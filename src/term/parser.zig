@@ -43,7 +43,23 @@ pub const Separator = enum(u2) {
 
     /// Advance to the next parameter.
     semicolon = 2,
+
+    /// padding to cover all u2 values
+    /// need to prove its actualy full coverage
+    invalid = 3,
 };
+
+comptime {
+    const info = @typeInfo(Separator);
+    if (info != .@"enum") {
+        @compileError("Separator must be an enum.");
+    }
+
+    const tag_type = info.@"enum".tag_type;
+    if (@typeInfo(tag_type).int.signedness != .unsigned) {
+        @compileError("Separator enum must use unsigned tag type");
+    }
+}
 
 /// Fixed-size bit-packed array of `Separator` values.
 ///
