@@ -60,36 +60,53 @@ pub const Separator = enum(u2) {
 /// * Out-of-bounds access is asserted in debug builds.
 pub fn SeparatorPacked(comptime n: usize) type {
     const bits_per = @bitSizeOf(Separator);
-    const total = n * bits_per;
-    const T = std.meta.Int(.unsigned, total);
+    const size = n * bits_per;
+
+    comptime {
+        if (n == 0) {
+            @compileError("SeparatorPacked requires n > 0.");
+        }
+
+        if (size > 65535) {
+            @compileError("Packed size too large");
+        }
+
+        const max = std.math.maxInt(std.meta.Tag(Separator));
+        var i: usize = 0;
+        while (i <= max) : (i += 1) {
+            _ = std.meta.intToEnum(Separator, i) catch {
+                @compileError("Separator does not cover all values of its backing integer");
+            };
+        }
+    }
+
+    const Storage = std.meta.Int(.unsigned, size);
+    const SeparatorMask: Storage = (1 << bits_per) - 1;
+    const ShiftInt = std.math.Log2Int(Storage);
 
     return struct {
-        bits: T,
-
         const Self = @This();
-        pub const init: Self = .{ .bits = 0 };
+        pub const capacity = n;
+        pub const empty: Self = .{ .bits = 0 };
+
+        /// The bit mask, as a single integer
+        bits: Storage,
 
         /// Read separator at index
-        pub fn get(self: Self, index: usize) Separator {
+        pub inline fn get(self: Self, index: usize) Separator {
             std.debug.assert(index < n);
 
-            const shift = index * bits_per;
-            return @enumFromInt(
-                @as(u2, @truncate(self.bits >> @intCast(shift))),
-            );
+            const raw: u2 = @truncate(self.bits >> @intCast(index * bits_per));
+            return @enumFromInt(raw);
         }
 
         /// Write separator at index
-        pub fn set(self: *Self, index: usize, value: Separator) void {
+        pub inline fn set(self: *Self, index: usize, value: Separator) void {
             std.debug.assert(index < n);
 
-            const shift = index * bits_per;
-            const mask = (@as(T, 1) << bits_per) - 1;
-            const shifted_mask = mask << @intCast(shift);
-
-            self.bits =
-                (self.bits & ~shifted_mask) |
-                (@as(T, @intFromEnum(value)) << @intCast(shift));
+            const shift: ShiftInt = @intCast(index * bits_per);
+            self.bits &= ~(SeparatorMask << shift);
+            self.bits |= @as(Storage, @intFromEnum(value)) << shift;
         }
     };
 }
