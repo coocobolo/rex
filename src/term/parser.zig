@@ -128,7 +128,7 @@ pub fn SeparatorPacked(comptime n: usize) type {
 }
 
 test "SeparatorPacked basic set/get" {
-    var s: SeparatorPacked(8) = .init;
+    var s: SeparatorPacked(8) = .empty;
 
     s.set(0, .colon);
     s.set(1, .semicolon);
@@ -140,7 +140,7 @@ test "SeparatorPacked basic set/get" {
 }
 
 test "SeparatorPacked overwrite works" {
-    var s: SeparatorPacked(4) = .init;
+    var s: SeparatorPacked(4) = .empty;
 
     s.set(1, .colon);
     try std.testing.expectEqual(.colon, s.get(1));
@@ -150,7 +150,7 @@ test "SeparatorPacked overwrite works" {
 }
 
 test "SeparatorPacked boundary indices" {
-    var s: SeparatorPacked(16) = .init;
+    var s: SeparatorPacked(16) = .empty;
 
     s.set(0, .colon);
     s.set(15, .semicolon);
@@ -160,7 +160,7 @@ test "SeparatorPacked boundary indices" {
 }
 
 test "SeparatorPacked full capacity stress test" {
-    var s: SeparatorPacked(32) = .init;
+    var s: SeparatorPacked(32) = .empty;
 
     // fill pattern
     for (0..32) |i| {
@@ -188,8 +188,7 @@ test "SeparatorPacked full capacity stress test" {
 }
 
 test "SeparatorPacked alternating pattern" {
-    var s: SeparatorPacked(16) = .init;
-
+    var s: SeparatorPacked(16) = .empty;
     for (0..16) |i| {
         s.set(i, if (i % 2 == 0) .colon else .semicolon);
     }
@@ -205,16 +204,14 @@ test "SeparatorPacked alternating pattern" {
 }
 
 test "SeparatorPacked default is zeroed" {
-    var s: SeparatorPacked(10) = .init;
+    var s: SeparatorPacked(10) = .empty;
     for (0..10) |i| {
         try std.testing.expectEqual(.end, s.get(i));
     }
 }
 
 test "SeparatorPacked fuzz random" {
-    const S = SeparatorPacked(32);
-
-    var s = S.init;
+    var s: SeparatorPacked(32) = .empty;
     var expected: [32]Separator = undefined;
 
     var prng = std.Random.DefaultPrng.init(12345);
