@@ -32,14 +32,10 @@ const no_value = 0xffff;
 //
 // see details (3. Device Control functions)[https://invisible island.net/xterm/ctlseqs/ctlseqs.html#h3 Device Control functions].
 
-const Transition = union(enum) {
-    complete: Action,
-    next,
-    abort,
-};
+pub const Transition = enum { complete, next, abort };
 
 /// Maximum number of parameter values supported.
-pub const max_values = 32;
+pub const max_values: usize = 32;
 
 /// Maximum number of intermediate values supported.
 pub const max_intermediates = 4;
