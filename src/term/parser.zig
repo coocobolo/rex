@@ -59,6 +59,14 @@ comptime {
     if (@typeInfo(tag_type).int.signedness != .unsigned) {
         @compileError("Separator enum must use unsigned tag type");
     }
+
+    const max = std.math.maxInt(std.meta.Tag(Separator));
+    var i: usize = 0;
+    while (i <= max) : (i += 1) {
+        _ = std.enums.fromInt(Separator, i) orelse {
+            @compileError("Separator does not cover all values of its backing integer");
+        };
+    }
 }
 
 /// Fixed-size bit-packed array of `Separator` values.
@@ -85,14 +93,6 @@ pub fn SeparatorPacked(comptime n: usize) type {
 
         if (size > 65535) {
             @compileError("Packed size too large");
-        }
-
-        const max = std.math.maxInt(std.meta.Tag(Separator));
-        var i: usize = 0;
-        while (i <= max) : (i += 1) {
-            _ = std.enums.fromInt(Separator, i) orelse {
-                @compileError("Separator does not cover all values of its backing integer");
-            };
         }
     }
 
