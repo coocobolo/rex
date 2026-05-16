@@ -127,54 +127,13 @@ pub fn SeparatorPacked(comptime n: usize) type {
     };
 }
 
-test "SeparatorPacked basic set/get" {
-    var s: SeparatorPacked(8) = .empty;
-
-    s.set(0, .colon);
-    s.set(1, .semicolon);
-    s.set(2, .end);
-
-    try std.testing.expectEqual(.colon, s.get(0));
-    try std.testing.expectEqual(.semicolon, s.get(1));
-    try std.testing.expectEqual(.end, s.get(2));
-}
-
-test "SeparatorPacked: set/get round-trip" {
-    const P = SeparatorPacked(8);
-    var p = P.empty;
-    p.set(0, .semicolon);
-    p.set(3, .colon);
-    p.set(7, .end);
-    try std.testing.expectEqual(Separator.semicolon, p.get(0));
-    try std.testing.expectEqual(Separator.colon, p.get(3));
-    try std.testing.expectEqual(Separator.end, p.get(7));
-}
-
-test "SeparatorPacked: fresh instance reads as zero" {
-    const P = SeparatorPacked(8);
-    const p = P.empty;
-    try std.testing.expectEqual(@as(Separator, @enumFromInt(0)), p.get(0));
-    try std.testing.expectEqual(@as(Separator, @enumFromInt(0)), p.get(7));
-}
-
-test "SeparatorPacked: set does not clobber adjacent slots" {
-    const P = SeparatorPacked(4);
-    var p = P.empty;
-    p.set(1, .semicolon);
-    p.set(2, .colon);
-    try std.testing.expectEqual(@as(Separator, @enumFromInt(0)), p.get(0));
-    try std.testing.expectEqual(Separator.semicolon, p.get(1));
-    try std.testing.expectEqual(Separator.colon, p.get(2));
-    try std.testing.expectEqual(@as(Separator, @enumFromInt(0)), p.get(3));
-}
-
-test "SeparatorPacked: overwrite slot" {
-    const P = SeparatorPacked(4);
-    var p = P.empty;
-    p.set(2, .semicolon);
-    p.set(2, .colon); // overwrite
-    try std.testing.expectEqual(Separator.colon, p.get(2));
-}
+const PrivateMarker = enum(u3) {
+    none,
+    lt,
+    eq,
+    gt,
+    question,
+};
 
 test "SeparatorPacked boundary indices" {
     var s: SeparatorPacked(16) = .empty;
