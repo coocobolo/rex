@@ -104,8 +104,8 @@ pub fn SeparatorPacked(comptime n: usize) type {
     }
 
     const Storage = std.meta.Int(.unsigned, size);
-    const SeparatorMask: Storage = (1 << bits_per) - 1;
     const ShiftInt = std.math.Log2Int(Storage);
+    const SeparatorMask: Storage = (1 << bits_per) - 1;
 
     return struct {
         const Self = @This();
