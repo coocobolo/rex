@@ -3,7 +3,18 @@ const Action = @import("actions.zig").Action;
 const Sgr = @import("actions.zig").Sgr;
 const SgrOp = @import("actions.zig").SgrOp;
 const Control = @import("actions.zig").Control;
+pub const Osc = @import("osc.zig");
 const Utf8Dfa = @import("unicode.zig").Utf8Dfa;
+
+test {
+    std.testing.refAllDecls(@This());
+    _ = @import("si_test.zig");
+}
+
+/// In CSI sequences, 65535 is not a valid parameter anyway
+/// (the spec generally allows 0 up to 65534)
+/// if the input parameter is "65535" which will treat as "parameter not specified".
+const no_value = 0xffff;
 
 // Definitions
 // Many controls use parameters, shown in italics.  If a control uses a
