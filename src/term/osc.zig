@@ -18,7 +18,7 @@ pub const State = enum {
 /// osc_maybe_st        osc_maybe_st
 ///     │
 ///    '\'──► .abort (came from ignore path)
-pub fn OSC(comptime max_string_len: usize) type {
+pub fn Osc(comptime max_string_len: usize) type {
     return struct {
         const Self = @This();
         pub const cap = max_string_len;
@@ -28,7 +28,7 @@ pub fn OSC(comptime max_string_len: usize) type {
         buffer_len: usize,
         buffer: [max_string_len]u8,
 
-        const empty: Self = .{
+        const default: Self = .{
             .param = 0,
             .buffer = undefined,
             .buffer_len = 0,
