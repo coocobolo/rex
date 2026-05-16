@@ -90,7 +90,7 @@ pub fn SeparatorPacked(comptime n: usize) type {
         const max = std.math.maxInt(std.meta.Tag(Separator));
         var i: usize = 0;
         while (i <= max) : (i += 1) {
-            _ = std.meta.intToEnum(Separator, i) catch {
+            _ = std.enums.fromInt(Separator, i) orelse {
                 @compileError("Separator does not cover all values of its backing integer");
             };
         }
