@@ -143,7 +143,7 @@ pub fn Osc(comptime max_string_len: usize) type {
 }
 
 const MaxStringLen = 1 << 8;
-const TestOsc = OSC(MaxStringLen);
+const TestOsc = Osc(MaxStringLen);
 
 fn feedAll(osc: *TestOsc, input: []const u8) Transition {
     var t: Transition = .next;
@@ -152,7 +152,7 @@ fn feedAll(osc: *TestOsc, input: []const u8) Transition {
 }
 
 test "OSC: simple string, BEL terminator" {
-    var osc: TestOsc = .empty;
+    var osc: TestOsc = .default;
     const t = feedAll(&osc, "2;My Window\x07");
     try std.testing.expectEqual(Transition.complete, t);
     try std.testing.expectEqual(@as(u32, 2), osc.param);
@@ -160,7 +160,7 @@ test "OSC: simple string, BEL terminator" {
 }
 
 test "OSC: simple string, ST terminator (ESC \\)" {
-    var osc: TestOsc = .empty;
+    var osc: TestOsc = .default;
     const t = feedAll(&osc, "2;My Window\x1b\\");
     try std.testing.expectEqual(Transition.complete, t);
     try std.testing.expectEqual(@as(u32, 2), osc.param);
@@ -168,7 +168,7 @@ test "OSC: simple string, ST terminator (ESC \\)" {
 }
 
 test "OSC: param=0 (set icon name and title)" {
-    var osc: TestOsc = .empty;
+    var osc: TestOsc = .default;
     const t = feedAll(&osc, "0;title\x07");
     try std.testing.expectEqual(Transition.complete, t);
     try std.testing.expectEqual(@as(u32, 0), osc.param);
@@ -176,7 +176,7 @@ test "OSC: param=0 (set icon name and title)" {
 }
 
 test "OSC: multi-digit param" {
-    var osc: TestOsc = .empty;
+    var osc: TestOsc = .default;
     const t = feedAll(&osc, "104;color\x07");
     try std.testing.expectEqual(Transition.complete, t);
     try std.testing.expectEqual(@as(u32, 104), osc.param);
@@ -184,7 +184,7 @@ test "OSC: multi-digit param" {
 }
 
 test "OSC: empty string payload" {
-    var osc: TestOsc = .empty;
+    var osc: TestOsc = .default;
     const t = feedAll(&osc, "0;\x07");
     try std.testing.expectEqual(Transition.complete, t);
     try std.testing.expectEqual(@as(u32, 0), osc.param);
@@ -192,7 +192,7 @@ test "OSC: empty string payload" {
 }
 
 test "OSC: zero param (no digits before semicolon)" {
-    var osc: TestOsc = .empty;
+    var osc: TestOsc = .default;
 
     // ';' with no preceding digits → param defaults to 0
     const t = feedAll(&osc, ";\x07");
@@ -201,7 +201,7 @@ test "OSC: zero param (no digits before semicolon)" {
 }
 
 test "OSC: OSC 52 clipboard (base64 payload)" {
-    var osc: TestOsc = .empty;
+    var osc: TestOsc = .default;
     const t = feedAll(&osc, "52;c;aGVsbG8=\x07");
     try std.testing.expectEqual(Transition.complete, t);
     try std.testing.expectEqual(@as(u32, 52), osc.param);
@@ -209,7 +209,7 @@ test "OSC: OSC 52 clipboard (base64 payload)" {
 }
 
 test "OSC: OSC 8 hyperlink (double semicolon in string)" {
-    var osc: TestOsc = .empty;
+    var osc: TestOsc = .default;
     const t = feedAll(&osc, "8;;https://example.com\x07");
     try std.testing.expectEqual(Transition.complete, t);
     try std.testing.expectEqual(@as(u32, 8), osc.param);
@@ -217,14 +217,14 @@ test "OSC: OSC 8 hyperlink (double semicolon in string)" {
 }
 
 test "OSC: string with printable ASCII range" {
-    var osc: TestOsc = .empty;
+    var osc: TestOsc = .default;
     const t = feedAll(&osc, "1; !\"#$%&'()*+,-./0123456789:;<=>?@AZ\x07");
     try std.testing.expectEqual(Transition.complete, t);
     try std.testing.expectEqual(@as(u32, 1), osc.param);
 }
 
 test "OSC: reset and reuse" {
-    var osc: TestOsc = .empty;
+    var osc: TestOsc = .default;
     _ = feedAll(&osc, "2;first\x07");
     osc.reset();
     try std.testing.expectEqual(@as(u32, 0), osc.param);
@@ -238,7 +238,7 @@ test "OSC: reset and reuse" {
 
 test "OSC: C0 controls (except BEL/ESC) ignored in string" {
     // 0x01..0x06 and 0x08..0x1A are ignored per ECMA-48 §8.3.89
-    var osc: TestOsc = .empty;
+    var osc: TestOsc = .default;
     const t = feedAll(&osc, "0;ab\x01\x08\x0Acd\x07");
     try std.testing.expectEqual(Transition.complete, t);
     // C0 bytes are ignored, string is "abcd"
@@ -246,7 +246,7 @@ test "OSC: C0 controls (except BEL/ESC) ignored in string" {
 }
 
 test "OSC: DEL (0x7F) ignored in string" {
-    var osc: TestOsc = .empty;
+    var osc: TestOsc = .default;
     const t = feedAll(&osc, "0;ab\x7Fcd\x07");
     try std.testing.expectEqual(Transition.complete, t);
     try std.testing.expectEqualSlices(u8, "abcd", osc.getString());
@@ -258,7 +258,7 @@ test "OSC: ESC followed by non-backslash resumes string collection" {
     // ESC X (not ST) — ESC is consumed, X is processed as a string byte
     // (or ignored if it's a C0 control — depends on your design)
 
-    var osc: TestOsc = .empty;
+    var osc: TestOsc = .default;
     // ESC followed by 'A' (not '\') — should NOT terminate
     _ = osc.feed('0');
     _ = osc.feed(';');
@@ -276,7 +276,7 @@ test "OSC: ESC followed by non-backslash resumes string collection" {
 test "OSC: ESC at end of string (no following byte before BEL)" {
     // ESC then BEL — BEL is not '\', so not ST; behavior is implementation-defined
 
-    var osc: TestOsc = .empty;
+    var osc: TestOsc = .default;
     _ = osc.feed('0');
     _ = osc.feed(';');
     _ = osc.feed(0x1b); // ESC → maybe_st
@@ -287,7 +287,7 @@ test "OSC: ESC at end of string (no following byte before BEL)" {
 }
 
 test "OSC: non-digit non-semicolon byte in osc_param → abort" {
-    var osc: TestOsc = .empty;
+    var osc: TestOsc = .default;
     // 'A' (0x41) is not a digit or ';' in the param phase
     const t = osc.feed('A');
 
@@ -296,14 +296,14 @@ test "OSC: non-digit non-semicolon byte in osc_param → abort" {
 
 test "OSC: BEL before semicolon (no string phase entered) → abort" {
     // BEL arrives while still in osc_param (no ';' seen yet)
-    var osc: TestOsc = .empty;
+    var osc: TestOsc = .default;
     _ = osc.feed('2');
     const t = osc.feed(0x07); // BEL in osc_param state
     try std.testing.expectEqual(Transition.abort, t);
 }
 
 test "OSC: ST before semicolon → abort" {
-    var osc: TestOsc = .empty;
+    var osc: TestOsc = .default;
 
     _ = osc.feed('2');
     _ = osc.feed(0x1b); // ESC in osc_param
@@ -312,7 +312,7 @@ test "OSC: ST before semicolon → abort" {
 }
 
 test "OSC: param overflow → ignore → abort at terminator" {
-    var osc: TestOsc = .empty;
+    var osc: TestOsc = .default;
     // Feed enough digits to overflow u32 (> 4294967295)
     _ = feedAll(&osc, "99999999999");
     _ = osc.feed(';');
@@ -322,7 +322,7 @@ test "OSC: param overflow → ignore → abort at terminator" {
 }
 
 test "OSC: string overflow → ignore → abort at terminator" {
-    var osc: TestOsc = .empty;
+    var osc: TestOsc = .default;
     _ = osc.feed('0');
     _ = osc.feed(';');
     // Fill the string buffer past max_string_len
@@ -336,7 +336,7 @@ test "OSC: string overflow → ignore → abort at terminator" {
 }
 
 test "OSC: abort in ignore state, then reset and reuse" {
-    var osc: TestOsc = .empty;
+    var osc: TestOsc = .default;
     // Trigger overflow → ignore
     _ = osc.feed('0');
     _ = osc.feed(';');
@@ -355,7 +355,7 @@ test "OSC: abort in ignore state, then reset and reuse" {
 
 // Boundary / exact-capacity cases
 test "OSC: string exactly at max_string_len → complete" {
-    var osc: TestOsc = .empty;
+    var osc: TestOsc = .default;
     _ = osc.feed('0');
     _ = osc.feed(';');
     for (0..TestOsc.cap) |_| {
@@ -367,7 +367,7 @@ test "OSC: string exactly at max_string_len → complete" {
 }
 
 test "OSC: string one byte over max_string_len → abort" {
-    var osc: TestOsc = .empty;
+    var osc: TestOsc = .default;
     _ = osc.feed('0');
     _ = osc.feed(';');
     for (0..TestOsc.cap + 1) |_| {
@@ -380,7 +380,7 @@ test "OSC: string one byte over max_string_len → abort" {
 test "OSC: param = max u32 boundary (4294967295)" {
     // 4294967295 = 0xFFFFFFFF — if your overflow check is > max, this should complete
     // if your check is >= max, this should abort. Adjust to match your design.
-    var osc: TestOsc = .empty;
+    var osc: TestOsc = .default;
     const t = feedAll(&osc, "4294967295;x\x07");
     try std.testing.expect(t == .complete);
 }
@@ -394,7 +394,7 @@ test "OSC: fuzz — no crash on arbitrary input" {
             // First byte encodes input length (0..255)
             const input = buf[1..][0..buf[0]];
 
-            var osc: TestOsc = .empty;
+            var osc: TestOsc = .default;
 
             for (input) |byte| {
                 const t = osc.feed(byte);
