@@ -37,8 +37,11 @@ pub const Transition = enum { complete, next, abort };
 /// Maximum number of parameter values supported.
 pub const max_values: usize = 32;
 
+/// Maximum number of string buffer supported.
+pub const max_string_buffer: usize = 256;
+
 /// Maximum number of intermediate values supported.
-pub const max_intermediates = 4;
+pub const max_intermediates: usize = 4;
 
 /// Packed separator token used by the parser.
 pub const Separator = enum(u2) {
