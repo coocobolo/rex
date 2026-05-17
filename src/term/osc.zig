@@ -11,14 +11,13 @@ pub const State = enum {
     ignore_maybe_st, // saw ESC in ignore state, waiting for '\'
 };
 
-/// osc_param ──';'──► osc_string ──ESC──► osc_maybe_st ──'\'──► .complete
-///     │                  │                     │
-///    ESC                ESC                  else──► ignore
-///     │                  │
-///     ▼                  ▼
-/// osc_maybe_st        osc_maybe_st
-///     │
-///    '\'──► .abort (came from ignore path)
+/// osc_param ─ ';' ─ osc_string ─ ESC ─ osc_maybe_st ─ '\' ─ .complete
+///     |                  |                     |
+///    ESC                ESC                  else ─ ignore
+///     |                  |
+/// osc_maybe_st        ignore_maybe_st
+///     |
+///    '\' ─ .abort (came from ignore path)
 pub fn Osc(comptime max_string_len: usize) type {
     return struct {
         const Self = @This();
