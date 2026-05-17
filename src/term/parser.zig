@@ -302,45 +302,48 @@ pub fn Csi(comptime max_value: usize) type {
             self.intermediate_count = 0;
         }
 
-    pub fn feed(self: *Csi, byte: u8) Transition {
-        return switch (self.state) {
-            .params => switch (byte) {
-                '<', '=', '>', '?' => blk: {
-                    self.private_marker = @enumFromInt(byte - 0x3B);
-                    break :blk .next;
-                },
+        fn pushIntermediate(self: *Self, byte: u8) void {
+            if (self.intermediate_count < self.intermediates.len) {
+                self.intermediates[self.intermediate_count] = byte;
+                self.intermediate_count += 1;
+            } else {
+                self.state = .ignore;
+            }
+        }
 
-                '0'...'9' => blk: {
-                    const digit: u16 = byte - '0';
+        fn pushValue(self: *Self, separator: Separator) void {
+            if (self.value_count < self.values.len) {
+                self.separators.set(self.value_count, separator);
 
-                    if (self.current == no_param) {
-                        self.current = digit;
-                    } else {
-                        const temp: u32 = @as(u32, @intCast(self.current)) * 10 + @as(u32, @intCast(digit));
-                        if (temp > 0xFFFF) {
-                            self.current = no_param;
-                            break :blk .abort;
-                        }
-                        self.current = @intCast(temp);
-                    }
+                self.values[self.value_count] = self.current;
+                self.value_count += 1;
+                self.current = no_value;
+            } else {
+                self.state = .ignore;
+            }
+        }
 
-                    break :blk .next;
-                },
+        fn finish(self: *Self, byte: u8) void {
+            self.final = byte;
 
-                ';' => blk: {
-                    self.pushParam();
-                    break :blk .next;
-                },
+            // store trailing parameter
+            if (self.current != no_value or self.value_count > 0) {
+                self.pushValue(.end);
+            }
+        }
 
-                ':' => blk: {
-                    break :blk .next;
-                },
+        pub fn value(self: *const Self, index: usize, fallback: u16) u16 {
+            if (index >= self.value_count) return fallback;
+            const v = self.values[index];
+            return if (v == no_value) fallback else v;
+        }
 
-                0x20...0x2F => blk: {
-                    self.state = .intermediates;
-                    self.pushIntermediate(byte);
-                    break :blk .next;
-                },
+        pub fn intermediate(self: *const Self, index: u4) u8 {
+            if (index >= self.intermediates.len) return 0;
+            return self.intermediates[index];
+        }
+    };
+}
 
                 0x40...0x7E => blk: {
                     self.finish(byte);
