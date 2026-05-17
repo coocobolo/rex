@@ -1,6 +1,6 @@
 const std = @import("std");
-const Action = @import("actions.zig").Action;
-const Sgr = @import("actions.zig").Sgr;
+const testing = std.testing;
+const log = std.log.scoped(.parser);
 const SgrOp = @import("actions.zig").SgrOp;
 const Control = @import("actions.zig").Control;
 pub const Osc = @import("osc.zig");
