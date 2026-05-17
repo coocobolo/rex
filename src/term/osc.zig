@@ -124,8 +124,18 @@ pub fn Osc(comptime max_string_len: usize) type {
             self.state = .osc_param;
         }
 
+        pub fn write(self: *const Self, dest: []u8) ![]u8 {
+            const s = self.buffer[0..self.buffer_len];
+            if (s.len > dest.len) return error.BufferTooSmall;
+            @memcpy(dest[0..s.len], s);
+            return dest[0..s.len];
+        }
+
         /// Returns the collected OSC string paylaod.
         /// Thus, dispatch or get the string only on (.complete) state.
+        ///
+        /// The returned slice is valid only until the next call to next() or reset().
+        /// Callers must copy the string if they need it to outlive the current dispatch.
         pub fn getString(self: *const Self) []const u8 {
             return self.buffer[0..self.buffer_len];
         }
