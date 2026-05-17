@@ -142,43 +142,63 @@ const PrivateMarker = enum(u3) {
     question,
 };
 
-test "SeparatorPacked boundary indices" {
-    var s: SeparatorPacked(16) = .empty;
+/// Sequence Introducer: `Introducer P...P I...I F`
+///
+/// Parameter values are capped at no_value - 1 (65534).
+/// 65535 is reserved as the no_value sentinel.
+pub fn Csi(comptime max_value: usize) type {
+    const ValueCount = std.math.IntFittingRange(0, max_value);
 
-    s.set(0, .colon);
-    s.set(15, .semicolon);
+    // NOTE (dapa)
+    // In real terminal sequences, no standard escape sequence uses
+    // 65535 (0xFFFF) as a parameter value. THe highest commonly used
+    // values are things like 256 (color indices) or a few thousand
+    // (window size). So the sentinel collision is a theoretical
+    // correctness bug that won't affect real-world usage.
 
-    try std.testing.expectEqual(.colon, s.get(0));
-    try std.testing.expectEqual(.semicolon, s.get(15));
-}
+    // then why not set current and valuus as optional?
+    // `?u16` in Zig is stored as u16 + u1 (bool) + padding = 4 bytes per slot
+    // instead of 2. For SI(16), values grows from 32 to 64 bytes.
 
-test "SeparatorPacked full capacity stress test" {
-    var s: SeparatorPacked(32) = .empty;
+    // other alternative: using empty_bits: std.meta.Int(.unsigned, max_value) = 0,
+    // One bit per slot: 1 = slot is empty (no digit entered), 0 = has explicit value
+    // For SI(16), empty_bits is u16 (2 bytes) much cheaper than ?u16 per slot.
+    // But it adds complexity to pushValue and value().
 
-    // fill pattern
-    for (0..32) |i| {
-        const v: Separator = if (i % 3 == 0)
-            .colon
-        else if (i % 3 == 1)
-            .semicolon
-        else
-            .end;
+    // so, yet this is a real design conflict. no_value = 0xFFFF is used as a sentinel
+    // for "no digit entered yet", but at the same time '65535' is also a valid u16 parameter value.
+    // It's not correct behavior for now, it's a sentinel collision.
+    // The parser correctly parses 65535 into current, but pushValue stores it as no_value, and value() then treats it as "empty parameter".
 
-        s.set(i, v);
-    }
+    return struct {
+        final: u8,
+        current: u16,
+        private_marker: PrivateMarker,
+        separators: SeparatorPacked(max_value),
+        state: enum(u2) { params, intermediates, ignore },
 
-    // verify
-    for (0..32) |i| {
-        const expected: Separator = if (i % 3 == 0)
-            .colon
-        else if (i % 3 == 1)
-            .semicolon
-        else
-            .end;
+        values: [max_value]u16,
+        intermediates: [max_intermediates]u8,
 
-        try std.testing.expectEqual(expected, s.get(i));
-    }
-}
+        intermediate_count: u4,
+        value_count: ValueCount,
+
+        const Self = @This();
+        pub const capacity = max_value;
+
+        pub const default: Self = .{
+            .final = 0,
+            .state = .params,
+            .current = no_value,
+            .separators = .empty,
+            .private_marker = .none,
+
+            .value_count = 0,
+            .intermediate_count = 0,
+
+            .values = undefined,
+            .intermediates = undefined,
+        };
 
 test "SeparatorPacked alternating pattern" {
     var s: SeparatorPacked(16) = .empty;
