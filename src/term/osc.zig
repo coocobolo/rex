@@ -28,7 +28,7 @@ pub fn Osc(comptime max_string_len: usize) type {
         buffer_len: usize,
         buffer: [max_string_len]u8,
 
-        const default: Self = .{
+        pub const default: Self = .{
             .param = 0,
             .buffer = undefined,
             .buffer_len = 0,
