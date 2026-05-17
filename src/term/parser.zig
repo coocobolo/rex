@@ -290,17 +290,17 @@ pub fn Csi(comptime max_value: usize) type {
             };
         }
 
-    params: [max_params]u16 = [_]u16{no_param} ** max_params,
-    intermediates: [max_intermediates]u8 = [_]u8{0} ** max_intermediates,
+        pub fn reset(self: *Self) void {
+            self.final = 0;
+            self.state = .params;
+            self.current = no_value;
 
-    const empty: Csi = .{
-        .final = 0,
-        .state = .params,
-        .private_marker = .none,
+            self.separators = .empty;
+            self.private_marker = .none;
 
-        .param_count = 0,
-        .intermediate_count = 0,
-    };
+            self.value_count = 0;
+            self.intermediate_count = 0;
+        }
 
     pub fn feed(self: *Csi, byte: u8) Transition {
         return switch (self.state) {
