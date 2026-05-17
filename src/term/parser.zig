@@ -200,64 +200,95 @@ pub fn Csi(comptime max_value: usize) type {
             .intermediates = undefined,
         };
 
-test "SeparatorPacked alternating pattern" {
-    var s: SeparatorPacked(16) = .empty;
-    for (0..16) |i| {
-        s.set(i, if (i % 2 == 0) .colon else .semicolon);
-    }
+        pub fn feed(self: *Self, byte: u8) Transition {
+            return switch (self.state) {
+                .ignore => switch (byte) {
+                    // consume all bytes until final, then signal abort (malformed)
+                    0x40...0x7E => .abort, // caller shold not dispatch any
+                    else => .next,
+                },
+                .params => switch (byte) {
+                    '<', '=', '>', '?' => blk: {
+                        // a private marker is only meaningful as the first byte
+                        // of the parameter string. A sequence like `CSI 1 ? m`
+                        // will overwrite `private_marker` after `1` has already
+                        // been parsed. so need to guard this!
+                        if (self.value_count == 0 and self.current == no_value) {
+                            self.private_marker = @enumFromInt(byte - 0x3B);
+                            break :blk .next;
+                        }
 
-    for (0..16) |i| {
-        const expected: Separator = if (i % 2 == 0)
-            .colon
-        else
-            .semicolon;
+                        self.state = .ignore;
+                        break :blk .next;
+                    },
 
-        try std.testing.expectEqual(expected, s.get(i));
-    }
-}
+                    '0'...'9' => blk: {
+                        const digit: u16 = byte - '0';
 
-test "SeparatorPacked default is zeroed" {
-    var s: SeparatorPacked(10) = .empty;
-    for (0..10) |i| {
-        try std.testing.expectEqual(.end, s.get(i));
-    }
-}
+                        if (self.current == no_value) {
+                            self.current = digit;
+                            break :blk .next;
+                        }
 
-test "SeparatorPacked fuzz random" {
-    var s: SeparatorPacked(32) = .empty;
-    var expected: [32]Separator = undefined;
+                        const temp = (@as(u32, self.current) * 10) + digit;
+                        // set a sentinel collision current to ignore
+                        if (temp >= 0xFFFF) {
+                            self.state = .ignore;
+                            break :blk .next;
+                        }
 
-    var prng = std.Random.DefaultPrng.init(12345);
-    const rand = prng.random();
+                        self.current = @truncate(temp);
+                        break :blk .next;
+                    },
 
-    for (0..32) |i| {
-        const v: Separator = @enumFromInt(
-            rand.intRangeAtMost(u2, 0, 2),
-        );
+                    ';' => blk: {
+                        self.pushValue(.semicolon);
+                        break :blk .next;
+                    },
 
-        expected[i] = v;
-        s.set(i, v);
-    }
+                    ':' => blk: {
+                        self.pushValue(.colon);
+                        break :blk .next;
+                    },
 
-    for (0..32) |i| {
-        try std.testing.expectEqual(expected[i], s.get(i));
-    }
-}
+                    0x20...0x2F => blk: {
+                        self.state = .intermediates;
+                        self.pushIntermediate(byte);
+                        break :blk .next;
+                    },
 
-pub const Csi = struct {
-    state: enum { params, intermediates },
-    final: u8,
-    current: u16 = no_param,
-    private_marker: enum(u3) {
-        none,
-        lt,
-        eq,
-        gt,
-        question,
-    },
+                    0x40...0x7E => blk: {
+                        self.finish(byte);
+                        // break :blk .complete;
+                        break :blk if (self.state == .ignore) Transition.abort else Transition.complete;
+                    },
 
-    param_count: u4 = 0,
-    intermediate_count: u3 = 0,
+                    0x7F => .next,
+                    else => .abort,
+                },
+
+                .intermediates => switch (byte) {
+                    0x20...0x2F => blk: {
+                        self.pushIntermediate(byte);
+                        break :blk .next;
+                    },
+
+                    0x30...0x3F => blk: {
+                        self.state = .ignore;
+                        break :blk .next;
+                    },
+
+                    0x40...0x7E => blk: {
+                        self.finish(byte);
+                        break :blk if (self.state == .ignore) Transition.abort else Transition.complete;
+                    },
+
+                    0x7F => .next,
+
+                    else => .abort,
+                },
+            };
+        }
 
     params: [max_params]u16 = [_]u16{no_param} ** max_params,
     intermediates: [max_intermediates]u8 = [_]u8{0} ** max_intermediates,
