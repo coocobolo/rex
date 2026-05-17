@@ -1,4 +1,5 @@
 const std = @import("std");
+const log = std.log.scoped(.osc);
 
 const Transition = @import("parser.zig").Transition;
 
