@@ -32,7 +32,21 @@ const no_value = 0xffff;
 //
 // see details (3. Device Control functions)[https://invisible island.net/xterm/ctlseqs/ctlseqs.html#h3 Device Control functions].
 
-pub const Transition = enum { complete, next, abort };
+/// Represents the result of a single byte being processed by the parser.
+pub const Transition = enum {
+    /// The sequence is complete and valid.
+    /// The caller SHOULD now dispatch or emit resulting action.
+    complete,
+
+    /// The byte was accepted, but the sequence is still in progress.
+    /// The caller MUST continue feeding subsequent bytes.
+    next,
+
+    /// The sequence was malformed or a semantic error occured.
+    /// The caller SHOULD abort the current sequence and typically
+    /// reset/clean-up the parser.
+    abort,
+};
 
 /// Maximum number of parameter values supported.
 pub const max_values: usize = 32;
