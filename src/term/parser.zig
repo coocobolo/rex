@@ -101,8 +101,9 @@ pub fn SeparatorPacked(comptime n: usize) type {
             @compileError("SeparatorPacked requires n > 0.");
         }
 
-        if (size > 65535) {
-            @compileError("Packed size too large");
+        const max_size = std.math.maxInt(u16);
+        if (size > max_size) {
+            @compileError(std.fmt.comptimePrint("Packed size must be <= max_size={}.", .{max_size}));
         }
     }
 
