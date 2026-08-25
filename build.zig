@@ -1,147 +1,409 @@
 const std = @import("std");
 
 pub fn build(b: *std.Build) void {
+    // var query = b.standardTargetOptions(.{}).query;
+    // query.cpu_features_sub = std.Target.x86.featureSet(&.{.bmi2});
+
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const mod = b.addModule("shtfup", .{
-        .root_source_file = b.path("src/root.zig"),
-        .optimize = optimize,
-        .target = target,
-    });
+    const requested_platform = b.option(
+        GlfwResolver.Platform,
+        "glfw-platform",
+        "windowing backend API",
+    ) orelse @panic(
+        "missing required option: -Dglfw-platform=<platform>",
+    );
 
-    // Here we define an executable. An executable needs to have a root module
-    // which needs to expose a `main` function. While we could add a main function
-    // to the module defined above, it's sometimes preferable to split business
-    // logic and the CLI into two separate modules.
-    //
-    // If your goal is to create a Zig library for others to use, consider if
-    // it might benefit from also exposing a CLI tool. A parser library for a
-    // data serialization format could also bundle a CLI syntax checker, for example.
-    //
-    // If instead your goal is to create an executable, consider if users might
-    // be interested in also being able to embed the core functionality of your
-    // program in their own executable in order to avoid the overhead involved in
-    // subprocessing your CLI tool.
-    //
-    // If neither case applies to you, feel free to delete the declaration you
-    // don't need and to put everything under a single module.
-    const exe = b.addExecutable(.{
-        .name = "shtfup",
+    const glfw_dep = b.dependency("glfw", .{});
+    const glfw_lib = b.addLibrary(.{
+        .name = "glfw",
+        .linkage = .static,
         .root_module = b.createModule(.{
-            // b.createModule defines a new module just like b.addModule but,
-            // unlike b.addModule, it does not expose the module to consumers of
-            // this package, which is why in this case we don't have to give it a name.
-            .root_source_file = b.path("src/main.zig"),
-            // Target and optimization levels must be explicitly wired in when
-            // defining an executable or library (in the root module), and you
-            // can also hardcode a specific target for an executable or library
-            // definition if desireable (e.g. firmware for embedded devices).
             .target = target,
             .optimize = optimize,
-            // List of modules available for import in source files part of the
-            // root module.
-            .imports = &.{
-                // Here "shtfup" is the name you will use in your source code to
-                // import this module (e.g. `@import("shtfup")`). The name is
-                // repeated because you are allowed to rename your imports, which
-                // can be extremely useful in case of collisions (which can happen
-                // importing modules from different packages).
-                .{ .name = "shtfup", .module = mod },
-            },
+            .link_libc = true,
         }),
     });
 
-    // This declares intent for the executable to be installed into the
-    // install prefix when running `zig build` (i.e. when executing the default
-    // step). By default the install prefix is `zig-out/` but can be overridden
-    // by passing `--prefix` or `-p`.
-    b.installArtifact(exe);
+    glfw_lib.root_module.addIncludePath(glfw_dep.path("src"));
+    glfw_lib.root_module.addIncludePath(glfw_dep.path("include"));
 
-    // This creates a top level step. Top level steps have a name and can be
-    // invoked by name when running `zig build` (e.g. `zig build run`).
-    // This will evaluate the `run` step rather than the default step.
-    // For a top level step to actually do something, it must depend on other
-    // steps (e.g. a Run step, as we will see in a moment).
-    const run_step = b.step("run", "Run the app");
+    GlfwResolver.add(glfw_lib, glfw_dep, target, requested_platform);
 
-    // This creates a RunArtifact step in the build graph. A RunArtifact step
-    // invokes an executable compiled by Zig. Steps will only be executed by the
-    // runner if invoked directly by the user (in the case of top level steps)
-    // or if another step depends on it, so it's up to you to define when and
-    // how this Run step will be executed. In our case we want to run it when
-    // the user runs `zig build run`, so we create a dependency link.
-    const run_cmd = b.addRunArtifact(exe);
-    run_step.dependOn(&run_cmd.step);
+    // glfw_lib.root_module.addCSourceFiles(.{
+    //     .root = glfw_dep.path(""),
+    //     .files = &[_][]const u8{} ++ glfw_common_srcs ++ glfw_linux_x11_srcs,
+    //     .flags = &.{"-D_GLFW_X11"},
+    // });
 
-    // By making the run step depend on the default step, it will be run from the
-    // installation directory rather than directly from within the cache directory.
-    run_cmd.step.dependOn(b.getInstallStep());
-
-    // This allows the user to pass arguments to the application in the build
-    // command itself, like this: `zig build run -- arg1 arg2 etc`
-    if (b.args) |args| {
-        run_cmd.addArgs(args);
+    switch (target.result.os.tag) {
+        .linux => {},
+        else => @panic("Unsupported GLFW platform"),
     }
 
-    // Creates an executable that will run `test` blocks from the provided module.
-    // Here `mod` needs to define a target, which is why earlier we made sure to
-    // set the releative field.
+    const glad_dep = b.dependency("glad", .{});
+    const glad_lib = b.addLibrary(.{
+        .name = "glad",
+        .linkage = .static,
+        .root_module = b.createModule(.{
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+        }),
+    });
+
+    glad_lib.root_module.addCSourceFile(.{ .file = glad_dep.path("src/glad.c") });
+    glad_lib.root_module.addIncludePath(glad_dep.path("include"));
+
+    // const miniaudio_dep = b.dependency("miniaudio", .{});
+    // const miniaudio = b.addLibrary(.{
+    //     .name = "miniaudio",
+    //     .linkage = .static,
+    //     .root_module = b.createModule(.{
+    //         .target = target,
+    //         .optimize = optimize,
+    //         .link_libc = true,
+    //     }),
+    // });
+    // miniaudio.root_module.addCSourceFile(.{
+    //     .file = miniaudio_dep.path("miniaudio.c"),
+    //     .flags = &.{
+    //         // "-DMA_NO_RUNTIME_LINKING", // optional: disable dlopen
+    //         "-DMA_ENABLE_VORBIS",
+    //     },
+    // });
+    // miniaudio.root_module.addIncludePath(miniaudio_dep.path(""));
+
+    const freetype_dep = b.dependency("freetype", .{});
+    const freetype_lib = b.addLibrary(.{
+        .linkage = .static,
+        .name = "freetype",
+        .root_module = b.createModule(.{
+            .target = target,
+            .link_libc = true, // freetype needs libc (malloc, memcpy, file I/O, etc.)
+            .optimize = optimize,
+        }),
+    });
+    freetype_lib.root_module.addCSourceFiles(.{
+        .root = freetype_dep.path(""),
+        .files = &freetype_base_srcs, // mirrors CMakeLists.txt's BASE_SRCS list (only includes whats needed)
+        .flags = &.{
+            "-DFT2_BUILD_LIBRARY",
+            "-DFT_CONFIG_OPTION_USE_ZLIB",
+        },
+    });
+    freetype_lib.root_module.addIncludePath(freetype_dep.path("include"));
+    freetype_lib.root_module.addIncludePath(
+        freetype_dep.path("src"),
+    );
+
+    const t_c = b.addTranslateC(.{
+        .root_source_file = b.path("src/c.h"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+
+    t_c.defineCMacro("_FORTIFY_SOURCE", "0");
+    t_c.defineCMacro("_XOPEN_SOURCE", "800");
+
+    const c_mod = t_c.createModule();
+
+    // Core library module
+    const mod = b.addModule("rex", .{
+        .root_source_file = b.path("src/root.zig"),
+        .optimize = optimize,
+        .target = target,
+        .link_libc = true,
+        .imports = &.{
+            .{ .name = "c", .module = c_mod },
+        },
+    });
+
+    mod.addIncludePath(freetype_dep.path("include"));
+    mod.linkLibrary(freetype_lib);
+
+    // requires for freetype zlib
+    mod.linkSystemLibrary("z", .{});
+
+    // mod.addIncludePath(miniaudio_dep.path(""));
+    // mod.linkLibrary(miniaudio);
+
+    mod.addIncludePath(glad_dep.path("include"));
+    mod.linkLibrary(glad_lib);
+
+    mod.addIncludePath(glfw_dep.path("include"));
+    mod.linkLibrary(glfw_lib);
+
+    if (target.result.os.tag == .linux) {
+        mod.linkSystemLibrary("X11", .{});
+        mod.linkSystemLibrary("Xrandr", .{});
+        mod.linkSystemLibrary("Xi", .{});
+        mod.linkSystemLibrary("Xcursor", .{});
+        mod.linkSystemLibrary("Xinerama", .{});
+        mod.linkSystemLibrary("GL", .{});
+        mod.linkSystemLibrary("EGL", .{});
+        mod.linkSystemLibrary("dl", .{});
+        mod.linkSystemLibrary("m", .{});
+        mod.linkSystemLibrary("pthread", .{});
+        mod.linkSystemLibrary("X11", .{});
+        // Install the X11 extension development headers on your system, e.g. on Ubuntu/Debian:
+        // sudo apt install libxcursor-dev libxrandr-dev libxinerama-dev libxi-dev libx11-dev libxext-dev
+    }
+
+    // Executable
+    const exe = b.addExecutable(.{
+        .name = "rex",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/main.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "rex", .module = mod },
+            },
+            .strip = false, // TODO delete for testing only
+            .link_libc = true,
+        }),
+    });
+
+    b.installArtifact(exe);
+
+    b.installFile(
+        "assets/rex.desktop",
+        "share/applications/rex.desktop",
+    );
+
+    b.installDirectory(.{
+        .source_dir = b.path("assets/icons/hicolor"),
+        .install_dir = .{ .custom = "share/icons" },
+        .install_subdir = "hicolor",
+    });
+
+    const run_cmd = b.addRunArtifact(exe);
+    run_cmd.step.dependOn(b.getInstallStep());
+    if (b.args) |args| run_cmd.addArgs(args);
+
+    const run_step = b.step("run", "Run the app");
+    run_step.dependOn(&run_cmd.step);
+
+    // Tests
     const mod_tests = b.addTest(.{
         .root_module = mod,
         .filters = b.args orelse &.{},
     });
 
-    // const term_tests = b.addTest(.{
-    //     .root_module = b.createModule(.{
-    //         .root_source_file = b.path("tests/root.zig"),
-    //         .target = target,
-    //         .optimize = optimize,
-    //         // .fuzz = true,
-    //         .imports = &.{
-    //             // Here "shtfup" is the name you will use in your source code to
-    //             // import this module (e.g. `@import("shtfup")`). The name is
-    //             // repeated because you are allowed to rename your imports, which
-    //             // can be extremely useful in case of collisions (which can happen
-    //             // importing modules from different packages).
-    //             .{ .name = "shtfup", .module = mod },
-    //         },
-    //     }),
-    //
-    //     .filters = b.args orelse &.{},
-    // });
-
-    // A run step that will run the test executable.
-    const run_mod_tests = b.addRunArtifact(mod_tests);
-    // const run_term_tests = b.addRunArtifact(term_tests);
-
-    // Creates an executable that will run `test` blocks from the executable's
-    // root module. Note that test executables only test one module at a time,
-    // hence why we have to create two separate ones.
     const exe_tests = b.addTest(.{
         .root_module = exe.root_module,
     });
 
-    // A run step that will run the second test executable.
-    const run_exe_tests = b.addRunArtifact(exe_tests);
-
-    // A top level step for running all tests. dependOn can be called multiple
-    // times and since the two run steps do not depend on one another, this will
-    // make the two of them run in parallel.
     const test_step = b.step("test", "Run tests");
-    // test_step.dependOn(&run_term_tests.step);
-    test_step.dependOn(&run_mod_tests.step);
-    test_step.dependOn(&run_exe_tests.step);
+    test_step.dependOn(&b.addRunArtifact(mod_tests).step);
+    test_step.dependOn(&b.addRunArtifact(exe_tests).step);
 
-    // Just like flags, top level steps are also listed in the `--help` menu.
-    //
-    // The Zig build system is entirely implemented in userland, which means
-    // that it cannot hook into private compiler APIs. All compilation work
-    // orchestrated by the build system will result in other Zig compiler
-    // subcommands being invoked with the right flags defined. You can observe
-    // these invocations when one fails (or you pass a flag to increase
-    // verbosity) to validate assumptions and diagnose problems.
-    //
-    // Lastly, the Zig build system is relatively simple and self-contained,
-    // and reading its source code will allow you to master it.
+    // Code generation
+    const gen_x11_colors = b.addExecutable(
+        .{
+            .name = "gen_x11_colors",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("tools/gen_x11_colors.zig"),
+                .optimize = optimize,
+                .target = target,
+            }),
+        },
+    );
+
+    const run_gen_x11_colors = b.addRunArtifact(gen_x11_colors);
+    run_gen_x11_colors.addFileArg(b.path("tools/rgb.txt"));
+    const x11_colors_source = run_gen_x11_colors.captureStdOut(.{});
+
+    const update_x11_colors = b.addUpdateSourceFiles();
+    update_x11_colors.addCopyFileToSource(x11_colors_source, "src/color/x11.zig");
+
+    {
+        const gen_step = b.step("gen-x11-colors", "Regenerate x11 color table from rgb.txt");
+        gen_step.dependOn(&update_x11_colors.step);
+    }
+
+    // Regenerates src/term/nfc_table.zig from tools/UnicodeData.txt.
+    // Run manually after updating UnicodeData.txt, then commit the result.
+
+    const gen_nfc = b.addExecutable(.{
+        .name = "gen_nfc_table",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/gen_nfc_table.zig"),
+            .target = b.graph.host,
+            .optimize = .ReleaseFast,
+        }),
+    });
+
+    const run_gen_nfc = b.addRunArtifact(gen_nfc);
+    run_gen_nfc.addFileArg(b.path("tools/UnicodeData.txt"));
+    const nfc_source = run_gen_nfc.captureStdOut(.{});
+
+    const update_nfc = b.addUpdateSourceFiles();
+    update_nfc.addCopyFileToSource(nfc_source, "src/term/nfc_table.zig");
+
+    {
+        const gen_step = b.step("gen-nfc", "Regenerate src/term/nfc_table.zig from UnicodeData.txt");
+        gen_step.dependOn(&update_nfc.step);
+    }
 }
+
+const ftmodule_h_contents =
+    \\FT_USE_MODULE( FT_Module_Class, autofit_module_class )  
+    \\FT_USE_MODULE( FT_Driver_ClassRec, tt_driver_class )  
+    \\FT_USE_MODULE( FT_Driver_ClassRec, cff_driver_class )  
+    \\FT_USE_MODULE( FT_Module_Class, psaux_module_class )  
+    \\FT_USE_MODULE( FT_Module_Class, psnames_module_class )  
+    \\FT_USE_MODULE( FT_Module_Class, pshinter_module_class )  
+    \\FT_USE_MODULE( FT_Module_Class, sfnt_module_class )  
+    \\FT_USE_MODULE( FT_Renderer_Class, ft_smooth_renderer_class )  
+    \\FT_USE_MODULE( FT_Renderer_Class, ft_raster1_renderer_class )
+    \\
+;
+
+const ftoption_h_contents =
+    \\// #define FT_CONFIG_OPTION_USE_PNG
+    \\// #define FT_CONFIG_OPTION_USE_ZLIB
+    \\// #define FT_CONFIG_OPTION_USE_BZIP2
+    \\// #define FT_CONFIG_OPTION_USE_BROTLI
+    \\// #define FT_CONFIG_OPTION_SVG
+;
+
+const freetype_base_srcs = [_][]const u8{
+    "src/autofit/autofit.c",
+
+    "src/base/ftbase.c",
+    "src/base/ftbbox.c",
+    "src/base/ftbdf.c",
+    "src/base/ftbitmap.c",
+    "src/base/ftcid.c",
+    "src/base/ftfstype.c",
+    "src/base/ftgasp.c",
+    "src/base/ftglyph.c",
+    "src/base/ftgxval.c",
+    "src/base/ftinit.c",
+    "src/base/ftmm.c",
+    "src/base/ftotval.c",
+    "src/base/ftpatent.c",
+    "src/base/ftpfr.c",
+    "src/base/ftstroke.c",
+    "src/base/ftsynth.c",
+    "src/base/fttype1.c",
+    "src/base/ftwinfnt.c",
+
+    "src/bdf/bdf.c",
+    "src/bzip2/ftbzip2.c",
+    "src/cache/ftcache.c",
+    "src/cff/cff.c",
+    "src/cid/type1cid.c",
+    "src/gzip/ftgzip.c",
+    "src/lzw/ftlzw.c",
+    "src/pcf/pcf.c",
+    "src/pfr/pfr.c",
+    "src/psaux/psaux.c",
+    "src/pshinter/pshinter.c",
+    "src/psnames/psnames.c",
+    "src/raster/raster.c",
+    "src/sdf/sdf.c",
+    "src/sfnt/sfnt.c",
+    "src/smooth/smooth.c",
+    "src/svg/svg.c",
+    "src/truetype/truetype.c",
+    "src/type1/type1.c",
+    "src/type42/type42.c",
+    "src/winfonts/winfnt.c",
+
+    "src/base/ftdebug.c",
+    "src/base/ftsystem.c",
+};
+
+const glfw_common_srcs = [_][]const u8{
+    "src/context.c",
+    "src/init.c",
+    "src/input.c",
+    "src/monitor.c",
+    "src/vulkan.c",
+    "src/window.c",
+};
+
+const GlfwResolver = struct {
+    const Platform = enum {
+        win32,
+        cocoa,
+        wayland,
+        x11,
+    };
+
+    fn mustValidate(target: std.Build.ResolvedTarget, platform: Platform) void {
+        switch (platform) {
+            .win32 => if (target.result.os.tag != .windows) @panic("glfw-platform=win32 requires a Windows target"),
+            .cocoa => if (target.result.os.tag != .macos) @panic("glfw-platform=cocoa requires a macOS target"),
+            .wayland, .x11 => if (target.result.os.tag != .linux) @panic("X11 and Wayland require a Linux target"),
+        }
+    }
+
+    fn add(
+        compile: *std.Build.Step.Compile,
+        dep: *std.Build.Dependency,
+        target: std.Build.ResolvedTarget,
+        platform: Platform,
+    ) void {
+        mustValidate(target, platform);
+
+        compile.root_module.addIncludePath(dep.path("src"));
+        compile.root_module.addIncludePath(dep.path("include"));
+
+        switch (platform) {
+            .x11 => addX11(compile.root_module, dep.path("")),
+            else => @panic("unsupported GLFW target os"),
+        }
+    }
+
+    // FIXME need reading more about Zig build equivalent to
+    // the generate_wayland_protocol macro in src/CMakeLists.txt
+    // runs wayland-scanner twice per protocol XML file to produce
+    // two generated C artifacts that GLFW's Wayland backend.
+    fn addWayland(module: *std.Build.Module, root: ?std.Build.LazyPath) void {
+        module.addCSourceFiles(.{
+            .root = root,
+            .flags = &.{"-D_GLFW_WAYLAND"},
+            .files = &[_][]const u8{} ++ glfw_common_srcs ++ &[_][]const u8{
+                "src/egl_context.c ",
+                "src/osmesa_context.c  ",
+                "src/null_init.c ",
+                "src/null_monitor.c ",
+                "src/null_window.c",
+                "src/null_joystick.c  ",
+                "src/posix_time.c ",
+                "src/posix_thread.c ",
+                "src/posix_module.c  ",
+                "src/wl_init.c ",
+                "src/wl_monitor.c ",
+                "src/wl_window.c  ",
+                "src/linux_joystick.c  ",
+                "src/posix_poll.c  ",
+            },
+        });
+    }
+
+    fn addX11(module: *std.Build.Module, root: ?std.Build.LazyPath) void {
+        module.addCSourceFiles(.{
+            .root = root,
+            .flags = &.{"-D_GLFW_X11"},
+            .files = &[_][]const u8{} ++ glfw_common_srcs ++ &[_][]const u8{
+                "src/x11_init.c",
+                "src/x11_monitor.c",
+                "src/x11_window.c",
+                "src/xkb_unicode.c",
+                "src/posix_time.c",
+                "src/posix_thread.c",
+                "src/glx_context.c",
+                "src/egl_context.c",
+                "src/osmesa_context.c",
+                "src/linux_joystick.c",
+            },
+        });
+    }
+};
