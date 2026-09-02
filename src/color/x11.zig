@@ -63,10 +63,10 @@
 //! FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 //! DEALINGS IN THE SOFTWARE.
 //!
-//! Regenerate: 
+//! Regenerate:
 //! zig build gen-x11-colors <src.txt> > <dest/x11.zig>
 //!
-//! The generator emits lowercase keys. Both forms "ghost white" 
+//! The generator emits lowercase keys. Both forms "ghost white"
 //! and "ghostwhite" are retained as separate entries.
 
 const std = @import("std");
@@ -857,10 +857,10 @@ pub const colors_map = std.StaticStringMap(Rgb).initComptime(&.{
     .{ "teal", Rgb{ .r = 0, .g = 128, .b = 128 } },
 });
 
-/// Lookup: lowercase only, no space stripping  
-pub fn fromName(name: []const u8) ?Rgb {  
-    var buf: [64]u8 = undefined;  
-    if (name.len > buf.len) return null;  
-    const lower = std.ascii.lowerString(&buf, name);  
-    return colors_map.get(lower);  
+/// Lookup: lowercase only, no space stripping
+pub fn fromName(name: []const u8) ?Rgb {
+    var buf: [64]u8 = undefined;
+    if (name.len > buf.len) return null;
+    const lower = std.ascii.lowerString(&buf, name);
+    return colors_map.get(lower);
 }
