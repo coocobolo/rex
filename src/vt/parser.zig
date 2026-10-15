@@ -201,23 +201,6 @@ pub const Action = enum(u8) {
     osc_end,
 };
 
-const exit_action: [State.count]Action = blk: {
-    var a: [State.count]Action = @splat(Action.none);
-    a[@intFromEnum(State.osc_string)] = .osc_end;
-    a[@intFromEnum(State.dcs_passthrough)] = .unhook;
-    break :blk a;
-};
-
-const entry_action: [State.count]Action = blk: {
-    var a: [State.count]Action = @splat(Action.none);
-    a[@intFromEnum(State.escape)] = .clear;
-    a[@intFromEnum(State.csi_entry)] = .clear;
-    a[@intFromEnum(State.dcs_entry)] = .clear;
-    a[@intFromEnum(State.osc_string)] = .osc_start;
-    a[@intFromEnum(State.dcs_passthrough)] = .hook;
-    break :blk a;
-};
-
 const Entry = extern struct {
     action: Action,
     next: State,
@@ -232,6 +215,23 @@ fn createEntries() [State.count][256]Entry {
 
     const state_count = State.count;
     var t: [state_count][256]Entry = undefined;
+
+    const exit_action: [State.count]Action = blk: {
+        var a: [State.count]Action = @splat(Action.none);
+        a[@intFromEnum(State.osc_string)] = .osc_end;
+        a[@intFromEnum(State.dcs_passthrough)] = .unhook;
+        break :blk a;
+    };
+
+    const entry_action: [State.count]Action = blk: {
+        var a: [State.count]Action = @splat(Action.none);
+        a[@intFromEnum(State.escape)] = .clear;
+        a[@intFromEnum(State.csi_entry)] = .clear;
+        a[@intFromEnum(State.dcs_entry)] = .clear;
+        a[@intFromEnum(State.osc_string)] = .osc_start;
+        a[@intFromEnum(State.dcs_passthrough)] = .hook;
+        break :blk a;
+    };
 
     // Default: stay in current state, no action
     for (0..state_count) |s| {
