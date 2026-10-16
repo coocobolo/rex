@@ -828,7 +828,7 @@ pub fn Parser(comptime Handler: type, comptime options: ParserOptions) type {
                     if (i >= bytes.len) break;
                 }
 
-                // Inside a string state, batch the pure-payload prefix and skip
+                // Inside a string state, batch the pure payload prefix and skip
                 // per-byte table lookups for it. payloadEnd stops at the first
                 // terminator, which then goes through the normal step() path,
                 // same contract feedStringRun already relies on.
@@ -839,9 +839,9 @@ pub fn Parser(comptime Handler: type, comptime options: ParserOptions) type {
                     if (i >= bytes.len) break;
                 }
 
-                // Param-run batch: csi_param/dcs_param runs of [0x30,0x3F] skip the
+                // Param run batch: csi_param/dcs_param runs of [0x30,0x3F] skip the
                 // table entirely. Every byte in the run maps to pushParam, digit
-                // accumulation, ';' slot advance, ':' sub-param marking with no
+                // accumulation, ';' slot advance, ':' subparam marking with no
                 // transition possible.
                 if (self.inParamState()) {
                     const j = i + self.state.paramEnd(bytes[i..]);
@@ -852,6 +852,20 @@ pub fn Parser(comptime Handler: type, comptime options: ParserOptions) type {
                     }
                 }
 
+                // Mixed byte residue: run length the stay in state tail so the
+                // transition check is paid once per run, not once per byte.
+                var j = i;
+                while (j < bytes.len) : (j += 1) {
+                    const e = entries[@intFromEnum(self.state)][bytes[j]];
+                    if (e.next != self.state or forcedTransition(self.state, bytes[j])) break;
+                    self.dispatch(h, e.action, bytes[j]);
+                }
+
+                if (j > i) {
+                    i = j;
+                    continue;
+                }
+
                 const byte = bytes[i];
                 i += 1;
 
@@ -860,7 +874,7 @@ pub fn Parser(comptime Handler: type, comptime options: ParserOptions) type {
         }
 
         /// Feeds a contiguous payload span to the handler for the parser's current
-        /// string state. It performs the bulk equivalent of the per-byte `.osc_put`
+        /// string state. It performs the bulk equivalent of the per byte `.osc_put`
         /// and `.put` actions. The parser must be in `.osc_string`, `.dcs_passthrough`,
         /// or `.sos_pm_apc_string`.
         ///
@@ -878,7 +892,7 @@ pub fn Parser(comptime Handler: type, comptime options: ParserOptions) type {
                 .osc_string => h.oscPutSlice(bytes),
                 .dcs_passthrough => h.dcsPutSlice(bytes),
                 .sos_pm_apc_string => {}, // swallowed
-                else => std.debug.panic("feedData called in non-string state: {t}", .{self.state}),
+                else => std.debug.panic("feedData called in non string state: {t}", .{self.state}),
             }
         }
 
@@ -899,42 +913,19 @@ pub fn Parser(comptime Handler: type, comptime options: ParserOptions) type {
             };
         }
 
-        fn step(self: *Self, h: *Handler, byte: u8) void {
-            const e = entries[@intFromEnum(self.state)][byte]; // ONE load
-            if (e.next != self.state or forcedTransition(self.state, byte)) {
+        inline fn step(self: *Self, h: *Handler, byte: u8) void {
+            const e = entries[@intFromEnum(self.state)][byte];
+            const prev_state = self.state;
+
+            if (e.next != prev_state or forcedTransition(self.state, byte)) {
                 self.dispatch(h, e.exit, byte);
                 self.dispatch(h, e.action, byte);
-                self.dispatch(h, e.entry, byte);
                 self.state = e.next;
+                self.dispatch(h, e.entry, byte);
             } else {
                 self.dispatch(h, e.action, byte);
             }
         }
-
-        // inline fn stepV1(self: *Self, h: *Handler, byte: u8) void {
-        //     const state_signed = @intFromEnum(self.state);
-        //     const entry = entries[state_signed][byte];
-        //     const new_state = entry.next;
-        //
-        //     const transition = entry.force_transition or new_state != self.state;
-        //
-        //     if (transition) {
-        //         const action = exit_action[state_signed];
-        //         if (action != .none) self.dispatch(h, action, 0);
-        //     }
-        //
-        //     if (entry.action == .print) {
-        //         h.printByte(byte);
-        //     } else if (entry.action != .none) {
-        //         self.dispatch(h, entry.action, byte);
-        //     }
-        //
-        //     if (transition) {
-        //         const action = entry_action[@intFromEnum(new_state)];
-        //         if (action != .none) self.dispatch(h, action, byte);
-        //         self.state = new_state;
-        //     }
-        // }
 
         inline fn clear(self: *Self) void {
             self.param_len = 0;
