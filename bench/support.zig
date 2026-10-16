@@ -1,8 +1,12 @@
 const std = @import("std");
+const builtin = @import("builtin");
 
 const Io = std.Io;
 const Clock = std.Io.Clock;
 const Allocator = std.mem.Allocator;
+
+const baseline_version: u64 = 1;
+const flag_threshold_pct: u64 = 3.0;
 
 pub const Options = struct {
     sample_mib: usize,
@@ -33,7 +37,6 @@ pub const Sample = struct {
     }
 };
 
-// FIXME! needs to implement baseline for compare to other baseline and save results mechanism
 pub const Result = struct {
     case: []const u8,
     variant: []const u8,
@@ -45,8 +48,8 @@ pub const Result = struct {
     /// Checksum is hex so equal-key comparisons in --compare are exact.
     pub fn writeJsonl(self: *const Result, writer: *Io.Writer) Io.Writer.Error!void {
         try writer.print(
-            \\{{"case":"{s}","variant":"{s}","min_ns":{d},"p50_ns":{d},"checksum":"{x}"}}  
-            \\  
+            \\{{"case":"{s}","variant":"{s}","min_ns":{d},"p50_ns":{d},"checksum":"{x}"}}
+            \\
         , .{ self.case, self.variant, self.min_ns, self.p50_ns, self.checksum });
     }
 
@@ -179,6 +182,79 @@ pub const Stats = struct {
         }
     }
 };
+
+pub fn saveResults(gpa: Allocator, io: Io, path: []const u8, results: []const Result) !void {
+    const file = try std.Io.Dir.cwd().createFile(io, path, .{ .truncate = true });
+    defer file.close(io);
+
+    var buf: [4 << 10]u8 = undefined;
+    var fw = file.writer(io, &buf);
+    const w = &fw.interface;
+
+    // Meta header, identifies the file and lets future compare reject stale
+    // baselines (schema bump, different machine, different build).
+    try w.print(
+        \\{{"meta":{{"version":{d},"git":"{s}","cpu":"{s}"}}}}
+        \\
+    ,
+        .{
+            baseline_version,
+            gitShortSha(gpa, io) orelse "unknown",
+            builtin.cpu.model.name,
+        },
+    );
+
+    for (results) |*r| try r.writeJsonl(w);
+    try w.flush();
+    std.debug.print("saved: {d} results to {s}\n", .{ results.len, path });
+}
+
+/// `git rev-parse --short HEAD`, best-effort. Returns error on any failure.
+fn gitShortSha(gpa: Allocator, io: Io) ?[]const u8 {
+    var child = std.process.spawn(io, .{
+        .argv = &.{ "git", "rev-parse", "--short", "HEAD" },
+        .stdin = .ignore,
+        .stderr = .ignore,
+        .stdout = .pipe,
+    }) catch |err| {
+        std.debug.print("gitShortSha: spawn failed: {s}\n", .{@errorName(err)});
+        return null;
+    };
+
+    defer if (child.id != null) {
+        _ = child.wait(io) catch |err| {
+            std.debug.print("gitShortSha: deferred wait failed: {s}\n", .{@errorName(err)});
+        };
+    };
+
+    const stdout = child.stdout orelse return null;
+
+    var buf: [4 << 10]u8 = undefined;
+    var reader = stdout.reader(io, &buf);
+    const out = reader.interface.takeDelimiter('\n') catch |err| {
+        std.debug.print("gitShortSha: reading stdout failed: {s}\n", .{@errorName(err)});
+        _ = child.wait(io) catch |wait_err| {
+            std.debug.print("gitShortSha: wait after read failure failed: {s}\n", .{@errorName(wait_err)});
+        };
+        return null;
+    } orelse return null;
+
+    const term = child.wait(io) catch |err| {
+        std.debug.print("gitShortSha: wait failed: {s}\n", .{@errorName(err)});
+        return null;
+    };
+
+    if (term != .exited or term.exited != 0) return null;
+
+    const sha = std.mem.trim(u8, out, " \n\r\t");
+    return if (sha.len > 0)
+        gpa.dupe(u8, sha) catch |err| {
+            std.debug.print("gitShortSha: copying SHA failed: {s}\n", .{@errorName(err)});
+            return null;
+        }
+    else
+        null;
+}
 
 pub fn run(
     gpa: Allocator,

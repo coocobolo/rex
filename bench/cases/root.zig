@@ -6,26 +6,36 @@ const Allocator = std.mem.Allocator;
 pub const term = @import("term/root.zig");
 pub const vt = @import("vt/root.zig");
 
-const Options = @import("../support.zig").Options;
+const support = @import("../support.zig");
+const Options = support.Options;
+const Result = support.Result;
 
 pub fn run(gpa: Allocator, io: Io, options: Options) !void {
+    var results: std.ArrayList(Result) = .empty;
+    defer results.deinit(gpa);
+
     try vt.parser.runDispatcher(
         io,
         gpa,
         options,
+        &results,
     );
 
     try vt.parser.runCorpus(
         io,
         gpa,
         options,
+        &results,
     );
 
-    try vt.parser.runCostModel(
+    if (options.cost_model) try vt.parser.runCostModel(
         io,
         gpa,
         options,
+        &results,
     );
+
+    if (options.save) |path| try support.saveResults(gpa, io, path, results.items);
 
     // try term.screen.runPhysRow(
     //     gpa,

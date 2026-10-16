@@ -37,6 +37,8 @@ const vt = rex.VT;
 const Parser = vt.Parser;
 const ChecksumDispatcher = vt.ChecksumDispatcher;
 const support = @import("../../support.zig");
+const Options = support.Options;
+const Result = support.Result;
 
 const corpus_dir = "bench/cases/vt/testdata/corpus/";
 const corpus_names = [_][]const u8{
@@ -206,6 +208,7 @@ const shape_variants = .{
 const plan_divisor = 4;
 
 // Filtering
+
 fn allowed(filter: ?[]const u8, name: []const u8, variant: []const u8) bool {
     const terms = filter orelse return true;
     var buf: [128]u8 = undefined;
@@ -410,6 +413,7 @@ fn measure(
     comptime feed: anytype,
     divisor: usize,
     plan: []const u32,
+    results: ?*std.ArrayList(Result),
 ) !f64 {
     var label_buf: [64]u8 = undefined;
     const label = std.fmt.bufPrint(&label_buf, "{s}/{s}{s}", .{ run.name, variant, tag }) catch run.name;
@@ -427,8 +431,22 @@ fn measure(
     );
     defer stats.deinit(run.gpa);
 
-    std.debug.print("{s:<32} {f}  checksum={x}\n", .{ label, stats, fingerprint(&ctx.h) });
-    return stats.minNsPerIteration();
+    const fp = fingerprint(&ctx.h);
+    const min_ns = stats.minNsPerIteration();
+
+    std.debug.print("{s:<32} {f}  checksum={x}\n", .{ label, stats, fp });
+
+    if (results) |list| {
+        try list.append(run.gpa, .{
+            .case = run.name,
+            .variant = if (tag.len > 0) try std.fmt.allocPrint(run.gpa, "{s}{s}", .{ variant, tag }) else variant,
+            .min_ns = @intFromFloat(min_ns),
+            .p50_ns = @intFromFloat(stats.percentile(50)),
+            .checksum = fp,
+        });
+    }
+
+    return min_ns;
 }
 
 /// Verifies a feed shape, then times it with the counting dispatcher.
@@ -439,10 +457,11 @@ fn runVariant(
     comptime feed: anytype,
     divisor: usize,
     plan: []const u32,
+    results: ?*std.ArrayList(Result),
 ) !?f64 {
     if (!allowed(run.filter, run.name, variant)) return null;
     try verify(run, variant, feed, plan);
-    return try measure(run, CountingDispatcher, variant, "", feed, divisor, plan);
+    return try measure(run, CountingDispatcher, variant, "", feed, divisor, plan, results);
 }
 
 /// Runs one input through every feed shape that passes the filter. `recorded`
@@ -454,7 +473,8 @@ fn benchCase(
     name: []const u8,
     bytes: []const u8,
     recorded: ?[]const u32,
-    opts: support.Options,
+    opts: Options,
+    results: ?*std.ArrayList(Result),
 ) !?f64 {
     if (!anyAllowed(opts.filter, name, recorded != null)) return null;
 
@@ -477,16 +497,16 @@ fn benchCase(
 
     var once_min: ?f64 = null;
     inline for (shape_variants) |v| {
-        const min_ns = try runVariant(run, v.name, v.feed, v.divisor, &.{});
+        const min_ns = try runVariant(run, v.name, v.feed, v.divisor, &.{}, results);
         if (comptime std.mem.eql(u8, v.name, "feed_once")) once_min = min_ns;
     }
-    _ = try runVariant(run, random_variant, feedPlan, plan_divisor, random_plan);
+    _ = try runVariant(run, random_variant, feedPlan, plan_divisor, random_plan, results);
     if (recorded) |plan| {
-        _ = try runVariant(run, recorded_variant, feedPlan, plan_divisor, plan);
+        _ = try runVariant(run, recorded_variant, feedPlan, plan_divisor, plan, results);
     }
 
     if (compare_checksum_dispatcher and allowed(opts.filter, name, reference_variant)) {
-        const sum_min = try measure(run, ChecksumDispatcher, "feed_once", "+checksum", feedOnce, 1, &.{});
+        const sum_min = try measure(run, ChecksumDispatcher, "feed_once", "+checksum", feedOnce, 1, &.{}, results);
         if (once_min) |base| {
             std.debug.print(
                 "{s}/dispatcher_cost  checksum dispatcher adds {d:.1}% over counting (min ns/op)\n",
@@ -536,9 +556,9 @@ const synthetic_cases = [_]Synthetic{
     .{ .name = "dcs_passthrough", .bytes = "\x1bPq#0;2;0;0;0#1~~~~\x1b\\" ** 1000 },
 };
 
-pub fn runDispatcher(io: Io, gpa: Allocator, opts: support.Options) !void {
+pub fn runDispatcher(io: Io, gpa: Allocator, opts: Options, results: *std.ArrayList(Result)) !void {
     for (synthetic_cases) |case| {
-        _ = try benchCase(io, gpa, case.name, case.bytes, null, opts);
+        _ = try benchCase(io, gpa, case.name, case.bytes, null, opts, results);
     }
 
     // Print-heavy inputs. `plain_text` above is 14 KB and L1-resident; these
@@ -547,20 +567,20 @@ pub fn runDispatcher(io: Io, gpa: Allocator, opts: support.Options) !void {
     if (anyAllowed(opts.filter, ascii_name, false)) {
         const ascii = try genPlainAscii(gpa, generated_len, random_seed);
         defer gpa.free(ascii);
-        _ = try benchCase(io, gpa, ascii_name, ascii, null, opts);
+        _ = try benchCase(io, gpa, ascii_name, ascii, null, opts, results);
     }
 
     const lines_name = "plain_lines_64k";
     if (anyAllowed(opts.filter, lines_name, false)) {
         const lines = try genPlainLines(gpa, generated_len, random_seed);
         defer gpa.free(lines);
-        _ = try benchCase(io, gpa, lines_name, lines, null, opts);
+        _ = try benchCase(io, gpa, lines_name, lines, null, opts, results);
     }
 }
 
 /// Real PTY captures made by scripts/capture-corpus.sh. Corpus files are much
 /// larger than the synthetic strings, so each sample runs filter a few iterations.
-pub fn runCorpus(io: Io, gpa: Allocator, opts: support.Options) !void {
+pub fn runCorpus(io: Io, gpa: Allocator, opts: Options, results: *std.ArrayList(Result)) !void {
     for (corpus_names) |name| {
         if (!anyAllowed(opts.filter, name, true)) continue;
 
@@ -581,7 +601,7 @@ pub fn runCorpus(io: Io, gpa: Allocator, opts: support.Options) !void {
         const bytes = try appendCan(gpa, raw);
         defer gpa.free(bytes);
 
-        _ = try benchCase(io, gpa, name, bytes, plan, opts);
+        _ = try benchCase(io, gpa, name, bytes, plan, opts, results);
     }
 }
 
@@ -647,7 +667,7 @@ fn reportFit(label: []const u8, x_name: []const u8, xs: []const f64, ys: []const
 ///     the LF execute) and per-print-byte cost.
 ///
 /// Only `feed_once` is timed unless `--filter` says otherwise.
-pub fn runCostModel(io: Io, gpa: Allocator, base_opts: support.Options) !void {
+pub fn runCostModel(io: Io, gpa: Allocator, base_opts: Options, results: *std.ArrayList(Result)) !void {
     var opts = base_opts;
     if (opts.filter == null) opts.filter = "/feed_once";
 
@@ -659,7 +679,7 @@ pub fn runCostModel(io: Io, gpa: Allocator, base_opts: support.Options) !void {
     }) |e| {
         const units = cost_case_len / e[1].len;
         const bytes = comptime repeatUnit(e[1], units);
-        const min_ns = try benchCase(io, gpa, e[0], &bytes, null, opts);
+        const min_ns = try benchCase(io, gpa, e[0], &bytes, null, opts, results);
         _ = reportPerUnit(e[0], min_ns, units, bytes.len);
     }
 
@@ -672,7 +692,7 @@ pub fn runCostModel(io: Io, gpa: Allocator, base_opts: support.Options) !void {
         const bytes = comptime repeatUnit(unit, units);
         const name = comptime std.fmt.comptimePrint("csi_p{d}", .{n});
 
-        const min_ns = try benchCase(io, gpa, name, &bytes, null, opts);
+        const min_ns = try benchCase(io, gpa, name, &bytes, null, opts, results);
         if (reportPerUnit(name, min_ns, units, bytes.len)) |per_unit| {
             csi_x[csi_n] = @floatFromInt(n);
             csi_y[csi_n] = per_unit;
@@ -691,7 +711,7 @@ pub fn runCostModel(io: Io, gpa: Allocator, base_opts: support.Options) !void {
             const buf = try genRuns(gpa, units * (n + 1), n, random_seed);
             defer gpa.free(buf);
 
-            const min_ns = try benchCase(io, gpa, name, buf, null, opts);
+            const min_ns = try benchCase(io, gpa, name, buf, null, opts, results);
             if (reportPerUnit(name, min_ns, units, buf.len)) |per_unit| {
                 run_x[run_n] = @floatFromInt(n);
                 run_y[run_n] = per_unit;
