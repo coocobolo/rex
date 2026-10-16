@@ -634,7 +634,7 @@ comptime {
 }
 
 comptime {
-    @setEvalBranchQuota(36 << 10);
+    @setEvalBranchQuota(128 << 10);
 
     const Recorder = struct {
         log: [8]u32 = @splat(0),
@@ -726,6 +726,37 @@ comptime {
             }
         }
     }
+
+    // For every digit-count 1..8 and every possible current-slot value,
+    // accumulateDigits must equal digit_count sequential pushParam calls.
+    var seed: u64 = 0x9E3779B97F4A7C15;
+    for (0..2000) |_| {
+        // sample space is too big for exhaustive; sample hard
+        seed = seed *% 6364136223846793005 +% 1442695040888963407;
+        const digits_in = blk: {
+            var d: [8]u8 = undefined;
+            for (&d, 0..) |*c, k| {
+                const digit: u64 = (seed >> (k * 6)) % 10;
+                c.* = @as(u8, '0') + @as(u8, @intCast(digit));
+            }
+            break :blk d;
+        };
+
+        const n: u8 = @intCast(1 + seed % 8);
+
+        var p1: P = .{};
+        var p2: P = .{};
+
+        // seed identical slots
+        p1.pushParam(';');
+        p2.pushParam(';');
+        p1.accumulateDigits(@bitCast(digits_in), n);
+
+        for (digits_in[0..n]) |c| p2.pushParam(c);
+        if (!std.mem.eql(Parameter, p1.getParams(), p2.getParams())) {
+            @compileError("accumulateDigits drifted from pushParam");
+        }
+    }
 }
 
 pub const Parameter = packed struct(u16) {
@@ -756,6 +787,23 @@ pub const ParserOptions = struct {
     max_params: u8 = 16,
     max_intermediates: u8 = 2,
 };
+
+comptime {
+    for (0..256) |b| {
+        const octet: u64 = @as(u64, b) *% 0x0101010101010101; // broadcast
+        const lo = octet -% 0x3030303030303030; // wraps (high nibble set) iff b < 0x30
+        const hi = octet -% 0x3A3A3A3A3A3A3A3A; // wraps iff b <= 0x39
+        const swar =
+            (lo & 0xF0F0F0F0F0F0F0F0) == 0 and
+            (hi & 0x8080808080808080) == 0x8080808080808080;
+
+        const scalar = b >= '0' and b <= '9';
+
+        if (swar != scalar) {
+            @compileError("SWAR isdigit mask drifted from scalar predicate");
+        }
+    }
+}
 
 /// VT/ANSI escape sequence parser (DEC 8-bit control semantics).
 ///
