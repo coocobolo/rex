@@ -570,7 +570,7 @@ comptime {
 }
 
 comptime {
-    @setEvalBranchQuota(2 << 10);
+    @setEvalBranchQuota(4 << 10);
 
     for ([_]State{ .csi_param, .dcs_param }) |s| {
         for (0..256) |b| {
@@ -586,6 +586,31 @@ comptime {
 
             if (table_ok != scalar_ok) {
                 @compileError("param scalar predicate drifted from entries");
+            }
+        }
+    }
+
+    // Pin the SIMD param predicates to the scalar ones: paramEnd's
+    // stop-vector mask must agree with *continues() on every bytes.
+    // Probing with a 1-byte chunk exercises the same vector expressions
+    // the Chunk-width path runs, the predicates are width-agnostic.
+
+    for ([_]State{ .csi_param, .dcs_param }) |s| {
+        for (0..256) |b| {
+            const byte: u8 = @intCast(b);
+            const unit: @Vector(1, u8) = @splat(byte);
+            const vec_stop = if (s == .csi_param)
+                State.csiParamStopVector(unit)[0]
+            else
+                State.dcsParamStopVector(unit)[0];
+
+            const scalar_ok = if (s == .csi_param)
+                State.csiParamContinues(s, byte)
+            else
+                State.dcsParamContinues(s, byte);
+
+            if (vec_stop == scalar_ok) {
+                @compileError("paramEnd SIMD predicate drifted from scalar");
             }
         }
     }
