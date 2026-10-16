@@ -553,16 +553,17 @@ comptime {
                 @compileError("payloadEnd predicate drifted from entries");
             }
 
-            // The SIMD stop vector must agree with isPayload stop exactly
-            // when the value is value.
+            // The SIMD stop vector must agree with isPayload
+            // stop exactly when the byte is payload.
             const unit: @Vector(1, u8) = @splat(byte);
-            const stop = switch (s) {
-                .osc_string => State.oscStopVector(unit),
-                .dcs_passthrough => State.dcsStopVector(unit),
-                .sos_pm_apc_string => State.sosStopVector(unit),
+            const payload_vec_stop = switch (s) {
+                .dcs_passthrough => State.dcsStopVector(unit)[0],
+                .sos_pm_apc_string => State.sosStopVector(unit)[0],
+                .osc_string => State.oscStopVector(unit)[0],
                 else => unreachable,
             };
-            if (stop[0] != !scalar_ok) {
+
+            if (payload_vec_stop == scalar_ok) {
                 @compileError("stopVector drifted from isPayload");
             }
         }
@@ -620,7 +621,7 @@ comptime {
     // The ground printable fast path is a subset of the table's
     // printable set: every byte it batches must be .print + stay,
     // but the table may legitimately cover bytes the predicate
-    // leaves to step() — 0xA0..0xFF (latin1 printables, unreachable
+    // leaves to step(), 0xA0...0xFF (latin1 printables, unreachable
     // in utf8 sessions) being the deliberate case.
     for (0..256) |b| {
         const byte: u8 = @intCast(b);
