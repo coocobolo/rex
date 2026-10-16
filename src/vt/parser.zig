@@ -603,7 +603,102 @@ comptime {
         const table_ok = e.action == .print and e.next == .ground and !forcedTransition(.ground, byte);
         const simd_ok = (b >= 0x20 and b <= 0x7E);
         if (simd_ok and !table_ok)
-            @compileError("ground printable-run predicate outside table's .print set");
+            @compileError("ground printable run predicate outside table's .print set");
+    }
+}
+
+comptime {
+    @setEvalBranchQuota(36 << 10);
+
+    const Recorder = struct {
+        log: [8]u32 = @splat(0),
+        len: usize = 0,
+
+        inline fn rec(self: *@This(), tag: u32, byte: u8) void {
+            self.log[self.len] = (tag << 8) | byte;
+            self.len += 1;
+        }
+
+        // One method per handler API used by dispatch();
+        // encode a distinct tag per action.
+        pub fn printByte(s: *@This(), b: u8) void {
+            s.rec(1, b);
+        }
+        pub fn dcsPut(s: *@This(), b: u8) void {
+            s.rec(2, b);
+        }
+        pub fn execute(s: *@This(), b: u8) void {
+            s.rec(3, b);
+        }
+        pub fn oscPut(s: *@This(), b: u8) void {
+            s.rec(4, b);
+        }
+        pub fn oscEnd(s: *@This()) void {
+            s.rec(5, 0);
+        }
+        pub fn oscStart(s: *@This()) void {
+            s.rec(6, 0);
+        }
+        pub fn unhook(s: *@This()) void {
+            s.rec(7, 0);
+        }
+        pub fn escDispatch(s: *@This(), b: u8, i: []const u8) void {
+            _ = i;
+            s.rec(8, b);
+        }
+        pub fn hook(s: *@This(), b: u8, i: []const u8, p: []const Parameter) void {
+            _ = i;
+            _ = p;
+            s.rec(9, b);
+        }
+        pub fn csiDispatch(s: *@This(), b: u8, i: []const u8, p: []const Parameter) void {
+            _ = i;
+            _ = p;
+            s.rec(10, b);
+        }
+        pub fn print(s: *@This(), bytes: []const u8) void {
+            for (bytes) |b| s.rec(1, b);
+        }
+        pub fn oscPutSlice(s: *@This(), bytes: []const u8) void {
+            for (bytes) |b| s.rec(4, b);
+        }
+        pub fn dcsPutSlice(s: *@This(), bytes: []const u8) void {
+            for (bytes) |b| s.rec(2, b);
+        }
+    };
+
+    const P = Parser(Recorder, .{});
+
+    for (0..State.count) |s| {
+        for (0..256) |b| {
+            const e = entries[s][b];
+            const st: State = @enumFromInt(s);
+            // Only stay cells: the residue arm's domain.
+            if (e.next != st or forcedTransition(st, @intCast(b))) continue;
+
+            var p1 = P{};
+            var r1 = Recorder{};
+            p1.state = st;
+            p1.step(&r1, @intCast(b)); // full path
+
+            var p2 = P{};
+            var r2 = Recorder{};
+            p2.state = st;
+            p2.dispatch(&r2, e.action, @intCast(b)); // residue arm
+
+            const logs_match = r1.len == r2.len and
+                std.mem.eql(u32, r1.log[0..r1.len], r2.log[0..r2.len]);
+
+            const state_match = p1.state == p2.state and
+                p1.param_len == p2.param_len and
+                p1.intermediate_len == p2.intermediate_len and
+                std.mem.eql(Parameter, p1.getParams(), p2.getParams()) and
+                std.mem.eql(u8, p1.getIntermediates(), p2.getIntermediates());
+
+            if (!logs_match or !state_match) {
+                @compileError("residue arm dispatch drifted from step()");
+            }
+        }
     }
 }
 
