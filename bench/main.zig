@@ -24,10 +24,10 @@ fn usage() void {
         \\  -c  --compare PATH         Diff against a saved baseline (±3% = flag)  
         \\
         \\Examples:
-        \\  bench --only plain_lines_64k/feed_once
-        \\  bench --only /feed_once
-        \\  bench --only htop,man_bash
-        \\  bench --cost-model --only csi_,run_
+        \\  bench --filter plain_lines_64k/feed_once
+        \\  bench --filter /feed_once
+        \\  bench --filter htop,man_bash
+        \\  bench --cost-model --filter csi_,run_
         \\
         \\Defaults:
         \\  sample_mib: {d}
