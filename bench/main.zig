@@ -32,6 +32,7 @@ fn usage() void {
         \\Defaults:
         \\  sample_mib: {d}
         \\  samples:    {d}
+        \\
     , .{
         Options.default.sample_mib,
         Options.default.samples,
@@ -71,39 +72,31 @@ pub fn parse(args: []const [:0]const u8) !Options {
 
         if (mem.eql(u8, arg, "-h") or mem.eql(u8, arg, "--help")) {
             return error.HelpRequested;
-        }
-
-        if (mem.eql(u8, arg, "-n") or mem.eql(u8, arg, "--sample_mib")) {
+        } else if (mem.eql(u8, arg, "-n") or mem.eql(u8, arg, "--sample_mib")) {
             opts.sample_mib = try parsePositive(try nextArg(args, &i));
         } else if (mem.startsWith(u8, arg, sample_mib_prefix)) {
             opts.sample_mib = try parsePositive(arg[sample_mib_prefix.len..]);
-        }
-
-        if (mem.eql(u8, arg, "-s") or mem.eql(u8, arg, "--samples")) {
+        } else if (mem.eql(u8, arg, "-s") or mem.eql(u8, arg, "--samples")) {
             opts.samples = try parsePositive(try nextArg(args, &i));
         } else if (mem.startsWith(u8, arg, samples_prefix)) {
             opts.samples = try parsePositive(arg[samples_prefix.len..]);
-        }
-
-        if (mem.eql(u8, arg, "-f") or mem.eql(u8, arg, "--filter")) {
+        } else if (mem.eql(u8, arg, "-f") or mem.eql(u8, arg, "--filter")) {
             opts.filter = try parsePattern(try nextArg(args, &i));
         } else if (mem.startsWith(u8, arg, filter_prefix)) {
             opts.filter = try parsePattern(arg[filter_prefix.len..]);
-        }
-
-        if (mem.eql(u8, arg, "-S") or mem.eql(u8, arg, "--save")) {
+        } else if (mem.eql(u8, arg, "-S") or mem.eql(u8, arg, "--save")) {
             opts.save = try parsePattern(try nextArg(args, &i));
         } else if (mem.startsWith(u8, arg, save_prefix)) {
             opts.save = try parsePattern(arg[save_prefix.len..]);
-        }
-
-        if (mem.eql(u8, arg, "-c") or mem.eql(u8, arg, "--compare")) {
+        } else if (mem.eql(u8, arg, "-c") or mem.eql(u8, arg, "--compare")) {
             opts.compare = try parsePattern(try nextArg(args, &i));
         } else if (mem.startsWith(u8, arg, compare_prefix)) {
             opts.compare = try parsePattern(arg[compare_prefix.len..]);
+        } else if (mem.eql(u8, arg, "--cost-model")) {
+            opts.cost_model = true;
+        } else {
+            return error.UnknownArgument;
         }
-
-        if (mem.eql(u8, arg, "--cost-model")) opts.cost_model = true;
 
         return error.UnknownArgument;
     }
