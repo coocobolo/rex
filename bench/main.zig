@@ -97,8 +97,6 @@ pub fn parse(args: []const [:0]const u8) !Options {
         } else {
             return error.UnknownArgument;
         }
-
-        return error.UnknownArgument;
     }
 
     return opts;
