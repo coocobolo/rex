@@ -1002,49 +1002,65 @@ pub fn Parser(comptime Handler: type, comptime options: ParserOptions) type {
     };
 }
 
-pub const NoopDispatcher = struct {
+pub const ChecksumDispatcher = struct {
     checksum: u64 = 0,
 
-    // no-op, doesn't touch checksum at all for the bulk print path.
-    pub fn print(self: *@This(), bytes: []const u8) void {
-        for (bytes) |b| self.checksum +%= @as(u64, b) *% 31;
+    // Per-kind weights. Every path for the same kind uses the same weight,
+    // so the checksum is invariant to how the parser batches bytes.
+    const w_print: u64 = 31;
+    const w_osc: u64 = 37;
+    const w_dcs: u64 = 41;
+
+    inline fn add(self: *@This(), w: u64, b: u8) void {
+        self.checksum +%= @as(u64, b) *% w;
     }
 
-    // Everything else still accumulates, since these ARE called once per
-    // byte already on the non fast path, so they don't change per-byte cost.
+    inline fn addSlice(self: *@This(), w: u64, bytes: []const u8) void {
+        for (bytes) |b| self.add(w, b);
+    }
+
+    pub fn print(self: *@This(), bytes: []const u8) void {
+        self.addSlice(w_print, bytes);
+    }
     pub fn printByte(self: *@This(), b: u8) void {
-        self.checksum +%= b;
+        self.add(w_print, b);
     }
     pub fn execute(self: *@This(), b: u8) void {
-        self.checksum +%= b;
+        self.checksum +%= @as(u64, b) *% 43;
     }
     pub fn escDispatch(self: *@This(), final: u8, intermediates: []const u8) void {
-        self.checksum +%= final;
-        for (intermediates) |b| self.checksum +%= b;
+        self.checksum +%= @as(u64, final) *% 47;
+        for (intermediates) |b| self.checksum +%= @as(u64, b) *% 53;
     }
     pub fn csiDispatch(self: *@This(), final: u8, intermediates: []const u8, params: anytype) void {
-        self.checksum +%= final;
-        for (intermediates) |b| self.checksum +%= b;
-        for (params) |p| self.checksum +%= p.value;
+        self.checksum +%= @as(u64, final) *% 59;
+        for (intermediates) |b| self.checksum +%= @as(u64, b) *% 53;
+        for (params) |p| self.checksum +%= @as(u64, p.value) *% 61;
     }
     pub fn hook(self: *@This(), final: u8, intermediates: []const u8, params: anytype) void {
-        self.checksum +%= final;
-        for (intermediates) |b| self.checksum +%= b;
-        for (params) |p| self.checksum +%= p.value;
+        self.checksum +%= @as(u64, final) *% 67;
+        for (intermediates) |b| self.checksum +%= @as(u64, b) *% 53;
+        for (params) |p| self.checksum +%= @as(u64, p.value) *% 61;
     }
     pub fn dcsPut(self: *@This(), b: u8) void {
-        self.checksum +%= b;
+        self.add(w_dcs, b);
     }
-    pub fn dcsPutSlice(self: *NoopDispatcher, bytes: []const u8) void {
-        for (bytes) |b| self.checksum +%= @as(u64, b) *% 31;
+    pub fn dcsPutSlice(self: *@This(), bytes: []const u8) void {
+        self.addSlice(w_dcs, bytes);
     }
-    pub fn unhook(_: *@This()) void {}
-    pub fn oscStart(_: *@This()) void {}
+    pub fn unhook(self: *@This()) void {
+        self.checksum +%= 71;
+    }
+    pub fn oscStart(self: *@This()) void {
+        self.checksum +%= 73;
+    }
     pub fn oscPut(self: *@This(), b: u8) void {
-        self.checksum +%= b;
+        self.add(w_osc, b);
     }
-    pub fn oscPutSlice(self: *NoopDispatcher, bytes: []const u8) void {
-        for (bytes) |b| self.checksum +%= @as(u64, b) *% 31;
+    pub fn oscPutSlice(self: *@This(), bytes: []const u8) void {
+        self.addSlice(w_osc, bytes);
     }
-    pub fn oscEnd(_: *@This()) void {}
+    pub fn oscEnd(self: *@This()) void {
+        self.checksum +%= 79;
+    }
 };
