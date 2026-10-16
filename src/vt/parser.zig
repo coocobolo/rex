@@ -703,7 +703,7 @@ comptime {
 }
 
 pub const Parameter = packed struct(u16) {
-    // The numeric value up to (0-32767).
+    // The numeric value up to (0...32767).
     // sufficent for cursor positions, SGR codes, color values, etc.
     value: u15,
     separator: enum(u1) { sub_parameter, parameter },
