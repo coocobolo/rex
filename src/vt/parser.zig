@@ -1010,7 +1010,7 @@ pub const NoopDispatcher = struct {
     }
 
     // Everything else still accumulates, since these ARE called once per
-    // byte already on the non-fast-path, so they don't change per-byte cost.
+    // byte already on the non fast path, so they don't change per-byte cost.
     pub fn printByte(self: *@This(), b: u8) void {
         self.checksum +%= b;
     }
