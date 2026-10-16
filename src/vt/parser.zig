@@ -846,8 +846,70 @@ pub fn Parser(comptime Handler: type, comptime options: ParserOptions) type {
                 // transition possible.
                 if (self.inParamState()) {
                     const j = i + self.state.paramEnd(bytes[i..]);
+
                     if (j > i) {
-                        for (bytes[i..j]) |b| self.pushParam(b);
+                        // Only attempt SWAR when the run is long enoug for one full
+                        // octet, short/separator-dense runs go straight to pushParam
+                        // and don't pay the probe cost.
+                        var k = i;
+                        // Fast path, 8-byte SWAR block, all digits?
+                        if (j - i >= 8 and self.param_len > 0) {
+                            while (k + 8 <= j) {
+                                const octet: u64 = @bitCast(bytes[k..][0..8].*);
+                                // SWAR digit check: all 8 lanes in '0'..'9'
+                                const lo = octet -% 0x3030303030303030;
+                                const hi = octet -% 0x3939393939393939;
+                                // lane is digit iff (lo <= 9) and no borrow between lanes:
+                                // check lo < 0x0A per lane and hi >= 0x80 per lane
+                                const is_digits =
+                                    (lo & 0xF0F0F0F0F0F0F0F0) == 0 and
+                                    (hi & 0x8080808080808080) == 0x8080808080808080;
+
+                                if (!is_digits) break;
+                                self.accumulateDigits(octet, 8);
+                                k += 8;
+                            }
+                        }
+
+                        // residue: separators, sub-param colons, short tails
+                        // while (k < j) : (k += 1) self.pushParam(bytes[k]);
+                        while (k < j) {
+                            const b = bytes[k];
+
+                            if (b >= '0' and b <= '9') {
+                                // First digit may need to open the slot, defer to
+                                // pushParam once, then accumulate the rest directly.
+                                if (self.param_len == 0) {
+                                    self.pushParam(b);
+                                    k += 1;
+                                    continue;
+                                }
+
+                                if (self.param_len <= max_params - 1) {
+                                    const p = &self.params[self.param_len - 1];
+
+                                    // separator (bit 15) is invariant across the whole digit
+                                    // sub-run, read it once, accumulate wide, remerge once.
+                                    const sep: u16 = @as(u16, @bitCast(p.*)) & 0x8000;
+                                    var v: u32 = p.value;
+
+                                    while (k < j and bytes[k] >= '0' and bytes[k] <= '9') : (k += 1) {
+                                        v = v *% 10 +% (bytes[k] -% '0');
+                                    }
+
+                                    p.* = @bitCast(sep | @as(u16, @truncate(v)));
+                                } else {
+                                    // Slot cap reached: digits are dropped, but must still
+                                    // be consumed, same as pushParam's else behavior.
+                                    while (k < j and bytes[k] >= '0' and bytes[k] <= '9') : (k += 1) {}
+                                }
+                                continue;
+                            }
+
+                            self.pushParam(b); // ';', ':', '<'..'?' slot bookkeeping
+                            k += 1;
+                        }
+
                         i = j;
                         continue;
                     }
@@ -944,6 +1006,37 @@ pub fn Parser(comptime Handler: type, comptime options: ParserOptions) type {
                 self.intermediates[self.intermediate_len] = byte;
                 self.intermediate_len += 1;
             }
+        }
+
+        const pow10 = [9]u32{ 1, 10, 100, 1_000, 10_000, 100_000, 1_000_000, 10_000_000, 100_000_000 };
+
+        /// Accumulate up to 8 decimal digits into the current param slot in
+        /// one pass, instead of per-byte pushParam. Same clamping semantics:
+        /// digits beyond the slot's saturation point produce the identical
+        /// clamped value pushParam would.
+        fn accumulateDigits(self: *Self, octet: u64, digit_count: u8) void {
+            // caller guarantees a slot exists
+            std.debug.assert(self.param_len > 0);
+            std.debug.assert(digit_count >= 1 and digit_count <= 8);
+
+            const index = self.param_len - 1;
+            const p = &self.params[index];
+
+            var digits = octet -% 0x3030303030303030;
+
+            // zero lanes beyond digit_count so the fixed 8-lane fold
+            // produces exactly the n-digit value
+            const n: u6 = @intCast(digit_count);
+            const keep: u64 = if (digit_count == 8) ~@as(u64, 0) else (@as(u64, 1) << (n * 8)) - 1;
+            digits &= keep;
+            digits <<= (8 - n) * 8; // left-justify: fold expects lane0 = most significant
+
+            const pairs = ((digits *% 2561) >> 8) & 0x00FF00FF00FF00FF;
+            const quads = ((pairs *% 6553601) >> 16) & 0x0000FFFF0000FFFF;
+            const val = (quads *% 42949672960001) >> 32;
+
+            const acc = @as(u64, p.value) *% pow10[digit_count] +% val;
+            p.value = @truncate(acc);
         }
 
         inline fn pushParam(self: *Self, byte: u8) void {
