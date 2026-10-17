@@ -3,6 +3,7 @@ const mem = std.mem;
 
 const cases = @import("cases/root.zig");
 const support = @import("support.zig");
+
 const Options = support.Options;
 
 fn usage() void {
@@ -33,10 +34,7 @@ fn usage() void {
         \\  sample_mib: {d}
         \\  samples:    {d}
         \\
-    , .{
-        Options.default.sample_mib,
-        Options.default.samples,
-    });
+    , .{ Options.default.sample_mib, Options.default.samples });
 }
 
 fn parsePositive(bytes: []const u8) !usize {
