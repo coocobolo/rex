@@ -1,1 +1,8 @@
 .zig-cache
+zig-out
+zig-pkg
+
+# bench
+perf-results/runs/
+perf-results/latest
+perf-results/*.data
