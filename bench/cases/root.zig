@@ -35,6 +35,7 @@ pub fn run(gpa: Allocator, io: Io, options: Options) !void {
         &results,
     );
 
+    if (options.compare) |path| try support.compareResults(gpa, io, path, results.items);
     if (options.save) |path| try support.saveResults(gpa, io, path, results.items);
 
     // try term.screen.runPhysRow(
