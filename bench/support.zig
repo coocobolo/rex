@@ -380,7 +380,7 @@ pub fn run(
 
     const warmup_iterations = @max(1, iterations / 10);
 
-    // warm up caches, branch predictors, and lazy initilization.
+    // warm up caches, branch predictors, and lazy initialization.
     for (0..warmup_iterations) |_| {
         const r = try @call(.auto, function, .{context});
         std.mem.doNotOptimizeAway(r);
@@ -389,7 +389,8 @@ pub fn run(
     for (samples) |*sample| {
         const start = Clock.now(.awake, io);
         for (0..iterations) |_| {
-            try @call(.auto, function, .{context});
+            const r = try @call(.auto, function, .{context});
+            std.mem.doNotOptimizeAway(r);
         }
         const end = Clock.now(.awake, io);
 
