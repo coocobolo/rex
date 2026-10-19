@@ -1,0 +1,11 @@
+{
+  "git": "234161b",
+  "dirty": true,
+  "filtered": false,
+  "cpu": "AMD Ryzen 3 3300X 4-Core Processor",
+  "governor": "performance",
+  "pinned_cpu": 2,
+  "zig": "0.16.0",
+  "args": "",
+  "date": "2026-10-19T12:39:46+01:00"
+}
