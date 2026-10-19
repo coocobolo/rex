@@ -182,7 +182,36 @@ pub fn build(b: *std.Build) void {
 
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());
+
     if (b.args) |args| run_cmd.addArgs(args);
+
+    const strip = b.option(
+        bool,
+        "strip",
+        "Strip debug information from executables",
+    ) orelse false;
+
+    const bench = b.addExecutable(.{
+        .name = "benchmark",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("bench/main.zig"),
+            .imports = &.{
+                .{ .name = "rex", .module = mod },
+            },
+            .target = target,
+            .strip = strip,
+            .optimize = optimize,
+        }),
+    });
+
+    b.installArtifact(bench);
+
+    const bench_step = b.step(
+        "bench",
+        "Build the benchmark",
+    );
+
+    bench_step.dependOn(b.getInstallStep());
 
     const run_step = b.step("run", "Run the app");
     run_step.dependOn(&run_cmd.step);
