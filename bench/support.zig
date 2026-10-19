@@ -42,19 +42,21 @@ pub const Result = struct {
     variant: []const u8,
     min_ns: u64,
     p50_ns: u64,
+    stddev_ns: u64,
+    drift_pct: f64, // first-half min, second-half min, %
     checksum: u64,
 
     /// One line: {"case":"sgr_heavy","variant":"feed_once","min_ns":…,"p50_ns":…,"checksum":"…"}
     /// Checksum is hex so equal-key comparisons in --compare are exact.
     pub fn writeJsonl(self: *const Result, writer: *Io.Writer) Io.Writer.Error!void {
         try writer.print(
-            \\{{"case":"{s}","variant":"{s}","min_ns":{d},"p50_ns":{d},"checksum":"{x}"}}
-            \\
-        , .{ self.case, self.variant, self.min_ns, self.p50_ns, self.checksum });
+            \\{{"case":"{s}","variant":"{s}","min_ns":{d},"p50_ns":{d},"stddev_ns":{d},"drift":{d:.2},"checksum":"{x}"}}  
+            \\  
+        , .{ self.case, self.variant, self.min_ns, self.p50_ns, self.stddev_ns, self.drift_pct, self.checksum });
     }
 
-    pub fn key(self: *const Result, buf: []u8) []const u8 {
-        return std.fmt.bufPrint(buf, "{s}/{s}", .{ self.case, self.variant });
+    pub fn key(self: *const Result, buf: []u8) ![]const u8 {
+        return try std.fmt.bufPrint(buf, "{s}/{s}", .{ self.case, self.variant });
     }
 };
 

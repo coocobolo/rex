@@ -981,6 +981,37 @@ pub fn Parser(comptime Handler: type, comptime options: ParserOptions) type {
                 i += 1;
 
                 self.step(h, byte);
+        /// Scan and dispatch a CSI sequence beginning at `start`.
+        ///
+        /// On success, returns the index just past the final byte. Returns `null`
+        /// without changing parser state if the sequence is incomplete or its final
+        /// byte is not a CSI final; the caller then handles the ESC via `step()`.
+        ///
+        /// If a private marker (0x3C..0x3F) follows parameter bytes, enters
+        /// `.csi_ignore` and returns the marker's index. The marker is left unconsumed
+        /// so the caller can process it through the table-driven path, matching the
+        /// `.csi_param` to `.csi_ignore` transition.
+        fn feedCsi(self: *Self, h: *Handler, bytes: []const u8, start: usize) ?usize {
+            const n = bytes.len;
+            var p = start + 2;
+
+            const marker_at: ?usize = if (p < n and bytes[p] >= 0x3C and bytes[p] <= 0x3F) blk: {
+                p += 1;
+                break :blk p - 1;
+            } else null;
+
+            const params_begin = p;
+
+            // CSI parameter bytes are in the range 0x30..0x3B.
+            while (p < n and bytes[p] >= 0x30 and bytes[p] <= 0x3B) : (p += 1) {}
+
+            const params_end = p;
+
+            // A private marker here is invalid after parameters. Preserve the table
+            // parser's behaviour and leave the marker for processing in .csi_ignore.
+            if (p < n and bytes[p] >= 0x3C and bytes[p] <= 0x3F) {
+                self.state = .csi_ignore;
+                return p;
             }
         }
 
