@@ -50,8 +50,8 @@ pub const Result = struct {
     /// Checksum is hex so equal-key comparisons in --compare are exact.
     pub fn writeJsonl(self: *const Result, writer: *Io.Writer) Io.Writer.Error!void {
         try writer.print(
-            \\{{"case":"{s}","variant":"{s}","min_ns":{d},"p50_ns":{d},"stddev_ns":{d},"drift":{d:.2},"checksum":"{x}"}}  
-            \\  
+            \\{{"case":"{s}","variant":"{s}","min_ns":{d},"p50_ns":{d},"stddev_ns":{d},"drift":{d:.2},"checksum":"{x}"}}
+            \\
         , .{ self.case, self.variant, self.min_ns, self.p50_ns, self.stddev_ns, self.drift_pct, self.checksum });
     }
 
