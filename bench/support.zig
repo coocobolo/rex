@@ -140,10 +140,12 @@ pub const Stats = struct {
     ) Result {
         return .{
             .case = case,
-            .variant = variant,
+            .checksum = checksum,
+            .drift_pct = self.driftPercent(),
             .min_ns = @intFromFloat(self.minNsPerIteration()),
             .p50_ns = @intFromFloat(self.percentile(50)),
-            .checksum = checksum,
+            .stddev_ns = @intFromFloat(self.stddevNsPerIteration()),
+            .variant = variant,
         };
     }
 
