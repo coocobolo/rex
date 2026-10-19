@@ -40,6 +40,8 @@ const support = @import("../../support.zig");
 const Options = support.Options;
 const Result = support.Result;
 
+const suite = "vt";
+
 const corpus_dir = "bench/cases/vt/testdata/corpus/";
 const corpus_names = [_][]const u8{
     "ls_color",
@@ -128,6 +130,10 @@ const CountingDispatcher = struct {
     }
     pub fn oscEnd(self: *@This()) void {
         self.osc_events +%= 1;
+    }
+
+    pub fn reset(self: *@This()) void {
+        self.* = .{};
     }
 
     /// Folds every counter into one value for cross-shape comparison.
@@ -337,7 +343,7 @@ fn genRuns(gpa: Allocator, len: usize, run_len: usize, seed: u64) ![]u8 {
     var i: usize = 0;
     while (i < len) {
         const text = @min(run_len, len - i);
-        for (buf[i..][0..text]) |*b| b.* = rng.intRangeAtMostBiased(u8, 0x20, 0x7e);
+        for (buf[i..][0..text]) |*b| b.* = rng.intRangeAtMost(u8, 0x20, 0x7e);
         i += text;
         if (i < len) {
             buf[i] = '\n';
@@ -367,6 +373,7 @@ const CaseRun = struct {
     io: Io,
     gpa: Allocator,
     name: []const u8,
+    result_case: []const u8, // "<suite>.<name>": saved in Result.case
     bytes: []const u8,
     sample_bytes: usize,
     samples: usize,
@@ -419,17 +426,21 @@ fn measure(
     const label = std.fmt.bufPrint(&label_buf, "{s}/{s}{s}", .{ run.name, variant, tag }) catch run.name;
 
     var ctx: Context(D) = .{ .bytes = run.bytes, .plan = plan };
-    const iters = @max(1, run.sample_bytes / run.bytes.len / divisor);
+    const iterations = @max(1, run.sample_bytes / @max(1, run.bytes.len) / divisor);
     var stats = try support.run(
         run.gpa,
         run.io,
         feed,
         &ctx,
-        iters,
+        iterations,
         run.samples,
         run.bytes.len,
     );
     defer stats.deinit(run.gpa);
+
+    // fingerprint exactly ONE pass, not `iterations` passes
+    ctx.h.reset();
+    _ = try feed(&ctx);
 
     const fp = fingerprint(&ctx.h);
     const min_ns = stats.minNsPerIteration();
@@ -438,11 +449,13 @@ fn measure(
 
     if (results) |list| {
         try list.append(run.gpa, .{
-            .case = run.name,
+            .case = run.result_case,
             .variant = if (tag.len > 0) try std.fmt.allocPrint(run.gpa, "{s}{s}", .{ variant, tag }) else variant,
             .min_ns = @intFromFloat(min_ns),
             .p50_ns = @intFromFloat(stats.percentile(50)),
             .checksum = fp,
+            .drift_pct = stats.driftPercent(),
+            .stddev_ns = @intFromFloat(stats.stddevNsPerIteration()),
         });
     }
 
@@ -483,10 +496,13 @@ fn benchCase(
     const random_plan = try buildRandomPlan(gpa, bytes.len, random_max_chunk, random_seed);
     defer gpa.free(random_plan);
 
+    const result_case = try std.fmt.allocPrint(gpa, "{s}.{s}", .{ suite, name });
+
     const run: CaseRun = .{
         .io = io,
         .gpa = gpa,
         .name = name,
+        .result_case = result_case,
         .bytes = bytes,
         .sample_bytes = opts.sample_mib * mib,
         .samples = opts.samples,
@@ -506,12 +522,34 @@ fn benchCase(
     }
 
     if (compare_checksum_dispatcher and allowed(opts.filter, name, reference_variant)) {
-        const sum_min = try measure(run, ChecksumDispatcher, "feed_once", "+checksum", feedOnce, 1, &.{}, results);
-        if (once_min) |base| {
-            std.debug.print(
-                "{s}/dispatcher_cost  checksum dispatcher adds {d:.1}% over counting (min ns/op)\n",
-                .{ name, (sum_min / base - 1.0) * 100.0 },
-            );
+        const checksum_min = try measure(
+            run,
+            ChecksumDispatcher,
+            "feed_once",
+            "+checksum",
+            feedOnce,
+            1,
+            &.{},
+            results,
+        );
+
+        const percent_floor_ns: f64 = 100.0;
+
+        if (once_min) |base_ns| {
+            const delta_ns = checksum_min - base_ns;
+
+            if (base_ns > percent_floor_ns) {
+                const delta_percent = (delta_ns / base_ns) * 100.0;
+                std.debug.print(
+                    "{s}/dispatcher_cost  {d:.1} ns/op ({d:.1}%)\n",
+                    .{ name, delta_ns, delta_percent },
+                );
+            } else {
+                std.debug.print(
+                    "{s}/dispatcher_cost  {d:.1} ns/op (base {d:.1} ns/op)\n",
+                    .{ name, delta_ns, base_ns },
+                );
+            }
         }
     }
     return once_min;
@@ -551,7 +589,8 @@ const Synthetic = struct { name: []const u8, bytes: []const u8 };
 const synthetic_cases = [_]Synthetic{
     .{ .name = "plain_text", .bytes = "Hello, World! " ** 1000 },
     .{ .name = "sgr_normal", .bytes = "\x1b[1;2;3;0mcolored\x1b[0m " ** 1000 },
-    .{ .name = "sgr_heavy", .bytes = "\x1b[38;2;255;12345678;0mcolored\x1b[0m " ** 1000 },
+    // digits parser SWAR path is deleted
+    .{ .name = "sgr_overflow", .bytes = "\x1b[38;2;255;12345678;0mcolored\x1b[0m " ** 1000 },
     .{ .name = "osc_title", .bytes = "\x1b]0;My Title\x07" ** 1000 },
     .{ .name = "dcs_passthrough", .bytes = "\x1bPq#0;2;0;0;0#1~~~~\x1b\\" ** 1000 },
 };
