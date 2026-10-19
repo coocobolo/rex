@@ -185,6 +185,112 @@ pub const Stats = struct {
     }
 };
 
+pub const Baseline = struct {
+    meta_cpu: ?[]const u8,
+    meta_git: ?[]const u8,
+    results: std.StringHashMap(Result),
+
+    pub fn deinit(self: *Baseline, gpa: Allocator) void {
+        var it = self.results.iterator();
+        while (it.next()) |e| gpa.free(e.key_ptr.*);
+        self.results.deinit();
+        if (self.meta_cpu) |s| gpa.free(s);
+        if (self.meta_git) |s| gpa.free(s);
+    }
+
+    pub fn loadBaseline(gpa: Allocator, io: Io, path: []const u8) !Baseline {
+        var base: Baseline = .{
+            .meta_cpu = null,
+            .meta_git = null,
+            .results = .init(gpa),
+        };
+        errdefer base.deinit(gpa);
+
+        const file = try std.Io.Dir.openFile(.cwd(), io, path, .{});
+        defer file.close(io);
+
+        var buf: [8 << 10]u8 = undefined;
+        var fr = file.reader(io, &buf);
+        const r = &fr.interface;
+
+        while (r.takeDelimiter('\n') catch null) |line| {
+            if (line.len == 0) continue;
+            const parsed = std.json.parseFromSlice(std.json.Value, gpa, line, .{}) catch continue;
+            defer parsed.deinit();
+            const obj = parsed.value.object;
+
+            if (obj.get("meta")) |m| {
+                if (m.object.get("cpu")) |cpu| base.meta_cpu = try gpa.dupe(u8, cpu.string);
+                if (m.object.get("git")) |git| base.meta_git = try gpa.dupe(u8, git.string);
+                continue;
+            }
+
+            var result: Result = undefined;
+            result.case = try gpa.dupe(u8, obj.get("case").?.string);
+            result.variant = try gpa.dupe(u8, obj.get("variant").?.string);
+            result.min_ns = @intCast(obj.get("min_ns").?.integer);
+            result.p50_ns = @intCast(obj.get("p50_ns").?.integer);
+            result.stddev_ns = if (obj.get("stddev_ns")) |v| @intCast(v.integer) else 0;
+            result.drift_pct = if (obj.get("drift")) |v| v.float else 0;
+            const chk = obj.get("checksum").?.string;
+            result.checksum = std.fmt.parseInt(u46, chk, 16) catch 0;
+
+            var keybuf: [1 << 10]u8 = undefined;
+            const key = try gpa.dupe(u8, try result.key(&keybuf));
+            try base.results.put(key, result);
+        }
+        return base;
+    }
+};
+
+pub fn compareResults(
+    gpa: Allocator,
+    io: Io,
+    baseline_path: []const u8,
+    results: []const Result,
+) !void {
+    var base = try Baseline.loadBaseline(gpa, io, baseline_path);
+    defer base.deinit(gpa);
+
+    // machine check, a diff across different CPUs is meanngless.
+    if (base.meta_cpu) |cpu| {
+        if (!std.mem.eql(u8, cpu, builtin.cpu.model.name)) {
+            std.debug.print("warning: baseline captured on '{s}', running on '{s}' deltas are machine noise", .{
+                cpu, builtin.cpu.model.name,
+            });
+        }
+    }
+    if (base.meta_git) |sha| {
+        const current = gitShortSha(gpa, io) orelse "unknown";
+        if (!std.mem.eql(u8, sha, current)) {
+            std.debug.print("note: baseline git={x}, current={x}\n", .{ sha, current });
+        }
+    }
+
+    var keybuf: [256]u8 = undefined;
+    for (results) |*r| {
+        const key = try r.key(&keybuf);
+        const b = base.results.get(key) orelse {
+            std.debug.print("{s}: (new)\n", .{key});
+            continue;
+        };
+
+        if (b.checksum != r.checksum) {
+            std.debug.print("{s}: (CHECKSUM CHANGED {x} => {x})\n", .{ key, b.checksum, r.checksum });
+        }
+        const delta = @as(f64, @floatFromInt(r.min_ns)) / @as(f64, @floatFromInt(b.min_ns)) - 1.0;
+        const mark: []const u8 = if (@abs(delta) < 0.03) " " else if (delta < 0) "v" else "x";
+        std.debug.print("{s}{s}: {d:.1}% (min {d} -> {d} ns", .{
+            mark, key, delta * 100.0, b.min_ns, r.min_ns,
+        });
+        // If the baseline row itself was noisy, flag it instead of trusting the delta.
+        if (@abs(b.drift_pct) > 10) {
+            std.debug.print(", baseline drift {d:.1}% — suspect)", .{b.drift_pct});
+        } else std.debug.print(")", .{});
+        std.debug.print("\n", .{});
+    }
+}
+
 pub fn saveResults(gpa: Allocator, io: Io, path: []const u8, results: []const Result) !void {
     const file = try std.Io.Dir.cwd().createFile(io, path, .{ .truncate = true });
     defer file.close(io);
