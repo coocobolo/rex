@@ -1,7 +1,7 @@
 # scripts/
 
-Tooling for running, recording and comparing benchmarks. Results live in
-`perf-results/`; the benchmark binary itself is `zig-out/bin/benchmark` (sources in `bench/`).
+Tooling for running, recording and comparing benchmarks. Results live in `perf-results/`; 
+the benchmark binary itself is `zig-out/bin/benchmark` (sources in `bench/`).
 
 | script | purpose |
 |---|---|
