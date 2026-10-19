@@ -1,6 +1,6 @@
 const std = @import("std");
 
-pub fn build(b: *std.Build) void {
+pub fn build(b: *std.Build) !void {
     // var query = b.standardTargetOptions(.{}).query;
     // query.cpu_features_sub = std.Target.x86.featureSet(&.{.bmi2});
 
@@ -11,9 +11,7 @@ pub fn build(b: *std.Build) void {
         GlfwResolver.Platform,
         "glfw-platform",
         "windowing backend API",
-    ) orelse @panic(
-        "missing required option: -Dglfw-platform=<platform>",
-    );
+    ) orelse .x11;
 
     const glfw_dep = b.dependency("glfw", .{});
     const glfw_lib = b.addLibrary(.{
@@ -30,12 +28,6 @@ pub fn build(b: *std.Build) void {
     glfw_lib.root_module.addIncludePath(glfw_dep.path("include"));
 
     GlfwResolver.add(glfw_lib, glfw_dep, target, requested_platform);
-
-    // glfw_lib.root_module.addCSourceFiles(.{
-    //     .root = glfw_dep.path(""),
-    //     .files = &[_][]const u8{} ++ glfw_common_srcs ++ glfw_linux_x11_srcs,
-    //     .flags = &.{"-D_GLFW_X11"},
-    // });
 
     switch (target.result.os.tag) {
         .linux => {},
@@ -90,6 +82,7 @@ pub fn build(b: *std.Build) void {
         .files = &freetype_base_srcs, // mirrors CMakeLists.txt's BASE_SRCS list (only includes whats needed)
         .flags = &.{
             "-DFT2_BUILD_LIBRARY",
+            "-DFT_CONFIG_OPTION_USE_PNG",
             "-DFT_CONFIG_OPTION_USE_ZLIB",
         },
     });
@@ -98,17 +91,17 @@ pub fn build(b: *std.Build) void {
         freetype_dep.path("src"),
     );
 
-    const t_c = b.addTranslateC(.{
+    const termio_c = b.addTranslateC(.{
         .root_source_file = b.path("src/c.h"),
         .target = target,
         .optimize = optimize,
         .link_libc = true,
     });
 
-    t_c.defineCMacro("_FORTIFY_SOURCE", "0");
-    t_c.defineCMacro("_XOPEN_SOURCE", "800");
+    termio_c.defineCMacro("_FORTIFY_SOURCE", "0");
+    termio_c.defineCMacro("_XOPEN_SOURCE", "800");
 
-    const c_mod = t_c.createModule();
+    const c_mod = termio_c.createModule();
 
     // Core library module
     const mod = b.addModule("rex", .{
@@ -124,8 +117,12 @@ pub fn build(b: *std.Build) void {
     mod.addIncludePath(freetype_dep.path("include"));
     mod.linkLibrary(freetype_lib);
 
-    // requires for freetype zlib
+    // FreeType is built with:
+    //   FT_CONFIG_OPTION_USE_ZLIB
+    //   FT_CONFIG_OPTION_USE_PNG
+    // Therefore its final consumer must link these system libraries.
     mod.linkSystemLibrary("z", .{});
+    mod.linkSystemLibrary("png", .{});
 
     // mod.addIncludePath(miniaudio_dep.path(""));
     // mod.linkLibrary(miniaudio);
@@ -136,6 +133,7 @@ pub fn build(b: *std.Build) void {
     mod.addIncludePath(glfw_dep.path("include"));
     mod.linkLibrary(glfw_lib);
 
+    // FIXME! this should aligned with glfw option -Dglfw-platform?
     if (target.result.os.tag == .linux) {
         mod.linkSystemLibrary("X11", .{});
         mod.linkSystemLibrary("Xrandr", .{});
@@ -150,6 +148,8 @@ pub fn build(b: *std.Build) void {
         mod.linkSystemLibrary("X11", .{});
         // Install the X11 extension development headers on your system, e.g. on Ubuntu/Debian:
         // sudo apt install libxcursor-dev libxrandr-dev libxinerama-dev libxi-dev libx11-dev libxext-dev
+    } else {
+        @panic("unimplemented glfw extension link library headers");
     }
 
     // Executable
@@ -279,30 +279,8 @@ pub fn build(b: *std.Build) void {
     }
 }
 
-const ftmodule_h_contents =
-    \\FT_USE_MODULE( FT_Module_Class, autofit_module_class )  
-    \\FT_USE_MODULE( FT_Driver_ClassRec, tt_driver_class )  
-    \\FT_USE_MODULE( FT_Driver_ClassRec, cff_driver_class )  
-    \\FT_USE_MODULE( FT_Module_Class, psaux_module_class )  
-    \\FT_USE_MODULE( FT_Module_Class, psnames_module_class )  
-    \\FT_USE_MODULE( FT_Module_Class, pshinter_module_class )  
-    \\FT_USE_MODULE( FT_Module_Class, sfnt_module_class )  
-    \\FT_USE_MODULE( FT_Renderer_Class, ft_smooth_renderer_class )  
-    \\FT_USE_MODULE( FT_Renderer_Class, ft_raster1_renderer_class )
-    \\
-;
-
-const ftoption_h_contents =
-    \\// #define FT_CONFIG_OPTION_USE_PNG
-    \\// #define FT_CONFIG_OPTION_USE_ZLIB
-    \\// #define FT_CONFIG_OPTION_USE_BZIP2
-    \\// #define FT_CONFIG_OPTION_USE_BROTLI
-    \\// #define FT_CONFIG_OPTION_SVG
-;
-
 const freetype_base_srcs = [_][]const u8{
     "src/autofit/autofit.c",
-
     "src/base/ftbase.c",
     "src/base/ftbbox.c",
     "src/base/ftbdf.c",
@@ -399,22 +377,34 @@ const GlfwResolver = struct {
             .root = root,
             .flags = &.{"-D_GLFW_WAYLAND"},
             .files = &[_][]const u8{} ++ glfw_common_srcs ++ &[_][]const u8{
-                "src/egl_context.c ",
-                "src/osmesa_context.c  ",
-                "src/null_init.c ",
-                "src/null_monitor.c ",
+                "src/egl_context.c",
+                "src/osmesa_context.c",
+                "src/null_init.c",
+                "src/null_monitor.c",
                 "src/null_window.c",
-                "src/null_joystick.c  ",
-                "src/posix_time.c ",
-                "src/posix_thread.c ",
-                "src/posix_module.c  ",
-                "src/wl_init.c ",
-                "src/wl_monitor.c ",
-                "src/wl_window.c  ",
-                "src/linux_joystick.c  ",
-                "src/posix_poll.c  ",
+                "src/null_joystick.c",
+                "src/posix_time.c",
+                "src/posix_thread.c",
+                "src/posix_module.c",
+                "src/wl_init.c",
+                "src/wl_monitor.c",
+                "src/wl_window.c",
+                "src/linux_joystick.c",
+                "src/posix_poll.c",
             },
         });
+    }
+
+    fn addCocoa(module: *std.Build.Module, root: ?std.Build.LazyPath) void {
+        _ = module;
+        _ = root;
+        @panic("not implemented!");
+    }
+
+    fn addWin32(module: *std.Build.Module, root: ?std.Build.LazyPath) void {
+        _ = module;
+        _ = root;
+        @panic("not implemented!");
     }
 
     fn addX11(module: *std.Build.Module, root: ?std.Build.LazyPath) void {
