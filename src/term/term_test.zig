@@ -10,7 +10,9 @@ const Cell = @import("cell.zig").Cell;
 
 const max_title_len = @import("term.zig").max_title_len;
 
-const O: Option = .{
+const Response = Events.Response;
+
+const option: Option = .{
     .max_rows = 12,
     .max_cols = 24,
     .tab_width = 8,
@@ -19,16 +21,16 @@ const O: Option = .{
     .version = "0.0.1",
 };
 
-const T = Terminal(O);
+const Term = Terminal(option);
 const alloc = testing.allocator;
 
 test "Terminal: create and destroy ok" {
-    const t = try T.create(alloc);
+    const t = try Term.create(alloc);
     defer t.destroy(alloc);
 }
 
 test "Terminal: basics" {
-    const t = try T.create(alloc);
+    const t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     try testing.expectEqual(&t.primary, t.active);
@@ -36,7 +38,7 @@ test "Terminal: basics" {
 }
 
 test "resize: updates both screens" {
-    const t = try T.create(alloc);
+    const t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.resize(8, 16);
@@ -49,20 +51,20 @@ test "resize: updates both screens" {
 }
 
 test "resize: clamps to max dimensions" {
-    const t = try T.create(alloc);
+    const t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.resize(999, 999);
 
-    try testing.expectEqual(O.max_rows, t.primary.active_rows);
-    try testing.expectEqual(O.max_cols, t.primary.active_cols);
+    try testing.expectEqual(option.max_rows, t.primary.active_rows);
+    try testing.expectEqual(option.max_cols, t.primary.active_cols);
 
-    try testing.expectEqual(O.max_rows, t.alternate.active_rows);
-    try testing.expectEqual(O.max_cols, t.alternate.active_cols);
+    try testing.expectEqual(option.max_rows, t.alternate.active_rows);
+    try testing.expectEqual(option.max_cols, t.alternate.active_cols);
 }
 
 test "setTitle/getTitle: round-trip" {
-    const t = try T.create(alloc);
+    const t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.setTitle("hello, from zig!");
@@ -73,7 +75,7 @@ test "setTitle/getTitle: round-trip" {
 }
 
 test "setTitle: empty string clears title" {
-    const t = try T.create(alloc);
+    const t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.setTitle("initial");
@@ -84,7 +86,7 @@ test "setTitle: empty string clears title" {
 }
 
 test "setTitle: truncates at max_title_len" {
-    const t = try T.create(alloc);
+    const t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     // Build a string longer than max_title_len.
@@ -97,7 +99,7 @@ test "setTitle: truncates at max_title_len" {
 }
 
 test "getTitle: returns null-terminated slice" {
-    const t = try T.create(alloc);
+    const t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.setTitle("zig");
@@ -108,7 +110,7 @@ test "getTitle: returns null-terminated slice" {
 }
 
 test "setIconName/getIconName: round-trip" {
-    const t = try T.create(alloc);
+    const t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.setIconName("myterm");
@@ -116,7 +118,7 @@ test "setIconName/getIconName: round-trip" {
 }
 
 test "Terminal: title and icon_name are independent" {
-    const t = try T.create(alloc);
+    const t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.setTitle("title");
@@ -127,7 +129,7 @@ test "Terminal: title and icon_name are independent" {
 }
 
 test "Terminal: default modes" {
-    const t = try T.create(alloc);
+    const t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     try testing.expect(t.mode.auto_repeat);
@@ -137,15 +139,41 @@ test "Terminal: default modes" {
     try testing.expect(!t.mode.focus_events);
 }
 
-test "feed: empty slice" {
-    const t = try T.create(alloc);
+test "Response: filling the buffer" {
+    var r: Response = .{};
+    r.append("x" ** 255);
+    r.append("y"); // len 255 + 1 = 256; shouldn't panic
+
+    try testing.expectEqual(256, r.len);
+    r.append("z"); // no room, dropped
+    try testing.expectEqual(256, r.len);
+}
+
+test "Response: a reply that doesn't fit is dropped, not half-written" {
+    var r: Response = .{};
+    r.append("x" ** 250);
+    r.print("{d}", .{1234567}); // needs 7, 6 free
+    r.appendHexU16(0xBEEF); // need 4, fits
+
+    try testing.expectEqual(254, r.len);
+    r.appendHex(0xAB); // needs 2, 2 free, fits
+    r.appendHex(0xCD); // no room
+    try testing.expectEqual(256, r.len);
+}
+
+test "Response: 60x CPR in one feed does not panic" {
+    const t = try Term.create(alloc);
     defer t.destroy(alloc);
 
-    t.feed("");
+    t.feed("\x1b[6n" ** 60); // ~7 bytes each, 256 total
+    const s = t.events.response.slice();
+    try testing.expect(s.len <= 256);
+    // Whole replies only each one starts with ESC and ends with 'R'.
+    try testing.expectEqual(std.mem.count(u8, s, "\x1b"), std.mem.count(u8, s, "R"));
 }
 
 test "Terminal: feed printable ASCII" {
-    const t = try T.create(alloc);
+    const t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     // dispatch is not yet wired; verify the parser loop itself is stable.
@@ -153,7 +181,7 @@ test "Terminal: feed printable ASCII" {
 }
 
 test "Terminal: feed CSI sequence" {
-    const t = try T.create(alloc);
+    const t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     // CUP: ESC [ 1 ; 1 H
@@ -161,7 +189,7 @@ test "Terminal: feed CSI sequence" {
 }
 
 test "print: single ASCII character written at cursor" {
-    const t = try T.create(alloc);
+    const t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("A");
@@ -172,7 +200,7 @@ test "print: single ASCII character written at cursor" {
 }
 
 test "print: multiple ASCII characters advance cursor" {
-    const t = try T.create(alloc);
+    const t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("hello");
@@ -186,7 +214,7 @@ test "print: multiple ASCII characters advance cursor" {
 }
 
 test "print: UTF-8 two-byte sequence decoded correctly" {
-    const t = try T.create(alloc);
+    const t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     // U+00E9 LATIN SMALL LETTER E WITH ACUTE, 2-byte UTF-8: 0xC3 0xA9
@@ -199,7 +227,7 @@ test "print: UTF-8 two-byte sequence decoded correctly" {
 }
 
 test "print: wide CJK character occupies two columns" {
-    const t = try T.create(alloc);
+    const t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     // U+4E2D CJK UNIFIED IDEOGRAPH, 3-byte UTF-8: 0xE4 0xB8 0xAD
@@ -216,7 +244,7 @@ test "print: wide CJK character occupies two columns" {
 }
 
 test "print: auto-wrap sets wrap_pending at last column" {
-    const t = try T.create(alloc);
+    const t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     // Fill the first row exactly (active_cols = 24)
@@ -229,7 +257,7 @@ test "print: auto-wrap sets wrap_pending at last column" {
 }
 
 test "print: auto-wrap triggers on next character" {
-    const t = try T.create(alloc);
+    const t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     // Fill row 0, then write one more character
@@ -244,7 +272,7 @@ test "print: auto-wrap triggers on next character" {
 }
 
 test "print: generation bumped after each character" {
-    const t = try T.create(alloc);
+    const t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     const gen0 = t.active.generation;
@@ -257,7 +285,7 @@ test "print: generation bumped after each character" {
 }
 
 test "print: dirty row marked after write" {
-    const t = try T.create(alloc);
+    const t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("Z");
@@ -266,7 +294,7 @@ test "print: dirty row marked after write" {
 }
 
 test "print: writes to active screen, not inactive" {
-    const t = try T.create(alloc);
+    const t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     // primary is active by default
@@ -278,7 +306,7 @@ test "print: writes to active screen, not inactive" {
 }
 
 test "softReset: active screen scroll region reset" {
-    const t = try T.create(alloc);
+    const t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active.scroll_top = 3;
@@ -290,7 +318,7 @@ test "softReset: active screen scroll region reset" {
 }
 
 test "softReset: active screen cursor attrs cleared" {
-    const t = try T.create(alloc);
+    const t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active.cursor.attr.flags.bold = true;
@@ -301,7 +329,7 @@ test "softReset: active screen cursor attrs cleared" {
 }
 
 test "softReset: active screen origin mode cleared" {
-    const t = try T.create(alloc);
+    const t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active.cursor.origin = true;
@@ -311,7 +339,7 @@ test "softReset: active screen origin mode cleared" {
 }
 
 test "softReset: active screen modes reset" {
-    const t = try T.create(alloc);
+    const t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active.mode.auto_wrap = false;
@@ -332,7 +360,7 @@ test "softReset: active screen non-targeted modes survive" {
     // TERMV4 M2 item 7: DECSTR reset set is undecided (cursor blink, line attrs).
     if (true) return error.SkipZigTest;
 
-    const t = try T.create(alloc);
+    const t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active.mode.cursor_blink = true;
@@ -347,7 +375,7 @@ test "softReset: active screen non-targeted modes survive" {
 }
 
 test "softReset: terminal modes reset" {
-    const t = try T.create(alloc);
+    const t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.mode.linefeed = true;
@@ -363,7 +391,7 @@ test "softReset: terminal modes reset" {
 }
 
 test "softReset: mouse modes survive" {
-    const t = try T.create(alloc);
+    const t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.mode.mouse_button = true;
@@ -380,7 +408,7 @@ test "softReset: mouse modes survive" {
 }
 
 test "softReset: cell content survives" {
-    const t = try T.create(alloc);
+    const t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active.cursor.row = 0;
@@ -393,7 +421,7 @@ test "softReset: cell content survives" {
 }
 
 test "softReset: alternate screen not affected" {
-    const t = try T.create(alloc);
+    const t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     // Switch to alternate, set a mode, switch back, soft reset
@@ -407,7 +435,7 @@ test "softReset: alternate screen not affected" {
 }
 
 test "hardReset: active screen returns to primary" {
-    const t = try T.create(alloc);
+    const t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active = &t.alternate;
@@ -419,7 +447,7 @@ test "hardReset: active screen returns to primary" {
 }
 
 test "hardReset: both screens cells cleared" {
-    const t = try T.create(alloc);
+    const t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.primary.cursor.row = 0;
@@ -440,7 +468,7 @@ test "hardReset: both screens cells cleared" {
 }
 
 test "hardReset: terminal modes reset to defaults" {
-    const t = try T.create(alloc);
+    const t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.mode.linefeed = true;
@@ -458,7 +486,7 @@ test "hardReset: terminal modes reset to defaults" {
 }
 
 test "hardReset: title and icon name cleared" {
-    const t = try T.create(alloc);
+    const t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.setTitle("my terminal");
@@ -470,7 +498,7 @@ test "hardReset: title and icon name cleared" {
 }
 
 test "hardReset: events cleared" {
-    const t = try T.create(alloc);
+    const t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.events.bell = true;
@@ -482,7 +510,7 @@ test "hardReset: events cleared" {
 }
 
 test "hardReset: answerback preserved" {
-    const t = try T.create(alloc);
+    const t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.setAnswerback("xterm");

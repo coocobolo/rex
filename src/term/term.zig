@@ -123,19 +123,22 @@ pub const Events = struct {
 
     pub const Response = struct {
         buf: [256]u8 = undefined,
-        len: u8 = 0,
+        len: usize = 0,
+
+        pub fn fits(self: *const Response, n: usize) bool {
+            return n <= (self.buf.len - self.len);
+        }
 
         /// Append a response string. Silently truncates if the buffer is full.
         pub fn append(self: *Response, s: []const u8) void {
-            const space = self.buf.len - self.len;
-            const n = @min(s.len, space);
-            @memcpy(self.buf[self.len..][0..n], s[0..n]);
-            self.len += @intCast(n);
+            if (!self.fits(s.len)) return;
+            @memcpy(self.buf[self.len..][0..s.len], s);
+            self.len += s.len;
         }
 
         /// Append a single ASCII character.
-        fn appendByte(self: *Response, b: u8) void {
-            if (self.len >= self.buf.len) return;
+        pub fn appendByte(self: *Response, b: u8) void {
+            if (!self.fits(1)) return;
             self.buf[self.len] = b;
             self.len += 1;
         }
@@ -158,16 +161,16 @@ pub const Events = struct {
         }
 
         // Appends exactly two lowercase hex digits for a u8: 0..255 -> "00".."ff"
-        fn appendHex(self: *Response, v: u8) void {
-            if (self.len + 2 > self.buf.len) return;
+        pub fn appendHex(self: *Response, v: u8) void {
+            if (!self.fits(2)) return;
             self.buf[self.len] = alphabet[v >> 4];
             self.buf[self.len + 1] = alphabet[v & 0x0F];
             self.len += 2;
         }
 
         // add to Response
-        fn appendHexU16(self: *Response, v: u16) void {
-            if (self.len + 4 > self.buf.len) return;
+        pub fn appendHexU16(self: *Response, v: u16) void {
+            if (!self.fits(4)) return;
             self.buf[self.len + 0] = alphabet[(v >> 12) & 0xF];
             self.buf[self.len + 1] = alphabet[(v >> 8) & 0xF];
             self.buf[self.len + 2] = alphabet[(v >> 4) & 0xF];
@@ -179,7 +182,7 @@ pub const Events = struct {
         /// Silently drops the entire formatted string if the remaining space is too small.
         pub fn print(self: *Response, comptime fmt: []const u8, args: anytype) void {
             const written = std.fmt.bufPrint(self.buf[self.len..], fmt, args) catch return;
-            self.len += @intCast(written.len);
+            self.len += written.len;
         }
 
         pub fn slice(self: *const Response) []const u8 {
