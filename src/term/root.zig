@@ -9,7 +9,6 @@ pub const Option = term.Option;
 
 pub const screen = @import("screen.zig");
 pub const Screen = screen.Screen;
-pub const ScreenV2 = @import("screen_v2.zig");
 pub const Palette = @import("palette.zig");
 pub const Theme = @import("theme.zig");
 pub const grapheme = @import("grapheme.zig");

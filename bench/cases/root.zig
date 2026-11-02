@@ -3,7 +3,6 @@ const std = @import("std");
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 
-pub const term = @import("term/root.zig");
 pub const vt = @import("vt/root.zig");
 
 const support = @import("../support.zig");
@@ -37,11 +36,4 @@ pub fn run(gpa: Allocator, io: Io, options: Options) !void {
 
     if (options.compare) |path| try support.compareResults(gpa, io, path, results.items);
     if (options.save) |path| try support.saveResults(gpa, io, path, results.items);
-
-    // try term.screen.runPhysRow(
-    //     gpa,
-    //     io,
-    //     iteration,
-    //     samples,
-    // );
 }
