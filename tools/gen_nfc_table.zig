@@ -174,27 +174,27 @@ pub fn main(init: std.process.Init) !void {
     }
     try writer.interface.writeAll("};\n");
     try writer.interface.writeAll(
-        \\  
-        \\/// Returns the NFC canonical composition of (base, combiner), or null.  
-        \\/// O(log n) binary search over the sorted entries table.  
-        \\pub fn compose(base: u32, combiner: u32) ?u21 {  
-        \\    const key: u64 = (@as(u64, base) << 42) | (@as(u64, combiner) << 21);  
-        \\    var lo: usize = 0;  
-        \\    var hi: usize = entries.len;  
-        \\    while (lo < hi) {  
-        \\        const mid = lo + (hi - lo) / 2;  
-        \\        const entry     = entries[mid];  
-        \\        const entry_key = entry & 0xFFFFFFFFFFE00000; // zero out composed bits  
-        \\        if (entry_key < key) {  
-        \\            lo = mid + 1;  
-        \\        } else if (entry_key > key) {  
-        \\            hi = mid;  
-        \\        } else {  
-        \\            return @intCast(entry & 0x1FFFFF);  
-        \\        }  
-        \\    }  
-        \\    return null;  
-        \\}  
+        \\
+        \\/// Returns the NFC canonical composition of (base, combiner), or null.
+        \\/// O(log n) binary search over the sorted entries table.
+        \\pub fn compose(base: u32, combiner: u32) ?u21 {
+        \\    const key: u64 = (@as(u64, base) << 42) | (@as(u64, combiner) << 21);
+        \\    var lo: usize = 0;
+        \\    var hi: usize = entries.len;
+        \\    while (lo < hi) {
+        \\        const mid = lo + (hi - lo) / 2;
+        \\        const entry     = entries[mid];
+        \\        const entry_key = entry & 0xFFFFFFFFFFE00000; // zero out composed bits
+        \\        if (entry_key < key) {
+        \\            lo = mid + 1;
+        \\        } else if (entry_key > key) {
+        \\            hi = mid;
+        \\        } else {
+        \\            return @intCast(entry & 0x1FFFFF);
+        \\        }
+        \\    }
+        \\    return null;
+        \\}
     );
 }
 
