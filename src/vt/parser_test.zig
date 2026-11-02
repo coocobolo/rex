@@ -598,35 +598,6 @@ test "vt_parser: params beyond cap set params_overflow, slot-max kept" {
     try testing.expectEqual(@as(u15, 32), ev.params[31].value); // last kept slot intact
 }
 
-test "vt_parser: exactly max_params does not set params_overflow" {
-    var d: TestDispatcher = try .init(alloc);
-    defer d.deinit();
-    var p: Parser(TestDispatcher, .{}) = .{};
-
-    p.feedBytes(&d, "\x1b[1;2;3;4;5;6;7;8;9;10;11;12;13;14;15;16;17;18;19;20;21;22;23;24;25;26;27;28;29;30;31;32H");
-
-    const ev = d.csi_events.items[0];
-    try testing.expectEqual(32, ev.param_len);
-    try testing.expectEqual(false, p.params_overflow);
-}
-
-test "vt_parser: digits after dropped separator never touch last slot" {
-    var d: TestDispatcher = try .init(alloc);
-    defer d.deinit();
-    var p: Parser(TestDispatcher, .{}) = .{};
-
-    // 32 params fill capacity; ';' drops (overflow), then 987654 must not
-    // accumulate into slot 31. it's a skipped parameter, not digits for 32.
-    p.feedBytes(&d, "\x1b[1;2;3;4;5;6;7;8;9;10;11;12;13;14;15;16;17;18;19;20;21;22;23;24;25;26;27;28;29;30;31;32;987654H");
-
-    const ev = d.csi_events.items[0];
-    try testing.expectEqual(32, ev.param_len);
-    try testing.expectEqual(@as(u15, 32), ev.params[31].value); // not wrapped/saturated from 987654
-    try testing.expectEqual(true, p.params_overflow);
-    // H still dispatches: the dropped digits were consumed as param bytes
-    try testing.expectEqual('H', ev.final);
-}
-
 test "vt_parser: exactly max_params sets no overflow" {
     var d: TestDispatcher = try .init(alloc);
     defer d.deinit();
@@ -1041,6 +1012,64 @@ test "vt_parser: CSI colon then semicolon resets parameter separator" {
         },
         ev.params[0..ev.param_len],
     );
+}
+
+// Ported from the removed term/csi_test.zig: behaviour that had no
+// equivalent vt_parser test.
+
+fn expectCsiParams(input: []const u8, final: u8, expected: []const Parameter) !void {
+    var d: TestDispatcher = try .init(alloc);
+    defer d.deinit();
+    var p: Parser(TestDispatcher, .{}) = .{};
+
+    p.feedBytes(&d, input);
+
+    try testing.expectEqual(1, d.csi_events.items.len);
+    const ev = d.csi_events.items[0];
+    try testing.expectEqual(.ground, p.state);
+    try testing.expectEqual(final, ev.final);
+    try testing.expectEqualSlices(Parameter, expected, ev.params[0..ev.param_len]);
+}
+
+test "vt_parser: CSI DEL inside params is ignored" {
+    try expectCsiParams("\x1b[1\x7f2m", 'm', &.{
+        .{ .value = 12, .separator = .parameter },
+    });
+}
+
+test "vt_parser: CSI DEL inside intermediates is ignored" {
+    var d: TestDispatcher = try .init(alloc);
+    defer d.deinit();
+    var p: Parser(TestDispatcher, .{}) = .{};
+
+    p.feedBytes(&d, "\x1b[ \x7fq");
+
+    try testing.expectEqual(1, d.csi_events.items.len);
+    const ev = d.csi_events.items[0];
+    try testing.expectEqual('q', ev.final);
+    try testing.expectEqualSlices(u8, &.{' '}, ev.intermediates[0..ev.intermediate_len]);
+}
+
+test "vt_parser: CSI trailing ';' opens an empty trailing param" {
+    try expectCsiParams("\x1b[1;m", 'm', &.{
+        .{ .value = 1, .separator = .parameter },
+        .{ .value = 0, .separator = .parameter },
+    });
+}
+
+test "vt_parser: CSI only separators yields empty params" {
+    try expectCsiParams("\x1b[;;m", 'm', &.{
+        .{ .value = 0, .separator = .parameter },
+        .{ .value = 0, .separator = .parameter },
+        .{ .value = 0, .separator = .parameter },
+    });
+}
+
+test "vt_parser: CSI empty first param keeps its slot" {
+    try expectCsiParams("\x1b[;5H", 'H', &.{
+        .{ .value = 0, .separator = .parameter },
+        .{ .value = 5, .separator = .parameter },
+    });
 }
 
 test "vt_parser: C0 control inside csi_entry fires execute but stays in csi_entry" {

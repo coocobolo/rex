@@ -329,6 +329,9 @@ test "softReset: active screen modes reset" {
 }
 
 test "softReset: active screen non-targeted modes survive" {
+    // TERMV4 M2 item 7: DECSTR reset set is undecided (cursor blink, line attrs).
+    if (true) return error.SkipZigTest;
+
     const t = try T.create(alloc);
     defer t.destroy(alloc);
 

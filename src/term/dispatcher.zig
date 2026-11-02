@@ -15,7 +15,7 @@ const seqIntroducer = @import("term.zig").seqIntroducer;
 
 test {
     // FIXME!
-    // _ = @import("dispatcher_test.zig");
+    _ = @import("dispatcher_test.zig");
 }
 
 /// helper: get param value or default fallback, skipping sub-params

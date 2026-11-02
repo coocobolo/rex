@@ -30,7 +30,7 @@ const Classifier = ucd.classifer.Classifier;
 // extern fn memmove(dest: ?*anyopaque, src: ?*const anyopaque, n: usize) ?*anyopaque;
 
 test "Screen" {
-    // _ = @import("screen_test.zig");
+    _ = @import("screen_test.zig");
 }
 
 // With enum(u8), the backing type matches the storage size exactly.

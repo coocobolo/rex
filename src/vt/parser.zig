@@ -5,7 +5,7 @@ const assert = std.debug.assert;
 
 test {
     _ = @import("parser_test.zig");
-    // _ = @import("parser_fuzzy_test.zig");
+    _ = @import("parser_fuzzy_test.zig");
 }
 
 /// State machine of the VT Parser.

@@ -29,7 +29,7 @@ pub const max_answerback_len = 32;
 const log = std.log.scoped(.term);
 
 test {
-    // _ = @import("term_test.zig");
+    _ = @import("term_test.zig");
 }
 
 pub const ScreenBuffer = enum { primary, alternate };
