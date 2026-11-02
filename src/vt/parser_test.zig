@@ -403,6 +403,303 @@ test "vt_parser: paramEnd stops after a valid param prefix" {
     try expectPayloadEndParam(.csi_param, "?25", 0); // private marker not param-run
 }
 
+test "vt_parser: leading ':' opens implicit empty parent + sub-parameter" {
+    var d: TestDispatcher = try .init(alloc);
+    defer d.deinit();
+    var p: Parser(TestDispatcher, .{}) = .{};
+
+    p.feedBytes(&d, "\x1b[:5m");
+
+    try testing.expectEqual(1, d.csi_events.items.len);
+
+    const ev = d.csi_events.items[0];
+
+    try testing.expectEqual(2, ev.param_len);
+    try testing.expectEqual(@as(u15, 0), ev.params[0].value);
+    try testing.expectEqual(.parameter, ev.params[0].separator);
+    try testing.expectEqual(@as(u15, 5), ev.params[1].value);
+    try testing.expectEqual(.sub_parameter, ev.params[1].separator);
+    try testing.expectEqual(.ground, p.state);
+}
+
+test "vt_parser: leading ':' parity across feed shapes" {
+    // Same input through different dispatcher must produce identical
+    // params, pins pushParam v feedParamRun on the plen == 0 delegation boundary.
+
+    const input = "\x1b[::7;1::2m";
+
+    var expected_params: [16]Parameter = undefined;
+    var expected_len: u8 = 0;
+    var expected_overflow: bool = false;
+
+    inline for (.{ 0, 3, 1 }) |chunk| {
+        // 0 = feed once
+        var d: TestDispatcher = try .init(alloc);
+        defer d.deinit();
+
+        var p: Parser(TestDispatcher, .{}) = .{};
+
+        if (chunk == 0) {
+            p.feedBytes(&d, input);
+        } else {
+            var i: usize = 0;
+            while (i < input.len) {
+                const end = @min(i + chunk, input.len);
+                p.feedBytes(&d, input[i..end]);
+                i = end;
+            }
+        }
+
+        try testing.expectEqual(1, d.csi_events.items.len);
+        const ev = d.csi_events.items[0];
+
+        if (chunk == 0) {
+            expected_len = ev.param_len;
+            expected_overflow = p.params_overflow;
+            @memcpy(expected_params[0..ev.param_len], ev.params[0..ev.param_len]);
+        } else {
+            try testing.expectEqual(expected_len, ev.param_len);
+            try testing.expectEqual(expected_overflow, p.params_overflow);
+            for (expected_params[0..expected_len], ev.params[0..expected_len]) |a, b| {
+                try testing.expectEqual(a.value, b.value);
+                try testing.expectEqual(a.separator, b.separator);
+            }
+        }
+    }
+}
+
+test "vt_parser: digit accumulation paths agree at every split offset" {
+    const inputs = [_][]const u8{
+        "\x1b[000001m", // leading zeros: six digits, value 1; NOT saturated
+        "\x1b[99999m", // exactly 5 digits, fits unclamped window
+        "\x1b[100000m", // 6 digits, clamps to 32767
+        "\x1b[4294967296m", // would wrap u32 if accumulated raw; must clamp
+        "\x1b[0000000000042m", // many leading zeros then value; must stay 42
+        "\x1b[1;99999m", // 5-digit run on a nonzero prior slot
+        "\x1b[32767m", // boundary
+        "\x1b[32768m", // boundary + 1
+        "\x1b[327679m", // worst case: saturated slot then 9 clamps to 32767
+    };
+
+    for (inputs) |input| {
+        // Reference: whole-buffer feed to feedCsi to feedParamRun windowed accumulate.
+        var ref_d: TestDispatcher = try .init(alloc);
+        defer ref_d.deinit();
+        var ref_p: Parser(TestDispatcher, .{}) = .{};
+        ref_p.feedBytes(&ref_d, input);
+
+        // Per-byte: every byte goes through step()/pushParam's per-digit clamp.
+        var byte_d: TestDispatcher = try .init(alloc);
+        defer byte_d.deinit();
+        var byte_p: Parser(TestDispatcher, .{}) = .{};
+        for (0..input.len) |j| byte_p.feedBytes(&byte_d, input[j..][0..1]);
+
+        // Parser-side param state must agree.
+        try testing.expectEqual(ref_p.state, byte_p.state);
+        try testing.expectEqual(ref_p.param_len, byte_p.param_len);
+        try testing.expectEqual(ref_p.params_overflow, byte_p.params_overflow);
+        try testing.expectEqualSlices(
+            Parameter,
+            ref_p.params[0..ref_p.param_len],
+            byte_p.params[0..byte_p.param_len],
+        );
+
+        // And the dispatched event must agree on the observable surface.
+        try testing.expectEqual(ref_d.csi_events.items.len, byte_d.csi_events.items.len);
+        const e = ref_d.csi_events.items[0];
+        const a = byte_d.csi_events.items[0];
+        try testing.expectEqual(e.final, a.final);
+        try testing.expectEqual(e.param_len, a.param_len);
+        try testing.expectEqual(e.intermediate_len, a.intermediate_len);
+        try testing.expectEqualSlices(Parameter, e.params[0..e.param_len], a.params[0..a.param_len]);
+    }
+}
+
+test "vt_parser: digit accumulation boundary values" {
+    const cases = [_]struct { input: []const u8, expect: u15 }{
+        .{ .input = "\x1b[000001m", .expect = 1 },
+        .{ .input = "\x1b[99999m", .expect = 32767 }, // 99999 > 32767 (clamped)
+        .{ .input = "\x1b[100000m", .expect = 32767 },
+        .{ .input = "\x1b[4294967296m", .expect = 32767 },
+        .{ .input = "\x1b[0000000000042m", .expect = 42 },
+        .{ .input = "\x1b[32767m", .expect = 32767 },
+        .{ .input = "\x1b[32768m", .expect = 32767 },
+        .{ .input = "\x1b[327679m", .expect = 32767 },
+    };
+
+    for (cases) |c| {
+        var d: TestDispatcher = try .init(alloc);
+        defer d.deinit();
+        var p: Parser(TestDispatcher, .{}) = .{};
+        p.feedBytes(&d, c.input);
+
+        try testing.expectEqual(1, d.csi_events.items.len);
+        const ev = d.csi_events.items[0];
+        try testing.expectEqual(1, ev.param_len);
+        try testing.expectEqual(c.expect, ev.params[0].value);
+    }
+}
+
+test "vt_parser: digit overflow saturates at Parameter.Value max" {
+    var d: TestDispatcher = try .init(alloc);
+    defer d.deinit();
+    var p: Parser(TestDispatcher, .{}) = .{};
+
+    p.feedBytes(&d, "\x1b[99999999999H");
+
+    try testing.expectEqual(1, d.csi_events.items.len);
+    const ev = d.csi_events.items[0];
+    try testing.expectEqual(1, ev.param_len);
+    try testing.expectEqual(std.math.maxInt(Parameter.Value), ev.params[0].value);
+}
+
+test "vt_parser: overflow saturates on every digit, both paths" {
+    // 40000 crosses the u15 bound mid-run, feedParamRun's accumDigit
+    // loop and pushParam's digit arm must agree bit-for-bit.
+
+    for ([_][]const u8{
+        "\x1b[40000C",
+        "\x1b[99999;9m",
+        "\x1b[1;99999999;3m",
+    }) |input| {
+        var d1: TestDispatcher = try .init(alloc);
+        defer d1.deinit();
+        var p1: Parser(TestDispatcher, .{}) = .{};
+        p1.feedBytes(&d1, input);
+
+        var d2: TestDispatcher = try .init(alloc);
+        defer d2.deinit();
+        var p2: Parser(TestDispatcher, .{}) = .{};
+        for (input) |b| p2.feedBytes(&d2, &.{b}); // feed one byte at a time
+
+        const e1 = d1.csi_events.items[0];
+        const e2 = d2.csi_events.items[0];
+        try testing.expectEqual(e1.param_len, e2.param_len);
+        for (e1.params[0..e1.param_len], e2.params[0..e2.param_len]) |a, b| {
+            try testing.expectEqual(a.value, b.value);
+            try testing.expectEqual(a.separator, b.separator);
+        }
+    }
+}
+
+test "vt_parser: params beyond cap set params_overflow, slot-max kept" {
+    var d: TestDispatcher = try .init(alloc);
+    defer d.deinit();
+
+    var p: Parser(TestDispatcher, .{}) = .{};
+
+    // 33 params against max_params = 32: slot 32 gets '32', '33' is dropped.
+    p.feedBytes(&d, "\x1b[1;2;3;4;5;6;7;8;9;10;11;12;13;14;15;16;17;18;19;20;21;22;23;24;25;26;27;28;29;30;31;32;33H");
+
+    try testing.expectEqual(1, d.csi_events.items.len);
+    const ev = d.csi_events.items[0];
+    try testing.expectEqual(opt.max_params, ev.param_len); // max_params
+    try testing.expectEqual(true, p.params_overflow);
+    try testing.expectEqual(@as(u15, 32), ev.params[31].value); // last kept slot intact
+}
+
+test "vt_parser: exactly max_params does not set params_overflow" {
+    var d: TestDispatcher = try .init(alloc);
+    defer d.deinit();
+    var p: Parser(TestDispatcher, .{}) = .{};
+
+    p.feedBytes(&d, "\x1b[1;2;3;4;5;6;7;8;9;10;11;12;13;14;15;16;17;18;19;20;21;22;23;24;25;26;27;28;29;30;31;32H");
+
+    const ev = d.csi_events.items[0];
+    try testing.expectEqual(32, ev.param_len);
+    try testing.expectEqual(false, p.params_overflow);
+}
+
+test "vt_parser: digits after dropped separator never touch last slot" {
+    var d: TestDispatcher = try .init(alloc);
+    defer d.deinit();
+    var p: Parser(TestDispatcher, .{}) = .{};
+
+    // 32 params fill capacity; ';' drops (overflow), then 987654 must not
+    // accumulate into slot 31. it's a skipped parameter, not digits for 32.
+    p.feedBytes(&d, "\x1b[1;2;3;4;5;6;7;8;9;10;11;12;13;14;15;16;17;18;19;20;21;22;23;24;25;26;27;28;29;30;31;32;987654H");
+
+    const ev = d.csi_events.items[0];
+    try testing.expectEqual(32, ev.param_len);
+    try testing.expectEqual(@as(u15, 32), ev.params[31].value); // not wrapped/saturated from 987654
+    try testing.expectEqual(true, p.params_overflow);
+    // H still dispatches: the dropped digits were consumed as param bytes
+    try testing.expectEqual('H', ev.final);
+}
+
+test "vt_parser: exactly max_params sets no overflow" {
+    var d: TestDispatcher = try .init(alloc);
+    defer d.deinit();
+    var p: Parser(TestDispatcher, .{}) = .{};
+
+    p.feedBytes(&d, "\x1b[1;2;3;4;5;6;7;8;9;10;11;12;13;14;15;16;17;18;19;20;21;22;23;24;25;26;27;28;29;30;31;32H");
+
+    const ev = d.csi_events.items[0];
+    try testing.expectEqual(32, ev.param_len);
+    try testing.expectEqual(false, p.params_overflow); // boundary: full ≠ overflow
+    try testing.expectEqual(@as(u15, 32), ev.params[31].value);
+}
+
+test "vt_parser: digits after dropped separator don't leak into last slot" {
+    var d: TestDispatcher = try .init(alloc);
+    defer d.deinit();
+    var p: Parser(TestDispatcher, .{}) = .{};
+
+    // 32 params fill the cap; ";987654" is dropped — its digits must not
+    // accumulate into slot 32, and 'H' must still dispatch.
+    p.feedBytes(&d, "\x1b[1;2;3;4;5;6;7;8;9;10;11;12;13;14;15;16;17;18;19;20;21;22;23;24;25;26;27;28;29;30;31;32;987654H");
+
+    const ev = d.csi_events.items[0];
+    try testing.expectEqual('H', ev.final);
+    try testing.expectEqual(32, ev.param_len);
+    try testing.expectEqual(@as(u15, 32), ev.params[31].value); // NOT 987654-wrapped
+    try testing.expectEqual(true, p.params_overflow);
+}
+
+test "vt_parser: param paths agree at every split offset" {
+    const inputs = [_][]const u8{
+        "\x1b[40000C",
+        "\x1b[99999999999C",
+        "\x1b[1;2;3;4;5;6;7;8;9;10;11;12;13;14;15;16;17;18;19;20;21;22;23;24;25;26;27;28;29;30;31;32;987654H",
+        "\x1b[:5m",
+    };
+
+    for (inputs) |input| {
+        // Reference: whole-buffer feed; fused feedCsi or feedParamRun path.
+        var ref_d: TestDispatcher = try .init(alloc);
+        defer ref_d.deinit();
+        var ref_p: Parser(TestDispatcher, .{}) = .{};
+        ref_p.feedBytes(&ref_d, input);
+
+        // Byte-at-a-time feed; pure step() or pushParam path.
+        var byte_d: TestDispatcher = try .init(alloc);
+        defer byte_d.deinit();
+        var byte_p: Parser(TestDispatcher, .{}) = .{};
+        for (input, 0..) |_, j| byte_p.feedBytes(&byte_d, input[j..][0..1]);
+
+        // Parser state must match exactly.
+        try testing.expectEqual(ref_p.state, byte_p.state);
+        try testing.expectEqual(ref_p.param_len, byte_p.param_len);
+        try testing.expectEqual(ref_p.params_overflow, byte_p.params_overflow);
+        try testing.expectEqualSlices(
+            Parameter,
+            ref_p.params[0..ref_p.param_len],
+            byte_p.params[0..byte_p.param_len],
+        );
+
+        // Events must match, compare field-by-field, not whole struct,
+        // because csi event carries slices that won't compare equal by value.
+        try testing.expectEqual(ref_d.csi_events.items.len, byte_d.csi_events.items.len);
+        for (ref_d.csi_events.items, byte_d.csi_events.items) |e, a| {
+            try testing.expectEqual(e.final, a.final);
+            try testing.expectEqual(e.param_len, a.param_len);
+            try testing.expectEqual(e.intermediate_len, a.intermediate_len);
+            try testing.expectEqualSlices(Parameter, e.params[0..e.param_len], a.params[0..a.param_len]);
+            try testing.expectEqualSlices(u8, e.intermediates[0..e.intermediate_len], a.intermediates[0..a.intermediate_len]);
+        }
+    }
+}
+
 test "vt_parser: printable ascii" {
     var d: TestDispatcher = try .init(alloc);
     defer d.deinit();
@@ -625,7 +922,10 @@ test "vt_parser: CSI colon in csi_entry, sub-parameter with value 0" {
     try testing.expectEqual('m', ev.final);
     try testing.expectEqualSlices(
         Parameter,
-        &.{Parameter{ .value = 0, .separator = .sub_parameter }},
+        &.{
+            Parameter{ .value = 0, .separator = .parameter },
+            Parameter{ .value = 0, .separator = .sub_parameter },
+        },
         ev.params[0..ev.param_len],
     );
 }
@@ -996,4 +1296,54 @@ test "vt_parser: SOS all bytes ignored until ST" {
     try testing.expectEqual(0, d.prints.items.len);
     try testing.expectEqual(0, d.executes.items.len);
     try testing.expectEqual(0, d.osc_events.items.len);
+}
+
+test "vt_parser: ':' in DCS params aborts to dcs_ignore in both paths" {
+    // Table: dcs_param × 0x3A (':') => .none or .dcs_ignore.
+    // isParamOrSep(allow_colon=false) must agree; if the fast path
+    // admits ':' as a param byte, the whole-buffer feed would reach
+    // 'q' (final) and fire hook + dcsPut where feed_byte does not.
+    const input = "\x1bP1:2qabc\x9c";
+
+    // Fast path: whole-buffer feed.
+    var fast_d: TestDispatcher = try .init(alloc);
+    defer fast_d.deinit();
+    var fast_p: Parser(TestDispatcher, .{}) = .{};
+    fast_p.feedBytes(&fast_d, input);
+
+    // Table path: byte-at-a-time.
+    var slow_d: TestDispatcher = try .init(alloc);
+    defer slow_d.deinit();
+    var slow_p: Parser(TestDispatcher, .{}) = .{};
+    for (input) |b| slow_p.feedBytes(&slow_d, &[1]u8{b});
+
+    // Both must agree: sequence aborted at ':', nothing dispatched.
+    try testing.expectEqual(0, fast_d.dcs_hooks.items.len);
+    try testing.expectEqual(0, fast_d.dcs_puts.items.len);
+    try testing.expectEqual(.ground, fast_p.state);
+
+    try testing.expectEqual(0, slow_d.dcs_hooks.items.len);
+    try testing.expectEqual(0, slow_d.dcs_puts.items.len);
+    try testing.expectEqual(.ground, slow_p.state);
+}
+
+test "scanUntil: bitcast mask LSB == lane 0 (firstTrue equivalence)" {
+    const N = std.simd.suggestVectorLength(u8) orelse return error.SkipZigTest;
+    const Chunk = @Vector(N, u8);
+    const Mask = std.meta.Int(.unsigned, N);
+
+    var prng = std.Random.DefaultPrng.init(0xdeadbeef);
+    const rnd = prng.random();
+    for (0..4096) |_| {
+        var buf: [N]u8 = undefined;
+        rnd.bytes(&buf);
+        const chunk: Chunk = buf;
+        const stop = chunk > @as(Chunk, @splat(0x7F)); // arbitrary mask
+
+        const expected: ?usize = if (std.simd.firstTrue(stop)) |f| f else null;
+        const m: Mask = @bitCast(stop);
+        const actual: ?usize = if (m != 0) @ctz(m) else null;
+
+        try testing.expectEqual(expected, actual);
+    }
 }

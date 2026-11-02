@@ -8,8 +8,9 @@ test {
     // _ = @import("parser_fuzzy_test.zig");
 }
 
-/// States of the VT Parser. The current state determines how the
-/// next input byte is interpreted.
+/// State machine of the VT Parser.
+///
+/// The current state determines how the next input byte is interpreted.
 pub const State = enum(u8) {
     ground = 0,
     escape,
@@ -29,7 +30,7 @@ pub const State = enum(u8) {
     pub const count: usize = 14;
 
     /// Scans `bytes` from the beginning and returns the index of the
-    /// first that stops the scan, or `bytes.len` if every continues it.
+    /// first byte where the stops fires, or `bytes.len` if every continues it.
     ///
     /// `stopVector(chunk)` must return a mask where `true` marks a byte that
     /// ends the run.
@@ -39,19 +40,32 @@ pub const State = enum(u8) {
     /// predicate.
     ///
     /// `context` is passed to `continuesScalar`.
-    pub fn scanUntil(
+    pub inline fn scanUntil(
         bytes: []const u8,
         context: anytype,
-        comptime stopVector: anytype,
-        comptime continuesScalar: anytype,
+        comptime stopVector: anytype, // fn(Chunk) @Vector(N, bool)
+        comptime continuesScalar: anytype, // fn(context, u8) bool
     ) usize {
         var i: usize = 0;
 
         if (std.simd.suggestVectorLength(u8)) |chunk_len| {
             const Chunk = @Vector(chunk_len, u8);
+            const Mask = std.meta.Int(.unsigned, chunk_len);
+
             while (i + chunk_len <= bytes.len) : (i += chunk_len) {
                 const chunk: Chunk = bytes[i..][0..chunk_len].*;
-                if (std.simd.firstTrue(stopVector(chunk))) |first| return i + first;
+                const m: Mask = @bitCast(stopVector(chunk));
+                if (m != 0) return i + @ctz(m);
+            }
+
+            // Overlapping tail load bytes before `i` are proven non-stop, so
+            // re-scanning the overlap [bytes.len - chunk_len, i] cannot produce
+            // a stop earlier than the true one in the tail.
+            if (i < bytes.len and bytes.len >= chunk_len) {
+                const at = bytes.len - chunk_len;
+                const chunk: Chunk = bytes[at..][0..chunk_len].*;
+                const m: Mask = @bitCast(stopVector(chunk));
+                return if (m != 0) at + @ctz(m) else bytes.len;
             }
         }
 
@@ -118,8 +132,7 @@ pub const State = enum(u8) {
 
         // Stops at C0 bytes and C1 bytes [0x80, 0x9F].
         const c0 = chunk < @as(Chunk, @splat(0x20));
-        const c1 =
-            (chunk -% @as(Chunk, @splat(0x80))) < @as(Chunk, @splat(0x20));
+        const c1 = (chunk -% @as(Chunk, @splat(0x80))) < @as(Chunk, @splat(0x20));
 
         return c0 | c1;
     }
@@ -131,7 +144,7 @@ pub const State = enum(u8) {
     ///
     /// Returns `0` for states without payload scanning.
     /// This method does not change parser state or consume any bytes.
-    pub fn payloadEnd(self: State, bytes: []const u8) usize {
+    pub inline fn payloadEnd(self: State, bytes: []const u8) usize {
         return switch (self) {
             .dcs_passthrough => scanUntil(bytes, self, dcsStopVector, isPayload),
             .sos_pm_apc_string => scanUntil(bytes, self, sosStopVector, isPayload),
@@ -158,11 +171,11 @@ pub const State = enum(u8) {
     }
 
     inline fn csiParamContinues(_: State, byte: u8) bool {
-        return byte >= 0x30 and byte <= 0x3B;
+        return byte >= 0x30 and byte <= 0x3B; // digits + ':' + ';'
     }
 
     inline fn dcsParamContinues(_: State, byte: u8) bool {
-        return (byte >= 0x30 and byte <= 0x39) or byte == 0x3B;
+        return (byte >= 0x30 and byte <= 0x39) or byte == 0x3B; // digits + ';' only
     }
 
     /// Returns the length of the leading parameter run in `bytes`.
@@ -170,7 +183,7 @@ pub const State = enum(u8) {
     /// Uses the parameter-byte rules for `.csi_param` or `.dcs_param`.
     /// Returns `bytes.len` if every byte continues the run.
     /// Panics if `self` is in any other state.
-    pub fn paramEnd(self: State, bytes: []const u8) usize {
+    pub inline fn paramEnd(self: State, bytes: []const u8) usize {
         if (self != .csi_param and self != .dcs_param) {
             std.debug.panic("paramEnd called in {t}", .{self});
         }
@@ -573,47 +586,70 @@ comptime {
 comptime {
     @setEvalBranchQuota(4 << 10);
 
-    for ([_]State{ .csi_param, .dcs_param }) |s| {
+    for ([_]State{
+        .csi_entry,
+        .csi_param,
+        .dcs_entry,
+        .dcs_param,
+    }) |s| {
         for (0..256) |b| {
             const byte: u8 = @intCast(b);
             const e = entries[@intFromEnum(s)][byte];
+            // A byte is "param-like" or this state if the table keeps it
+            // in-state as .param with no forced transition.
             const table_ok = e.action == .param and e.next == s and !forcedTransition(s, byte);
 
-            // Scalar continues-function must match the table.
-            const scalar_ok = if (s == .csi_param)
-                State.csiParamContinues(s, byte)
-            else
-                State.dcsParamContinues(s, byte);
+            // entry states have no continues-predicate; skip the scalar check
+            // for them. csi_param/dcs_param must match the table byte-for-byte.
+            if (s == .csi_param) {
+                if (table_ok != State.csiParamContinues(s, byte)) {
+                    @compileError("csiParamContinues drifted from entries");
+                }
+            }
 
-            if (table_ok != scalar_ok) {
-                @compileError("param scalar predicate drifted from entries");
+            if (s == .dcs_param) {
+                if (table_ok != State.dcsParamContinues(s, byte)) {
+                    @compileError("dcsParamContinues drifted from entries");
+                }
+            }
+
+            // SIMD predicate agrees with scalar at width 1 (width-agnostic per-lane
+            // comparisons make wider lanes equivalent).
+            const unit: @Vector(1, u8) = @splat(byte);
+            if (s == .csi_param or s == .dcs_param) {
+                const vec_stop = if (s == .csi_param)
+                    State.csiParamStopVector(unit)[0]
+                else
+                    State.dcsParamStopVector(unit)[0];
+
+                const scalar_ok = if (s == .csi_param)
+                    State.csiParamContinues(s, byte)
+                else
+                    State.dcsParamContinues(s, byte);
+
+                if (vec_stop == scalar_ok) {
+                    @compileError("paramEnd SIMD predicate drifted from scalar");
+                }
             }
         }
     }
 
-    // Pin the SIMD param predicates to the scalar ones: paramEnd's
-    // stop-vector mask must agree with *continues() on every bytes.
-    // Probing with a 1-byte chunk exercises the same vector expressions
-    // the Chunk-width path runs, the predicates are width-agnostic.
-
-    for ([_]State{ .csi_param, .dcs_param }) |s| {
-        for (0..256) |b| {
-            const byte: u8 = @intCast(b);
-            const unit: @Vector(1, u8) = @splat(byte);
-            const vec_stop = if (s == .csi_param)
-                State.csiParamStopVector(unit)[0]
-            else
-                State.dcsParamStopVector(unit)[0];
-
-            const scalar_ok = if (s == .csi_param)
-                State.csiParamContinues(s, byte)
-            else
-                State.dcsParamContinues(s, byte);
-
-            if (vec_stop == scalar_ok) {
-                @compileError("paramEnd SIMD predicate drifted from scalar");
-            }
+    // feedCsi's param-marker shortcut: safe only while these rows are
+    // pure csi_ignore with no side effects.
+    for ([_]State{ .csi_param, .csi_intermediate, .csi_ignore }) |s| {
+        for (0x3C..0x40) |b| {
+            const e = entries[@intFromEnum(s)][@intCast(b)];
+            if (e.next != .csi_ignore or e.exit != .none or e.action != .none or e.entry != .none)
+                @compileError("csi_ignore fast-path no longer matches entries");
         }
+    }
+
+    // Separately: markers in csi_entry must remain .collect into csi_param;
+    // feedCsi pushes marker_at via pushIntermediates, mirroring this row.
+    for (0x3C..0x40) |b| {
+        const e = entries[@intFromEnum(State.csi_entry)][@intCast(b)];
+        if (e.next != .csi_param or e.exit != .none or e.action != .collect)
+            @compileError("csi_entry marker row drifted — feedCsi's marker_at path no longer matches");
     }
 }
 
@@ -628,8 +664,9 @@ comptime {
         const e = entries[@intFromEnum(State.ground)][byte];
         const table_ok = e.action == .print and e.next == .ground and !forcedTransition(.ground, byte);
         const simd_ok = (b >= 0x20 and b <= 0x7E);
-        if (simd_ok and !table_ok)
+        if (simd_ok and !table_ok) {
             @compileError("ground printable run predicate outside table's .print set");
+        }
     }
 }
 
@@ -726,67 +763,7 @@ comptime {
             }
         }
     }
-
-    // For every digit-count 1..8 and every possible current-slot value,
-    // accumulateDigits must equal digit_count sequential pushParam calls.
-    var seed: u64 = 0x9E3779B97F4A7C15;
-    for (0..2000) |_| {
-        // sample space is too big for exhaustive; sample hard
-        seed = seed *% 6364136223846793005 +% 1442695040888963407;
-        const digits_in = blk: {
-            var d: [8]u8 = undefined;
-            for (&d, 0..) |*c, k| {
-                const digit: u64 = (seed >> (k * 6)) % 10;
-                c.* = @as(u8, '0') + @as(u8, @intCast(digit));
-            }
-            break :blk d;
-        };
-
-        const n: u8 = @intCast(1 + seed % 8);
-
-        var p1: P = .{};
-        var p2: P = .{};
-
-        // seed identical slots
-        p1.pushParam(';');
-        p2.pushParam(';');
-        p1.accumulateDigits(@bitCast(digits_in), n);
-
-        for (digits_in[0..n]) |c| p2.pushParam(c);
-        if (!std.mem.eql(Parameter, p1.getParams(), p2.getParams())) {
-            @compileError("accumulateDigits drifted from pushParam");
-        }
-    }
 }
-
-pub const Parameter = packed struct(u16) {
-    // The numeric value up to (0...32767).
-    // sufficent for cursor positions, SGR codes, color values, etc.
-    value: u15,
-    separator: enum(u1) { sub_parameter, parameter },
-    const Self = @This();
-
-    pub fn format(self: Self, writer: *std.Io.Writer) std.Io.Writer.Error!void {
-        try writer.print("Parameter\n", .{});
-        try writer.print(".value={x}\n", .{self.value});
-        try writer.print(".separator={}\n", .{self.separator});
-    }
-
-    pub const default: Self = .{
-        .value = 0,
-        .separator = .parameter,
-    };
-};
-
-comptime {
-    assert(@bitSizeOf(u16) == @bitSizeOf(Parameter));
-    assert(@sizeOf(u16) == @sizeOf(Parameter));
-}
-
-pub const ParserOptions = struct {
-    max_params: u8 = 16,
-    max_intermediates: u8 = 2,
-};
 
 comptime {
     for (0..256) |b| {
@@ -805,14 +782,109 @@ comptime {
     }
 }
 
+comptime {
+    for (0..256) |b| {
+        if (!continuesPrintableScalar({}, @intCast(b))) continue;
+        const e = entries[@intFromEnum(State.ground)][b];
+        // Bytes that are in the run must be print/stay-in-ground in the table.
+        // (0x7F is allowed to be print in the table but excluded from the run.)
+        if (e.next != .ground or e.action != .print or e.exit != .none or e.entry != .none) {
+            @compileError(std.fmt.comptimePrint("print run includes 0x{x}, table disagrees", .{b}));
+        }
+    }
+}
+
+fn stopPrintableVector(chunk: anytype) @Vector(@typeInfo(@TypeOf(chunk)).vector.len, bool) {
+    const Chunk = @TypeOf(chunk);
+    const min: Chunk = @splat(0x20);
+    const range: Chunk = @splat(0x7E -% 0x20);
+
+    // True for bytes outside printable ASCII (0x20–0x7E).
+    return (chunk -% min) > range;
+}
+
+fn continuesPrintableScalar(_: void, byte: u8) bool {
+    return byte >= 0x20 and byte <= 0x7E;
+}
+
+pub const Parameter = packed struct(u16) {
+    const Self = @This();
+
+    // The numeric value up to (0...32767).
+    // sufficent for cursor positions, SGR codes, color values, etc.
+    value: u15,
+    separator: enum(u1) { sub_parameter, parameter },
+
+    pub const Value = @TypeOf(default.value);
+
+    pub fn format(self: Self, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+        try writer.print("Parameter\n", .{});
+        try writer.print(".value={x}\n", .{self.value});
+        try writer.print(".separator={}\n", .{self.separator});
+    }
+
+    pub const default: Self = .{
+        .value = 0,
+        .separator = .parameter,
+    };
+};
+
+comptime {
+    assert(@bitSizeOf(u16) == @bitSizeOf(Parameter));
+    assert(@sizeOf(u16) == @sizeOf(Parameter));
+}
+
+comptime {
+    for (0..0x20) |b| {
+        if (b == 0x1B) continue;
+        const e = entries[@intFromEnum(State.ground)][b];
+        if (e.action != .execute or e.next != .ground or
+            e.exit != .none or e.entry != .none or
+            forcedTransition(.ground, @intCast(b)))
+        {
+            @compileError(std.fmt.comptimePrint(
+                "ground 0x{x} is not a plain execute; direct-execute path is invalid",
+                .{b},
+            ));
+        }
+    }
+}
+
+pub const ParserOptions = struct {
+    max_params: u8 = 32,
+    max_intermediates: u8 = 2,
+};
+
 /// VT/ANSI escape sequence parser (DEC 8-bit control semantics).
 ///
 /// Raw UTF-8 input must be decoded on upstream before feeding it to Parser.
 pub fn Parser(comptime Handler: type, comptime options: ParserOptions) type {
-    return struct {
-        const max_params = options.max_params;
-        const max_intermediates = options.max_intermediates;
+    const max_params = options.max_params;
+    const max_intermediates = options.max_intermediates;
 
+    comptime {
+        // param_len and intermediate_len are u8.
+        if (max_params > 255) {
+            @compileError("max_params must be <= 255 (param_len is u8)");
+        }
+        if (max_intermediates > 255) {
+            @compileError("max_intermediates must be <= 255 (intermediate_len is u8)");
+        }
+
+        // max_params == 0 leaves no room for even one slot; == 1 makes
+        // every separator input degenerate to overflow. Reject both.
+        if (max_params < 2) {
+            @compileError("max_params must be >= 2 (leading separator opens slot 0, then the separator's slot)");
+        }
+
+        // Same reasoning: intermediates need at least
+        // one slot to be representable at all.
+        if (max_intermediates < 1) {
+            @compileError("max_intermediates must be >= 1");
+        }
+    }
+
+    return struct {
         const Self = @This();
 
         state: State = .ground,
@@ -823,164 +895,150 @@ pub fn Parser(comptime Handler: type, comptime options: ParserOptions) type {
         intermediates: [max_intermediates]u8 = @splat(0),
         intermediate_len: u8 = 0,
 
-        /// Feed bytes through the DEC-compatible state transition table (8-bit control semantics).
+        /// An internal flag set when a separator cannot open a slot at the parameter
+        /// limit. Remaining parameter bytes are consumed without modifying the stored
+        /// prefix, so dropped digits cannot alter its last slot. Dispatch exposes the
+        /// retained prefix through `getParams()`; truncation is intentional.
         ///
-        /// Bytes (0x80...0x9F) are interpreted as C1 controls per the table, they abort
-        /// string states, dispatch as commands, and are never treated as string payload
-        /// or printable data.
+        /// Cleared by `reset()` on sequence entry.
+        params_overflow: bool = false,
+
+        /// Feeds `bytes` through the DEC 8-bit state machine, calling `Handler`
+        /// methods in stream order.
         ///
-        /// Terminial that supports for UTF-8 mode, callers must not pass raw multibyte
-        /// input directly here. UTF-8 continuation bytes live in 0x80...0xBF and would
-        /// be misinterpreted as C1 controls, which silently corrupting string state.
-        /// UTF-8 input must be decoded upstream and routed per run: decoded text via feed(),
-        /// string-payload runs via feedData() if necessary.
+        /// Parser state persists across calls, so a sequence may be split at any byte
+        /// boundary. Behavior is identical to feeding each byte through the transition
+        /// table individually; the fast paths below only change cost, not output.
+        ///
+        /// `0x80..0x9F` are C1 controls. UTF-8 must be decoded upstream.
+        /// Slices passed to the Handler are valid only for the duration of the call.
         pub fn feedBytes(self: *Self, h: *Handler, bytes: []const u8) void {
             var i: usize = 0;
             while (i < bytes.len) {
+                switch (self.state) {
+                    .ground => {
+                        @branchHint(.likely);
 
-                // Fast path batch ASCII printable runs in ground state
-                if (self.state == .ground) {
-                    @branchHint(.likely);
+                        i = self.feedPrintRun(h, bytes, i);
+                        if (i >= bytes.len) break;
 
-                    const start = i;
+                        // Fused CSI sequence a complete `ESC [ ... final` inside the buffer.
+                        // null means incomplete or non-plain CSI, so step() handles ESC.
+                        // if (i + 1 < bytes.len and bytes[i] == 0x1B and bytes[i + 1] == '[') {
+                        //     if (self.feedCsi(h, bytes, i)) |next| {
+                        //         i = next;
+                        //         continue;
+                        //     }
+                        // }
+                        //
 
-                    if (std.simd.suggestVectorLength(u8)) |chunk_len| {
-                        const Chunk = @Vector(chunk_len, u8);
-
-                        // Printable run is [0x20, 0x7E], space included (it's .print in the table).
-                        // Everything below 0x20 and DEL/C1/high bytes fall to step().
-                        const base: Chunk = @splat(0x20);
-                        const range: Chunk = @splat(0x7E - 0x20); // 0x5E
-
-                        while (i + chunk_len <= bytes.len) {
-                            const chunk: Chunk = bytes[i..][0..chunk_len].*;
-
-                            // NOTE! using unsigned-wraparound range trick, anything < 0x20 wraps
-                            // to huge value under -%, so a single ">" catches both tails of the
-                            // original "chunk <= 0x20 | chunk >= 0x7F" check.
-                            const not_printable = (chunk -% base) > range;
-
-                            if (std.simd.firstTrue(not_printable)) |first| {
-                                i += first;
-                                break;
-                            }
-                            i += chunk_len;
-                        } else {
-                            // fell through the while without breaking the scan scalar tail
-                            while (i < bytes.len and bytes[i] >= 0x20 and bytes[i] <= 0x7E) : (i += 1) {}
-                        }
-                    } else {
-                        while (i < bytes.len and bytes[i] >= 0x20 and bytes[i] <= 0x7E) : (i += 1) {}
-                    }
-
-                    if (i > start) h.print(bytes[start..i]);
-                    if (i >= bytes.len) break;
-                }
-
-                // Inside a string state, batch the pure payload prefix and skip
-                // per-byte table lookups for it. payloadEnd stops at the first
-                // terminator, which then goes through the normal step() path,
-                // same contract feedStringRun already relies on.
-                if (self.inStringState()) { // or the switch, if inStringState lives on Parser not State
-                    const j = i + self.state.payloadEnd(bytes[i..]);
-                    if (j > i) self.feedData(h, bytes[i..j]);
-                    i = j;
-                    if (i >= bytes.len) break;
-                }
-
-                // Param run batch: csi_param/dcs_param runs of [0x30,0x3F] skip the
-                // table entirely. Every byte in the run maps to pushParam, digit
-                // accumulation, ';' slot advance, ':' subparam marking with no
-                // transition possible.
-                if (self.inParamState()) {
-                    const j = i + self.state.paramEnd(bytes[i..]);
-
-                    if (j > i) {
-                        // Only attempt SWAR when the run is long enoug for one full
-                        // octet, short/separator-dense runs go straight to pushParam
-                        // and don't pay the probe cost.
-                        var k = i;
-                        // Fast path, 8-byte SWAR block, all digits?
-                        if (j - i >= 8 and self.param_len > 0) {
-                            while (k + 8 <= j) {
-                                const octet: u64 = @bitCast(bytes[k..][0..8].*);
-                                // SWAR digit check: all 8 lanes in '0'..'9'
-                                const lo = octet -% 0x3030303030303030;
-                                const hi = octet -% 0x3939393939393939;
-                                // lane is digit iff (lo <= 9) and no borrow between lanes:
-                                // check lo < 0x0A per lane and hi >= 0x80 per lane
-                                const is_digits =
-                                    (lo & 0xF0F0F0F0F0F0F0F0) == 0 and
-                                    (hi & 0x8080808080808080) == 0x8080808080808080;
-
-                                if (!is_digits) break;
-                                self.accumulateDigits(octet, 8);
-                                k += 8;
-                            }
-                        }
-
-                        // residue: separators, sub-param colons, short tails
-                        // while (k < j) : (k += 1) self.pushParam(bytes[k]);
-                        while (k < j) {
-                            const b = bytes[k];
-
-                            if (b >= '0' and b <= '9') {
-                                // First digit may need to open the slot, defer to
-                                // pushParam once, then accumulate the rest directly.
-                                if (self.param_len == 0) {
-                                    self.pushParam(b);
-                                    k += 1;
+                        if (bytes[i] == 0x1B) {
+                            if (i + 1 < bytes.len and bytes[i + 1] == '[') {
+                                if (self.feedCsi(h, bytes, i)) |next| {
+                                    i = next;
                                     continue;
                                 }
-
-                                if (self.param_len <= max_params - 1) {
-                                    const p = &self.params[self.param_len - 1];
-
-                                    // separator (bit 15) is invariant across the whole digit
-                                    // sub-run, read it once, accumulate wide, remerge once.
-                                    const sep: u16 = @as(u16, @bitCast(p.*)) & 0x8000;
-                                    var v: u32 = p.value;
-
-                                    while (k < j and bytes[k] >= '0' and bytes[k] <= '9') : (k += 1) {
-                                        v = v *% 10 +% (bytes[k] -% '0');
-                                    }
-
-                                    p.* = @bitCast(sep | @as(u16, @truncate(v)));
-                                } else {
-                                    // Slot cap reached: digits are dropped, but must still
-                                    // be consumed, same as pushParam's else behavior.
-                                    while (k < j and bytes[k] >= '0' and bytes[k] <= '9') : (k += 1) {}
-                                }
-                                continue;
                             }
-
-                            self.pushParam(b); // ';', ':', '<'..'?' slot bookkeeping
-                            k += 1;
+                            // ESC needs a real transition (clear + enter escape): fall to step().
+                        } else if (bytes[i] < 0x20) {
+                            h.execute(bytes[i]); // plain C0 in ground: no transition, no exit/entry action
+                            i += 1;
+                            continue;
                         }
 
-                        i = j;
+                        // Exactly one control byte (C0, DEL, C1, ESC), then back to scan.
+                        self.step(h, bytes[i]);
+                        i += 1;
                         continue;
-                    }
+                    },
+
+                    .osc_string, .sos_pm_apc_string, .dcs_passthrough => {
+                        // Batch the payload prefix up to the first terminator; the
+                        // terminator itself falls through to residue or step handling.
+                        const end = i + self.state.payloadEnd(bytes[i..]);
+                        if (end > i) self.feedData(h, bytes[i..end]);
+                        i = end;
+                        if (i >= bytes.len) break;
+                        // fall through to residue for the terminator byte
+                    },
+
+                    inline .csi_param, .dcs_param => |st| {
+                        const j = self.feedParamRun(bytes, i, st == .csi_param);
+                        if (j > i) {
+                            i = j;
+                            continue;
+                        }
+                    },
+
+                    else => {},
                 }
 
-                // Mixed byte residue: run length the stay in state tail so the
-                // transition check is paid once per run, not once per byte.
+                // Look up each entry once and reuse it for both
+                // the stay-in-state test and transition().
+
+                const s = self.state; // loop-invariant: dispatch() never writes .state
+                const row = &entries[@intFromEnum(s)];
+
                 var j = i;
+                var e: Entry = undefined;
                 while (j < bytes.len) : (j += 1) {
-                    const e = entries[@intFromEnum(self.state)][bytes[j]];
-                    if (e.next != self.state or forcedTransition(self.state, bytes[j])) break;
+                    e = row[bytes[j]];
+                    if (e.next != s or forcedTransition(s, bytes[j])) break;
                     self.dispatch(h, e.action, bytes[j]);
                 }
 
-                if (j > i) {
-                    i = j;
-                    continue;
+                if (j < bytes.len) {
+                    self.transition(h, e, bytes[j]);
+                    j += 1;
                 }
 
-                const byte = bytes[i];
-                i += 1;
+                i = j;
+                continue;
+            }
+        }
 
-                self.step(h, byte);
+        /// Apply the table entry resolved for the current `(state, byte)` pair.
+        ///
+        /// Runs the exit and transition actions, updates `self.state` to `e.next`,
+        /// then runs the entry action. Both `step()` and the `feedBytes` residue loop
+        /// use this function to keep transition ordering consistent.
+        inline fn transition(self: *Self, h: *Handler, e: Entry, byte: u8) void {
+            if (e.exit != .none) self.dispatch(h, e.exit, byte);
+            self.dispatch(h, e.action, byte);
+            self.state = e.next;
+            if (e.entry != .none) self.dispatch(h, e.entry, byte);
+        }
+
+        inline fn step(self: *Self, h: *Handler, byte: u8) void {
+            const e = entries[@intFromEnum(self.state)][byte];
+            if (e.next != self.state or forcedTransition(self.state, byte)) {
+                self.transition(h, e, byte);
+            } else {
+                self.dispatch(h, e.action, byte);
+            }
+        }
+
+        /// Emits the maximal run of printable ASCII bytes beginning at `start`.
+        ///
+        /// Printable ASCII is the inclusive range `0x20...0x7E`. Returns the index
+        /// immediately after the emitted run: the first non-printable byte's index,
+        /// or `bytes.len` if the remaining bytes are all printable. The byte at the
+        /// returned index is not emitted, leaving it for the caller to dispatch.
+        ///
+        /// `start` must be at most `bytes.len`.
+        fn feedPrintRun(_: *const Self, h: *Handler, bytes: []const u8, start: usize) usize {
+            // scanUntil returns an index relative to the slice passed to it.
+            const i = start + State.scanUntil(
+                bytes[start..],
+                {},
+                stopPrintableVector,
+                continuesPrintableScalar,
+            );
+
+            if (i > start) h.print(bytes[start..i]);
+            return i;
+        }
+
         /// Scan and dispatch a CSI sequence beginning at `start`.
         ///
         /// On success, returns the index just past the final byte. Returns `null`
@@ -1001,10 +1059,9 @@ pub fn Parser(comptime Handler: type, comptime options: ParserOptions) type {
             } else null;
 
             const params_begin = p;
-
             // CSI parameter bytes are in the range 0x30..0x3B.
+            // scan bounds only, no state.
             while (p < n and bytes[p] >= 0x30 and bytes[p] <= 0x3B) : (p += 1) {}
-
             const params_end = p;
 
             // A private marker here is invalid after parameters. Preserve the table
@@ -1013,6 +1070,29 @@ pub fn Parser(comptime Handler: type, comptime options: ParserOptions) type {
                 self.state = .csi_ignore;
                 return p;
             }
+
+            // Collect intermediates so they can be included in the dispatch.
+            while (p < n and bytes[p] >= 0x20 and bytes[p] <= 0x2F) : (p += 1) {}
+            const intermediates_end = p;
+
+            if (p >= n) return null;
+
+            const final = bytes[p];
+            if (final < 0x40 or final > 0x7E) return null;
+
+            self.reset();
+
+            // marker is intermediates, not params
+            if (marker_at) |m| self.pushIntermediates(bytes[m]);
+
+            // fill params through the batched path, one slot open per separator,
+            // register-held digit accumulation, no per-byte pushParam machinery
+            _ = self.feedParamRun(bytes[0..params_end], params_begin, true);
+            for (bytes[params_end..intermediates_end]) |b| self.pushIntermediates(b);
+
+            self.dispatch(h, .csi_dispatch, final);
+            self.state = .ground;
+            return p + 1;
         }
 
         /// Feeds a contiguous payload span to the handler for the parser's current
@@ -1048,36 +1128,10 @@ pub fn Parser(comptime Handler: type, comptime options: ParserOptions) type {
             };
         }
 
-        pub fn inParamState(self: *const Self) bool {
-            return switch (self.state) {
-                .csi_param, .dcs_param => true,
-                else => false,
-            };
-        }
-
-        inline fn step(self: *Self, h: *Handler, byte: u8) void {
-            const e = entries[@intFromEnum(self.state)][byte];
-            const prev_state = self.state;
-
-            if (e.next != prev_state or forcedTransition(self.state, byte)) {
-                self.dispatch(h, e.exit, byte);
-                self.dispatch(h, e.action, byte);
-                self.state = e.next;
-                self.dispatch(h, e.entry, byte);
-            } else {
-                self.dispatch(h, e.action, byte);
-            }
-        }
-
-        inline fn clear(self: *Self) void {
+        inline fn reset(self: *Self) void {
             self.param_len = 0;
             self.intermediate_len = 0;
-
-            // No @memset needed: pushParam() always initializes params[0] on the
-            // first digit and params[param_len-1] on each new separator before
-            // any read via getParams() (which is bounded by param_len). Stale
-            // slots beyond param_len are never observed.
-            // @memset(&self.params, Parameter{ .value = 0, .separator = .parameter });
+            self.params_overflow = false;
         }
 
         inline fn pushIntermediates(self: *Self, byte: u8) void {
@@ -1087,57 +1141,201 @@ pub fn Parser(comptime Handler: type, comptime options: ParserOptions) type {
             }
         }
 
-        const pow10 = [9]u32{ 1, 10, 100, 1_000, 10_000, 100_000, 1_000_000, 10_000_000, 100_000_000 };
-
-        /// Accumulate up to 8 decimal digits into the current param slot in
-        /// one pass, instead of per-byte pushParam. Same clamping semantics:
-        /// digits beyond the slot's saturation point produce the identical
-        /// clamped value pushParam would.
-        fn accumulateDigits(self: *Self, octet: u64, digit_count: u8) void {
-            // caller guarantees a slot exists
-            std.debug.assert(self.param_len > 0);
-            std.debug.assert(digit_count >= 1 and digit_count <= 8);
-
-            const index = self.param_len - 1;
-            const p = &self.params[index];
-
-            var digits = octet -% 0x3030303030303030;
-
-            // zero lanes beyond digit_count so the fixed 8-lane fold
-            // produces exactly the n-digit value
-            const n: u6 = @intCast(digit_count);
-            const keep: u64 = if (digit_count == 8) ~@as(u64, 0) else (@as(u64, 1) << (n * 8)) - 1;
-            digits &= keep;
-            digits <<= (8 - n) * 8; // left-justify: fold expects lane0 = most significant
-
-            const pairs = ((digits *% 2561) >> 8) & 0x00FF00FF00FF00FF;
-            const quads = ((pairs *% 6553601) >> 16) & 0x0000FFFF0000FFFF;
-            const val = (quads *% 42949672960001) >> 32;
-
-            const acc = @as(u64, p.value) *% pow10[digit_count] +% val;
-            p.value = @truncate(acc);
+        inline fn isDigit(b: u8) bool {
+            return b -% '0' < 10;
         }
 
+        // `value * 10 + digit`, saturating at `maxInt(Parameter.Value)` (32767).
+        // Params that large are degenerate; clamping is strictly better than a
+        // wrapped command value.
+        //
+        // `digit` must be in 0..9, which enforced by the caller's debug assert.
+        // inline fn accumDigit(value: Parameter.Value, digit: Parameter.Value) Parameter.Value {
+        //     // u16 intermediate: u15*10+9 fits in u16, no overflow flag needed,
+        //     // the clamp is one cmovae instead of saturating ops.
+        //     const wide = @as(u32, value) * 10 + digit; // max 327679, never wraps
+        //     return @min(wide, 32767); // one cmp + cmov
+        // }
+
+        const max_param_value = std.math.maxInt(Parameter.Value);
+
+        /// `value * 10 + digit`, saturating at `maxInt(Parameter.Value)` (32767).
+        /// Params that large are degenerate; clamping is strictly better than a
+        /// wrapped command value.
+        ///
+        /// `digit` must be in 0..9, enforced by the caller's debug assert.
+        /// Table-path use (pushParam): one digit at a time, cmp+cmov only.
+        inline fn accumDigit(value: Parameter.Value, digit: Parameter.Value) Parameter.Value {
+            // u32 intermediate: 32767*10+9 = 327679, never wraps.
+            const wide = @as(u32, value) * 10 + digit;
+            return @min(wide, max_param_value);
+        }
+
+        /// Consume a maximal digit run at `start`, returning the saturated
+        /// accumulation into `value` and the new index.
+        ///
+        /// Five digits are accumulated unclamped in u32: value <= 32767, so
+        /// value*10^5 + 99999 < 2^32 cannot wrap. A longer run saturates at
+        /// 32767 and its remaining digits are skipped. v*10+d is monotonic in
+        /// v, so one clamp at the end equals per-digit clamping. Leading zeros
+        /// are counted as digits, so 000001 stays 1; parity with pushParam.
+        fn accumDigits(v0: Parameter.Value, bytes: []const u8, start: usize) struct {
+            value: Parameter.Value,
+            index: usize,
+        } {
+            var v: u32 = v0;
+            var i = start;
+
+            var k: usize = 0;
+            while (k < 5 and i < bytes.len) : (k += 1) {
+                const d = bytes[i] -% '0';
+                if (d >= 10) break;
+                v = v * 10 + d;
+                i += 1;
+            }
+            if (k == 5) {
+                v = @min(v, 32767);
+                while (i < bytes.len and isDigit(bytes[i])) : (i += 1) {
+                    // past the provable window: fold with clamp per digit
+                    v = @min(v * 10 + (bytes[i] -% '0'), 32767);
+                }
+            }
+
+            const clamped: u32 = @min(v, max_param_value);
+            return .{ .value = @intCast(@min(v, clamped)), .index = i };
+        }
+
+        /// Consumes parameter bytes starting at `start` and returns the index of the
+        /// first byte it did not consume.
+        ///
+        /// Digits update the current parameter. `;` starts a new parameter, and `:`
+        /// starts a sub-parameter when `allow_colon` is true. If no parameter is open,
+        /// the first byte is passed to `pushParam` to preserve its handling of leading
+        /// separators.
+        ///
+        /// With `allow_colon` false (the DCS caller), `:` is NOT a param byte: the
+        /// loop exits on it, and the residue/table path transitions to `dcs_ignore`.
+        /// This contract is pinned at comptime against `dcsParamContinues` /
+        /// `dcsParamStopVector` and the `entries` table; do not add `:` handling
+        /// to this function for the DCS path.
+        ///
+        /// At the slot cap a separator is consumed but dropped and `params_overflow`
+        /// is set; once set, remaining digits and separators are consumed without
+        /// modifying any slot, so digits never leak into the last kept parameter.
+        ///
+        /// State transitions for non-parameter bytes are left to `step`.
+        fn feedParamRun(
+            self: *Self,
+            bytes: []const u8,
+            start: usize,
+            comptime allow_colon: bool,
+        ) usize {
+            const n = bytes.len;
+            var i = start;
+            var plen = self.param_len;
+
+            // First param byte opens slot 0, let pushParam own that transition.
+            if (plen == 0) {
+                if (i >= n) return i;
+
+                const b = bytes[i];
+                const ok = (b -% '0' < 10) or b == ';' or (allow_colon and b == ':');
+                if (!ok) return i;
+
+                self.pushParam(b);
+
+                i += 1;
+                plen = self.param_len;
+            }
+
+            // prelude guarantees a slot exists
+            std.debug.assert(plen > 0);
+
+            while (i < n) {
+                const b = bytes[i];
+
+                if (isDigit(b)) {
+                    if (self.params_overflow) {
+                        // separator was dropped at the cap; consume digits for
+                        // the slot that doesn't exist, never touching slot max_params-1.
+                        while (i < n and isDigit(bytes[i])) : (i += 1) {}
+                    } else {
+                        const r = accumDigits(self.params[plen - 1].value, bytes, i);
+                        self.params[plen - 1].value = r.value;
+                        i = r.index;
+                    }
+                } else if (b == ';' or (allow_colon and b == ':')) {
+                    if (plen < max_params) {
+                        plen += 1;
+                        self.params[plen - 1] = .{
+                            .value = 0,
+                            .separator = if (b == ':') .sub_parameter else .parameter,
+                        };
+                    } else {
+                        // Cap reached, mark overflow so following digits drop.
+                        self.params_overflow = true;
+                    }
+                    i += 1;
+                } else break;
+
+                // Finals, intermediates, markers 0x3C..0x3F, C0, ESC all exit here.
+                // step() owns every transition out of a param state (incl. csi_ignore).
+            }
+
+            self.param_len = plen;
+            return i;
+        }
+
+        /// Consume one param byte: digit, ';', or ':'. Any other byte is a contract
+        /// violation, in debug builds the digit arm asserts `byte -% '0' < 10` to
+        /// catch misrouted input early.
+        ///
+        /// A separator opens the next slot and sets its kind (`;` is a `.parameter`,
+        /// `:` is a `.sub_parameter`). A leading separator first creates an implicit
+        /// empty `.default` slot, so `:5` remains distinct from `0:5`.
+        ///
+        /// Keep this rule shared by the fast and table-driven paths. At the slot
+        /// limit a separator is consumed without opening a slot and sets
+        /// `params_overflow`; while overflowed, digits are consumed without
+        /// accumulating into the last parameter.
         inline fn pushParam(self: *Self, byte: u8) void {
             switch (byte) {
                 ';', ':' => {
-                    if (self.param_len < max_params - 1) {
+                    if (self.param_len == 0) {
+                        // Preserve the empty parameter before a leading separator.
+                        self.param_len = 1;
+                        self.params[0] = .default;
+                    }
+
+                    if (self.param_len < max_params) {
+                        // Open a new slot tagged by this separator's kind.
                         self.param_len += 1;
-                        // Initialize the new current slot (param_len-1)
                         self.params[self.param_len - 1] = .{
                             .value = 0,
                             .separator = if (byte == ':') .sub_parameter else .parameter,
                         };
+                    } else {
+                        self.params_overflow = true;
                     }
                 },
                 else => { // digit
+                    // callers must only route param bytes here, the table's `.param`
+                    // action covers exactly 0x30..0x3B (digits + separators), and
+                    // `feedCsi` or `feedParamRun` scan the same range. Anything else would
+                    // wrap into a bogus digit via '-% '0''
+                    std.debug.assert(byte -% '0' < 10);
+
                     if (self.param_len == 0) {
                         self.param_len = 1;
-                        self.params[0] = .{ .value = 0, .separator = .parameter };
+                        self.params[0] = .default;
                     }
-                    if (self.param_len <= max_params - 1) { // only accumulate into valid slots
-                        const i = self.param_len - 1;
-                        self.params[i].value = self.params[i].value *% 10 +% (byte -% '0');
+
+                    // param_len <= max_params is structural; the only guard that
+                    // matters is !params_overflow; digits after a dropped
+                    // separator must not leak into the last kept slot.
+                    if (!self.params_overflow) {
+                        const p = &self.params[self.param_len - 1];
+                        p.value = accumDigit(p.value, byte -% '0');
                     }
                 },
             }
@@ -1155,7 +1353,7 @@ pub fn Parser(comptime Handler: type, comptime options: ParserOptions) type {
             switch (action) {
                 // zig fmt: off
                 .none, .ignore => {},
-                .clear         => self.clear(),
+                .clear         => self.reset(),
                 .param         => self.pushParam(byte),
                 .collect       => self.pushIntermediates(byte),
                 .unhook        => handler.unhook(),
@@ -1183,6 +1381,10 @@ pub const ChecksumDispatcher = struct {
     const w_osc: u64 = 37;
     const w_dcs: u64 = 41;
 
+    pub fn reset(self: *@This()) void {
+        self.checksum = 0;
+    }
+
     inline fn add(self: *@This(), w: u64, b: u8) void {
         self.checksum +%= @as(u64, b) *% w;
     }
@@ -1205,7 +1407,8 @@ pub const ChecksumDispatcher = struct {
         for (intermediates) |b| self.checksum +%= @as(u64, b) *% 53;
     }
     pub fn csiDispatch(self: *@This(), final: u8, intermediates: []const u8, params: anytype) void {
-        self.checksum +%= @as(u64, final) *% 59;
+        self.checksum +%= @as(u64, final) *% 43;
+        self.checksum +%= @as(u64, params.len) *% 67; // count
         for (intermediates) |b| self.checksum +%= @as(u64, b) *% 53;
         for (params) |p| self.checksum +%= @as(u64, p.value) *% 61;
     }
@@ -1236,3 +1439,10 @@ pub const ChecksumDispatcher = struct {
         self.checksum +%= 79;
     }
 };
+
+// String-state payload prefix, batch up to first terminator.
+// fn feedStringRun(self: *Self, h: *Handler, bytes: []const u8, start: usize) usize {
+//     const end = start + self.state.payloadEnd(bytes[start..]);
+//     if (end > start) self.feedData(h, bytes[start..end]);
+//     return end;
+// }
