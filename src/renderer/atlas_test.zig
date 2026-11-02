@@ -2,8 +2,8 @@ const std = @import("std");
 const testing = std.testing;
 const alloc = std.testing.allocator;
 
-const Atlas = @import("atlas.zig");
-const window = @import("window.zig");
+const Atlas = @import("Atlas.zig");
+const window = @import("Window.zig");
 const ft = @import("../freetype/root.zig");
 
 const FontConfig = ft.FontConfig;

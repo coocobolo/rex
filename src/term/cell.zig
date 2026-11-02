@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const Palette = @import("palette.zig").Palette;
+const Palette = @import("Palette.zig").Palette;
 const x11_colors = @import("../color/x11.zig");
 // const Instance = @import("../renderer/instance.zig").Instance;
 
@@ -681,18 +681,6 @@ pub const AttrFlags = packed struct(u12) {
         .overline = false,
         .underline = .none,
     };
-
-    // pub fn packFlags(attr: AttrFlags, is_cursor: bool) Instance.Flags {
-    //     return .{
-    //         .bold = attr.bold,
-    //         .italic = attr.italic,
-    //         .underline = if (attr.underline == .none) false else true,
-    //         .blink = attr.blink,
-    //         .reverse = attr.reverse,
-    //         .strikethrough = attr.strikethrough,
-    //         .cursor = is_cursor,
-    //     };
-    // }
 };
 
 comptime {

@@ -3,12 +3,12 @@ const log = std.log.scoped(.cursor);
 
 const gl = @import("gl.zig");
 
-const Shader = @import("shader.zig");
-const Atlas = @import("atlas.zig");
+const Shader = @import("Shader.zig");
+const Atlas = @import("Atlas.zig");
 const Dimension = @import("dimension.zig").Dimension;
 const cellOff = @import("buffer.zig").cellOff;
 const CellBuffer = @import("buffer.zig").CellBuffer;
-const CellInstance = @import("cell.zig").Instance;
+const CellInstance = @import("Cell.zig").Instance;
 
 const f32_size = @sizeOf(f32);
 const cell_instance_size = @sizeOf(CellInstance);

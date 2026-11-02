@@ -4,9 +4,9 @@ const log = std.log.scoped(.buffer);
 
 const gl = @import("gl.zig");
 
-const CellInstance = @import("cell.zig").Instance;
-const BackgroundInstance = @import("background.zig").Instance;
-const SelectionInstance = @import("selection.zig").Instance;
+const CellInstance = @import("Cell.zig").Instance;
+const BackgroundInstance = @import("Background.zig").Instance;
+const SelectionInstance = @import("Selection.zig").Instance;
 const SelectionPolygon = @import("frame.zig").SelectionPolygon;
 const SelectionVertex = @import("frame.zig").SelectionVertex;
 

@@ -2,7 +2,7 @@ const std = @import("std");
 
 const root = @import("root.zig");
 
-const ScreenType = @import("app.zig").ScreenType;
+const ScreenType = @import("App.zig").ScreenType;
 const Classifier = root.unicode.Classifier;
 
 /// A single selection endpoint with a fields row and column.
@@ -107,13 +107,13 @@ pub const empty: Selection = .{
     .range = .{ .start = .empty, .end = .empty },
 };
 
-pub inline fn has_selection(self: *const Selection) bool {
+pub inline fn hasSelection(self: *const Selection) bool {
     // if phase == .selected (not dragging) but start.col, dragged should still returns true.
     return self.phase == .dragging or self.phase == .selected;
 }
 
 pub inline fn dragged(self: *Selection) bool {
-    return self.has_selection() and self.range.isExtended();
+    return self.hasSelection() and self.range.isExtended();
 }
 
 /// Sets the initial (zero-width or kind-snapped) range for a fresh press,

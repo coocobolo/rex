@@ -4,7 +4,7 @@ const Allocator = std.mem.Allocator;
 
 const log = std.log.scoped(.rasterizer);
 
-const Config = @import("config.zig");
+const Config = @import("Config.zig");
 const ft = @import("root.zig");
 const c = @import("root.zig").c;
 const wcwidth = @import("../unicode/wcwidth.zig").wcwidth;

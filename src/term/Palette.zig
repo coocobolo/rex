@@ -4,7 +4,7 @@ const testing = std.testing;
 const Color = @import("cell.zig").Color;
 const Rgb = Color.Rgb;
 const ansi = @import("../color/ansi.zig");
-const Theme = @import("theme.zig");
+const Theme = @import("Theme.zig");
 
 /// Per-screen color palette.
 ///

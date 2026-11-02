@@ -3,7 +3,7 @@ const log = std.log.scoped(.background);
 
 const Flags = @import("frame.zig").Flags;
 const gl = @import("gl.zig");
-const Shader = @import("shader.zig");
+const Shader = @import("Shader.zig");
 const Buffer = @import("buffer.zig").BgBuffer;
 const Dimension = @import("dimension.zig").Dimension;
 

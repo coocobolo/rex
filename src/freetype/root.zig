@@ -10,8 +10,8 @@ pub const c = @cImport({
     @cInclude("freetype/ftmm.h");
 });
 
-pub const FontConfig = @import("config.zig");
-pub const Rasterizer = @import("rasterizer.zig");
+pub const FontConfig = @import("Config.zig");
+pub const Rasterizer = @import("Rasterizer.zig");
 
 comptime {
     std.testing.refAllDecls(@This());

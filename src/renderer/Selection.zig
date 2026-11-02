@@ -2,9 +2,9 @@ const std = @import("std");
 const log = std.log.scoped(.selection);
 
 const gl = @import("gl.zig");
-const Shader = @import("shader.zig");
+const Shader = @import("Shader.zig");
 const Dimension = @import("dimension.zig").Dimension;
-const Kind = @import("../selection.zig").Kind;
+const Kind = @import("../Selection.zig").Kind;
 const Buffer = @import("buffer.zig").SelectionBuffer;
 
 pub const State = struct {

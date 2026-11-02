@@ -387,7 +387,7 @@ pub const Posix = struct {
         };
     }
 
-    pub fn read_raw(self: *Posix, dest: []u8) posix.ReadError!usize {
+    pub fn readRaw(self: *Posix, dest: []u8) posix.ReadError!usize {
         return try posix.read(self.master, dest);
     }
 

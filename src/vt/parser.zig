@@ -441,7 +441,7 @@ fn createEntries() [State.count][256]Entry {
     // zig fmt: on
 
     // DCS IGNORE
-    // malformed DCS, swallow untill ST
+    // malformed DCS, swallow until ST
     // zig fmt: off
     check.sets(&t, .dcs_ignore, 0x00, 0x17, .ignore, .dcs_ignore);
     check.set(&t,  .dcs_ignore, 0x19,       .ignore, .dcs_ignore);

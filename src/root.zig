@@ -1,7 +1,7 @@
 //! By convention, root.zig is the root source file when making a library.
 const std = @import("std");
 
-pub const App = @import("app.zig");
+pub const App = @import("App.zig");
 pub const input = @import("input.zig");
 pub const gl = @import("renderer/gl.zig");
 
@@ -16,7 +16,7 @@ pub const dirs = @import("dirs/root.zig");
 pub const env = @import("env/root.zig");
 pub const unicode = @import("unicode/root.zig");
 
-pub const Selection = @import("selection.zig");
+pub const Selection = @import("Selection.zig");
 
 pub const VT = @import("vt/parser.zig");
 
@@ -24,7 +24,7 @@ pub const termio = @import("termio/root.zig");
 pub const FreeType = @import("freetype/root.zig");
 pub const builtin = @import("builtin/root.zig");
 
-// pub const Audio = @import("audio.zig");
+// pub const Audio = @import("Audio.zig");
 
 test {
     std.testing.refAllDecls(@This());

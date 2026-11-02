@@ -18,7 +18,7 @@ const Option = @import("term.zig").Option;
 const Terminal = @import("term.zig").Terminal;
 const Attr = @import("cell.zig").Attr;
 const Color = @import("cell.zig").Color;
-const Palette = @import("palette.zig").Palette;
+const Palette = @import("Palette.zig").Palette;
 
 const ColorTarget = enum { fg, bg, underline };
 

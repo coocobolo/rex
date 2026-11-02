@@ -5,8 +5,8 @@ const native_endian = builtin.target.cpu.arch.endian();
 const Parser = @import("../vt/parser.zig").Parser;
 const Parameter = @import("../vt/parser.zig").Parameter;
 
-const Palette = @import("palette.zig").Palette;
-const Theme = @import("theme.zig");
+const Palette = @import("Palette.zig").Palette;
+const Theme = @import("Theme.zig");
 const Color = @import("cell.zig").Color;
 const CellKind = @import("cell.zig").Kind;
 const Rgb = Color.Rgb;
@@ -134,7 +134,7 @@ pub const Events = struct {
         }
 
         /// Append a single ASCII character.
-        pub fn appendByte(self: *Response, b: u8) void {
+        fn appendByte(self: *Response, b: u8) void {
             if (self.len >= self.buf.len) return;
             self.buf[self.len] = b;
             self.len += 1;
@@ -158,7 +158,7 @@ pub const Events = struct {
         }
 
         // Appends exactly two lowercase hex digits for a u8: 0..255 -> "00".."ff"
-        pub fn appendHex(self: *Response, v: u8) void {
+        fn appendHex(self: *Response, v: u8) void {
             if (self.len + 2 > self.buf.len) return;
             self.buf[self.len] = alphabet[v >> 4];
             self.buf[self.len + 1] = alphabet[v & 0x0F];
@@ -166,7 +166,7 @@ pub const Events = struct {
         }
 
         // add to Response
-        pub fn appendHexU16(self: *Response, v: u16) void {
+        fn appendHexU16(self: *Response, v: u16) void {
             if (self.len + 4 > self.buf.len) return;
             self.buf[self.len + 0] = alphabet[(v >> 12) & 0xF];
             self.buf[self.len + 1] = alphabet[(v >> 8) & 0xF];
@@ -789,7 +789,7 @@ pub fn Terminal(comptime option: Option) type {
 
         /// Call at end of input (e.g., PTY read returns 0 bytes) to flush any
         /// pending cluster.  Also call on cursor movement / screen clear.
-        pub fn flushPendingGrapheme(self: *Self) void {
+        fn flushPendingGrapheme(self: *Self) void {
             // cursor movement should never have a pending grapheme in normal input
             self.flushGrapheme();
             self.grapheme_breaker = null;

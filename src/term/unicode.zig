@@ -82,49 +82,6 @@ pub const Utf8Dfa = struct {
     }
 };
 
-// /// Returns the terminal column width of a Unicode codepoint.
-// /// Returns 2 for East Asian Wide/Fullwidth characters, 1 otherwise.
-// /// Combining characters (width 0) are not handled here — the caller
-// /// (putChar) must resolve them before calling writeChar.
-// pub fn wcwidth(cp: u21) u2 {
-//     // Fast path: ASCII printable (U+0020–U+007E).
-//     // Control characters (U+0000–U+001F, U+007F) do not reach this function;
-//     // the VT parser dispatches them as control actions before calling putChar.
-//     if (cp < 0x7F) return 1;
-//
-//     // Scattered wide/ambiguous emoji
-//     // Property W (Wide) or A (Ambiguous, treated as wide for CJK compatibility).
-//     // Source: Unicode 15.0 EastAsianWidth.txt.
-//     return switch (cp) {
-//         // 0x1100...0x115F,
-//         // 0x2E80...0x303E,
-//         // 0x3041...0x33FF,
-//         // 0x3400...0x4DBF,
-//         // 0x4E00...0x9FFF,
-//         // 0xA000...0xA4CF,
-//         // 0xA960...0xA97F,
-//         // 0xAC00...0xD7AF,
-//         // 0xF900...0xFAFF,
-//         // 0xFE10...0xFE1F,
-//         // 0xFE30...0xFE6F,
-//         // 0xFF01...0xFF60,
-//         // 0xFFE0...0xFFE6,
-//         // 0x1B000...0x1B0FF,
-//         // 0x1F004...0x1F004,
-//         // 0x1F0CF...0x1F0CF,
-//         // 0x1F200...0x1F2FF,
-//         // 0x1F300...0x1F64F,
-//         // 0x1F680...0x1F6FF,
-//         // 0x1F900...0x1F9FF,
-//         // 0x1FA70...0x1FAFF,
-//         // 0x20000...0x2FFFD,
-//         // 0x30000...0x3FFFD,
-//         // => 2,
-//
-//         else => 1,
-//     };
-// }
-
 /// Returns the terminal column width of a Unicode codepoint.
 ///
 /// Returns:

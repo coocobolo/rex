@@ -4,7 +4,7 @@ const std = @import("std");
 const log = std.log.scoped(.scrollbar);
 
 const gl = @import("gl.zig");
-const Shader = @import("shader.zig");
+const Shader = @import("Shader.zig");
 const Dimension = @import("dimension.zig").Dimension;
 
 pub const State = struct {

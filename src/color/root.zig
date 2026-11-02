@@ -11,4 +11,4 @@
 pub const ansi = @import("ansi.zig");
 pub const x11 = @import("x11.zig");
 pub const Color = @import("color.zig").Color;
-pub const Rgb = @import("rgb.zig").Rgb;
+pub const Rgb = @import("Rgb.zig").Rgb;

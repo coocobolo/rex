@@ -4,16 +4,16 @@ const log = std.log.scoped(.renderer);
 
 const gl = @import("gl.zig");
 
-const Atlas = @import("atlas.zig");
-const Background = @import("background.zig");
+const Atlas = @import("Atlas.zig");
+const Background = @import("Background.zig");
 const buffer = @import("buffer.zig");
-const Cell = @import("cell.zig");
-const Cursor = @import("cursor.zig");
+const Cell = @import("Cell.zig");
+const Cursor = @import("Cursor.zig");
 const Dimension = @import("dimension.zig").Dimension;
 const FrameData = @import("frame.zig");
-const Scrollbar = @import("scrollbar.zig");
-const Selection = @import("selection.zig");
-const Shader = @import("shader.zig");
+const Scrollbar = @import("Scrollbar.zig");
+const Selection = @import("Selection.zig");
+const Shader = @import("Shader.zig");
 
 const TerminalOption = @import("../term/root.zig").term.Option;
 

@@ -4,11 +4,8 @@ const Parameter = @import("../vt/parser.zig").Parameter;
 const Terminal = @import("term.zig").Terminal;
 const Charset = @import("cell.zig").Charset;
 const Option = @import("term.zig").Option;
-const Palette = @import("palette.zig").Palette;
+const Palette = @import("Palette.zig").Palette;
 const Screen = @import("screen.zig").Screen;
-// const ControlSequence = @import("parser.zig").ControlSequence;
-// const EscapeSequence = @import("actions.zig").EscapeDispatch;
-// const OscDispatch = @import("actions.zig").OscDispatch;
 const sgr = @import("sgr.zig");
 
 const seqIntroducer = @import("term.zig").seqIntroducer;
@@ -19,7 +16,7 @@ test {
 }
 
 /// helper: get param value or default fallback, skipping sub-params
-pub fn paramOr(params: []const Parameter, index: usize, default: u16) u16 {
+fn paramOr(params: []const Parameter, index: usize, default: u16) u16 {
     var n: usize = 0;
     for (params) |p| {
         if (p.separator == .sub_parameter) continue;

@@ -1,8 +1,8 @@
 const std = @import("std");
 
 const gl = @import("gl.zig");
-const Atlas = @import("atlas.zig");
-const Shader = @import("shader.zig");
+const Atlas = @import("Atlas.zig");
+const Shader = @import("Shader.zig");
 
 const Buffer = @import("buffer.zig").CellBuffer;
 const Flags = @import("frame.zig").Flags;

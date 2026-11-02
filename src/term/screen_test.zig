@@ -11,7 +11,7 @@ const Screen = screen.Screen;
 const Cell = @import("cell.zig").Cell;
 const Attr = @import("cell.zig").Attr;
 const Color = @import("cell.zig").Color;
-const Palette = @import("palette.zig").Palette;
+const Palette = @import("Palette.zig").Palette;
 const Cursor = @import("cell.zig").Cursor;
 const SavedCursor = @import("cell.zig").SavedCursor;
 const Charset = @import("cell.zig").Charset;
@@ -5091,7 +5091,7 @@ test "putChar: GL=G0 (shiftIn) restores ASCII after G1 was active" {
     try testing.expectEqual(@as(u21, 'j'), s.cellAt(0, 1).codepoint);
 }
 
-test "putChar: SS2 applies G2 for one char than reverts to GL" {
+test "putChar: SS2 applies G2 for one char then reverts to GL" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
     defer s.destroy(alloc);
@@ -5112,7 +5112,7 @@ test "putChar: SS2 applies G2 for one char than reverts to GL" {
     try testing.expectEqual(@as(u21, 'j'), s.cellAt(0, 1).codepoint);
 }
 
-test "putChar: SS3 applies G3 for one char than reverts to GL" {
+test "putChar: SS3 applies G3 for one char then reverts to GL" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
     defer s.destroy(alloc);

@@ -3,8 +3,8 @@ const testing = std.testing;
 
 const alloc = testing.allocator;
 
-const Rasterizer = @import("rasterizer.zig");
-const Config = @import("config.zig");
+const Rasterizer = @import("Rasterizer.zig");
+const Config = @import("Config.zig");
 
 const test_font: Config = .{
     .max_size = 72,

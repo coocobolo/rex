@@ -1,6 +1,6 @@
 const std = @import("std");
 
-pub const classifer = @import("char_class.zig");
+pub const classifier = @import("char_class.zig");
 pub const Classifier = @import("char_class.zig").Classifier;
 pub const utf8 = @import("utf8.zig");
 pub const wc = @import("wcwidth_v2.zig");

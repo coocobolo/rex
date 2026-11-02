@@ -18,13 +18,13 @@ const Attr = @import("cell.zig").Attr;
 const Charset = @import("cell.zig").Charset;
 const CharsetState = @import("cell.zig").CharsetState;
 
-const Palette = @import("palette.zig").Palette;
+const Palette = @import("Palette.zig").Palette;
 const Option = @import("term.zig").Option;
 
 const nfc_table = @import("nfc_table.zig");
 const wcwidth = @import("../unicode/wcwidth.zig").wcwidth;
 const ucd = @import("../unicode/root.zig");
-const Classifier = ucd.classifer.Classifier;
+const Classifier = ucd.classifier.Classifier;
 
 // extern fn memset(dest: ?*anyopaque, c: c_int, n: usize) ?*anyopaque;
 // extern fn memmove(dest: ?*anyopaque, src: ?*const anyopaque, n: usize) ?*anyopaque;
@@ -629,7 +629,7 @@ pub fn Screen(comptime option: Option) type {
             });
         }
 
-        pub fn internGrapheme(self: *Self, cps: []const u21) !u32 {
+        fn internGrapheme(self: *Self, cps: []const u21) !u32 {
             const key = std.hash.Wyhash.hash(0, std.mem.sliceAsBytes(cps));
             if (self.grapheme_reverse.get(key)) |existing_id| return existing_id;
 
@@ -651,7 +651,7 @@ pub fn Screen(comptime option: Option) type {
         /// word-classification and text-extraction purposes. This is the one place
         /// that knows how to interpret from cell.codepoint differently depending on
         /// cell.kind, nothing else should branch on cell.kind for this purposes.
-        pub fn resolveCodepoint(self: *const Self, cell: Cell) u21 {
+        fn resolveCodepoint(self: *const Self, cell: Cell) u21 {
             const fallback = ' ';
             return switch (cell.kind) {
                 .empty => fallback,
@@ -1082,7 +1082,7 @@ pub fn Screen(comptime option: Option) type {
             classifier: *const Classifier,
             anchor: i64,
             col: u16,
-            join_option: ucd.classifer.JoinOption,
+            join_option: ucd.classifier.JoinOption,
         ) struct { u16, u16 } {
             const row_cells = self.rowCellsAtAnchor(anchor);
 
@@ -1149,7 +1149,7 @@ pub fn Screen(comptime option: Option) type {
         /// Caller must ensure `anchor >= -scrollback_used_signed` (i.e. not requesting an
         /// already-evicted row), this is not checked here; use `resolveAnchor`'s eviction
         /// guard before calling this.
-        pub inline fn rowCellsAtAnchor(self: *const Self, anchor: i64) []const Cell {
+        inline fn rowCellsAtAnchor(self: *const Self, anchor: i64) []const Cell {
             // const phys: usize = if (anchor >= 0)
             //     // Non-negative anchor: same as physRow(r), routed through row_map
             //     // for any active-area row remapping (e.g. partial-region scrolls).
@@ -2743,291 +2743,3 @@ pub fn Screen(comptime option: Option) type {
         }
     };
 }
-
-// Scroll the active scroll region up by `n` lines without marking the screen dirty.
-// This is the raw implementation shared by `scrollUp` and internal callers (e.g.
-// `writeChar`) that issue their own `bump()` after all mutations are complete.
-//
-// Behaviour is identical to `scrollUp`; see that function for a full description of
-// the two cases (full-screen ring-buffer advance vs. partial-region bulk copy) and the
-// clamping guarantee.
-//
-// Callers that want the dirty notification included should use `scrollUp` instead.
-// Call this directly only when a `bump()` will be issued by the surrounding operation,
-// to avoid a redundant generation increment.
-// noinline fn scrollUpImplV1(self: *Self, n: usize) bool {
-//     // A degenerate region (top >= bottom) has nothing to scroll.
-//     if (self.scroll_top >= self.scroll_bottom) return false;
-//
-//     const blank: Cell = .{ .background = self.cursor.attr.bg };
-//     const region_top: usize = self.scroll_top;
-//     const region_bottom: usize = self.scroll_bottom;
-//     const region_height: usize = region_bottom - region_top + 1;
-//
-//     // Clamp, scrolling more than the region height is equivalent to
-//     // scrolling exactly region_height lines.
-//     const count: usize = @min(@max(n, 1), region_height);
-//
-//     const is_full_screen = self.scroll_top == 0 and self.scroll_bottom == self.active_rows - 1;
-//
-//     // if (is_full_screen) {
-//     //     // Advance scroll_offset by count in one step
-//     //     self.scroll_offset = @intCast((self.scroll_offset + count) % ring_rows);
-//     //     self.total_lines_scrolled += @intCast(count);
-//     //
-//     //     // Reset row_map to identity once
-//     //     self.row_map_is_identity = true; // replaces the 208-iteration loop
-//     //
-//     //     const phys_start = (self.scroll_offset + (self.active_rows - count)) % ring_rows;
-//     //     const phys_end_total = phys_start + count;
-//     //
-//     //     // clear cells
-//     //     if (phys_end_total <= ring_rows) {
-//     //         const start_i = phys_start * max_cols;
-//     //         const end_i = (phys_start + count) * max_cols;
-//     //         const cell_slice = self.cells[start_i..end_i];
-//     //         if (blank.background == 0) {
-//     //             // @memset(std.mem.sliceAsBytes(cell_slice), 0);
-//     //             // _ = memset(cell_slice.ptr, 0, cell_slice.len * @sizeOf(Cell));
-//     //             zeroRow(cell_slice.ptr, cell_slice.len);
-//     //         } else {
-//     //             // most terminal use default background tho
-//     //             @branchHint(.unlikely);
-//     //             @memset(cell_slice, blank);
-//     //         }
-//     //     } else {
-//     //         const second = (phys_end_total - ring_rows);
-//     //         if (blank.background == 0) { // Wrapping case
-//     //             // @memset(std.mem.sliceAsBytes(self.cells[phys_start * max_cols .. ring_rows * max_cols]), 0);
-//     //             // @memset(std.mem.sliceAsBytes(self.cells[0 .. second * max_cols]), 0);
-//     //             // _ = memset(&self.cells[phys_start * max_cols], 0, (ring_rows - phys_start) * max_cols * @sizeOf(Cell));
-//     //             // _ = memset(&self.cells[0], 0, second * max_cols * @sizeOf(Cell));
-//     //             zeroRow(@ptrCast(&self.cells[phys_start * max_cols]), (ring_rows - phys_start) * max_cols);
-//     //             zeroRow(@ptrCast(&self.cells[0]), second * max_cols);
-//     //         } else {
-//     //             @memset(self.cells[phys_start * max_cols .. ring_rows * max_cols], blank);
-//     //             @memset(self.cells[0 .. second * max_cols], blank);
-//     //         }
-//     //     }
-//     //
-//     //     if (phys_end_total <= ring_rows) {
-//     //         // _ = memset(&self.line_attrs[phys_start], 0, count);
-//     //         for (self.line_attrs[phys_start .. phys_start + count]) |*a| a.* = .normal;
-//     //         // @memset(self.line_attrs[phys_start .. phys_start + count], .normal);
-//     //     } else {
-//     //         for (self.line_attrs[phys_start..ring_rows]) |*a| a.* = .normal;
-//     //         for (self.line_attrs[0 .. phys_end_total - ring_rows]) |*a| a.* = .normal;
-//     //     }
-//     //
-//     //     if (comptime is_scrollback_used) {
-//     //         self.scrollback_used = @min(self.scrollback_used + count, max_scrollback);
-//     //     }
-//     //
-//     //     // rowMutRaw was used (no dirty mark).
-//     //     // The entire viewport has shifted, so mark all rows dirty explicitly.
-//     //     //
-//     //     // So, current problem vzeroupper before compiler_rt.memset (and at ret)
-//     //     // `vmovdqu  -0x914d4(%rip),%ymm0` load 256-bit full bitmask constant
-//     //     // `vmovdqu  %ymm0,0xc8(%r14)`       store to dirty_rows
-//     //     // sample StaticBitSet(208) has a 256-bit mas ([4]u64), so the compiler
-//     //     // uses vmovdqu (AVX 256-bit store) to set it. Once any AVX instruction in
-//     //     // scrollUpImpl, the compiler must emit vzeroupper before every non-AVX call
-//     //     // (compiiler_rt.memset) and before ret.
-//     //     // self.dirty_rows = .full;
-//     //
-//     //     // This stores 0xFF to each of the 26 bytes of dirty_rows,  the compiler emits scalar stores
-//     //     // or rep stosb, no AVX. The vzeroupper before memset and at ret should both disappear.
-//     //     // @memset(std.mem.asBytes(&self.dirty_rows), 0xFF);
-//     //     //
-//     //     // Well, That's bad too, The vzeroupper at 17.64%
-//     //     // ```
-//     //     // vpcmpeqd   %ymm0,%ymm0,%ymm0    ← generate all-ones in YMM register
-//     //     // vmovdqu    %ymm0,0xc8(%rbx)     ← 32-byte AVX store
-//     //     // ```
-//     //
-//     //     self.setDirtyAll();
-//     //     // inline for (&self.dirty_rows.masks, 0..) |*m, i| {
-//     //     //     m.* = if (i < self.dirty_rows.masks.len - 1)
-//     //     //         ~@as(@TypeOf(m.*), 0)
-//     //     //     else
-//     //     //         @TypeOf(self.dirty_rows).last_item_mask;
-//     //     // }
-//
-//     if (is_full_screen) {
-//         // Advance scroll_offset by count in one step
-//         self.scroll_offset = @intCast((self.scroll_offset + count) % ring_rows);
-//         self.total_lines_scrolled += @intCast(count);
-//
-//         // Reset row_map to identity once
-//         // replaces the 208-iteration loop
-//         self.canonicalizeRowMap();
-//
-//         const phys_start = (self.scroll_offset + (self.active_rows - count)) % ring_rows;
-//         const phys_end_total = phys_start + count;
-//
-//         // clear cells
-//         var r = phys_start;
-//         var remaining = count;
-//
-//         while (remaining > 0) : (remaining -= 1) {
-//             const row_start = r * max_cols;
-//             const row_cells = self.cells[row_start .. row_start + self.active_cols];
-//             if (blank.background == 0) {
-//                 zeroRow(row_cells.ptr, row_cells.len);
-//             } else {
-//                 @branchHint(.unlikely);
-//                 @memset(row_cells, blank);
-//             }
-//             r += 1;
-//             if (r >= ring_rows) r = 0;
-//         }
-//
-//         if (phys_end_total <= ring_rows) {
-//             // _ = memset(&self.line_attrs[phys_start], 0, count);
-//             // @memset(self.line_attrs[phys_start .. phys_start + count], .normal);
-//             for (self.line_attrs[phys_start .. phys_start + count]) |*a| a.* = .normal;
-//         } else {
-//             for (self.line_attrs[phys_start..ring_rows]) |*a| a.* = .normal;
-//             for (self.line_attrs[0 .. phys_end_total - ring_rows]) |*a| a.* = .normal;
-//         }
-//
-//         if (comptime is_scrollback_used) {
-//             self.scrollback_used = @min(self.scrollback_used + count, max_scrollback);
-//         }
-//
-//         self.setDirtyAll();
-//     } else {
-//         // Partial scroll region, use single bulk-copy pass.
-//         //
-//         // Shift rows [region_top+count .. region_bottom] up to
-//         // [region_top .. region_bottom-count] in one forward pass.
-//         // A forward (ascending) pass is correct because the destination
-//         // index is always strictly less than the source index, so there
-//         // is no overlap that would corrupt data.
-//         //
-//         // The previous implementation used a nested loop:
-//         //   outer: count iterations, inner: region_height copies
-//         // giving O(n × region_height × active_cols).
-//         //
-//         // This single pass is O(region_height * active_cols) regardless of n.
-//         // var r: usize = region_top;
-//         // while (r + count <= region_bottom) : (r += 1) {
-//         //     // @memcpy(self.rowMut(r)[0..self.active_cols], self.row(r + count));
-//         //     @memcpy(self.rowMutRaw(r)[0..self.active_cols], self.row(r + count)[0..self.active_cols]);
-//         //     self.line_attrs[self.physRow(r)] = self.line_attrs[self.physRow(r + count)];
-//         // }
-//         //
-//         // // Clear the `count` vacated rows at the bottom of the region.
-//         // while (r <= region_bottom) : (r += 1) {
-//         //     @memset(self.rowMutRaw(r)[0..self.active_cols], blank);
-//         //     self.line_attrs[self.physRow(r)] = .normal;
-//         // }
-//
-//         // Rotate row_map[region_top..region_bottom+1] left by count.
-//         // This remaps logical rows so row N now points to the physical slot
-//         // that held row N+count — no cell data is copied.
-//         // std.mem.rotate(u16, self.row_map[region_top .. region_bottom + 1], count);
-//
-//         // if (self.row_map_is_identity) {
-//         //     // we only need to initialize region_top..region_bottom+1 — the rows we're about to rotate.
-//         //     // Rows outside the region are never accessed via row_map in this call.
-//         //     for (region_top..region_bottom + 1) |i| self.row_map[i] = @intCast(i);
-//         //     // rows outside region still need row_map valid if physRow is called on them later
-//         //     // so only do this if physRow for outside-region rows is never called after this point
-//         //     self.row_map_is_identity = false;
-//         // }
-//
-//         // // For small count (common case: count == 1), a single rotate is just:
-//         // if (count == 1) {
-//         //     const tmp = self.row_map[region_top];
-//         //     // @memcpy(self.row_map[region_top..region_bottom], self.row_map[region_top + 1 .. region_bottom + 1]);
-//         //     // std.mem.copyForwards(u16, self.row_map[region_top..region_bottom], self.row_map[region_top + 1 .. region_bottom + 1]);
-//         //     _ = memmove(&self.row_map[region_top], &self.row_map[region_top + 1], (region_bottom - region_top) * @sizeOf(u16));
-//         //     self.row_map[region_bottom] = tmp;
-//         // } else {
-//         //     std.mem.rotate(u16, self.row_map[region_top .. region_bottom + 1], count);
-//         // }
-//
-//         self.rotateRowMapRegion(region_top, region_bottom, count, .left);
-//
-//         // Clear the count vacated rows at the bottom of the region.
-//         // Their row_map entries now point to the evicted physical slots.
-//         for (region_bottom + 1 - count..region_bottom + 1) |r| {
-//             // self.clearRow(r, blank);
-//             // self.line_attrs[self.physRow(r)] = .normal;
-//
-//             const phys = self.physRow(r);
-//             // pass phys directly to avoid recomputing inside clearRow
-//             const row_mut = self.cells[phys * max_cols ..][0..self.active_cols];
-//             if (blank.background == 0) {
-//                 zeroRow(row_mut.ptr, row_mut.len);
-//             } else {
-//                 // most terminals use default background tho
-//                 @branchHint(.unlikely);
-//                 @memset(row_mut, blank);
-//             }
-//             self.line_attrs[phys] = .normal;
-//         }
-//
-//         // Mark the entire region dirty in one operation
-//         self.dirty_rows.setRangeValue(.{ .start = region_top, .end = region_bottom + 1 }, true);
-//     }
-//
-//     self.cached_row_phys = max_u16; // ring buffer rotated, cache is stale
-//     return true;
-// }
-
-// pub fn setActive(self: *Self, row_size: usize, col_size: usize) void {
-//     const new_rows: usize = @min(row_size, max_rows);
-//     const new_cols: usize = @min(col_size, max_cols);
-//     const old_rows = self.active_rows;
-//     const old_cols = self.active_cols;
-//
-//     // active_rows and row_map_lo/row_map_hi must describe the same area.
-//     // Canonicalize before changing active_rows so the pending permutation
-//     // cannot become invalid after a shrink.
-//     if (new_rows != self.active_rows and !self.row_map_is_identity) {
-//         self.canonicalizeRowMap();
-//     }
-//
-//     self.active_rows = @intCast(new_rows);
-//     self.active_cols = @intCast(new_cols);
-//
-//     const was_empty = old_rows == 0 or old_cols == 0;
-//     const is_empty = self.active_rows == 0 or self.active_cols == 0;
-//     if (is_empty) {
-//         self.bump();
-//         return;
-//     }
-//
-//     if (self.active_rows > old_rows or was_empty) {
-//         const clear_from: usize = if (was_empty) 0 else old_rows;
-//
-//         for (clear_from..self.active_rows) |r| {
-//             self.row_map[r] = @intCast(r);
-//             self.clearRow(r, .{});
-//             self.line_attrs[self.physRow(r)] = .normal;
-//         }
-//     }
-//
-//     self.dirty_rows = .full;
-//     self.scroll_top = 0;
-//     self.scroll_bottom = self.active_rows - 1;
-//
-//     // if (comptime max_scrollback > 0) {
-//     //     self.viewport_offset = @min(
-//     //         self.viewport_offset,
-//     //         @min(max_scrollback, ring_rows - self.active_rows),
-//     //     );
-//     // }
-//
-//     self.cursor.row = @min(self.cursor.row, self.active_rows - 1);
-//     self.cursor.col = @min(self.cursor.col, self.active_cols - 1);
-//
-//     if (self.cursor.col < self.active_cols - 1) {
-//         self.cursor.wrap_pending = false;
-//     }
-//
-//     self.cached_row_phys = max_u16;
-//     self.bump();
-// }
