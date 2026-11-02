@@ -7,3 +7,8 @@
 //! converts to RGBA pixel data. Index 0 is special: it always means "terminal default,"
 //! resolved at render time to the user-overridden foreground or background if set, otherwise the built-in fallback.
 //! The u32 key and the u32 RGBA are entirely different encodings and are never interchangeable.
+
+pub const ansi = @import("ansi.zig");
+pub const x11 = @import("x11.zig");
+pub const Color = @import("color.zig").Color;
+pub const Rgb = @import("rgb.zig").Rgb;

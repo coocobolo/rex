@@ -1,0 +1,792 @@
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+const ArrayListUnmanaged = std.ArrayListUnmanaged;
+
+const log = std.log.scoped(.framedata);
+
+const renderer = @import("root.zig");
+
+const gl = renderer.gl;
+const Atlas = renderer.Atlas;
+
+const Cell = renderer.Cell;
+const Background = renderer.Background;
+const Selection = renderer.Selection;
+const Scrollbar = renderer.Scrollbar;
+const Cursor = renderer.Cursor;
+const DirtyFlags = renderer.DirtyFlags;
+
+const ft = @import("../freetype/root.zig");
+const Rasterizer = ft.Rasterizer;
+const FaceKind = Rasterizer.FaceKind;
+
+const term = @import("../term/root.zig");
+const AttrFlags = term.cell.AttrFlags;
+const UnderlineStyle = term.cell.UnderlineStyle;
+const Mode = term.screen.Mode;
+const Option = term.term.Option;
+const Palette = term.Palette;
+const Screen = term.Screen;
+
+/// Bit layout (LSB first):
+///   0: strikethrough
+///   1: blink
+///   2: overline
+///   3: blink_rapid
+///   4-6: underline style (UnderlineStyle)
+///   7: reserved
+pub const Flags = packed struct(u8) {
+    strikethrough: bool = false,
+    blink: bool = false, // slow (~0.5 Hz)
+    overline: bool = false,
+    blink_rapid: bool = false, // rapid (~3 Hz)
+    underline: UnderlineStyle = .none,
+    _pad: u1 = 0,
+};
+
+// A terminal selection always produces a "staircase" polygon with
+// at most 8 vertices (6 for the common case where top/bottom rows
+// are partial and middle rows are full-width).
+//
+// For: row1=[40..80], row2=[0..80], row3=[0..40]
+// Verticies (clockwise):
+// A=(40,0)   B=(80,0)   top edge of row 1
+// B=(80,0)   C=(80,2ch) right edge of rows 1+2
+// C=(80,0)   D=(40,2ch) right staircase step
+// D=(40,2ch) E=(40,3ch) right edge of row 3
+// E=(40,3
+// F=(0,3ch)  G=(0,ch)   left edge of rows 2+3
+// G=(0,ch)   H=(40,ch)  left staircase step
+// H=(40,ch)  A=(40,0)   left edge row 1
+//
+// The vertex count is always 4,6,or 8.
+// A-B-C, A-C-D, A-D-E, A-E-F, A-F-G, A-G-H (6 triangles for 8 vertices)
+// A-B-C, A-C-D, A-D-E, A-E-F               (4 triangles for 6 vertices)
+// A-B-C, A-C-D                             (2 triangles for 4 vertices)
+pub const SelectionVertex = extern struct {
+    col: u16,
+    row: u16,
+};
+
+pub const SelectionPolygon = extern struct {
+    vertices: [8]SelectionVertex,
+    count: u8,
+    _pad: [3]u8 = .{0} ** 3,
+};
+
+pub const CursorCache = struct {
+    row: u16,
+    col: u16,
+    glyph: ?Atlas.Metric,
+    glyph_fg: [3]u8,
+
+    const empty: CursorCache = .{
+        .glyph = null,
+        .glyph_fg = .{ 0, 0, 0 },
+        .row = 0,
+        .col = 0,
+    };
+
+    /// Refreshes the cache when the cursor has moved to a new cell.
+    /// Returns true if the cursor moved (caller may need to re-render).
+    pub fn refresh(
+        self: *CursorCache,
+        gpa: Allocator,
+        rasterizer: *Rasterizer,
+        atlas: *Atlas,
+        cursor: *const term.cell.Cursor,
+        palette: *const Palette,
+        cursor_cell: *const term.Cell,
+    ) bool {
+        const row = cursor.row;
+        const col = cursor.col;
+        const moved = row != self.row or col != self.col;
+        if (!moved) return false;
+
+        self.row = row;
+        self.col = col;
+
+        if (cursor.style.shape() != .block) {
+            self.glyph = null;
+            return false;
+        }
+
+        if (cursor_cell.codepoint == 0) {
+            self.glyph = null;
+            self.glyph_fg = .{ 0, 0, 0 };
+            return true;
+        }
+
+        const face = faceKindFromCell(cursor_cell.flags);
+        self.glyph = atlas.get(gpa, rasterizer, @intCast(cursor_cell.codepoint), face) catch null;
+
+        var fg: u32 = palette.resolve(cursor_cell.foreground, .foreground);
+        var bg: u32 = palette.resolve(cursor_cell.background, .background);
+        if (cursor_cell.flags.reverse) std.mem.swap(u32, &fg, &bg);
+
+        const bg_u = unpackRgb(bg);
+        self.glyph_fg = .{ bg_u.r, bg_u.g, bg_u.b };
+        return true;
+    }
+
+    /// Called at the end of a dirty rebuild, the loop already captured
+    /// the metric, so no atlas lookup needed.
+    pub fn set(
+        self: *CursorCache,
+        row: u16,
+        col: u16,
+        glyph: ?Atlas.Metric,
+        glyph_fg: [3]u8,
+    ) void {
+        self.row = row;
+        self.col = col;
+        self.glyph = glyph;
+        self.glyph_fg = glyph_fg;
+    }
+};
+
+pub const FrameData = @This();
+
+/// Slices are views into FrameBuilder's pre-allocated buffers.
+/// FrameData does not own the memory, do not free these slices.
+gray_instances: []const Cell.Instance,
+color_instances: []const Cell.Instance,
+background_instances: []const Background.Instance,
+selection_instances: []const Selection.Instance,
+scrollbar_state: Scrollbar.State,
+cursor_state: Cursor.State,
+
+/// Set by FrameBuilder when instance data changed since the last build.
+/// Renderer skips VBO re-upload when false, but always issues draw calls.
+// dirty: bool,
+dirty: DirtyFlags,
+
+pub fn Builder(comptime option: Option) type {
+    const ScreenType = Screen(option);
+    const max_cols = option.max_cols;
+    const max_rows = option.max_rows;
+    const max_cells = max_rows * max_cols;
+
+    return struct {
+        const Self = @This();
+
+        gray_buffer: std.ArrayListUnmanaged(Cell.Instance),
+        color_buffer: std.ArrayListUnmanaged(Cell.Instance),
+        background_buffer: std.ArrayListUnmanaged(Background.Instance),
+        selection_buffer: std.ArrayListUnmanaged(Selection.Instance),
+        last_cursor: CursorCache,
+
+        // last_polygon: ?SelectionPolygon,
+        last_blink_on: bool = false,
+        last_generation: ?u32,
+        last_scrollbar: Scrollbar.State,
+        last_selection: ?Selection.State,
+
+        pub fn init(gpa: Allocator) !Self {
+            var gray_buffer: std.ArrayListUnmanaged(Cell.Instance) = try .initCapacity(gpa, max_cells);
+            errdefer gray_buffer.deinit(gpa);
+
+            var color_buffer: std.ArrayListUnmanaged(Cell.Instance) = try .initCapacity(gpa, max_cells);
+            errdefer color_buffer.deinit(gpa);
+
+            var background_buffer: std.ArrayListUnmanaged(Background.Instance) = try .initCapacity(gpa, max_cells);
+            errdefer background_buffer.deinit(gpa);
+
+            var selection_buffer: ArrayListUnmanaged(Selection.Instance) = try .initCapacity(gpa, max_rows);
+            errdefer selection_buffer.deinit(gpa);
+
+            return .{
+                .background_buffer = background_buffer,
+                .gray_buffer = gray_buffer,
+                .color_buffer = color_buffer,
+                .selection_buffer = selection_buffer,
+
+                .last_cursor = .empty,
+                .last_scrollbar = .empty,
+                .last_selection = null,
+                .last_generation = null,
+            };
+        }
+
+        pub fn deinit(self: *Self, gpa: Allocator) void {
+            self.gray_buffer.deinit(gpa);
+            self.color_buffer.deinit(gpa);
+            self.background_buffer.deinit(gpa);
+            self.selection_buffer.deinit(gpa);
+        }
+
+        fn buildSelectionInstances(self: *Self, screen: *const ScreenType, sel: Selection.State) void {
+            const top_row = @min(sel.start_row, sel.end_row);
+            const bot_row = @max(sel.start_row, sel.end_row);
+            const cols_limit: u16 = @min(screen.active_cols, max_cols);
+
+            // Normalize: anchor vs active end
+            const top_col: u16 = if (sel.start_row < sel.end_row) sel.start_col else if (sel.start_row > sel.end_row) sel.end_col else @min(sel.start_col, sel.end_col); // same row: normalize
+            const bot_col: u16 = if (sel.start_row < sel.end_row) sel.end_col else if (sel.start_row > sel.end_row) sel.start_col else @max(sel.start_col, sel.end_col); // same row: normalize
+
+            var prev_col: u16 = 0;
+            var prev_span: u16 = 0;
+            var pending: ?Selection.Instance = null;
+            for (top_row..bot_row + 1) |r_idx| {
+                const r: u16 = @intCast(r_idx);
+                const span_start: u16 = if (r == top_row) top_col else 0;
+                const span_end: u16 = if (r == bot_row) bot_col + 1 else cols_limit;
+                if (span_end <= span_start) continue;
+
+                const cur_span = span_end - span_start;
+                const is_first: u16 = @intFromBool(r == top_row);
+                const is_last: u16 = @intFromBool(r == bot_row);
+
+                const prev_end = prev_col + prev_span;
+
+                // Flush the previous pending instance: we now know the next row,
+                // so we can set bottom-corner convex step bits.
+                if (pending) |*p| {
+                    const next_end = span_start + cur_span; // current row interval [span_start, next_end)
+
+                    // Bottom-left/bottom-right on previous row using current row interval [span_start, next_end)
+                    const step_BL: u16 = @intFromBool(p.col < span_start or p.col >= next_end);
+                    const step_BR: u16 = @intFromBool(p.col + p.span > next_end or p.col + p.span <= span_start);
+
+                    p.flags |= (step_BL << 5) | (step_BR << 6);
+
+                    p.next_col = span_start;
+                    p.next_span = cur_span;
+                    self.selection_buffer.appendAssumeCapacity(p.*);
+                }
+
+                // create the new pending instance for current row.
+                // We already know the previous row, so we can set top-corner convex step bits.
+
+                const step_TL: u16 = @intFromBool(is_first == 0 and (span_start < prev_col or span_start >= prev_end));
+                const step_TR: u16 = @intFromBool(is_first == 0 and (span_end > prev_end or span_end <= prev_col));
+
+                pending = .{
+                    .col = span_start,
+                    .row = r,
+                    .span = cur_span,
+                    .flags = is_first | (is_last << 1) | (step_TL << 3) | (step_TR << 4),
+
+                    .prev_col = prev_col,
+                    .prev_span = prev_span,
+                    // next_* defaults to self — correct for the last row
+                    .next_col = span_start,
+                    .next_span = cur_span,
+                };
+
+                prev_col = span_start;
+                prev_span = cur_span;
+            }
+
+            // Flush the last pending instance (is_last row, next_* already set to self)
+            if (pending) |p| self.selection_buffer.appendAssumeCapacity(p);
+        }
+
+        pub fn build(
+            self: *Self,
+            gpa: Allocator,
+            screen: *const ScreenType,
+            atlas: *Atlas,
+            rasterizer: *Rasterizer,
+            blink_on: bool,
+            selection_state: ?Selection.State,
+            cursor_color: ?[3]u8,
+        ) !FrameData {
+            const mode = screen.mode;
+            const palette = &screen.palette;
+            const cursor = &screen.cursor;
+            const cursor_visiblity = mode.cursor_visibility and screen.isAt(.bottom);
+            const cursor_row, const cursor_col = cursor.position();
+            const cursor_cell = screen.cellAt(cursor_row, cursor_col);
+
+            const selection_changed = !std.meta.eql(selection_state, self.last_selection);
+            // zig fmt: off
+            const fg_override_changed = selection_changed and
+                ((selection_state    != null and selection_state.?.fg       != null) or
+                (self.last_selection != null and self.last_selection.?.fg   != null));
+            // zig fmt: on
+
+            const cells_dirty = if (self.last_generation) |gen|
+                gen != screen.generation or fg_override_changed or selection_changed
+            else
+                true;
+
+            const blink_changed = blink_on != self.last_blink_on;
+            self.last_blink_on = blink_on;
+
+            // path 1: nothing changed
+            if (!cells_dirty and !selection_changed) {
+                const cursor_changed = self.last_cursor.refresh(
+                    gpa,
+                    rasterizer,
+                    atlas,
+                    cursor,
+                    palette,
+                    &cursor_cell,
+                );
+
+                const new_scrollbar = buildScrollbar(screen);
+                const scrollbar_changed = !std.meta.eql(new_scrollbar, self.last_scrollbar);
+                self.last_scrollbar = new_scrollbar;
+
+                // reuse existing buffer contents, only update cursor/Scrollbar
+                return .{
+                    .background_instances = self.background_buffer.items,
+                    .gray_instances = self.gray_buffer.items,
+                    .color_instances = self.color_buffer.items,
+                    .cursor_state = buildCursor(
+                        palette,
+                        cursor,
+                        selection_state,
+                        blink_on,
+                        cursor_visiblity,
+                        cursor_color,
+                        self.last_cursor.glyph,
+                        self.last_cursor.glyph_fg,
+                    ),
+                    .dirty = .{
+                        .blink = blink_changed,
+                        .scrollbar = scrollbar_changed,
+                        .cursor = cursor_changed or blink_changed,
+                    },
+                    .scrollbar_state = new_scrollbar,
+                    .selection_instances = self.selection_buffer.items,
+                };
+            }
+
+            // path 2: only selection changed
+            if (!cells_dirty and selection_changed) {
+                // only selection changed, rebuild selection_buf, reuse cell buffers
+                self.selection_buffer.clearRetainingCapacity();
+                if (selection_state) |sel| self.buildSelectionInstances(screen, sel);
+                self.last_selection = selection_state;
+
+                const cursor_changed = self.last_cursor.refresh(
+                    gpa,
+                    rasterizer,
+                    atlas,
+                    cursor,
+                    palette,
+                    &cursor_cell,
+                );
+
+                const new_scrollbar = buildScrollbar(screen);
+                const scrollbar_changed = !std.meta.eql(new_scrollbar, self.last_scrollbar);
+                self.last_scrollbar = new_scrollbar;
+
+                // reuse existing buffer contents, only update cursor/Scrollbar
+                return .{
+                    .background_instances = self.background_buffer.items,
+                    .gray_instances = self.gray_buffer.items,
+                    .color_instances = self.color_buffer.items,
+                    .scrollbar_state = new_scrollbar,
+                    .selection_instances = self.selection_buffer.items,
+                    .cursor_state = buildCursor(
+                        palette,
+                        cursor,
+                        selection_state,
+                        blink_on,
+                        cursor_visiblity,
+                        cursor_color,
+                        self.last_cursor.glyph,
+                        self.last_cursor.glyph_fg,
+                    ),
+                    .dirty = .{
+                        .selection = true,
+                        .blink = blink_changed,
+                        .scrollbar = scrollbar_changed,
+                        .cursor = cursor_changed or blink_changed,
+                    },
+                };
+            }
+
+            // path 3: full rebuild
+            self.background_buffer.clearRetainingCapacity();
+            self.gray_buffer.clearRetainingCapacity();
+            self.color_buffer.clearRetainingCapacity();
+            self.selection_buffer.clearRetainingCapacity();
+
+            // const cols_limit: u16 = @min(screen.active_cols, max_cols);
+            const reverse_video = mode.reverse_video;
+            const has_selection = selection_state != null;
+
+            if (selection_state) |sel| self.buildSelectionInstances(screen, sel);
+
+            const is_cursor_block = cursor.style.shape() == .block;
+            var cursor_glyph: ?Atlas.Metric = null;
+            var cursor_glyph_fg: [3]u8 = .{ 0, 0, 0 };
+
+            // std.debug.print("+", .{});
+            const cols_limit: u16 = @min(screen.active_cols, max_cols);
+            const rows_limit: u16 = @min(screen.active_rows, max_rows);
+
+            var row: u16 = 0;
+            while (row < rows_limit) : (row += 1) {
+                // if (row_idx >= screen.viewport_offset) {
+                //     const logical = row_idx - screen.viewport_offset;
+                //     if (!screen.dirty_rows.isSet(logical)) continue;
+                // }
+
+                const is_cursor_row = row == cursor_row;
+                const cells = screen.displayRow(row);
+
+                var col: u16 = 0;
+                while (col < cols_limit) : (col += 1) {
+                    const c = cells[col];
+
+                    // 0 = empty cell, skip, no glyph to draw
+                    // 1 = narrow char, draw at col
+                    // 2 = wide char (left-half), draw at col, advance col +=2 (or just += 1 and let width == 3 skip the next)
+                    // 3 = wide char (right-half), skip, already drawn by the width == 2 cell
+                    if (c.kind == .wide_right) continue; // right-half of wide char: background covered by left-half span=2
+                    const span: u16 = c.kind.columnSpan();
+
+                    // const do_reverse = (cell.flags.reverse or reverse_video) != in_selection;
+
+                    // Drop the do_reverse logic in build, with the overlay approach, text colors
+                    // are unchanged and the semi-transparent highlight provides the visual selection.
+                    // This is simpler and looks better than color inversion.
+                    const do_reverse = (c.flags.reverse or reverse_video);
+
+                    // Base colors: resolveColor handles default color substitution + SGR reverse
+                    var foreground = palette.resolveRgb(c.foreground, .foreground);
+                    var background = palette.resolveRgb(c.background, .background);
+
+                    // Invisible text (SGR 8): hide glyph by matching fg to bg
+                    if (do_reverse) std.mem.swap([3]u8, &foreground, &background);
+                    if (c.flags.invisible) foreground = background;
+
+                    const in_selection = has_selection and selection_state.?.contains(row, col);
+                    if (in_selection) {
+                        if (selection_state.?.fg) |sel_fg| foreground = sel_fg;
+                    }
+
+                    const foreground_alpha: u8 = if (c.flags.dim) 128 else 255;
+
+                    // if (row == 1 and col >= 34 and col <= 41) {
+                    //     log.debug("bg instance ({}, {}): bg=({},{},{}) fg=({},{},{})", .{
+                    //         row,           col,
+                    //         background[0], background[1],
+                    //         background[2], foreground[0],
+                    //         foreground[1], foreground[2],
+                    //     });
+                    // }
+
+                    // Background instance (always, even for empty cells)
+                    self.background_buffer.appendAssumeCapacity(.{
+                        .col = col,
+                        .row = row,
+                        .span = span,
+                        .r = background[0],
+                        .g = background[1],
+                        .b = background[2],
+                        .a = 255,
+                        .fg_r = foreground[0],
+                        .fg_g = foreground[1],
+                        .fg_b = foreground[2],
+                        .fg_a = foreground_alpha,
+                        .flags = .{
+                            .strikethrough = c.flags.strikethrough,
+                            .overline = c.flags.overline,
+                            .blink = c.flags.blink,
+                            .blink_rapid = c.flags.blink_rapid,
+                            .underline = c.flags.underline,
+                        },
+                    });
+
+                    if (c.kind == .empty) continue;
+                    const codepoint = c.codepoint;
+
+                    // log.debug(
+                    //     \\cell: {any}
+                    //     \\codepoint: '{c}'
+                    //     \\background: {any}
+                    //     \\foregound: {any}
+                    //     \\do_reverse: {}
+                    //     \\in_selection: {}
+                    // ,
+                    //     .{
+                    //         c,
+                    //         @as(u8, @intCast(codepoint)),
+                    //         background,
+                    //         foreground,
+                    //         do_reverse,
+                    //         in_selection,
+                    //     },
+                    // );
+
+                    const requested_kind = faceKindFromCell(c.flags);
+
+                    // Frame builder only passes the requested style + codepoint:
+                    const metric: Atlas.Metric = if (c.kind.isGrapheme()) blk: {
+                        const cps = screen.getGrapheme(codepoint) orelse continue;
+                        break :blk atlas.getSequence(gpa, rasterizer, cps, requested_kind) catch continue;
+                    } else if (c.kind == .shaped) {
+                        // FIXME requires HarfBuzz shaped run
+                        continue;
+                    } else blk: {
+                        // FIXME consider changing atlas.get's signature to take u32 instead of u21
+                        // it removes the cast entirely and is more honest about the fact that the atlas
+                        // doesn't care about Unicode validity, only about using the value as a cache key
+
+                        // safe: kind ∈ {.narrow, .wide_left} which a valid Unicode
+                        const cp21: u21 = @intCast(codepoint);
+                        break :blk atlas.get(gpa, rasterizer, cp21, requested_kind) catch continue;
+                    };
+
+                    // log.debug(
+                    //     \\ cell.codepoint: 0x{X}
+                    //     \\ cell.kind: {t}
+                    //     \\ cell.kind.isGrapheme: {}
+                    //     \\ metric: {any}
+                    // , .{
+                    //     c.codepoint,
+                    //     c.kind,
+                    //     c.kind.isGrapheme(),
+                    //     metric,
+                    // });
+                    // Skip zero-size glyphs (space, combining marks with no bitmap)
+                    if (metric.width == 0 or metric.height == 0) continue;
+
+                    const is_cursor_cell = is_cursor_block and is_cursor_row and col == cursor_col;
+                    if (is_cursor_cell) {
+                        cursor_glyph = metric;
+                        cursor_glyph_fg = background;
+                    }
+
+                    const inst: Cell.Instance = .{
+                        .col = col,
+                        .row = @intCast(row),
+                        .atlas_x = metric.atlas_x,
+                        .atlas_y = metric.atlas_y,
+                        .bearing_x = metric.bearing_x,
+                        .bearing_y = metric.bearing_y,
+                        .fg_r = foreground[0],
+                        .fg_g = foreground[1],
+                        .fg_b = foreground[2],
+                        .fg_a = foreground_alpha,
+                        .glyph_width = metric.width,
+                        .glyph_height = metric.height,
+                        .flags = .{
+                            .blink = c.flags.blink,
+                            .overline = c.flags.overline,
+                            .underline = c.flags.underline,
+                            .blink_rapid = c.flags.blink_rapid,
+                            .strikethrough = c.flags.strikethrough,
+                        },
+                    };
+
+                    switch (metric.kind) {
+                        .color => self.color_buffer.appendAssumeCapacity(inst),
+                        .gray => self.gray_buffer.appendAssumeCapacity(inst),
+                    }
+                }
+            }
+
+            self.last_generation = screen.generation;
+            self.last_selection = selection_state;
+            self.last_cursor.set(cursor_row, cursor_col, cursor_glyph, cursor_glyph_fg);
+
+            const new_scrollbar = buildScrollbar(screen);
+            const scrollbar_changed = !std.meta.eql(new_scrollbar, self.last_scrollbar);
+            self.last_scrollbar = new_scrollbar;
+
+            return .{
+                .gray_instances = self.gray_buffer.items,
+                .color_instances = self.color_buffer.items,
+                .background_instances = self.background_buffer.items,
+                .scrollbar_state = new_scrollbar,
+                .selection_instances = self.selection_buffer.items,
+                .cursor_state = buildCursor(
+                    palette,
+                    cursor,
+                    selection_state,
+                    blink_on,
+                    cursor_visiblity,
+                    cursor_color,
+                    self.last_cursor.glyph,
+                    self.last_cursor.glyph_fg,
+                ),
+                .dirty = .{
+                    .cells = true,
+                    .blink = blink_changed,
+                    .cursor = true,
+                    .selection = selection_changed,
+                    .scrollbar = scrollbar_changed,
+                },
+            };
+        }
+
+        fn buildScrollbar(screen: *const ScreenType) Scrollbar.State {
+            if (comptime option.max_scrollback == 0) return .{ .visibility = false, .thumb_top_frac = 0, .thumb_height_frac = 1 };
+            if (screen.scrollback_used == 0) return .{
+                .visibility = false,
+                .at_live_view = true,
+                .thumb_top_frac = 0,
+                .thumb_height_frac = 1.0,
+            };
+
+            const total = screen.active_rows + screen.scrollback_used;
+            const height_frac = @as(f32, @floatFromInt(screen.active_rows)) / @as(f32, @floatFromInt(total));
+            const scroll_frac = @as(f32, @floatFromInt(screen.viewport_offset)) / @as(f32, @floatFromInt(screen.scrollback_used));
+
+            return .{
+                .visibility = true,
+                .at_live_view = screen.viewport_offset == 0,
+                .thumb_height_frac = height_frac,
+                .thumb_top_frac = 1.0 - scroll_frac,
+            };
+        }
+
+        fn buildCursor(
+            palette: *const Palette,
+            cursor: *const term.cell.Cursor,
+            selection_state: ?Selection.State,
+            blink_on: bool,
+            visibility: bool,
+            color: ?[3]u8,
+            glyph: ?Atlas.Metric,
+            glyph_fg: [3]u8,
+        ) Cursor.State {
+            const in_selection = if (selection_state) |sel| sel.contains(cursor.row, cursor.col) else false;
+            const resovled_rgb: [3]u8 = if (color) |cc| cc else palette.resolveRgb(cursor.attr.fg, .foreground);
+
+            var glyph_fg_final = glyph_fg;
+            if (in_selection) {
+                if (selection_state.?.bg) |sel_bg| glyph_fg_final = sel_bg;
+                // glyph_fg = sel_bg so the glyph contrasts against the cursor block,
+                // which sits on top of the sel_bg-colored cell background
+            }
+
+            return .{
+                .blink_on = blink_on,
+                .col = cursor.col,
+                .color = resovled_rgb,
+                .glyph = glyph,
+                .glyph_fg = glyph_fg_final,
+                .row = cursor.row,
+                .style = cursor.style,
+                .visibility = visibility,
+            };
+        }
+    };
+}
+
+fn faceKindFromCell(flags: AttrFlags) FaceKind {
+    if (flags.bold and flags.italic) return .bold_italic;
+    if (flags.bold) return .bold;
+    if (flags.italic) return .italic;
+    return .regular;
+    // emoji face is selected by the atlas based on codepoint range, not cell flags
+}
+
+fn unpackRgb(packed_color: u32) struct { r: u8, g: u8, b: u8 } {
+    return .{
+        .r = @truncate(packed_color >> 24),
+        .g = @truncate(packed_color >> 16),
+        .b = @truncate(packed_color >> 8),
+        // bits 7-0 are alpha (always 0xFF from resolve)
+    };
+}
+
+// fn buildSelectionPolygon(sel: Selection.State, cols_limit: u16) SelectionPolygon {
+//     var poly: SelectionPolygon = undefined;
+//     var n: usize = 0;
+//
+//     const top_row = @min(sel.start_row, sel.end_row);
+//     const bot_row = @max(sel.start_row, sel.end_row);
+//
+//     // Normalize anchor vs active end
+//     const top_col: u16 = if (sel.start_row < sel.end_row) sel.start_col else if (sel.start_row > sel.end_row) sel.end_col else @min(sel.start_col, sel.end_col); // same row: normalize
+//     const bot_col: u16 = if (sel.start_row < sel.end_row) sel.end_col else if (sel.start_row > sel.end_row) sel.start_col else @max(sel.start_col, sel.end_col); // same row: normalize
+//
+//     // Single line rectangle
+//     if (top_row == bot_row) {
+//         poly.vertices[n] = .{ .col = top_col, .row = top_row };
+//         n += 1;
+//
+//         poly.vertices[n] = .{ .col = bot_col + 1, .row = top_row };
+//         n += 1;
+//
+//         poly.vertices[n] = .{ .col = bot_col + 1, .row = top_row + 1 };
+//         n += 1;
+//
+//         poly.vertices[n] = .{ .col = top_col, .row = top_row + 1 };
+//         n += 1;
+//
+//         poly.count = @intCast(n);
+//         return poly;
+//     }
+//
+//     // A
+//     poly.vertices[n] = .{ .col = top_col, .row = top_row };
+//     n += 1;
+//
+//     // B
+//     poly.vertices[n] = .{ .col = cols_limit, .row = top_row };
+//     n += 1;
+//
+//     // C
+//     const c_row: u16 = if (bot_col + 1 == cols_limit) bot_row + 1 else bot_row;
+//     poly.vertices[n] = .{ .col = cols_limit, .row = c_row };
+//     n += 1;
+//
+//     if (bot_col + 1 != cols_limit) {
+//         // D
+//         poly.vertices[n] = .{ .col = bot_col + 1, .row = bot_row };
+//         n += 1;
+//
+//         // E
+//         poly.vertices[n] = .{ .col = bot_col + 1, .row = bot_row + 1 };
+//         n += 1;
+//     }
+//
+//     // F
+//     poly.vertices[n] = .{ .col = 0, .row = bot_row + 1 };
+//     n += 1;
+//
+//     // G
+//     poly.vertices[n] = .{ .col = 0, .row = top_row + 1 };
+//     n += 1;
+//
+//     // H left-side inner corner
+//     // only when first row doesn't start at col 0.
+//     if (top_col != 0) {
+//         poly.vertices[n] = .{ .col = top_col, .row = top_row + 1 };
+//         n += 1;
+//     }
+//
+//     poly.count = @intCast(n);
+//     return poly;
+// }
+//
+// fn buildSelectionInstancesV1(self: *Self, screen: *const ScreenType, sel: Selection.State) void {
+//     const top_row = @min(sel.start_row, sel.end_row);
+//     const bot_row = @max(sel.start_row, sel.end_row);
+//     const cols_limit: u16 = @min(screen.active_cols, max_cols);
+//
+//     // Normalize: anchor vs active end
+//     const top_col: u16 = if (sel.start_row < sel.end_row) sel.start_col else if (sel.start_row > sel.end_row) sel.end_col else @min(sel.start_col, sel.end_col); // same row: normalize
+//     const bot_col: u16 = if (sel.start_row < sel.end_row) sel.end_col else if (sel.start_row > sel.end_row) sel.start_col else @max(sel.start_col, sel.end_col); // same row: normalize
+//
+//     const is_rect: u16 = @intFromBool(top_row == bot_row or (top_col == 0 and bot_col + 1 == cols_limit));
+//
+//     var r: u16 = top_row;
+//     while (r <= bot_row) : (r += 1) {
+//         const span_start: u16 = if (r == top_row) top_col else 0;
+//         const span_end: u16 = if (r == bot_row) bot_col + 1 else cols_limit; // exclusive
+//         // const span_end: u16 = if (r == bot_row) bot_col else cols_limit; // inclusive
+//
+//         if (span_end <= span_start) continue;
+//
+//         const is_first: u16 = @intFromBool(r == top_row);
+//         const is_last: u16 = @intFromBool(r == bot_row);
+//         self.selection_buffer.appendAssumeCapacity(.{
+//             .col = span_start,
+//             .row = r,
+//             .span = span_end - span_start,
+//             .flags = is_first | (is_last << 1) | (is_rect << 2),
+//         });
+//     }
+// }
+//

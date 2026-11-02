@@ -1,0 +1,518 @@
+[
+  {
+    "name": "empty.bin",
+    "size": 0,
+    "description": "Empty input",
+    "hex_prefix": ""
+  },
+  {
+    "name": "ascii_01.bin",
+    "size": 1,
+    "description": "1-byte ASCII",
+    "hex_prefix": "61"
+  },
+  {
+    "name": "ascii_02.bin",
+    "size": 2,
+    "description": "2-byte ASCII",
+    "hex_prefix": "61 61"
+  },
+  {
+    "name": "ascii_03.bin",
+    "size": 3,
+    "description": "3-byte ASCII",
+    "hex_prefix": "61 61 61"
+  },
+  {
+    "name": "ascii_04.bin",
+    "size": 4,
+    "description": "4-byte ASCII",
+    "hex_prefix": "61 61 61 61"
+  },
+  {
+    "name": "ascii_05.bin",
+    "size": 5,
+    "description": "5-byte ASCII",
+    "hex_prefix": "61 61 61 61 61"
+  },
+  {
+    "name": "ascii_06.bin",
+    "size": 6,
+    "description": "6-byte ASCII",
+    "hex_prefix": "61 61 61 61 61 61"
+  },
+  {
+    "name": "ascii_07.bin",
+    "size": 7,
+    "description": "7-byte ASCII",
+    "hex_prefix": "61 61 61 61 61 61 61"
+  },
+  {
+    "name": "ascii_08.bin",
+    "size": 8,
+    "description": "8-byte ASCII / 8-byte boundary",
+    "hex_prefix": "61 61 61 61 61 61 61 61"
+  },
+  {
+    "name": "ascii_09.bin",
+    "size": 9,
+    "description": "9-byte ASCII / 8-byte boundary",
+    "hex_prefix": "61 61 61 61 61 61 61 61 61"
+  },
+  {
+    "name": "ascii_10.bin",
+    "size": 10,
+    "description": "10-byte ASCII / 8-byte boundary",
+    "hex_prefix": "61 61 61 61 61 61 61 61 61 61"
+  },
+  {
+    "name": "ascii_11.bin",
+    "size": 11,
+    "description": "11-byte ASCII / 8-byte boundary",
+    "hex_prefix": "61 61 61 61 61 61 61 61 61 61 61"
+  },
+  {
+    "name": "ascii_12.bin",
+    "size": 12,
+    "description": "12-byte ASCII / 8-byte boundary",
+    "hex_prefix": "61 61 61 61 61 61 61 61 61 61 61 61"
+  },
+  {
+    "name": "ascii_13.bin",
+    "size": 13,
+    "description": "13-byte ASCII / 8-byte boundary",
+    "hex_prefix": "61 61 61 61 61 61 61 61 61 61 61 61 61"
+  },
+  {
+    "name": "ascii_14.bin",
+    "size": 14,
+    "description": "14-byte ASCII / 8-byte boundary",
+    "hex_prefix": "61 61 61 61 61 61 61 61 61 61 61 61 61 61"
+  },
+  {
+    "name": "ascii_15.bin",
+    "size": 15,
+    "description": "15-byte ASCII / 8-byte boundary",
+    "hex_prefix": "61 61 61 61 61 61 61 61 61 61 61 61 61 61 61"
+  },
+  {
+    "name": "ascii_16.bin",
+    "size": 16,
+    "description": "16-byte ASCII / 16-byte boundary",
+    "hex_prefix": "61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61"
+  },
+  {
+    "name": "ascii_17.bin",
+    "size": 17,
+    "description": "17-byte ASCII / 16-byte boundary",
+    "hex_prefix": "61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61"
+  },
+  {
+    "name": "ascii_18.bin",
+    "size": 18,
+    "description": "18-byte ASCII / 16-byte boundary",
+    "hex_prefix": "61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61"
+  },
+  {
+    "name": "ascii_19.bin",
+    "size": 19,
+    "description": "19-byte ASCII / 16-byte boundary",
+    "hex_prefix": "61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61"
+  },
+  {
+    "name": "ascii_20.bin",
+    "size": 20,
+    "description": "20-byte ASCII / 16-byte boundary",
+    "hex_prefix": "61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61"
+  },
+  {
+    "name": "ascii_21.bin",
+    "size": 21,
+    "description": "21-byte ASCII / 16-byte boundary",
+    "hex_prefix": "61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61"
+  },
+  {
+    "name": "ascii_22.bin",
+    "size": 22,
+    "description": "22-byte ASCII / 16-byte boundary",
+    "hex_prefix": "61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61"
+  },
+  {
+    "name": "ascii_23.bin",
+    "size": 23,
+    "description": "23-byte ASCII / 16-byte boundary",
+    "hex_prefix": "61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61"
+  },
+  {
+    "name": "ascii_24.bin",
+    "size": 24,
+    "description": "24-byte ASCII / 16-byte boundary",
+    "hex_prefix": "61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61"
+  },
+  {
+    "name": "ascii_25.bin",
+    "size": 25,
+    "description": "25-byte ASCII / 16-byte boundary",
+    "hex_prefix": "61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61"
+  },
+  {
+    "name": "ascii_26.bin",
+    "size": 26,
+    "description": "26-byte ASCII / 16-byte boundary",
+    "hex_prefix": "61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61"
+  },
+  {
+    "name": "ascii_27.bin",
+    "size": 27,
+    "description": "27-byte ASCII / 16-byte boundary",
+    "hex_prefix": "61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61"
+  },
+  {
+    "name": "ascii_28.bin",
+    "size": 28,
+    "description": "28-byte ASCII / 16-byte boundary",
+    "hex_prefix": "61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61"
+  },
+  {
+    "name": "ascii_29.bin",
+    "size": 29,
+    "description": "29-byte ASCII / 16-byte boundary",
+    "hex_prefix": "61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61"
+  },
+  {
+    "name": "ascii_30.bin",
+    "size": 30,
+    "description": "30-byte ASCII / 16-byte boundary",
+    "hex_prefix": "61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61"
+  },
+  {
+    "name": "ascii_31.bin",
+    "size": 31,
+    "description": "31-byte ASCII / 16-byte boundary",
+    "hex_prefix": "61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61"
+  },
+  {
+    "name": "ascii_32.bin",
+    "size": 32,
+    "description": "32-byte ASCII / vector boundary",
+    "hex_prefix": "61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61"
+  },
+  {
+    "name": "ascii_64.bin",
+    "size": 64,
+    "description": "64-byte ASCII / vector boundary",
+    "hex_prefix": "61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61"
+  },
+  {
+    "name": "ascii_128.bin",
+    "size": 128,
+    "description": "128-byte ASCII / vector boundary",
+    "hex_prefix": "61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61"
+  },
+  {
+    "name": "ascii_4k.bin",
+    "size": 4096,
+    "description": "4 KiB pure ASCII",
+    "hex_prefix": "61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61"
+  },
+  {
+    "name": "ascii_64k.bin",
+    "size": 65536,
+    "description": "64 KiB pure ASCII",
+    "hex_prefix": "61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61"
+  },
+  {
+    "name": "nonascii_start_80.bin",
+    "size": 128,
+    "description": "Non-ASCII/high-bit byte at offset 0",
+    "hex_prefix": "80 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61"
+  },
+  {
+    "name": "nonascii_start_ff.bin",
+    "size": 128,
+    "description": "0xFF at offset 0",
+    "hex_prefix": "ff 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61"
+  },
+  {
+    "name": "nonascii_offset_1.bin",
+    "size": 128,
+    "description": "Non-ASCII/high-bit byte at offset 1",
+    "hex_prefix": "61 80 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61"
+  },
+  {
+    "name": "nonascii_offset_7.bin",
+    "size": 128,
+    "description": "Non-ASCII at offset 7",
+    "hex_prefix": "61 61 61 61 61 61 61 80 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61"
+  },
+  {
+    "name": "nonascii_offset_8.bin",
+    "size": 128,
+    "description": "Non-ASCII at offset 8",
+    "hex_prefix": "61 61 61 61 61 61 61 61 80 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61"
+  },
+  {
+    "name": "nonascii_offset_15.bin",
+    "size": 128,
+    "description": "Non-ASCII at offset 15",
+    "hex_prefix": "61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 80 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61"
+  },
+  {
+    "name": "nonascii_offset_16.bin",
+    "size": 128,
+    "description": "Non-ASCII at offset 16",
+    "hex_prefix": "61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 80 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61"
+  },
+  {
+    "name": "nonascii_tail_1.bin",
+    "size": 128,
+    "description": "Non-ASCII 1 byte(s) from end",
+    "hex_prefix": "61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61"
+  },
+  {
+    "name": "nonascii_tail_2.bin",
+    "size": 128,
+    "description": "Non-ASCII 2 byte(s) from end",
+    "hex_prefix": "61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61"
+  },
+  {
+    "name": "nonascii_tail_4.bin",
+    "size": 128,
+    "description": "Non-ASCII 4 byte(s) from end",
+    "hex_prefix": "61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61"
+  },
+  {
+    "name": "nonascii_tail_8.bin",
+    "size": 128,
+    "description": "Non-ASCII 8 byte(s) from end",
+    "hex_prefix": "61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61"
+  },
+  {
+    "name": "nonascii_tail_16.bin",
+    "size": 128,
+    "description": "Non-ASCII 16 byte(s) from end",
+    "hex_prefix": "61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61"
+  },
+  {
+    "name": "nonascii_tail_32.bin",
+    "size": 128,
+    "description": "Non-ASCII 32 byte(s) from end",
+    "hex_prefix": "61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61"
+  },
+  {
+    "name": "nonascii_exact_end.bin",
+    "size": 128,
+    "description": "Non-ASCII at final byte",
+    "hex_prefix": "61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61"
+  },
+  {
+    "name": "highbit_80.bin",
+    "size": 128,
+    "description": "0x80 at offset 64",
+    "hex_prefix": "61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61"
+  },
+  {
+    "name": "highbit_ff.bin",
+    "size": 128,
+    "description": "0xFF at offset 64",
+    "hex_prefix": "61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61"
+  },
+  {
+    "name": "unaligned_ascii_1.bin",
+    "size": 129,
+    "description": "1-byte prefix padding + 128-byte ASCII",
+    "hex_prefix": "cc 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61"
+  },
+  {
+    "name": "unaligned_ascii_2.bin",
+    "size": 130,
+    "description": "2-byte prefix padding + 128-byte ASCII",
+    "hex_prefix": "cc cc 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61"
+  },
+  {
+    "name": "unaligned_ascii_3.bin",
+    "size": 131,
+    "description": "3-byte prefix padding + 128-byte ASCII",
+    "hex_prefix": "cc cc cc 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61"
+  },
+  {
+    "name": "unaligned_ascii_4.bin",
+    "size": 132,
+    "description": "4-byte prefix padding + 128-byte ASCII",
+    "hex_prefix": "cc cc cc cc 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61"
+  },
+  {
+    "name": "unaligned_ascii_5.bin",
+    "size": 133,
+    "description": "5-byte prefix padding + 128-byte ASCII",
+    "hex_prefix": "cc cc cc cc cc 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61"
+  },
+  {
+    "name": "unaligned_ascii_6.bin",
+    "size": 134,
+    "description": "6-byte prefix padding + 128-byte ASCII",
+    "hex_prefix": "cc cc cc cc cc cc 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61"
+  },
+  {
+    "name": "unaligned_ascii_7.bin",
+    "size": 135,
+    "description": "7-byte prefix padding + 128-byte ASCII",
+    "hex_prefix": "cc cc cc cc cc cc cc 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61"
+  },
+  {
+    "name": "unaligned_ascii_8.bin",
+    "size": 136,
+    "description": "8-byte prefix padding + 128-byte ASCII",
+    "hex_prefix": "cc cc cc cc cc cc cc cc 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61"
+  },
+  {
+    "name": "unaligned_ascii_9.bin",
+    "size": 137,
+    "description": "9-byte prefix padding + 128-byte ASCII",
+    "hex_prefix": "cc cc cc cc cc cc cc cc cc 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61"
+  },
+  {
+    "name": "unaligned_ascii_10.bin",
+    "size": 138,
+    "description": "10-byte prefix padding + 128-byte ASCII",
+    "hex_prefix": "cc cc cc cc cc cc cc cc cc cc 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61"
+  },
+  {
+    "name": "unaligned_ascii_11.bin",
+    "size": 139,
+    "description": "11-byte prefix padding + 128-byte ASCII",
+    "hex_prefix": "cc cc cc cc cc cc cc cc cc cc cc 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61"
+  },
+  {
+    "name": "unaligned_ascii_12.bin",
+    "size": 140,
+    "description": "12-byte prefix padding + 128-byte ASCII",
+    "hex_prefix": "cc cc cc cc cc cc cc cc cc cc cc cc 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61"
+  },
+  {
+    "name": "unaligned_ascii_13.bin",
+    "size": 141,
+    "description": "13-byte prefix padding + 128-byte ASCII",
+    "hex_prefix": "cc cc cc cc cc cc cc cc cc cc cc cc cc 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61"
+  },
+  {
+    "name": "unaligned_ascii_14.bin",
+    "size": 142,
+    "description": "14-byte prefix padding + 128-byte ASCII",
+    "hex_prefix": "cc cc cc cc cc cc cc cc cc cc cc cc cc cc 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61"
+  },
+  {
+    "name": "unaligned_ascii_15.bin",
+    "size": 143,
+    "description": "15-byte prefix padding + 128-byte ASCII",
+    "hex_prefix": "cc cc cc cc cc cc cc cc cc cc cc cc cc cc cc 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61"
+  },
+  {
+    "name": "unaligned_nonascii_1.bin",
+    "size": 129,
+    "description": "1-byte prefix padding + non-ASCII payload",
+    "hex_prefix": "cc 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61"
+  },
+  {
+    "name": "unaligned_nonascii_2.bin",
+    "size": 130,
+    "description": "2-byte prefix padding + non-ASCII payload",
+    "hex_prefix": "cc cc 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61"
+  },
+  {
+    "name": "unaligned_nonascii_3.bin",
+    "size": 131,
+    "description": "3-byte prefix padding + non-ASCII payload",
+    "hex_prefix": "cc cc cc 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61"
+  },
+  {
+    "name": "unaligned_nonascii_4.bin",
+    "size": 132,
+    "description": "4-byte prefix padding + non-ASCII payload",
+    "hex_prefix": "cc cc cc cc 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61"
+  },
+  {
+    "name": "unaligned_nonascii_5.bin",
+    "size": 133,
+    "description": "5-byte prefix padding + non-ASCII payload",
+    "hex_prefix": "cc cc cc cc cc 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61"
+  },
+  {
+    "name": "unaligned_nonascii_6.bin",
+    "size": 134,
+    "description": "6-byte prefix padding + non-ASCII payload",
+    "hex_prefix": "cc cc cc cc cc cc 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61"
+  },
+  {
+    "name": "unaligned_nonascii_7.bin",
+    "size": 135,
+    "description": "7-byte prefix padding + non-ASCII payload",
+    "hex_prefix": "cc cc cc cc cc cc cc 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61"
+  },
+  {
+    "name": "unaligned_nonascii_8.bin",
+    "size": 136,
+    "description": "8-byte prefix padding + non-ASCII payload",
+    "hex_prefix": "cc cc cc cc cc cc cc cc 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61"
+  },
+  {
+    "name": "unaligned_nonascii_9.bin",
+    "size": 137,
+    "description": "9-byte prefix padding + non-ASCII payload",
+    "hex_prefix": "cc cc cc cc cc cc cc cc cc 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61"
+  },
+  {
+    "name": "unaligned_nonascii_10.bin",
+    "size": 138,
+    "description": "10-byte prefix padding + non-ASCII payload",
+    "hex_prefix": "cc cc cc cc cc cc cc cc cc cc 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61"
+  },
+  {
+    "name": "unaligned_nonascii_11.bin",
+    "size": 139,
+    "description": "11-byte prefix padding + non-ASCII payload",
+    "hex_prefix": "cc cc cc cc cc cc cc cc cc cc cc 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61"
+  },
+  {
+    "name": "unaligned_nonascii_12.bin",
+    "size": 140,
+    "description": "12-byte prefix padding + non-ASCII payload",
+    "hex_prefix": "cc cc cc cc cc cc cc cc cc cc cc cc 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61"
+  },
+  {
+    "name": "unaligned_nonascii_13.bin",
+    "size": 141,
+    "description": "13-byte prefix padding + non-ASCII payload",
+    "hex_prefix": "cc cc cc cc cc cc cc cc cc cc cc cc cc 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61"
+  },
+  {
+    "name": "unaligned_nonascii_14.bin",
+    "size": 142,
+    "description": "14-byte prefix padding + non-ASCII payload",
+    "hex_prefix": "cc cc cc cc cc cc cc cc cc cc cc cc cc cc 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61"
+  },
+  {
+    "name": "unaligned_nonascii_15.bin",
+    "size": 143,
+    "description": "15-byte prefix padding + non-ASCII payload",
+    "hex_prefix": "cc cc cc cc cc cc cc cc cc cc cc cc cc cc cc 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61"
+  },
+  {
+    "name": "utf8_2byte.bin",
+    "size": 129,
+    "description": "127 ASCII bytes + 2-byte UTF-8 sequence",
+    "hex_prefix": "61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61"
+  },
+  {
+    "name": "utf8_3byte.bin",
+    "size": 130,
+    "description": "127 ASCII bytes + 3-byte UTF-8 sequence",
+    "hex_prefix": "61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61"
+  },
+  {
+    "name": "utf8_4byte.bin",
+    "size": 131,
+    "description": "127 ASCII bytes + 4-byte UTF-8 sequence",
+    "hex_prefix": "61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61"
+  }
+]
