@@ -944,12 +944,20 @@ fn openNewWindow(self: *App) void {
     };
 
     const pid = child.id orelse return;
-    // Wait for the child on a small thread, so it leaves no zombie.
-    // If this process exits first, init adopts and reaps it instead.
-    const reaper = std.Thread.spawn(.{ .stack_size = 64 * 1024 }, reapChild, .{pid}) catch |err| {
+    reapInBackground(pid) catch |err| {
         log.warn("new window: no reaper thread ({}); pid {d} stays a zombie until rex exits", .{ err, pid });
-        return;
     };
+}
+
+/// Waits for child `pid` on a detached thread, so it leaves no zombie.
+/// If this process exits first, init adopts and reaps the child instead.
+///
+/// The thread keeps the default stack size. glibc puts static TLS on
+/// each thread's stack, and rex's TLS (about 256 KiB, mostly std's
+/// signal stack) does not fit a small stack: pthread_create then fails
+/// with EINVAL, which std.Thread.spawn treats as unreachable and panics.
+fn reapInBackground(pid: posix.pid_t) std.Thread.SpawnError!void {
+    const reaper = try std.Thread.spawn(.{}, reapChild, .{pid});
     reaper.detach();
 }
 
@@ -1543,4 +1551,26 @@ test "PeriodicTimer: any period works, not only the defaults" {
     var timer: PeriodicTimer = .{ .period_ms = 333 };
     try std.testing.expectEqual(3, timer.tick(1000));
     try std.testing.expectEqual(332, timer.remaining());
+}
+
+test "reapInBackground: reaps a finished child without a zombie" {
+    const child = try std.process.spawn(std.testing.io, .{
+        .argv = &.{"true"},
+        .stdin = .ignore,
+        .stdout = .ignore,
+        .stderr = .ignore,
+    });
+    const pid = child.id.?;
+    try reapInBackground(pid);
+
+    // A zombie still answers kill(pid, 0); a reaped child does not.
+    var tries: usize = 0;
+    while (true) : (tries += 1) {
+        posix.kill(pid, @enumFromInt(0)) catch |err| {
+            try std.testing.expectEqual(error.ProcessNotFound, err);
+            return;
+        };
+        if (tries == 200) return error.ChildNotReaped;
+        std.Io.sleep(std.testing.io, .fromMilliseconds(10), .awake) catch {};
+    }
 }
