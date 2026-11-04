@@ -104,3 +104,25 @@ test "Hoehrmann DFA fuzz compare std.unicode" {
         try testing.expectEqual(std_valid, dfa_valid);
     }
 }
+
+test "truncateLen: a cut never splits a sequence" {
+    const text = "ab\u{e9}\u{4e16}\u{1f600}"; // 1, 1, 2, 3 and 4 bytes
+    const want = [_]usize{ 0, 1, 2, 2, 4, 4, 4, 7, 7, 7, 7, 11 };
+    for (want, 0..) |len, max_len| {
+        try testing.expectEqual(len, utf8.truncateLen(text, max_len));
+    }
+    try testing.expectEqual(text.len, utf8.truncateLen(text, 100));
+}
+
+test "truncateLen: stray continuation bytes may be cut anywhere" {
+    try testing.expectEqual(2, utf8.truncateLen("\x80\x80\x80", 2));
+    try testing.expectEqual(4, utf8.truncateLen("a\x80\x80\x80\x80\x80", 4));
+    // The lead's sequence ended before the cut, so the extra
+    // continuation byte at the cut is stray.
+    try testing.expectEqual(3, utf8.truncateLen("\xc3\xa9\x80\x80", 3));
+}
+
+test "truncateLen: a lead byte at the cut is dropped with its sequence" {
+    try testing.expectEqual(1, utf8.truncateLen("a\xe4\xb8\x96", 1));
+    try testing.expectEqual(1, utf8.truncateLen("a\xe4\xb8\x96", 3));
+}

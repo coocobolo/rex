@@ -10,6 +10,7 @@ const Attr = @import("cell.zig").Attr;
 const Cell = @import("cell.zig").Cell;
 
 const max_title_len = @import("term.zig").max_title_len;
+const max_answerback_len = @import("term.zig").max_answerback_len;
 
 const Response = Events.Response;
 
@@ -107,6 +108,39 @@ test "setTitle: truncates at max_title_len" {
     try testing.expectEqual(max_title_len, t.title_len);
     // Null terminator must be in bounds.
     try testing.expectEqual(@as(u8, 0), t.title[max_title_len]);
+}
+
+test "setTitle: a character across the limit is dropped whole" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    // 254 bytes of ASCII, then a 3-byte character that would end at 257.
+    const head = "A" ** (max_title_len - 2);
+    t.setTitle(head ++ "\u{4e16}");
+    try testing.expectEqualStrings(head, t.getTitle());
+    try testing.expectEqual(0, t.title[head.len]);
+
+    // A 2-byte character that ends exactly at the limit is kept.
+    t.setTitle(head ++ "\u{e9}" ++ "B");
+    try testing.expectEqualStrings(head ++ "\u{e9}", t.getTitle());
+}
+
+test "setIconName: a 4-byte character across the limit is dropped whole" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    const head = "n" ** (max_title_len - 1);
+    t.feed("\x1b]1;" ++ head ++ "\u{1f600}" ++ "\x07");
+    try testing.expectEqualStrings(head, t.getIconName());
+}
+
+test "setAnswerback: a character across the limit is dropped whole" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    const head = "x" ** (max_answerback_len - 1);
+    t.setAnswerback(head ++ "\u{e9}");
+    try testing.expectEqualStrings(head, t.getAnswerback());
 }
 
 test "getTitle: returns null-terminated slice" {
