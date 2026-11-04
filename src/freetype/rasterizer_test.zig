@@ -85,3 +85,43 @@ test "rowPitch: keeps a top-down pitch and rejects a bottom-up one" {
     try testing.expectError(error.BottomUpBitmap, Rasterizer.rowPitch(-24));
     try testing.expectError(error.GlyphTooLarge, Rasterizer.rowPitch(70000));
 }
+
+test "Line.fit: rounds to whole pixels and keeps the line inside the cell" {
+    const Line = Rasterizer.Line;
+    try testing.expectEqual(Line{ .y = 13, .thickness = 1 }, Line.fit(12.6, 0.8, 16));
+    try testing.expectEqual(Line{ .y = 14, .thickness = 2 }, Line.fit(15.2, 1.6, 16));
+    try testing.expectEqual(Line{ .y = 0, .thickness = 1 }, Line.fit(-3.0, 0.2, 16));
+    try testing.expectEqual(Line{ .y = 0, .thickness = 4 }, Line.fit(2.0, 9.0, 4));
+}
+
+test "rasterizer: line metrics come from the font and fit the cell" {
+    var r = try Rasterizer.create(alloc, test_font);
+    defer r.destroy(alloc);
+
+    const m = r.metrics;
+    const height: f32 = @floatFromInt(m.cell_height);
+    const ascender: f32 = @floatFromInt(m.ascender);
+    for ([_][2]f32{
+        .{ m.underline_y, m.underline_thickness },
+        .{ m.strikethrough_y, m.strikethrough_thickness },
+    }) |line| {
+        try testing.expectEqual(@round(line[0]), line[0]);
+        try testing.expectEqual(@round(line[1]), line[1]);
+        try testing.expect(line[0] >= 0);
+        try testing.expect(line[1] >= 1);
+        try testing.expect(line[0] + line[1] <= height);
+    }
+    // The underline sits below the baseline, the strikethrough above it.
+    try testing.expect(m.underline_y >= ascender);
+    try testing.expect(m.strikethrough_y < ascender);
+}
+
+test "rasterizer: underline thickness scales with the font size" {
+    var big_font = test_font;
+    big_font.height = 64;
+    var r = try Rasterizer.create(alloc, big_font);
+    defer r.destroy(alloc);
+    // NotoSansMono has a 50 unit underline on a 1000 unit em, about
+    // 3 px at 64 px; the old sign bug always fell back to 1 px.
+    try testing.expect(r.metrics.underline_thickness > 1);
+}

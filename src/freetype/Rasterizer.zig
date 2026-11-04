@@ -25,7 +25,8 @@ pub const Span = enum(u1) { single, double };
 
 /// Font-wide metrics in pixels, from the regular face. FreeType keeps
 /// them in 26.6 fixed point (1/64 px); `ascender` and the cell size are
-/// truncated to whole pixels, the line positions keep the fraction.
+/// truncated to whole pixels, and the line positions and thicknesses
+/// are rounded to whole pixels and kept inside the cell (see `Line.fit`).
 pub const Metrics = struct {
     cell_width: u16,
     cell_height: u16,
@@ -57,6 +58,24 @@ pub const Metrics = struct {
         .strikethrough_y = 0,
         .strikethrough_thickness = 0,
     };
+};
+
+/// A horizontal line inside a cell, in whole pixels.
+pub const Line = struct {
+    /// Top of the line, down from the top of the cell.
+    y: f32,
+    thickness: f32,
+
+    /// Rounds `top` and `thickness` to whole pixels, keeps the line at
+    /// least 1 px thick and moves it up or down so it stays inside a
+    /// cell `cell_height` pixels tall. A line thicker than the cell is
+    /// clamped to the cell.
+    pub fn fit(top: f32, thickness: f32, cell_height: u16) Line {
+        const height: f32 = @floatFromInt(@max(cell_height, 1));
+        const t = std.math.clamp(@round(thickness), 1.0, height);
+        const y = std.math.clamp(@round(top), 0.0, height - t);
+        return .{ .y = y, .thickness = t };
+    }
 };
 
 /// One rasterized glyph: its bitmap and FreeType metrics.
@@ -252,29 +271,28 @@ pub fn create(gpa: Allocator, config: Config) !Rasterizer {
     const descender_px: f32 = ft.fontUnitsToPixels(-regular.descender, scale);
     self.metrics.descender = @intFromFloat(@round(descender_px));
 
-    // Underline from FT_Face
-    const ul_pos_px = ft.fontUnitsToPixels(-regular.underline_position, scale);
-    const ul_thick_px = ft.fontUnitsToPixels(-regular.underline_thickness, scale);
+    // Underline from FT_Face. underline_position is the centre of the
+    // line, negative below the baseline; underline_thickness is positive.
+    const ul_thick_px = ft.fontUnitsToPixels(regular.underline_thickness, scale);
+    const underline: Line = if (ul_thick_px > 0) .fit(
+        ascender_f + ft.fontUnitsToPixels(-regular.underline_position, scale) - ul_thick_px * 0.5,
+        ul_thick_px,
+        self.cell_height,
+    ) else .fit(ascender_f + 1.0, 1.0, self.cell_height);
+    self.metrics.underline_y = underline.y;
+    self.metrics.underline_thickness = underline.thickness;
 
-    if (ul_thick_px > 0) {
-        self.metrics.underline_y = ascender_f + ul_pos_px - ul_thick_px * 0.5;
-        self.metrics.underline_thickness = @max(1.0, ul_thick_px);
-    } else {
-        self.metrics.underline_y = ascender_f + 1.0;
-        self.metrics.underline_thickness = 1.0;
-    }
-
-    // Strikethrough, OS/2 table only
+    // Strikethrough, OS/2 table only. yStrikeoutPosition is the top of
+    // the line, positive above the baseline.
     const os2: ?*c.TT_OS2 = @ptrCast(@alignCast(c.FT_Get_Sfnt_Table(self.face.regular, c.FT_SFNT_OS2)));
-    if (os2) |os_2| {
-        const st_pos_px = ft.fontUnitsToPixels(os_2.yStrikeoutPosition, scale);
-        const st_thick_px = ft.fontUnitsToPixels(os_2.yStrikeoutSize, scale);
-        self.metrics.strikethrough_y = ascender_f - st_pos_px - st_thick_px * 0.5;
-        self.metrics.strikethrough_thickness = @max(1.0, st_thick_px);
-    } else {
-        self.metrics.strikethrough_y = ascender_f * 0.6;
-        self.metrics.strikethrough_thickness = self.metrics.underline_thickness;
-    }
+    const st_thick_px: f32 = if (os2) |os_2| ft.fontUnitsToPixels(os_2.yStrikeoutSize, scale) else 0;
+    const strikethrough: Line = if (os2 != null and st_thick_px > 0) .fit(
+        ascender_f - ft.fontUnitsToPixels(os2.?.yStrikeoutPosition, scale),
+        st_thick_px,
+        self.cell_height,
+    ) else .fit(ascender_f * 0.6, underline.thickness, self.cell_height);
+    self.metrics.strikethrough_y = strikethrough.y;
+    self.metrics.strikethrough_thickness = strikethrough.thickness;
 
     // Fallback faces load at the primary font's size so their glyphs fit
     // the same cells. A fallback that fails to load is skipped.
