@@ -1,6 +1,7 @@
 const App = @This();
 
 const std = @import("std");
+const root = @import("root");
 const builtin = @import("builtin");
 
 const log = std.log.scoped(.app);
@@ -52,15 +53,6 @@ const Screen = rex.terminal.screen.Screen;
 
 const pomodoro = rex.builtin.pomodoro;
 
-// Rows plus scrollback should be a power of two (here 4096), so the
-// ring wastes nothing. See TerminalOption.optimized.
-
-const max_rows: usize = 200;
-const max_cols: usize = 220;
-const max_scrollback: usize = 3896;
-const tab_width: usize = 8;
-const emulator_version = "0.1.0";
-const emulator_name = "rex";
 /// Largest selection copied to the clipboard, in bytes.
 const max_copy_size: usize = std.math.maxInt(u16) - 1;
 
@@ -112,17 +104,48 @@ pub const Config = struct {
     },
     /// Stores list of plain environment variable using "KEY=VALUE" format
     environments: []const rex.env.PlainVar,
-    terminal: TerminalOption = terminal_option,
+    /// Grid limits and identity: max_rows (200), max_cols (220),
+    /// tab_width (8), max_scrollback (3896), ambiguous_width (.narrow),
+    /// name ("rex") and version ("0.1.0"). Rows plus scrollback should
+    /// be a power of two so the ring wastes nothing, see
+    /// TerminalOption.optimized.
+    ///
+    /// These size the screen at compile time, so the types below read
+    /// them from the root file: main.zig declares
+    /// `pub const rex_terminal_option = config.terminal;`. App.init
+    /// fails to compile when the two differ.
+    terminal: TerminalOption = default_terminal_option,
 };
 
-const terminal_option: TerminalOption = .{
-    .max_rows = max_rows,
-    .max_cols = max_cols,
-    .tab_width = tab_width,
-    .name = emulator_name,
-    .version = emulator_version,
-    .max_scrollback = max_scrollback,
+/// Terminal limits used when the root file sets none, as in tests.
+/// 200 rows plus 3896 scrollback lines fill a 4096 row ring.
+pub const default_terminal_option: TerminalOption = .{
+    .max_rows = 200,
+    .max_cols = 220,
+    .tab_width = 8,
+    .max_scrollback = 3896,
+    .name = "rex",
+    .version = "0.1.0",
 };
+
+/// Terminal limits the screen, frame and renderer types are built
+/// with: the root rex_terminal_option when declared, else the defaults.
+pub const terminal_option: TerminalOption = if (@hasDecl(root, "rex_terminal_option"))
+    root.rex_terminal_option
+else
+    default_terminal_option;
+
+/// Whether two terminal options are the same, comparing strings by
+/// content.
+fn sameTerminalOption(comptime a: TerminalOption, comptime b: TerminalOption) bool {
+    return a.max_rows == b.max_rows and
+        a.max_cols == b.max_cols and
+        a.tab_width == b.tab_width and
+        a.max_scrollback == b.max_scrollback and
+        a.ambiguous_width == b.ambiguous_width and
+        std.mem.eql(u8, a.name, b.name) and
+        std.mem.eql(u8, a.version, b.version);
+}
 
 pub const FrameBuilderType = FrameBuilder(terminal_option);
 pub const RendererType = Renderer(terminal_option);
@@ -224,6 +247,10 @@ pub fn init(
     argv0: []const u8,
     comptime config: *const Config,
 ) !App {
+    comptime if (!sameTerminalOption(config.terminal, terminal_option)) {
+        @compileError("Config.terminal differs from the root rex_terminal_option");
+    };
+
     log.debug("envi.block.len: {d}", .{environ.block.slice.len});
 
     const home_dir = try environ.getAlloc(gpa, "HOME");
@@ -239,7 +266,7 @@ pub fn init(
 
     var dirs = try rex.dirs.Application.resolve(
         gpa,
-        emulator_name,
+        terminal_option.name,
         home_dir,
         &envmap,
     );
@@ -1072,8 +1099,8 @@ const keyCb: c.GLFWkeyfun = struct {
 
 fn mouseCellPos(self: *App, xpos: f32, ypos: f32) struct { u16, u16 } {
     const cw, const ch = .{ self.rasterizer.cell_width, self.rasterizer.cell_height };
-    const col: u16 = @intCast(@min(@as(u32, @intFromFloat(@max(0, xpos))) / cw, max_cols - 1));
-    const row: u16 = @intCast(@min(@as(u32, @intFromFloat(@max(0, ypos))) / ch, max_rows - 1));
+    const col: u16 = @intCast(@min(@as(u32, @intFromFloat(@max(0, xpos))) / cw, terminal_option.max_cols - 1));
+    const row: u16 = @intCast(@min(@as(u32, @intFromFloat(@max(0, ypos))) / ch, terminal_option.max_rows - 1));
     return .{ col, row };
 }
 
