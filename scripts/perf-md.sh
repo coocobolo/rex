@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# scripts/perf-md.sh <baselines/name.jsonl> <baselines/name.meta.json> > BENCHMARKS.md
+# scripts/perf-md.sh <baselines/name.jsonl> <baselines/name.meta.json>
 #
 # Env:
 #   PERF_MD_EXCLUDE   regex of variants to hide (default: feed_byte|\+checksum)

@@ -7,7 +7,7 @@ the benchmark binary itself is `zig-out/bin/benchmark` (sources in `bench/`).
 |---|---|
 | `perf-bench.sh` | build, run the benchmark, record results, compare against the baseline, `bless` a new baseline |
 | `perf-compare.sh` | compare any two `.jsonl` result files |
-| `perf-md.sh` | generate `BENCHMARKS.md` from a blessed baseline |
+| `perf-md.sh` | generate a markdown table from a blessed baseline |
 
 Requirements: `perf`, `zig`, `taskset`, `awk`. `jq` is needed by `perf-compare.sh` and `perf-md.sh`.
 
@@ -103,8 +103,8 @@ git commit -am "parser: <change>"
 scripts/perf-bench.sh                 # clean-tree run, the one that can be blessed
 scripts/perf-bench.sh bless <topic>
 b=$(ls perf-results/baselines/*.jsonl | tail -1); b=${b%.jsonl}
-scripts/perf-md.sh "$b.jsonl" "$b.meta.json" > BENCHMARKS.md
-git add perf-results/baselines perf-results/baseline BENCHMARKS.md
+scripts/perf-md.sh "$b.jsonl" "$b.meta.json"
+git add perf-results/baselines perf-results/baseline
 git commit -m "perf: bless <topic> (htop -4%, sgr_normal -3%)"
 ```
 
@@ -112,8 +112,8 @@ The code commit and the baseline commit stay separate. Put the headline deltas
 in the baseline commit message; the history of `baselines/` is the performance
 changelog.
 
-Do not regenerate `BENCHMARKS.md` after a plain run. It documents the blessed
-baseline only, and the table and the baseline are committed together.
+Do not regenerate the table after a plain run. It documents the blessed
+baseline only.
 
 Special cases:
 - **Accepted slowdown** (for example a correctness fix): bless it and say so in
