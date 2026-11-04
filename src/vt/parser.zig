@@ -25,8 +25,13 @@ pub const State = enum(u8) {
     /// byte: '\\' (ST) or BEL dispatches it, anything else drops it and
     /// runs as it would after a plain ESC, as xterm does.
     osc_escape,
+    /// ESC seen inside a DCS data string. The string stays hooked until
+    /// the next byte: '\\' (ST) unhooks it, anything else drops it
+    /// without an unhook and runs as it would after a plain ESC, as
+    /// xterm does. Unlike OSC, BEL does not end a DCS.
+    dcs_escape,
 
-    pub const count: usize = 15;
+    pub const count: usize = 16;
 
     /// Scans `bytes` from the beginning and returns the index of the
     /// first byte where the stops fires, or `bytes.len` if every continues it.
@@ -239,6 +244,7 @@ fn createEntries() [State.count][256]Entry {
         var a: [State.count]Action = @splat(Action.none);
         a[@intFromEnum(State.escape)] = .clear;
         a[@intFromEnum(State.osc_escape)] = .clear;
+        a[@intFromEnum(State.dcs_escape)] = .clear;
         a[@intFromEnum(State.csi_entry)] = .clear;
         a[@intFromEnum(State.dcs_entry)] = .clear;
         a[@intFromEnum(State.osc_string)] = .osc_start;
@@ -514,9 +520,12 @@ fn createEntries() [State.count][256]Entry {
         }
     }
 
-    // Except: CAN and SUB cancel an OSC string, as xterm does, so
-    // osc_end must not dispatch it. BEL, ST and ESC still end it.
-    for ([_]u8{ 0x18, 0x1A }) |b| t[@intFromEnum(State.osc_string)][b].exit = .none;
+    // Except: CAN and SUB cancel an OSC or DCS string, as xterm does
+    // (sos_table CAN/SUB reset the parser and drop the string), so
+    // osc_end and unhook must not dispatch it.
+    for ([_]State{ .osc_string, .dcs_passthrough }) |s| {
+        for ([_]u8{ 0x18, 0x1A }) |b| t[@intFromEnum(s)][b].exit = .none;
+    }
 
     // Except: ESC inside an OSC string does not end it. xterm (charproc.c,
     // sos_table) moves to esc_table and keeps the string; only ESC \\
@@ -549,6 +558,41 @@ fn createEntries() [State.count][256]Entry {
         };
     }
 
+    // Except: ESC inside a DCS data string does not end it either. xterm
+    // keeps the string across ESC exactly as for OSC; ESC \\ (CASE_ST)
+    // runs do_dcs and any other escape abandons it. So dcs_escape is
+    // the escape row with the string still hooked. BEL is not special:
+    // CASE_BELL only ends a string in OSC mode, so here it rings the
+    // bell (execute) and stays in dcs_escape, as the escape row does.
+    //
+    // Only dcs_passthrough needs this. ESC in dcs_entry, dcs_param,
+    // dcs_intermediate or dcs_ignore happens before hook, so there is
+    // nothing to keep and the plain escape row already matches xterm.
+    {
+        const dcs: u8 = @intFromEnum(State.dcs_passthrough);
+        const esc: u8 = @intFromEnum(State.dcs_escape);
+        t[dcs][0x1B] = .{
+            .action = .none,
+            .next = .dcs_escape,
+            .exit = .none,
+            .entry = entry_action[esc],
+        };
+        for (0..256) |b| {
+            var e = t[@intFromEnum(State.escape)][b];
+            if (e.next == .escape) {
+                e.next = .dcs_escape;
+                e.entry = entry_action[esc];
+            }
+            t[esc][b] = e;
+        }
+        t[esc]['\\'] = .{
+            .action = .none,
+            .next = .ground,
+            .exit = .unhook,
+            .entry = entry_action[@intFromEnum(State.ground)],
+        };
+    }
+
     return t;
 }
 
@@ -559,7 +603,8 @@ inline fn forcedTransition(state: State, byte: u8) bool {
 }
 
 comptime {
-    @setEvalBranchQuota(4 << 10);
+    // One branch per (state, byte) cell plus the outer loop.
+    @setEvalBranchQuota((State.count + 1) * 256);
 
     // Bits set on cells that force the transition path even when e.next == self.state.
     const forced_transitions: [State.count]u256 = blk: {

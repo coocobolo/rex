@@ -1180,19 +1180,114 @@ test "vt_parser: DCS with empty data stream" {
     try testing.expectEqual(.ground, p.state);
 }
 
-test "vt_parser: DCS ESC inside dsc_passthrough cancels via anywhere, unhook fires" {
+test "vt_parser: ESC inside DCS waits for the next byte, ESC \\ unhooks it" {
+    for ([_]bool{ false, true }) |split| {
+        var d: TestDispatcher = try .init(alloc);
+        defer d.deinit();
+        var p: Parser(TestDispatcher, .{}) = .{};
+
+        feedMaybeSplit(&p, &d, "\x1bPqdata\x1b", split);
+        try testing.expectEqual(.dcs_escape, p.state);
+        try testing.expectEqual(1, d.dcs_hooks.items.len);
+        try testing.expectEqual('q', d.dcs_hooks.items[0].final);
+        try testing.expectEqualSlices(u8, "data", d.dcs_puts.items);
+        try testing.expectEqual(0, d.dcs_unhook_count);
+
+        feedMaybeSplit(&p, &d, "\\", split);
+        try testing.expectEqual(.ground, p.state);
+        try testing.expectEqual(1, d.dcs_unhook_count);
+        try testing.expectEqual(0, d.escapes.items.len); // ST is not an escape
+    }
+}
+
+test "vt_parser: ESC then another byte inside DCS drops it and runs the escape" {
+    // xterm: in sos_table ESC goes to esc_table with the string kept;
+    // only '\\' (CASE_ST) runs do_dcs, any other escape abandons it.
+    for ([_]bool{ false, true }) |split| {
+        var d: TestDispatcher = try .init(alloc);
+        defer d.deinit();
+        var p: Parser(TestDispatcher, .{}) = .{};
+
+        feedMaybeSplit(&p, &d, "\x1bP$qm\x1b7", split);
+        try testing.expectEqual(.ground, p.state);
+        try testing.expectEqual(0, d.dcs_unhook_count);
+        try testing.expectEqual(1, d.escapes.items.len);
+        try testing.expectEqual('7', d.escapes.items[0].final);
+
+        feedMaybeSplit(&p, &d, "\x1bPqlost\x1b[31m", split);
+        try testing.expectEqual(0, d.dcs_unhook_count);
+        try testing.expectEqual(1, d.csi_events.items.len);
+        try testing.expectEqual('m', d.csi_events.items[0].final);
+
+        // ESC P restarts: only the second string is unhooked.
+        feedMaybeSplit(&p, &d, "\x1bPqlost\x1bP1qkept\x1b\\", split);
+        try testing.expectEqual(4, d.dcs_hooks.items.len);
+        try testing.expectEqual(1, d.dcs_hooks.items[3].param_len);
+        try testing.expectEqual(1, d.dcs_unhook_count);
+    }
+}
+
+test "vt_parser: ESC BEL inside DCS rings the bell and keeps the string" {
+    // xterm: CASE_BELL only ends a string in OSC mode; in DCS it is a
+    // plain bell and the parser stays in esc_table.
+    for ([_]bool{ false, true }) |split| {
+        var d: TestDispatcher = try .init(alloc);
+        defer d.deinit();
+        var p: Parser(TestDispatcher, .{}) = .{};
+
+        feedMaybeSplit(&p, &d, "\x1bPqa\x1b\x07", split);
+        try testing.expectEqual(.dcs_escape, p.state);
+        try testing.expectEqualSlices(u8, &.{0x07}, d.executes.items);
+        try testing.expectEqual(0, d.dcs_unhook_count);
+
+        feedMaybeSplit(&p, &d, "\\", split);
+        try testing.expectEqual(.ground, p.state);
+        try testing.expectEqual(1, d.dcs_unhook_count);
+    }
+}
+
+test "vt_parser: ESC ESC \\ inside DCS still unhooks, CAN after ESC drops it" {
+    for ([_]bool{ false, true }) |split| {
+        var d: TestDispatcher = try .init(alloc);
+        defer d.deinit();
+        var p: Parser(TestDispatcher, .{}) = .{};
+
+        feedMaybeSplit(&p, &d, "\x1bPqa\x1b\x1b\\", split);
+        try testing.expectEqual(.ground, p.state);
+        try testing.expectEqual(1, d.dcs_unhook_count);
+
+        feedMaybeSplit(&p, &d, "\x1bPqb\x1b\x18", split);
+        try testing.expectEqual(.ground, p.state);
+        try testing.expectEqual(1, d.dcs_unhook_count);
+        try testing.expectEqualSlices(u8, &.{0x18}, d.executes.items);
+    }
+}
+
+test "vt_parser: CAN or SUB inside DCS cancels it without unhook" {
+    for ([_]u8{ 0x18, 0x1A }) |cancel| {
+        var d: TestDispatcher = try .init(alloc);
+        defer d.deinit();
+        var p: Parser(TestDispatcher, .{}) = .{};
+
+        p.feedBytes(&d, "\x1bPqdata");
+        p.feedBytes(&d, &.{cancel});
+        try testing.expectEqual(.ground, p.state);
+        try testing.expectEqual(1, d.dcs_hooks.items.len);
+        try testing.expectEqual(0, d.dcs_unhook_count);
+        try testing.expectEqualSlices(u8, &.{cancel}, d.executes.items);
+    }
+}
+
+test "vt_parser: ESC before the DCS final byte abandons it without hook" {
     var d: TestDispatcher = try .init(alloc);
     defer d.deinit();
     var p: Parser(TestDispatcher, .{}) = .{};
 
-    // ESC P q data ESC (anywhere: ESC -> escape, exit fires unhook)
-    p.feedBytes(&d, "\x1bPqdata\x1b");
-
-    try testing.expectEqual(1, d.dcs_hooks.items.len);
-    try testing.expectEqual('q', d.dcs_hooks.items[0].final);
-    try testing.expectEqualSlices(u8, "data", d.dcs_puts.items[0..]);
-    try testing.expectEqual(1, d.dcs_unhook_count); // exit fired
-    try testing.expectEqual(.escape, p.state);
+    p.feedBytes(&d, "\x1bP1;2\x1b7");
+    try testing.expectEqual(.ground, p.state);
+    try testing.expectEqual(0, d.dcs_hooks.items.len);
+    try testing.expectEqual(0, d.dcs_unhook_count);
+    try testing.expectEqual('7', d.escapes.items[0].final);
 }
 
 test "vt_parser: DCS C1 0x90 shorthand enters dcs_entry" {
