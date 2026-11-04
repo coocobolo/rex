@@ -46,9 +46,7 @@ pub const Escape = struct {
             'M' => term.active().reverseIndex(), // RI
             'N' => term.active().singleShift2(), // SS2
             'O' => term.active().singleShift3(), // SS3
-            // DECID, obsolete form of DA1.
-            // https://invisible-island.net/xterm/manpage/xterm.html#VT100-Widget-Resources:decTerminalID
-            'Z' => term.reply(.decid),
+            'Z' => term.reply(.primary_attributes), // DECID, the obsolete DA1 request
 
             'c' => term.hardReset(), // RIS
 

@@ -2836,12 +2836,9 @@ test "csi: DECXCPR report cursor position" {
     try testing.expectEqualStrings("\x1b[?6;11R", t.events.response.slice());
 }
 
-test "csi: DA1 send device attributes" {
+test "csi: DA1 reports a VT220 with colour and clipboard" {
     var t = try Term.create(alloc);
     defer t.destroy(alloc);
-
-    t.active().cursor.row = 5;
-    t.active().cursor.col = 10;
 
     t.control_format = .s7c1t;
     t.feed("\x1b[0c");
@@ -2850,12 +2847,31 @@ test "csi: DA1 send device attributes" {
     try testing.expectEqualStrings("\x1b[?62;22;52c", t.events.response.slice());
 }
 
-test "csi: DA2 send device attributes" {
+test "esc: DECID answers exactly like DA1" {
     var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
-    t.active().cursor.row = 5;
-    t.active().cursor.col = 10;
+    t.feed("\x1b[c");
+    const da1 = try alloc.dupe(u8, t.events.response.slice());
+    defer alloc.free(da1);
+    t.events.response.clear();
+
+    t.feed("\x1bZ");
+    try testing.expectEqualStrings(da1, t.events.response.slice());
+}
+
+test "esc: DECID answers with 8-bit controls under s8c1t" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    t.control_format = .s8c1t;
+    t.feed("\x1bZ");
+    try testing.expectEqualStrings("\x9b?62;22;52c", t.events.response.slice());
+}
+
+test "csi: DA2 reports the terminal type and version" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
 
     t.control_format = .s7c1t;
     t.feed("\x1b[>0c");
