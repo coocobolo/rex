@@ -272,7 +272,7 @@ pub fn init(
     var atlas: Atlas = try .create(gpa);
     errdefer atlas.destroy();
 
-    var frame_builder: FrameBuilderType = try .init(gpa);
+    var frame_builder: FrameBuilderType = try .init(gpa, config.window.decoration);
     errdefer frame_builder.deinit(gpa);
 
     atlas.preRasterize(gpa, &rasterizer, .{ .start = 0x20, .end = 0x7F });

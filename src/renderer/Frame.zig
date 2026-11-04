@@ -11,6 +11,7 @@ const Atlas = renderer.Atlas;
 
 const Cell = renderer.Cell;
 const Background = renderer.Background;
+const Decoration = renderer.Decoration;
 const Selection = renderer.Selection;
 const Scrollbar = renderer.Scrollbar;
 const Cursor = renderer.Cursor;
@@ -37,6 +38,46 @@ pub fn cellColors(palette: *const Palette, cell: term.Cell, reverse_video: bool)
     return .{ foreground, background };
 }
 
+/// Returns the decoration run for one cell, or null when the cell has
+/// no visible decoration. `foreground` is the text color after reverse
+/// video and the selection override; `foreground_alpha` carries SGR 2.
+/// Invisible (SGR 8) cells hide their decorations with the text.
+pub fn decorationInstance(
+    option: *const Decoration.Option,
+    cell: term.Cell,
+    foreground: [3]u8,
+    foreground_alpha: u8,
+    col: u16,
+    row: u16,
+    span: u16,
+) ?Decoration.Instance {
+    const flags = cell.flags;
+    if (flags.invisible) return null;
+    if (flags.underline == .none and !flags.strikethrough and !flags.overline) return null;
+
+    const alpha: u8 = if (option.dim) foreground_alpha else 255;
+    const color = option.color;
+    return .{
+        .col = col,
+        .row = row,
+        .span = span,
+        .underline = rgba(color.underline orelse foreground, alpha),
+        .strikethrough = rgba(color.strikethrough orelse foreground, alpha),
+        .overline = rgba(color.overline orelse foreground, alpha),
+        .flags = .{
+            .underline = flags.underline,
+            .strikethrough = flags.strikethrough,
+            .overline = flags.overline,
+            .blink = option.blink and flags.blink,
+            .blink_rapid = option.blink and flags.blink_rapid,
+        },
+    };
+}
+
+fn rgba(rgb: [3]u8, alpha: u8) [4]u8 {
+    return .{ rgb[0], rgb[1], rgb[2], alpha };
+}
+
 /// Returns the cursor color: OSC 12 when set, else the default
 /// foreground, as the OSC 12 query reports. The SGR pen does not
 /// change it.
@@ -53,9 +94,9 @@ pub fn cursorColor(palette: *const Palette, osc_color: ?[3]u8) [3]u8 {
 ///   7: reserved
 pub const Flags = packed struct(u8) {
     strikethrough: bool = false,
-    blink: bool = false, // slow (~0.5 Hz)
+    blink: bool = false, // SGR 5, Config.blink.half_period
     overline: bool = false,
-    blink_rapid: bool = false, // rapid (~3 Hz)
+    blink_rapid: bool = false, // SGR 6, Config.blink.rapid_half_period
     underline: UnderlineStyle = .none,
     _pad: u1 = 0,
 };
@@ -168,6 +209,7 @@ pub const FrameData = @This();
 gray_instances: []const Cell.Instance,
 color_instances: []const Cell.Instance,
 background_instances: []const Background.Instance,
+decoration_instances: []const Decoration.Instance,
 selection_instances: []const Selection.Instance,
 scrollbar_state: Scrollbar.State,
 cursor_state: Cursor.State,
@@ -189,6 +231,7 @@ pub fn Builder(comptime option: Option) type {
         gray_buffer: std.ArrayListUnmanaged(Cell.Instance),
         color_buffer: std.ArrayListUnmanaged(Cell.Instance),
         background_buffer: std.ArrayListUnmanaged(Background.Instance),
+        decoration_buffer: std.ArrayListUnmanaged(Decoration.Instance),
         selection_buffer: std.ArrayListUnmanaged(Selection.Instance),
         last_cursor: CursorCache,
 
@@ -198,7 +241,10 @@ pub fn Builder(comptime option: Option) type {
         last_scrollbar: Scrollbar.State,
         last_selection: ?Selection.State,
 
-        pub fn init(gpa: Allocator) !Self {
+        /// Colors, dim and blink rules for the decoration runs.
+        decoration: Decoration.Option,
+
+        pub fn init(gpa: Allocator, decoration: Decoration.Option) !Self {
             var gray_buffer: std.ArrayListUnmanaged(Cell.Instance) = try .initCapacity(gpa, max_cells);
             errdefer gray_buffer.deinit(gpa);
 
@@ -208,11 +254,16 @@ pub fn Builder(comptime option: Option) type {
             var background_buffer: std.ArrayListUnmanaged(Background.Instance) = try .initCapacity(gpa, max_cells);
             errdefer background_buffer.deinit(gpa);
 
+            var decoration_buffer: std.ArrayListUnmanaged(Decoration.Instance) = try .initCapacity(gpa, max_cells);
+            errdefer decoration_buffer.deinit(gpa);
+
             var selection_buffer: ArrayListUnmanaged(Selection.Instance) = try .initCapacity(gpa, max_rows);
             errdefer selection_buffer.deinit(gpa);
 
             return .{
                 .background_buffer = background_buffer,
+                .decoration = decoration,
+                .decoration_buffer = decoration_buffer,
                 .gray_buffer = gray_buffer,
                 .color_buffer = color_buffer,
                 .selection_buffer = selection_buffer,
@@ -228,6 +279,7 @@ pub fn Builder(comptime option: Option) type {
             self.gray_buffer.deinit(gpa);
             self.color_buffer.deinit(gpa);
             self.background_buffer.deinit(gpa);
+            self.decoration_buffer.deinit(gpa);
             self.selection_buffer.deinit(gpa);
         }
 
@@ -349,6 +401,7 @@ pub fn Builder(comptime option: Option) type {
                 // reuse existing buffer contents, only update cursor/Scrollbar
                 return .{
                     .background_instances = self.background_buffer.items,
+                    .decoration_instances = self.decoration_buffer.items,
                     .gray_instances = self.gray_buffer.items,
                     .color_instances = self.color_buffer.items,
                     .cursor_state = buildCursor(
@@ -395,6 +448,7 @@ pub fn Builder(comptime option: Option) type {
                 // reuse existing buffer contents, only update cursor/Scrollbar
                 return .{
                     .background_instances = self.background_buffer.items,
+                    .decoration_instances = self.decoration_buffer.items,
                     .gray_instances = self.gray_buffer.items,
                     .color_instances = self.color_buffer.items,
                     .scrollbar_state = new_scrollbar,
@@ -420,6 +474,7 @@ pub fn Builder(comptime option: Option) type {
 
             // path 3: full rebuild
             self.background_buffer.clearRetainingCapacity();
+            self.decoration_buffer.clearRetainingCapacity();
             self.gray_buffer.clearRetainingCapacity();
             self.color_buffer.clearRetainingCapacity();
             self.selection_buffer.clearRetainingCapacity();
@@ -476,15 +531,6 @@ pub fn Builder(comptime option: Option) type {
 
                     const foreground_alpha: u8 = if (c.flags.dim) 128 else 255;
 
-                    // if (row == 1 and col >= 34 and col <= 41) {
-                    //     log.debug("bg instance ({}, {}): bg=({},{},{}) fg=({},{},{})", .{
-                    //         row,           col,
-                    //         background[0], background[1],
-                    //         background[2], foreground[0],
-                    //         foreground[1], foreground[2],
-                    //     });
-                    // }
-
                     // Background instance (always, even for empty cells)
                     self.background_buffer.appendAssumeCapacity(.{
                         .col = col,
@@ -494,18 +540,11 @@ pub fn Builder(comptime option: Option) type {
                         .g = background[1],
                         .b = background[2],
                         .a = 255,
-                        .fg_r = foreground[0],
-                        .fg_g = foreground[1],
-                        .fg_b = foreground[2],
-                        .fg_a = foreground_alpha,
-                        .flags = .{
-                            .strikethrough = c.flags.strikethrough,
-                            .overline = c.flags.overline,
-                            .blink = c.flags.blink,
-                            .blink_rapid = c.flags.blink_rapid,
-                            .underline = c.flags.underline,
-                        },
                     });
+
+                    if (decorationInstance(&self.decoration, c, foreground, foreground_alpha, col, row, span)) |run| {
+                        Decoration.appendRun(&self.decoration_buffer, run);
+                    }
 
                     if (c.kind == .empty) continue;
                     const metric = cellGlyph(gpa, rasterizer, atlas, screen, &c) orelse continue;
@@ -532,12 +571,10 @@ pub fn Builder(comptime option: Option) type {
                         .fg_a = foreground_alpha,
                         .glyph_width = metric.width,
                         .glyph_height = metric.height,
+                        // Decorations are drawn by the Decoration pass.
                         .flags = .{
                             .blink = c.flags.blink,
-                            .overline = c.flags.overline,
-                            .underline = c.flags.underline,
                             .blink_rapid = c.flags.blink_rapid,
-                            .strikethrough = c.flags.strikethrough,
                         },
                     };
 
@@ -560,6 +597,7 @@ pub fn Builder(comptime option: Option) type {
                 .gray_instances = self.gray_buffer.items,
                 .color_instances = self.color_buffer.items,
                 .background_instances = self.background_buffer.items,
+                .decoration_instances = self.decoration_buffer.items,
                 .scrollbar_state = new_scrollbar,
                 .selection_instances = self.selection_buffer.items,
                 .cursor_state = buildCursor(

@@ -1,19 +1,14 @@
 #version 330 core
 
 layout(location = 0) in vec2 a_quad;
-layout(location = 1) in uvec2 a_cell;  // col, row (u16)
-layout(location = 2) in uint a_span;   // span (u16)
-layout(location = 3) in vec4 a_bg;      // r,g,b,a normalized (GL_UNSIGNED_BYTE + normalized)
-layout(location = 4) in vec4 a_fg;      // fg_r,fg_g,fg_b,_ normalized (for decorations)
-layout(location = 5) in uint a_flags;   // Flags packed byte
+layout(location = 1) in uvec2 a_cell; // col, row (u16)
+layout(location = 2) in uint a_span;  // span (u16)
+layout(location = 3) in vec4 a_bg;    // r,g,b,a normalized (GL_UNSIGNED_BYTE + normalized)
 
 uniform vec2 u_cell_size;
 uniform vec2 u_screen_size;
 
-out vec2 v_quad_uv;
 flat out vec4 v_bg;
-flat out vec4 v_fg;
-flat out uint v_flags;
 
 void main() {
   vec2 cell_tl = vec2(a_cell) * u_cell_size;
@@ -22,8 +17,5 @@ void main() {
   vec2 ndc = (pixel / u_screen_size) * 2.0 - 1.0;
   gl_Position = vec4(ndc.x, -ndc.y, 0.0, 1.0);
 
-  v_quad_uv = a_quad;
   v_bg = a_bg;
-  v_fg = a_fg;
-  v_flags = a_flags;
 }
