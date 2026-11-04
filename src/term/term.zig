@@ -322,14 +322,19 @@ pub fn seqIntroducer(comptime target: SequenceType, c1_mode: ControlFormat) []co
 /// Pure state only: no I/O, threads, or allocations after `init`.
 /// The caller owns the PTY and feeds bytes via `feed`.
 ///
-/// Both screens use the same `S` type so `active: *S` stays a direct pointer
-/// with zero dispatch overhead. The alternate screen therefore allocates
-/// unused scrollback by design, matching xterm, wezterm, and Alacritty.
+/// Both screens use the same `Screen(option)` type, so `active()` is a
+/// branch-free select between two fields and every screen method is
+/// compiled once. The alternate screen therefore allocates unused
+/// scrollback by design, matching xterm, wezterm, and Alacritty.
+///
+/// `Terminal` holds no pointers into itself: the active screen is an
+/// enum, resolved per call. It can be returned by value and moved freely;
+/// the screens' cell storage is on the heap and does not move with it.
 ///
 /// NOTE (future dapa)
 /// If memory is a hard constraint (e.g. hundreds of simultaneous sessions),
-/// replace `alternate: S` with `alternate: Screen(..., 0)` and introduce a
-/// tagged union for `active`. See the `ActiveScreen` union pattern for that
+/// replace `alternate` with `Screen(..., 0)` and dispatch once per `feed`
+/// on `active_buffer`. See the `ActiveScreen` union pattern for that
 /// approach.
 ///
 /// Terminal modes live here instead of `Screen` because they persist across
@@ -343,8 +348,9 @@ pub fn seqIntroducer(comptime target: SequenceType, c1_mode: ControlFormat) []co
 ///
 ///   t.feed(chunk);
 ///
-///   for (0..t.active.active_rows) |r| {
-///       const row = t.active.displayRow(r);
+///   const s = t.active();
+///   for (0..s.active_rows) |r| {
+///       const row = s.displayRow(r);
 ///   }
 pub fn Terminal(comptime option: Option) type {
     // FIXME screen mode .alternate shouldn't has scrollback
@@ -358,8 +364,8 @@ pub fn Terminal(comptime option: Option) type {
         primary: ScreenType,
         alternate: ScreenType,
 
-        // Points to either `primary` or `alternate`, Never null.
-        active: *ScreenType,
+        /// Which of `primary` or `alternate` receives output; see `active`.
+        active_buffer: ScreenBuffer = .primary,
 
         /// Terminal-level modes (survive alternate-screen switches).
         mode: Mode = .{},
@@ -405,40 +411,32 @@ pub fn Terminal(comptime option: Option) type {
             selection_bg,
         };
 
-        pub fn create(alloc: std.mem.Allocator) !*Self {
-            const self = try alloc.create(Self);
-            errdefer alloc.destroy(self);
+        /// Allocates both screens' cell storage. The returned value owns
+        /// it; release with `destroy`.
+        pub fn create(alloc: std.mem.Allocator) !Self {
+            var primary: ScreenType = try .create(alloc);
+            errdefer primary.destroy(alloc);
 
-            self.primary = try ScreenType.create(alloc);
-            errdefer self.primary.destroy(alloc);
-
-            self.alternate = try ScreenType.create(alloc);
-            // no errdefer needed, alloc.destroy covers the struct
-
-            self.* = .{
-                .active = &self.primary,
-                .primary = self.primary,
-                .alternate = self.alternate,
-                .title = std.mem.zeroes([max_title_len:0]u8),
-                .title_len = 0,
-                .icon_name = std.mem.zeroes([max_title_len:0]u8),
-                .icon_name_len = 0,
+            return .{
+                .primary = primary,
+                .alternate = try .create(alloc),
                 .parser = .{},
-                .mode = .{},
                 .events = .{},
             };
-
-            return self;
         }
 
         pub fn destroy(self: *Self, alloc: std.mem.Allocator) void {
             self.primary.destroy(alloc);
             self.alternate.destroy(alloc);
-            alloc.destroy(self);
+            self.* = undefined;
         }
 
-        pub inline fn activeBuffer(self: *const Self) ScreenBuffer {
-            return if (self.active == &self.primary) .primary else .alternate;
+        /// The screen that output currently goes to.
+        pub inline fn active(self: *Self) *ScreenType {
+            return switch (self.active_buffer) {
+                .primary => &self.primary,
+                .alternate => &self.alternate,
+            };
         }
 
         pub fn feed(self: *Self, bytes: []const u8) void {
@@ -461,7 +459,7 @@ pub fn Terminal(comptime option: Option) type {
                 },
             }
 
-            self.active.bump();
+            self.active().bump();
         }
 
         fn feedLatin1(self: *Self, bytes: []const u8, comptime high_byte_policy: enum { ignore, strip }) void {
@@ -517,7 +515,7 @@ pub fn Terminal(comptime option: Option) type {
                     // A pending cluster always predates whatever this run starts
                     // (a sequence, text, a control); it must land on screen before
                     // the parser acts on new bytes.
-                    if (self.input.hasPendingCluster()) self.input.flush(self.active);
+                    if (self.input.hasPendingCluster()) self.input.flush(self.active());
 
                     // The run is all-ASCII (< 0x80), so feedBytes'
                     // internal string-state no C1 can be present.
@@ -541,7 +539,7 @@ pub fn Terminal(comptime option: Option) type {
                         if (bytes[i] < 0x80)
                             self.feedUtf8Byte(bytes[i])
                         else
-                            self.input.feedByte(self.active, bytes[i]);
+                            self.input.feedByte(self.active(), bytes[i]);
                         i += 1;
                         continue;
                     }
@@ -564,8 +562,8 @@ pub fn Terminal(comptime option: Option) type {
                 // then process this ASCII byte normally.
                 // The cut sequence becomes U+FFFD, and it and any pending
                 // cluster must land before the parser acts on this byte.
-                self.input.abortSequence(self.active);
-                self.input.flush(self.active);
+                self.input.abortSequence(self.active());
+                self.input.flush(self.active());
 
                 self.parser.feedBytes(self, &.{byte});
                 return;
@@ -585,30 +583,30 @@ pub fn Terminal(comptime option: Option) type {
                 return;
             }
 
-            self.input.feedByte(self.active, byte);
+            self.input.feedByte(self.active(), byte);
         }
 
         /// Ends the input stream (e.g. the PTY read returned 0 bytes):
         /// settles a partial UTF-8 sequence and flushes the pending cluster.
         pub fn end(self: *Self) void {
-            self.input.finish(self.active);
-            self.active.bump();
+            self.input.finish(self.active());
+            self.active().bump();
         }
 
         pub inline fn printByte(self: *Self, byte: u8) void {
-            self.active.putChar(byte);
+            self.active().putChar(byte);
         }
 
         pub inline fn print(self: *Self, bytes: []const u8) void {
-            // Requires self.active (or whatever putChar's owner is) to expose a
+            // Requires self.active() (or whatever putChar's owner is) to expose a
             // bulk write. If putChar does per-cell bookkeeping (cursor advance,
             // dirty-row tracking, wrap handling), that logic needs to be hoisted
             // out of the per-byte call and applied once per batch, e.g.:
-            //   self.active.putChars(bytes);
+            //   self.active().putChars(bytes);
             // rather than looping putChar per byte here — looping here defeats
             // the whole point of batching (point 2 was specifically about
             // eliminating per-byte handler dispatch, not just per-byte table lookups).
-            self.active.putChars(bytes);
+            self.active().putChars(bytes);
         }
 
         pub inline fn execute(self: *Self, byte: u8) void {
@@ -746,7 +744,7 @@ pub fn Terminal(comptime option: Option) type {
         /// Ps = 6         steady bar (I-beam)
         /// Any other      reset to default
         pub fn setCursorStyle(self: *Self, ps: u16) void {
-            self.active.cursor.style = switch (ps) {
+            self.active().cursor.style = switch (ps) {
                 0, 1 => .blinking_block,
                 2 => .steady_block,
                 3 => .blinking_underline,
@@ -755,7 +753,7 @@ pub fn Terminal(comptime option: Option) type {
                 6 => .steady_beam,
                 else => .default,
             };
-            self.active.markDirty(self.active.cursor.row);
+            self.active().markDirty(self.active().cursor.row);
         }
 
         /// Soft Terminal Reset (DECSTR / CSI ! p).
@@ -784,7 +782,7 @@ pub fn Terminal(comptime option: Option) type {
             self.mode.keypad_app = false;
             self.mode.auto_repeat = true;
 
-            self.active.softReset();
+            self.active().softReset();
             // Mouse modes, bracketed_paste, focus_events, synchronized_output,
             // and modify_other_keys survive DECSTR intentionally left untouched.
         }
@@ -794,7 +792,7 @@ pub fn Terminal(comptime option: Option) type {
         /// Resets the entire terminal to power-on state:
         ///   - Both primary and alternate screens are fully reset via Screen.hardReset()
         ///     (cells cleared, modes reset, tab stops rebuilt, scrollback cleared)
-        ///   - Active screen pointer returns to primary
+        ///   - Primary becomes the active screen again
         ///   - All Terminal.Modes reset to struct defaults
         ///   - Title and icon name cleared
         ///   - Pending events cleared
@@ -802,7 +800,7 @@ pub fn Terminal(comptime option: Option) type {
         /// Answerback string is intentionally preserved, it is user configuration,
         /// not terminal state, and survives RIS in all major terminal emulators.
         pub fn hardReset(self: *Self) void {
-            self.active = &self.primary;
+            self.active_buffer = .primary;
 
             self.parser = .{};
             self.mode = .{};
@@ -827,24 +825,19 @@ pub fn Terminal(comptime option: Option) type {
         }
 
         fn switchScreen(self: *Self, to_alt: bool) void {
-            const target = switch (to_alt) {
-                false => &self.primary,
-                true => &self.alternate,
-            };
-
-            if (self.active == target) return;
-            self.active = target;
+            const target: ScreenBuffer = if (to_alt) .alternate else .primary;
+            if (self.active_buffer == target) return;
+            self.active_buffer = target;
 
             self.cursor_color = null;
-            target.dirty_rows = .full;
-            // target.bump();
+            self.active().dirty_rows = .full;
             self.events.selection_reset = true;
         }
 
         /// ANSI mode set/reset (SM = CSI h, RM = CSI l).
         pub fn setMode(self: *Self, mode: u16, set: bool) void {
             switch (mode) {
-                4 => self.active.mode.insert = set,
+                4 => self.active().mode.insert = set,
                 20 => self.mode.linefeed = set,
                 else => {},
             }
@@ -862,46 +855,46 @@ pub fn Terminal(comptime option: Option) type {
                     const new_cols: u16 = if (set) 132 else 80;
 
                     // Resize both screens to the new column count
-                    self.resize(self.active.active_rows, new_cols);
+                    self.resize(self.active().active_rows, new_cols);
 
                     // DECCOLM always clears the screen and homes the cursor (VT spec)
-                    self.active.eraseDisplay(2);
-                    self.active.cursorPos(0, 0);
+                    self.active().eraseDisplay(2);
+                    self.active().cursorPos(0, 0);
 
                     // Reset scroll region to full active area (setActive already does this,
                     // but be explicit since the spec requires it)
                     // done by setActive
 
                     // Notify app to update PTY winsize
-                    self.events.resize = .{ .rows = self.active.active_rows, .cols = new_cols };
+                    self.events.resize = .{ .rows = self.active().active_rows, .cols = new_cols };
                 },
                 5 => {
-                    self.active.mode.reverse_video = set;
-                    self.active.dirty_rows = .full;
-                    self.active.bump();
+                    self.active().mode.reverse_video = set;
+                    self.active().dirty_rows = .full;
+                    self.active().bump();
                 },
                 6 => self.setDecom(set), // DECOM — origin mode
-                7 => self.active.mode.auto_wrap = set, // DECAWM
+                7 => self.active().mode.auto_wrap = set, // DECAWM
                 8 => self.mode.auto_repeat = set, // DECARM
                 9 => self.setMouseMode(.x10, set),
                 12 => {
-                    self.active.cursor.style = switch (self.active.cursor.style) {
+                    self.active().cursor.style = switch (self.active().cursor.style) {
                         .blinking_block, .steady_block => if (set) .blinking_block else .steady_block,
                         .blinking_underline, .steady_underline => if (set) .blinking_underline else .steady_underline,
                         .blinking_beam, .steady_beam => if (set) .blinking_beam else .steady_beam,
                     };
-                    self.active.markDirty(self.active.cursor.row);
+                    self.active().markDirty(self.active().cursor.row);
                 },
                 25 => {
-                    self.active.mode.cursor_visibility = set; // DECTCEM
-                    self.active.markDirty(self.active.cursor.row);
+                    self.active().mode.cursor_visibility = set; // DECTCEM
+                    self.active().markDirty(self.active().cursor.row);
                 },
 
                 40 => self.mode.allow_column_132 = set,
                 // Alternate screen (old xterm, no save/restore).
                 47 => {
                     self.switchScreen(set);
-                    self.active.bump();
+                    self.active().bump();
                 },
 
                 // Mouse reporting; mutually exclusive tracking modes.
@@ -916,28 +909,28 @@ pub fn Terminal(comptime option: Option) type {
                     switch (set) {
                         true => {
                             self.switchScreen(true);
-                            self.active.scroll_offset = 0;
-                            self.active.row_map_is_identity = true;
-                            self.active.cached_row_phys = std.math.maxInt(u16);
-                            self.active.mode = .{};
-                            self.active.cursor = .{};
-                            self.active.scroll_top = 0;
-                            self.active.scroll_bottom = @intCast(self.active.active_rows - 1);
-                            @memset(self.active.cells[0 .. self.active.active_rows * option.max_cols], .{});
-                            @memset(self.active.line_attrs[0..self.active.active_rows], .normal);
-                            // 1047 true path is missing:
-                            self.active.grapheme_table.clearRetainingCapacity();
-                            self.active.grapheme_reverse.clearRetainingCapacity();
-                            self.active.next_grapheme_id = 0x110000;
-                            _ = self.active.grapheme_arena.reset(.retain_capacity);
-                            self.active.ext_attrs.clearRetainingCapacity();
-                            self.active.url_table.clearRetainingCapacity();
-                            self.active.charset_is_identity = true;
+                            const alt = &self.alternate;
+                            alt.scroll_offset = 0;
+                            alt.row_map_is_identity = true;
+                            alt.cached_row_phys = std.math.maxInt(u16);
+                            alt.mode = .{};
+                            alt.cursor = .{};
+                            alt.scroll_top = 0;
+                            alt.scroll_bottom = @intCast(alt.active_rows - 1);
+                            @memset(alt.cells[0 .. alt.active_rows * option.max_cols], .{});
+                            @memset(alt.line_attrs[0..alt.active_rows], .normal);
+                            alt.grapheme_table.clearRetainingCapacity();
+                            alt.grapheme_reverse.clearRetainingCapacity();
+                            alt.next_grapheme_id = 0x110000;
+                            _ = alt.grapheme_arena.reset(.retain_capacity);
+                            alt.ext_attrs.clearRetainingCapacity();
+                            alt.url_table.clearRetainingCapacity();
+                            alt.charset_is_identity = true;
                         },
                         false => self.switchScreen(false),
                     }
 
-                    self.active.bump();
+                    self.active().bump();
                 },
 
                 // Alternate screen with save/restore cursor (xterm 1049).
@@ -946,31 +939,32 @@ pub fn Terminal(comptime option: Option) type {
                         true => {
                             self.primary.saveCursor();
                             self.switchScreen(true);
+                            const alt = &self.alternate;
                             // Reset ring buffer, must happen before any physRow-dependent ops
-                            self.active.scroll_offset = 0;
-                            self.active.row_map_is_identity = true;
-                            self.active.cached_row_phys = std.math.maxInt(u16);
+                            alt.scroll_offset = 0;
+                            alt.row_map_is_identity = true;
+                            alt.cached_row_phys = std.math.maxInt(u16);
                             // Reset cursor and scroll region
-                            self.active.cursor = .{};
-                            self.active.mode = .{};
-                            self.active.scroll_top = 0;
-                            self.active.scroll_bottom = @intCast(self.active.active_rows - 1);
+                            alt.cursor = .{};
+                            alt.mode = .{};
+                            alt.scroll_top = 0;
+                            alt.scroll_bottom = @intCast(alt.active_rows - 1);
 
                             // Clear cells directly, no physRow dependency
-                            @memset(self.active.cells[0 .. self.active.active_rows * option.max_cols], .{});
-                            @memset(self.active.line_attrs[0..self.active.active_rows], .normal);
+                            @memset(alt.cells[0 .. alt.active_rows * option.max_cols], .{});
+                            @memset(alt.line_attrs[0..alt.active_rows], .normal);
 
-                            self.active.grapheme_table.clearRetainingCapacity();
-                            self.active.grapheme_reverse.clearRetainingCapacity();
-                            self.active.next_grapheme_id = 0x110000;
-                            _ = self.active.grapheme_arena.reset(.retain_capacity);
-                            self.active.ext_attrs.clearRetainingCapacity();
-                            self.active.url_table.clearRetainingCapacity();
-                            self.active.charset_is_identity = true;
+                            alt.grapheme_table.clearRetainingCapacity();
+                            alt.grapheme_reverse.clearRetainingCapacity();
+                            alt.next_grapheme_id = 0x110000;
+                            _ = alt.grapheme_arena.reset(.retain_capacity);
+                            alt.ext_attrs.clearRetainingCapacity();
+                            alt.url_table.clearRetainingCapacity();
+                            alt.charset_is_identity = true;
 
                             if (comptime option.max_scrollback > 0) {
-                                self.active.scrollback_used = 0;
-                                self.active.viewport_offset = 0;
+                                alt.scrollback_used = 0;
+                                alt.viewport_offset = 0;
                             }
                             // dirty_rows already set to .full by switchScreen
                         },
@@ -979,7 +973,7 @@ pub fn Terminal(comptime option: Option) type {
                             self.primary.restoreCursor();
                         },
                     }
-                    self.active.bump();
+                    self.active().bump();
                 },
 
                 2004 => self.mode.bracketed_paste = set, // bracketed paste
@@ -1016,8 +1010,8 @@ pub fn Terminal(comptime option: Option) type {
 
         /// DECOM change: update cursor.origin and move cursor to home.
         fn setDecom(self: *Self, set: bool) void {
-            self.active.cursor.origin = set;
-            self.active.cursorPos(0, 0);
+            self.active().cursor.origin = set;
+            self.active().cursorPos(0, 0);
         }
 
         fn setMouseMode(self: *Self, mode: MouseMode, set: bool) void {
@@ -1108,7 +1102,7 @@ pub fn Terminal(comptime option: Option) type {
                 if (std.mem.eql(u8, spec, "?")) {
                     // Query: respond with current color
 
-                    const color = self.active.palette.getIndexed(idx);
+                    const color = self.active().palette.getIndexed(idx);
                     const control_format = self.control_format;
 
                     self.events.response.append(seqIntroducer(.osc, control_format));
@@ -1124,7 +1118,7 @@ pub fn Terminal(comptime option: Option) type {
 
                     self.events.response.append(seqIntroducer(.st, control_format));
                 } else if (Rgb.parseSpec(spec)) |c| {
-                    self.active.palette.setIndexed(idx, c);
+                    self.active().palette.setIndexed(idx, c);
                 }
             }
         }
@@ -1173,11 +1167,11 @@ pub fn Terminal(comptime option: Option) type {
                 };
 
                 const color: Rgb = switch (target) {
-                    .fg => self.active.palette.get(.foreground),
-                    .bg => self.active.palette.get(.background),
+                    .fg => self.active().palette.get(.foreground),
+                    .bg => self.active().palette.get(.background),
                     .selection_bg => self.selection_background orelse .black,
                     .selection_fg => self.selection_foreground orelse .white,
-                    .cursor => self.cursor_color orelse self.active.palette.get(.foreground),
+                    .cursor => self.cursor_color orelse self.active().palette.get(.foreground),
                 };
 
                 self.events.response.append(seqIntroducer(.osc, control_format));
@@ -1197,8 +1191,8 @@ pub fn Terminal(comptime option: Option) type {
                 self.events.response.append(seqIntroducer(.st, control_format));
             } else if (Rgb.parseSpec(spec)) |color| {
                 switch (target) {
-                    .fg => self.active.palette.set(.foreground, color),
-                    .bg => self.active.palette.set(.background, color),
+                    .fg => self.active().palette.set(.foreground, color),
+                    .bg => self.active().palette.set(.background, color),
                     .cursor => self.cursor_color = color,
                     .selection_bg => self.selection_background = color,
                     .selection_fg => self.selection_foreground = color,
@@ -1211,10 +1205,10 @@ pub fn Terminal(comptime option: Option) type {
             const s = std.mem.trim(u8, data, " ");
             if (s.len == 0) {
                 // No argument: reset all 256 colors to defaults
-                self.active.palette.resetAllIndexed();
+                self.active().palette.resetAllIndexed();
             } else {
                 const idx = std.fmt.parseInt(u8, s, 10) catch return;
-                self.active.palette.resetIndexed(idx);
+                self.active().palette.resetIndexed(idx);
             }
         }
     };

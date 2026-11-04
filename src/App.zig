@@ -531,7 +531,7 @@ pub fn run(self: *App) !void {
     // PTY write thread
     //  a. owns all writes to the PTY master
     start: while (!self.window.windowShouldClose()) {
-        const terminal = self.terminal;
+        const terminal = &self.terminal;
 
         const now = std.Io.Clock.Timestamp.now(self.io, .awake);
         const dt = self.last_frame.durationTo(now);
@@ -680,9 +680,9 @@ pub fn run(self: *App) !void {
 }
 
 fn renderFrame(self: *App) !bool {
-    const terminal = self.terminal;
+    const terminal = &self.terminal;
     const atlas = &self.atlas;
-    const screen = self.terminal.active;
+    const screen = self.terminal.active();
 
     const cursor_color: ?[3]u8 = if (terminal.cursor_color) |color| .{ color.r, color.g, color.b } else null;
     const selection_state = self.buildSelectionState();
@@ -740,8 +740,8 @@ fn resolveAnchor(position: rex.Selection.Position, total_line_scrolled: i64, scr
 fn buildSelectionState(self: *App) ?SelectionState {
     if (self.selection.phase == .none) return null;
 
-    const is_primary = self.terminal.activeBuffer() == .primary;
-    const screen = self.terminal.active;
+    const is_primary = self.terminal.active_buffer == .primary;
+    const screen = self.terminal.active();
 
     const active_rows: i64 = @intCast(screen.active_rows);
     const active_cols: u16 = screen.active_cols;
@@ -842,7 +842,7 @@ pub fn handleResize(self: *App, dimension: Dimension(u16)) void {
     if (new_rows == 0 or new_cols == 0) return;
 
     if (self.terminal.mode.column_132) {
-        const deccolm_cols = self.terminal.active.active_cols;
+        const deccolm_cols = self.terminal.active().active_cols;
         self.terminal.resize(new_rows, deccolm_cols);
         self.pty.resize(new_rows, deccolm_cols, frame_buffer_width, frame_buffer_height) catch {};
     } else {
@@ -859,8 +859,8 @@ pub fn handleResize(self: *App, dimension: Dimension(u16)) void {
 
     gl.viewport(0, 0, @intCast(frame_buffer_width), @intCast(frame_buffer_height));
 
-    self.terminal.active.dirty_rows = .full;
-    self.terminal.active.bump();
+    self.terminal.active().dirty_rows = .full;
+    self.terminal.active().bump();
     self.selection = .empty; // clear selection on resize
     self.needs_redraw = true;
 }
@@ -871,11 +871,11 @@ fn pasteFromClipboard(self: *App) void {
 
     log.debug("paste text: 0x{x} | '{s}'", .{ text, text });
     log.debug("terminal modes: {any}", .{self.terminal.mode});
-    log.debug("active screen buffer modes: {any}", .{self.terminal.active.mode});
+    log.debug("active screen buffer modes: {any}", .{self.terminal.active().mode});
 
     self.selection = .empty;
-    self.terminal.active.dirty_rows = .full;
-    self.terminal.active.bump();
+    self.terminal.active().dirty_rows = .full;
+    self.terminal.active().bump();
     self.needs_redraw = true;
 
     // If the PTY is O_NONBLOCK and somehow the PTY buffer is full mid-paste,
@@ -991,15 +991,15 @@ fn handleAction(self: *App, action: rex.input.Action) void {
             if (self.selection.phase != .none) {
                 self.copySelectionToClipboard();
                 self.selection = .empty;
-                self.terminal.active.bump();
+                self.terminal.active().bump();
             }
         },
         .scroll_up => {
-            self.terminal.active.scrollViewportBack(SCROLL_LINES);
+            self.terminal.active().scrollViewportBack(SCROLL_LINES);
             self.needs_redraw = true;
         },
         .scroll_down => {
-            self.terminal.active.scrollViewportForward(SCROLL_LINES);
+            self.terminal.active().scrollViewportForward(SCROLL_LINES);
             self.needs_redraw = true;
         },
         .increase_font_size => {
@@ -1109,7 +1109,7 @@ fn handleAction(self: *App, action: rex.input.Action) void {
 /// selection is cleared. A redraw is always requested because PTY input may
 /// produce terminal output that changes the displayed state.
 fn snapToLiveView(self: *App) void {
-    if (self.terminal.activeBuffer() == .primary and self.terminal.active.viewportReset()) {
+    if (self.terminal.active_buffer == .primary and self.terminal.active().viewportReset()) {
         self.selection = .empty;
     }
 
@@ -1163,7 +1163,7 @@ const keyCb: c.GLFWkeyfun = struct {
         }
 
         // Terminal key encoding
-        const terminal = app.terminal;
+        const terminal = &app.terminal;
         const context: KeyContext = .{
             .modify_other_keys = app.terminal.mode.modify_other_keys,
             .cursor_keys = terminal.mode.cursor_keys,
@@ -1190,7 +1190,7 @@ fn mouseCellPos(self: *App, xpos: f32, ypos: f32) struct { u16, u16 } {
 }
 
 fn copySelectionToClipboard(self: *App) void {
-    const screen = self.terminal.active;
+    const screen = self.terminal.active();
     const total_lines_scrolled = screen.total_lines_scrolled;
     const scrollback_used = screen.scrollbackUsedAs(i64);
 
@@ -1325,14 +1325,14 @@ fn detectMouseClickKind(self: *App, anchor: i32, col: u16, mods: c_int, scroll_g
 }
 
 fn fullRedraw(self: *App) void {
-    self.terminal.active.dirty_rows = .full;
-    self.terminal.active.bump();
+    self.terminal.active().dirty_rows = .full;
+    self.terminal.active().bump();
     self.needs_redraw = true;
 }
 
 fn handleSelectionPress(self: *App, row: u16, col: u16, mods: c_int) void {
-    const terminal = self.terminal;
-    const screen = terminal.active;
+    const terminal = &self.terminal;
+    const screen = terminal.active();
     const viewport_offset = screen.viewportOffsetAs(i32);
     const anchor = @as(i32, row) - viewport_offset;
     const scroll_gen = screen.total_lines_scrolled;
@@ -1381,13 +1381,13 @@ const mouseButtonCb: c.GLFWmousebuttonfun = struct {
         const shift_held = (mods & c.GLFW_MOD_SHIFT) != 0;
 
         const col, const row = app.mouseCellPos(app.mouse_x, app.mouse_y);
-        const terminal = app.terminal;
+        const terminal = &app.terminal;
         const mouse_reporting = terminal.mode.isMouseReporting();
-        const scrollback_used = terminal.active.scrollbackUsedAs(i64);
+        const scrollback_used = terminal.active().scrollbackUsedAs(i64);
 
         if (scrollback_used > 0 and app.handleScrollbarClick()) return;
 
-        const is_primary = terminal.activeBuffer() == .primary;
+        const is_primary = terminal.active_buffer == .primary;
         log.debug("mouse_reporting={} shift_held={} is_primary={}", .{ mouse_reporting, shift_held, is_primary });
         if (is_primary and (!mouse_reporting or shift_held)) {
             if (press and button == c.GLFW_MOUSE_BUTTON_LEFT) {
@@ -1406,7 +1406,7 @@ const mouseButtonCb: c.GLFWmousebuttonfun = struct {
 fn handleScrollbarRelease(self: *App) bool {
     if (!self.scrollbar_dragging) return false;
     self.scrollbar_dragging = false;
-    self.terminal.active.bump();
+    self.terminal.active().bump();
     self.needs_redraw = true;
     return true;
 }
@@ -1474,7 +1474,7 @@ fn handleScrollbarClick(self: *App) bool {
     // Record where within the thumb the user clicked
     self.scrollbar_drag_offset_y = mouse_y - thumb_top_y;
     self.scrollbar_dragging = true;
-    self.terminal.active.bump();
+    self.terminal.active().bump();
     self.needs_redraw = true;
     return true;
 }
@@ -1503,7 +1503,7 @@ fn handleScrollbarDrag(self: *App) bool {
     screen.viewport_offset = @intFromFloat(@min(target, scrollback_used));
     screen.dirty_rows = .full;
     screen.bump(); // keep: marks primary viewport as dirty
-    self.terminal.active.bump(); // add: triggers redraw of displayed screen
+    self.terminal.active().bump(); // add: triggers redraw of displayed screen
     self.needs_redraw = true;
     return true;
 }
@@ -1519,7 +1519,7 @@ fn updateScrollbarHover(self: *App) void {
 
     if (new_hover == sb.hover) return;
     sb.hover = new_hover;
-    self.terminal.active.bump();
+    self.terminal.active().bump();
     self.needs_redraw = true;
 }
 
@@ -1530,7 +1530,7 @@ fn flushScroll(self: *App) void {
     if (steps == 0) return; // fractional remainder only, not a full step yet
     self.scroll_accumulator_y -= @floatFromInt(steps);
 
-    const terminal = self.terminal;
+    const terminal = &self.terminal;
     // In X10 mode, sendMouse filters out scroll buttons (64/65 > 2)  and
     // returns early with empty events.response. The PTY write is then a no-op.
     const mode = terminal.mode;
@@ -1555,21 +1555,21 @@ fn flushScroll(self: *App) void {
         return;
     }
 
-    if (terminal.activeBuffer() == .alternate) return;
+    if (terminal.active_buffer == .alternate) return;
 
     // NOTE both viewport back and forward call already
     // set the dirty_rows to .full and bump, no need for that.
 
-    const prev_offset = terminal.active.viewport_offset;
+    const prev_offset = terminal.active().viewport_offset;
     const lines: u32 = @as(u32, @intCast(@abs(steps))) * self.scroll_lines_per_tick;
 
     if (steps > 0) {
-        terminal.active.scrollViewportBack(lines);
+        terminal.active().scrollViewportBack(lines);
     } else {
-        terminal.active.scrollViewportForward(lines);
+        terminal.active().scrollViewportForward(lines);
     }
 
-    if (terminal.active.viewport_offset != prev_offset) {
+    if (terminal.active().viewport_offset != prev_offset) {
         self.needs_redraw = true;
     }
 }
@@ -1578,7 +1578,7 @@ const scrollCb: c.GLFWscrollfun = struct {
     fn cb(handle: ?*c.GLFWwindow, _: f64, y_offset: f64) callconv(.c) void {
         const app: *App = @ptrCast(@alignCast(c.glfwGetWindowUserPointer(handle) orelse return));
 
-        // const terminal = app.terminal;
+        // const terminal = &app.terminal;
         // const mode = terminal.mode;
         //
         // if (mode.mouse_button or mode.mouse_any) {
@@ -1630,8 +1630,8 @@ const cursorPosCb: c.GLFWcursorposfun = struct {
 
         const col, const row = app.mouseCellPos(app.mouse_x, app.mouse_y);
 
-        const terminal = app.terminal;
-        const screen = terminal.active;
+        const terminal = &app.terminal;
+        const screen = terminal.active();
         const mouse_reporting = terminal.mode.isMouseReporting();
 
         if (mouse_reporting and app.selection.phase == .dragging) {
@@ -1643,10 +1643,10 @@ const cursorPosCb: c.GLFWcursorposfun = struct {
 
         // Text selection drag
         // if (left_held and app.selection.phase == .dragging) {
-        //     if (terminal.activeBuffer() == .primary) {
-        //         const viewport_offset = terminal.active.viewportOffsetAs(i32);
+        //     if (terminal.active_buffer == .primary) {
+        //         const viewport_offset = terminal.active().viewportOffsetAs(i32);
         //         const anchor: i32 = @as(i32, row) - viewport_offset;
-        //         const scroll_gen = terminal.active.total_lines_scrolled;
+        //         const scroll_gen = terminal.active().total_lines_scrolled;
         //
         //         const end_pos: Selection.Position = .{
         //             .row = anchor,
@@ -1654,15 +1654,15 @@ const cursorPosCb: c.GLFWcursorposfun = struct {
         //             .captured_scroll_gen = scroll_gen,
         //         };
         //         if (app.selection.range.set(.end, end_pos)) {
-        //             terminal.active.dirty_rows = .full;
-        //             terminal.active.bump();
+        //             terminal.active().dirty_rows = .full;
+        //             terminal.active().bump();
         //             app.needs_redraw = true;
         //         }
         //     }
         // }
 
         if (left_held and app.selection.phase == .dragging) {
-            if (terminal.activeBuffer() != .primary) return;
+            if (terminal.active_buffer != .primary) return;
 
             const anchor: i32 = @as(i32, row) - screen.viewportOffsetAs(i32);
             const scroll_gen = screen.total_lines_scrolled;
@@ -1712,8 +1712,8 @@ const cursorPosCb: c.GLFWcursorposfun = struct {
                 },
             }
 
-            terminal.active.dirty_rows = .full;
-            terminal.active.bump();
+            terminal.active().dirty_rows = .full;
+            terminal.active().bump();
             app.needs_redraw = true;
         }
     }

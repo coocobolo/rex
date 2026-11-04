@@ -32,20 +32,20 @@ pub const Escape = struct {
         switch (key) {
             '=' => term.mode.keypad_app = true, // DECKPAM
             '>' => term.mode.keypad_app = false, // DECKPNM
-            '7' => term.active.saveCursor(), // DECSC
+            '7' => term.active().saveCursor(), // DECSC
             '6' => {}, // DECBI (VT420); FIXME requires scrollRight
-            '8' => term.active.restoreCursor(), // DECRC
+            '8' => term.active().restoreCursor(), // DECRC
             '9' => {}, // DECFI (VT420); FIXME requires scrollLeft
-            'D' => term.active.index(), // IND
+            'D' => term.active().index(), // IND
             'E' => { // NEL (CR + LF)
-                term.active.index();
-                term.active.cursor.col = 0;
-                term.active.cursor.wrap_pending = false;
+                term.active().index();
+                term.active().cursor.col = 0;
+                term.active().cursor.wrap_pending = false;
             },
-            'H' => term.active.setTabStop(), // HTS
-            'M' => term.active.reverseIndex(), // RI
-            'N' => term.active.singleShift2(), // SS2
-            'O' => term.active.singleShift3(), // SS3
+            'H' => term.active().setTabStop(), // HTS
+            'M' => term.active().reverseIndex(), // RI
+            'N' => term.active().singleShift2(), // SS2
+            'O' => term.active().singleShift3(), // SS3
             'Z' => {
                 // FIXME obsolete CSI 0 C
                 // (see details)[https://invisible-island.net/xterm/manpage/xterm.html#VT100-Widget-Resources:decTerminalID]
@@ -54,11 +54,11 @@ pub const Escape = struct {
 
             'c' => term.hardReset(), // RIS
 
-            'n' => term.active.lockingShift(2, .gl), // LS2: GL = G2
-            'o' => term.active.lockingShift(3, .gl), // LS3: GL = G3
-            '~' => term.active.lockingShift(1, .gr), // LS1R: GR = G1
-            '}' => term.active.lockingShift(2, .gr), // LS2R: GR = G2
-            '|' => term.active.lockingShift(3, .gr), // LS3R: GR = G3
+            'n' => term.active().lockingShift(2, .gl), // LS2: GL = G2
+            'o' => term.active().lockingShift(3, .gl), // LS3: GL = G3
+            '~' => term.active().lockingShift(1, .gr), // LS1R: GR = G1
+            '}' => term.active().lockingShift(2, .gr), // LS2R: GR = G2
+            '|' => term.active().lockingShift(3, .gr), // LS3R: GR = G3
 
             // DECSCL | ESC [ level ; control-format " p
 
@@ -69,25 +69,25 @@ pub const Escape = struct {
             0x2047 => term.control_format = .s8c1t,
 
             // ESC # (0x23) DEC screen operations (VT100)
-            0x2333 => term.active.setLineAttr(.double_top), // DECDHL / ESC # 3
-            0x2334 => term.active.setLineAttr(.double_bottom), // DECDHL / ESC # 4
-            0x2335 => term.active.setLineAttr(.normal), // DECSWL /  ESC # 5
-            0x2336 => term.active.setLineAttr(.double_width), // DECDWL / ESC # 6
-            0x2338 => term.active.decaln(), // DECALN / ESC # 8
+            0x2333 => term.active().setLineAttr(.double_top), // DECDHL / ESC # 3
+            0x2334 => term.active().setLineAttr(.double_bottom), // DECDHL / ESC # 4
+            0x2335 => term.active().setLineAttr(.normal), // DECSWL /  ESC # 5
+            0x2336 => term.active().setLineAttr(.double_width), // DECDWL / ESC # 6
+            0x2338 => term.active().decaln(), // DECALN / ESC # 8
 
             0x2540 => term.input.encoding = .latin1, // ESC % @ (ISO Latin-1)
             0x2547 => term.input.encoding = .utf8, // ESC % G (UTF-8 mode)
 
             // ESC ( ) * + Charset designation
-            0x2800...0x28FF => term.active.designateCharset(0, Charset.charsetFromByte(final)),
-            0x2900...0x29FF => term.active.designateCharset(1, Charset.charsetFromByte(final)),
-            0x2A00...0x2AFF => term.active.designateCharset(2, Charset.charsetFromByte(final)),
-            0x2B00...0x2BFF => term.active.designateCharset(3, Charset.charsetFromByte(final)),
+            0x2800...0x28FF => term.active().designateCharset(0, Charset.charsetFromByte(final)),
+            0x2900...0x29FF => term.active().designateCharset(1, Charset.charsetFromByte(final)),
+            0x2A00...0x2AFF => term.active().designateCharset(2, Charset.charsetFromByte(final)),
+            0x2B00...0x2BFF => term.active().designateCharset(3, Charset.charsetFromByte(final)),
 
             // - . / : Designate G1/G2/G3 96-character sets (VT300)
-            0x2D00...0x2DFF => term.active.designateCharset(1, Charset.charsetFromByte96(final)),
-            0x2E00...0x2EFF => term.active.designateCharset(2, Charset.charsetFromByte96(final)),
-            0x2F00...0x2FFF => term.active.designateCharset(3, Charset.charsetFromByte96(final)),
+            0x2D00...0x2DFF => term.active().designateCharset(1, Charset.charsetFromByte96(final)),
+            0x2E00...0x2EFF => term.active().designateCharset(2, Charset.charsetFromByte96(final)),
+            0x2F00...0x2FFF => term.active().designateCharset(3, Charset.charsetFromByte96(final)),
 
             else => {
                 // escape control sequences that need > 1 intermediates
@@ -113,23 +113,23 @@ pub const C0 = struct {
             0x07 => { // BEL
                 if (!term.events.bell) term.events.bell = true;
             },
-            0x08 => term.active.cursorLeft(1), // BS
-            0x09 => term.active.tabForward(1), // HT
+            0x08 => term.active().cursorLeft(1), // BS
+            0x09 => term.active().tabForward(1), // HT
             0x0A, 0x0B, 0x0C => { // LF, VT, FF
-                term.active.index();
+                term.active().index();
                 if (term.mode.linefeed) {
-                    term.active.cursor.col = 0;
-                    term.active.cursor.wrap_pending = false;
+                    term.active().cursor.col = 0;
+                    term.active().cursor.wrap_pending = false;
                 }
             },
             0x0D => { // CR
-                term.active.cursor.col = 0;
-                term.active.cursor.wrap_pending = false;
-                term.active.markDirty(term.active.cursor.row);
+                term.active().cursor.col = 0;
+                term.active().cursor.wrap_pending = false;
+                term.active().markDirty(term.active().cursor.row);
             },
-            0x0E => term.active.shiftOut(), // SO | GL = G1
-            0x0F => term.active.shiftIn(), // SI | GL = G0
-            0x18, 0x1A => term.input.abortSequence(term.active),
+            0x0E => term.active().shiftOut(), // SO | GL = G1
+            0x0F => term.active().shiftIn(), // SI | GL = G0
+            0x18, 0x1A => term.input.abortSequence(term.active()),
             0x7F => {}, // DEL
             else => {}, // other C0
         }
@@ -163,48 +163,52 @@ pub const Csi = struct {
         const control_format = terminal.control_format;
         const prefix = seqIntroducer(.csi, control_format);
 
+        // Resolved once per sequence. Cases that can switch screens
+        // (DECSET 47/1047/1049, DECSTR) go through `terminal` instead.
+        const screen = terminal.active();
+
         switch (key) {
-            's' => terminal.active.saveCursor(), // ANSI SC / CSI s
-            'u' => terminal.active.restoreCursor(), // ANSI RC / CSI u
+            's' => screen.saveCursor(), // ANSI SC / CSI s
+            'u' => screen.restoreCursor(), // ANSI RC / CSI u
 
             // Cursor Movement
-            'A' => terminal.active.cursorUp(p1), // CUU / CSI Ps A
-            'B' => terminal.active.cursorDown(p1), // CUD / CSI Ps B
-            'C' => terminal.active.cursorRight(p1), // CUF / CSI Ps C
-            'D' => terminal.active.cursorLeft(p1), // CUB / CSI Ps D
+            'A' => screen.cursorUp(p1), // CUU / CSI Ps A
+            'B' => screen.cursorDown(p1), // CUD / CSI Ps B
+            'C' => screen.cursorRight(p1), // CUF / CSI Ps C
+            'D' => screen.cursorLeft(p1), // CUB / CSI Ps D
 
             'E' => {
                 // CNL / CSI Ps E (down N, column 0)
                 // cursorUp clears `wrap_pending`.
-                terminal.active.cursorDown(p1);
-                terminal.active.cursor.col = 0;
+                screen.cursorDown(p1);
+                screen.cursor.col = 0;
             },
 
             'F' => {
                 // CPL / CSI Ps F (up N, column 0)
-                terminal.active.cursorUp(p1);
-                terminal.active.cursor.col = 0; // cursorUp clears `wrap_pending`.
+                screen.cursorUp(p1);
+                screen.cursor.col = 0; // cursorUp clears `wrap_pending`.
             },
 
-            'G' => terminal.active.cursorCol(p1 -| 1), // CHA / CSI Ps G
-            'H' => terminal.active.cursorPos(p1 -| 1, p2 -| 1), // CUP / CSI Ps ; Ps H
-            'f' => terminal.active.cursorPos(p1 -| 1, p2 -| 1), // HVP / CSI Ps ; Ps f
-            'I' => terminal.active.tabForward(p1), // CHT / CSI Ps I
-            'J' => terminal.active.eraseDisplay(p1_0), // ED / CSI Ps J
-            'K' => terminal.active.eraseLine(p1_0), // EL / CSI Ps K
-            'X' => terminal.active.eraseChars(p1), // ECH / CSI Ps X
+            'G' => screen.cursorCol(p1 -| 1), // CHA / CSI Ps G
+            'H' => screen.cursorPos(p1 -| 1, p2 -| 1), // CUP / CSI Ps ; Ps H
+            'f' => screen.cursorPos(p1 -| 1, p2 -| 1), // HVP / CSI Ps ; Ps f
+            'I' => screen.tabForward(p1), // CHT / CSI Ps I
+            'J' => screen.eraseDisplay(p1_0), // ED / CSI Ps J
+            'K' => screen.eraseLine(p1_0), // EL / CSI Ps K
+            'X' => screen.eraseChars(p1), // ECH / CSI Ps X
 
-            '@' => terminal.active.insertChars(p1), // ICH / CSI Ps @
-            'P' => terminal.active.deleteChars(p1), // DCH / CSI Ps P
-            'L' => terminal.active.insertLines(p1), // IL / CSI Ps L
-            'M' => terminal.active.deleteLines(p1), // DL / CSI Ps M
+            '@' => screen.insertChars(p1), // ICH / CSI Ps @
+            'P' => screen.deleteChars(p1), // DCH / CSI Ps P
+            'L' => screen.insertLines(p1), // IL / CSI Ps L
+            'M' => screen.deleteLines(p1), // DL / CSI Ps M
 
-            'S' => terminal.active.scrollUp(p1), // SU / CSI Ps S
-            'T' => terminal.active.scrollDown(p1), // SD / CSI Ps T
-            'Z' => terminal.active.tabBackward(p1), // CBT / CSI Ps Z
+            'S' => screen.scrollUp(p1), // SU / CSI Ps S
+            'T' => screen.scrollDown(p1), // SD / CSI Ps T
+            'Z' => screen.tabBackward(p1), // CBT / CSI Ps Z
 
-            'a' => terminal.active.cursorRight(p1), // HPR / CSI Ps a
-            'b' => terminal.active.repeatChar(p1), // REP / CSI Ps b
+            'a' => screen.cursorRight(p1), // HPR / CSI Ps a
+            'b' => screen.repeatChar(p1), // REP / CSI Ps b
             'c' => {
                 switch (p1_0) {
                     // claim vt220 with color ansi, xterm compatibile (52)
@@ -227,16 +231,16 @@ pub const Csi = struct {
             },
 
             // VPA — Vertical Position Absolute (CSI Ps d): 1-based row, ignores DECOM
-            'd' => terminal.active.cursorRow(p1 -| 1),
+            'd' => screen.cursorRow(p1 -| 1),
 
-            'e' => terminal.active.cursorDown(p1), // VPR / CSI Ps e
-            '`' => terminal.active.cursorCol(p1 -| 1), // HPA / CSI Ps `
+            'e' => screen.cursorDown(p1), // VPR / CSI Ps e
+            '`' => screen.cursorCol(p1 -| 1), // HPA / CSI Ps `
 
-            'g' => terminal.active.clearTabStop(p1_0), // TBC Ps g
+            'g' => screen.clearTabStop(p1_0), // TBC Ps g
 
             'r' => {
                 // DECSTBM
-                terminal.active.setScrollRegion(p1_0, p2_0);
+                screen.setScrollRegion(p1_0, p2_0);
             },
 
             'n' => {
@@ -250,15 +254,15 @@ pub const Csi = struct {
 
                         w.print("{s}{d};{d}R", .{
                             prefix,
-                            terminal.active.cursor.row + 1,
-                            terminal.active.cursor.col + 1,
+                            screen.cursor.row + 1,
+                            screen.cursor.col + 1,
                         }) catch {};
                         terminal.events.response.append(buf[0..w.end]);
 
                         // terminal.events.response.append(prefix);
-                        // terminal.events.response.appendInt(@intCast(terminal.active.cursor.row + 1));
+                        // terminal.events.response.appendInt(@intCast(screen.cursor.row + 1));
                         // terminal.events.response.append(";");
-                        // terminal.events.response.appendInt(@intCast(terminal.active.cursor.col + 1));
+                        // terminal.events.response.appendInt(@intCast(screen.cursor.col + 1));
                         // terminal.events.response.append("R");
                     },
                     else => {},
@@ -311,15 +315,15 @@ pub const Csi = struct {
                     6 => {
                         // terminal.events.response.append(prefix);
                         // terminal.events.response.append("?");
-                        // terminal.events.response.appendInt(@intCast(terminal.active.cursor.row + 1));
+                        // terminal.events.response.appendInt(@intCast(screen.cursor.row + 1));
                         // terminal.events.response.append(";");
-                        // terminal.events.response.appendInt(@intCast(terminal.active.cursor.col + 1));
+                        // terminal.events.response.appendInt(@intCast(screen.cursor.col + 1));
                         // terminal.events.response.append("R");
 
                         w.print("{s}{d};{d}R", .{
                             prefix,
-                            terminal.active.cursor.row + 1,
-                            terminal.active.cursor.col + 1,
+                            screen.cursor.row + 1,
+                            screen.cursor.col + 1,
                         }) catch {};
                         terminal.events.response.append(buf[0..w.end]);
                     },
@@ -328,8 +332,8 @@ pub const Csi = struct {
             },
 
             // FIXME requires protected
-            // 0x3F4A => term.active.selectiveEraseDisplay(p1_0), // DECSED
-            // 0x3F4B => term.active.selectiveEraseLine(p1_0), // DECSEL
+            // 0x3F4A => term.active().selectiveEraseDisplay(p1_0), // DECSED
+            // 0x3F4B => term.active().selectiveEraseLine(p1_0), // DECSEL
 
             else => {}, // std.debug.print("unhandled dispatch={f}key=0x{x}\n\n", .{ sequence, key }),
 
@@ -363,10 +367,10 @@ pub const Osc = struct {
             104 => term.resetPaletteColor(data),
 
             // OSC 110 — Reset default foreground color
-            110 => term.active.palette.set(.foreground, null),
+            110 => term.active().palette.set(.foreground, null),
 
             // OSC 111 — Reset default background color
-            111 => term.active.palette.set(.background, null),
+            111 => term.active().palette.set(.background, null),
 
             // OSC 112 — Reset default cursor color
             112 => term.cursor_color = null,

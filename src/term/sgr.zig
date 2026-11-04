@@ -26,7 +26,7 @@ const ColorTarget = enum { fg, bg, underline };
 /// `CSI m` (no params) and `CSI 0 m` both reset all attributes.
 pub fn parse(comptime option: Option, term: *Terminal(option), params: []const Parameter) void {
     const n: usize = @intCast(params.len);
-    const attr = &term.active.cursor.attr;
+    const attr = &term.active().cursor.attr;
 
     // CSI m with no params = Normal/default (CSI 0 m).
     if (n == 0) {
@@ -34,7 +34,7 @@ pub fn parse(comptime option: Option, term: *Terminal(option), params: []const P
         return;
     }
 
-    const palette = &term.active.palette;
+    const palette = &term.active().palette;
 
     var i: usize = 0;
     while (i < n) : (i += 1) {
