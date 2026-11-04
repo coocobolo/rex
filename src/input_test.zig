@@ -28,13 +28,34 @@ test "encodeKey: ctrl+6 and ctrl+^ send RS" {
     try expectKey("\x1b\x1e", c.GLFW_KEY_6, ctrl | alt, .{});
 }
 
+test "encodeKey: ctrl+3 to ctrl+8 send ESC, FS, GS, RS, US and DEL" {
+    try expectKey("\x1b", c.GLFW_KEY_3, ctrl, .{});
+    try expectKey("\x1c", c.GLFW_KEY_4, ctrl, .{});
+    try expectKey("\x1d", c.GLFW_KEY_5, ctrl, .{});
+    try expectKey("\x1e", c.GLFW_KEY_6, ctrl, .{});
+    try expectKey("\x1f", c.GLFW_KEY_7, ctrl, .{});
+    try expectKey("\x7f", c.GLFW_KEY_8, ctrl, .{});
+}
+
+test "encodeKey: alt puts ESC before a ctrl+digit code" {
+    try expectKey("\x1b\x1b", c.GLFW_KEY_3, ctrl | alt, .{});
+    try expectKey("\x1b\x1c", c.GLFW_KEY_4, ctrl | alt, .{});
+    try expectKey("\x1b\x1d", c.GLFW_KEY_5, ctrl | alt, .{});
+    try expectKey("\x1b\x1f", c.GLFW_KEY_7, ctrl | alt, .{});
+    try expectKey("\x1b\x7f", c.GLFW_KEY_8, ctrl | alt, .{});
+}
+
 test "encodeKey: other digits are left to the char callback" {
     try expectKey("", c.GLFW_KEY_2, 0, .{});
-    try expectKey("", c.GLFW_KEY_5, ctrl, .{});
+    try expectKey("", c.GLFW_KEY_0, ctrl, .{});
+    try expectKey("", c.GLFW_KEY_1, ctrl, .{});
+    try expectKey("", c.GLFW_KEY_9, ctrl, .{});
     try expectKey("\x1b5", c.GLFW_KEY_5, alt, .{});
 }
 
 test "encodeKey: modifyOtherKeys still wins for ctrl+digit" {
     try expectKey("\x1b[27;5;50~", c.GLFW_KEY_2, ctrl, .{ .modify_other_keys = 1 });
     try expectKey("\x1b[27;5;54~", c.GLFW_KEY_6, ctrl, .{ .modify_other_keys = 1 });
+    try expectKey("\x1b[27;5;56~", c.GLFW_KEY_8, ctrl, .{ .modify_other_keys = 2 });
+    try expectKey("\x1b[27;7;51~", c.GLFW_KEY_3, ctrl | alt, .{ .modify_other_keys = 1 });
 }
