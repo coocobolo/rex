@@ -1,0 +1,3 @@
+# Verbatim Unicode Character Database files: keep them byte-identical
+# to unicode.org (tools/ucd/fetch.sh), so skip whitespace checks.
+tools/ucd/** -whitespace
