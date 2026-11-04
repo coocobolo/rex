@@ -289,6 +289,18 @@ pub inline fn encodeKey(
             const digit: u8 = @intCast('0' + (key - c.GLFW_KEY_0));
             if (ctrl or alt) {
                 if (mok >= 1) return fmtMok(buf, mod, digit);
+                // As in xterm on a US layout: Ctrl+2 is Ctrl+@ (NUL) and
+                // Ctrl+6 is Ctrl+^ (RS), with ESC first when Alt is held.
+                if (ctrl and (digit == '2' or digit == '6')) {
+                    const code: u8 = if (digit == '2') 0x00 else 0x1e;
+                    if (alt) {
+                        buf[0] = 0x1b;
+                        buf[1] = code;
+                        return buf[0..2];
+                    }
+                    buf[0] = code;
+                    return buf[0..1];
+                }
                 if (alt) {
                     buf[0] = 0x1b;
                     buf[1] = digit;
@@ -357,9 +369,9 @@ pub inline fn encodeKey(
         },
         c.GLFW_KEY_GRAVE_ACCENT => {
             if (ctrl) {
-                buf[0] = 0x1e;
+                buf[0] = 0x00;
                 return buf[0..1];
-            } // Ctrl+` = RS (also Ctrl+^)
+            } // Ctrl+` = NUL, as in xterm
             if (alt) {
                 buf[0] = 0x1b;
                 buf[1] = '`';
