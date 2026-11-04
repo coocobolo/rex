@@ -1,9 +1,8 @@
-const std = @import("std");
-const log = std.log.scoped(.input);
+//! GLFW key and mouse input: key bindings and xterm key encoding.
 
-const c = @cImport({
-    @cInclude("GLFW/glfw3.h");
-});
+const std = @import("std");
+
+const c = @import("glfw");
 
 /// Returns whether `key` is one of GLFW's left or right modifier keys.
 ///
@@ -52,7 +51,6 @@ pub const Action = union(enum) {
     // global debugging stats, option, etc.
     debug,
 
-    // for future: new_tab, close_tab, scroll_up, etc.
     send_to_pty: []const u8, // for custom sequences
 };
 
@@ -89,7 +87,7 @@ pub const KeyContext = struct {
     /// 1 = partial
     /// 2 = full
     modify_other_keys: u2 = 0,
-    /// DECCKM | application cursor keys (SS3 sv CSI)
+    /// DECCKM | application cursor keys (SS3 vs CSI)
     cursor_keys: bool = false,
     /// DECKPAM | application keypad
     keypad_app: bool = false,
@@ -151,7 +149,7 @@ fn fmtMok(buf: *[32]u8, mod: u8, cp: u21) []const u8 {
 
 /// Encode a GLFW key event into a terminal escape sequence.
 ///
-/// Returns a slice into `buf` or a string literal - never allocates.
+/// Returns a slice into `buf` or a string literal, never allocates.
 /// Returns "" when the key should be handled by the char callback instead
 /// (i.e. plain printable with no Ctrl/Alt modifier).
 pub inline fn encodeKey(
@@ -175,7 +173,7 @@ pub inline fn encodeKey(
         c.GLFW_KEY_LEFT => if (!has) (if (ctx.cursor_keys) fmtSs3(buf, 'D') else fmtCsi1(buf, 'D', 1)) else fmtCsi1(buf, 'D', mod),
 
         // Function keys
-        // F1-F4: SS3 P/Q/R/S without modifier, CSI 1;mod P/Q/R/S with modifer
+        // F1-F4: SS3 P/Q/R/S without modifier, CSI 1;mod P/Q/R/S with modifier
         c.GLFW_KEY_F1 => if (!has) fmtSs3(buf, 'P') else std.fmt.bufPrint(buf, "\x1b[1;{d}P", .{mod}) catch "",
         c.GLFW_KEY_F2 => if (!has) fmtSs3(buf, 'Q') else std.fmt.bufPrint(buf, "\x1b[1;{d}Q", .{mod}) catch "",
         c.GLFW_KEY_F3 => if (!has) fmtSs3(buf, 'R') else std.fmt.bufPrint(buf, "\x1b[1;{d}R", .{mod}) catch "",
@@ -248,8 +246,7 @@ pub inline fn encodeKey(
                 buf[1] = ' ';
                 return buf[0..2];
             }
-            if (!has) return ""; // let char callback handle plain space
-            return "";
+            return ""; // let char callback handle plain space
         },
 
         // Letters [A-Z]
@@ -259,25 +256,25 @@ pub inline fn encodeKey(
             const ctrl_code: u8 = @intCast(key - c.GLFW_KEY_A + 1);
 
             if (ctrl) {
-                // level 2: Ctrl+Shift+letter → CSI 27 ; mod ; UPPER ~
+                // level 2: Ctrl+Shift+letter sends CSI 27 ; mod ; UPPER ~
                 if (mok >= 2 and shift) return fmtMok(buf, mod, upper);
-                // level 1/2: Ctrl+Alt+letter → CSI 27 ; mod ; lower ~
+                // level 1/2: Ctrl+Alt+letter sends CSI 27 ; mod ; lower ~
                 if (mok >= 1 and alt) return fmtMok(buf, mod, lower);
-                // standard: Alt+Ctrl+letter → ESC + ^letter
+                // standard: Alt+Ctrl+letter sends ESC + ^letter
                 if (alt) {
                     buf[0] = 0x1b;
                     buf[1] = ctrl_code;
                     return buf[0..2];
                 }
-                // standard: Ctrl+letter → ^letter
+                // standard: Ctrl+letter sends ^letter
                 buf[0] = ctrl_code;
                 return buf[0..1];
             }
 
             if (alt) {
-                // level 2: Alt+letter → CSI 27 ; mod ; codepoint ~
+                // level 2: Alt+letter sends CSI 27 ; mod ; codepoint ~
                 if (mok >= 2) return fmtMok(buf, mod, if (shift) upper else lower);
-                // standard: Alt+letter → ESC + letter
+                // standard: Alt+letter sends ESC + letter
                 buf[0] = 0x1b;
                 buf[1] = if (shift) upper else lower;
                 return buf[0..2];
@@ -310,8 +307,7 @@ pub inline fn encodeKey(
             return ""; // let char callback handle digit
         },
 
-        // using "" let char callback handle send remaining byte
-        // '/'|'*'|'-'|'+'|'='|'.'
+        // Outside keypad application mode the char callback sends these.
         c.GLFW_KEY_KP_DECIMAL => if (ctx.keypad_app) fmtSs3(buf, 'n') else "",
         c.GLFW_KEY_KP_DIVIDE => if (ctx.keypad_app) fmtSs3(buf, 'o') else "",
         c.GLFW_KEY_KP_MULTIPLY => if (ctx.keypad_app) fmtSs3(buf, 'j') else "",

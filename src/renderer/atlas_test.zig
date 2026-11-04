@@ -9,7 +9,7 @@ const ft = @import("../freetype/root.zig");
 const FontConfig = ft.FontConfig;
 const Rasterizer = ft.Rasterizer;
 
-const c = window.c;
+const c = @import("glfw");
 const testGlContext = window.testGlContext;
 
 var gl_win: ?*c.GLFWwindow = null;
