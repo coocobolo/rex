@@ -19,6 +19,7 @@ pub const unicode = @import("unicode/root.zig");
 pub const Selection = @import("Selection.zig");
 
 pub const VT = @import("vt/parser.zig");
+pub const vt = @import("vt/root.zig");
 
 pub const termio = @import("termio/root.zig");
 pub const FreeType = @import("freetype/root.zig");

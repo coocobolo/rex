@@ -24,17 +24,12 @@ const std = @import("std");
 
 const CellKind = @import("cell.zig").Kind;
 const grapheme = @import("grapheme.zig");
-const unicode = @import("../unicode/root.zig");
-const Utf8Decoder = unicode.utf8.Decoder;
-const wc = unicode.wc;
+const Utf8Decoder = @import("../unicode/utf8.zig").Decoder;
+const wc = @import("../unicode/wcwidth_v2.zig");
 
 const log = std.log.scoped(.term);
 
 const InputEngine = @This();
-
-test {
-    _ = @import("input_engine_test.zig");
-}
 
 /// Character encoding used to interpret input bytes.
 pub const Encoding = enum {

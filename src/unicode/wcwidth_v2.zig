@@ -1,10 +1,6 @@
 const std = @import("std");
 const tables = @import("wcwidth_table.zig");
 
-test {
-    _ = @import("wcwidth_v2_test.zig");
-}
-
 /// Final width classification returned as column column-occupying glyph width.
 pub const Width = enum {
     /// Not printable or not representable as a column-occupying glyph

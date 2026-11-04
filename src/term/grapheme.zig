@@ -6,9 +6,6 @@ const std = @import("std");
 const table = @import("grapheme_table.zig");
 const Property = table.Property;
 
-test {
-    _ = @import("grapheme_test.zig");
-}
 
 /// Stateful grapheme cluster break detector.
 ///

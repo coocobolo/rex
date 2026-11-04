@@ -3,11 +3,6 @@ const log = std.log.scoped(.vt_parser);
 
 const assert = std.debug.assert;
 
-test {
-    _ = @import("parser_test.zig");
-    _ = @import("parser_fuzzy_test.zig");
-}
-
 /// State machine of the VT Parser.
 ///
 /// The current state determines how the next input byte is interpreted.

@@ -267,6 +267,8 @@ test "lookup: boundary agreement with linear scan" {
 }
 
 test "lookup(exhaustive): agrees with linear scan over the same table" {
+    // About 23 s in Debug; run with -Dslow.
+    if (!@import("test_options").slow) return error.SkipZigTest;
     const entries = &tables.entries;
     var cp: u32 = 0;
     while (cp <= 0x10FFFF) : (cp += 1) {

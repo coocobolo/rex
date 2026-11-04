@@ -22,15 +22,12 @@ const Palette = @import("Palette.zig").Palette;
 const Option = @import("term.zig").Option;
 
 const wcwidth = @import("../unicode/wcwidth.zig").wcwidth;
-const ucd = @import("../unicode/root.zig");
-const Classifier = ucd.classifier.Classifier;
+const char_class = @import("../unicode/char_class.zig");
+const Classifier = char_class.Classifier;
 
 // extern fn memset(dest: ?*anyopaque, c: c_int, n: usize) ?*anyopaque;
 // extern fn memmove(dest: ?*anyopaque, src: ?*const anyopaque, n: usize) ?*anyopaque;
 
-test "Screen" {
-    _ = @import("screen_test.zig");
-}
 
 // With enum(u8), the backing type matches the storage size exactly.
 // @memset(self.line_attrs[start..end], .normal) now clearly maps to
@@ -1205,7 +1202,7 @@ pub fn Screen(comptime option: Option) type {
             classifier: *const Classifier,
             anchor: i64,
             col: u16,
-            join_option: ucd.classifier.JoinOption,
+            join_option: char_class.JoinOption,
         ) struct { u16, u16 } {
             const row_cells = self.rowCellsAtAnchor(anchor);
 

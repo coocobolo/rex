@@ -216,17 +216,66 @@ pub fn build(b: *std.Build) !void {
     const run_step = b.step("run", "Run the app");
     run_step.dependOn(&run_cmd.step);
 
-    // Tests
+    // Tests. Optimize follows -Doptimize, which defaults to Debug.
+    const test_filters = b.option(
+        []const []const u8,
+        "test-filter",
+        "Run only tests whose name contains this (repeatable)",
+    ) orelse b.args orelse &.{};
+    const slow_tests = b.option(
+        bool,
+        "slow",
+        "Also run slow exhaustive tests",
+    ) orelse false;
+
+    const test_options = b.addOptions();
+    test_options.addOption(bool, "slow", slow_tests);
+    const test_options_mod = test_options.createModule();
+
+    // How tests are organised (see CONTRIBUTING.md, "Tests"):
+    //   - Tests live in `<name>_test.zig` next to the code they test.
+    //   - Each folder's root.zig lists its test files in a `test {}` block.
+    //     Adding a test file is one line there.
+    //   - `zig build test` builds src/root.zig, which reaches every folder
+    //     root, so each test runs exactly once.
+    //   - `zig build test-<suite>` runs one folder alone: a small binary
+    //     with no app, renderer or C code, rebuilt in well under a second.
+    //     Adding a suite is one row in `suites`.
+    //   - `-Dtest-filter=<substr>` (repeatable) and `-Dslow` apply to all.
+    const suites = .{
+        // name, root, links libc
+        .{ "term", "src/term_tests.zig", false }, // term/root.zig; see file
+        .{ "vt", "src/vt/root.zig", false },
+        .{ "unicode", "src/unicode/root.zig", true }, // vs libc wcwidth
+    };
+    inline for (suites) |suite| {
+        const suite_tests = b.addTest(.{
+            .name = "test-" ++ suite[0],
+            .root_module = b.createModule(.{
+                .root_source_file = b.path(suite[1]),
+                .target = target,
+                .optimize = optimize,
+                .link_libc = suite[2],
+                .imports = &.{
+                    .{ .name = "test_options", .module = test_options_mod },
+                },
+            }),
+            .filters = test_filters,
+        });
+        const step = b.step("test-" ++ suite[0], "Run the " ++ suite[0] ++ " tests");
+        step.dependOn(&b.addRunArtifact(suite_tests).step);
+    }
+
+    mod.addImport("test_options", test_options_mod);
     const mod_tests = b.addTest(.{
         .root_module = mod,
-        .filters = b.args orelse &.{},
+        .filters = test_filters,
     });
-
     const exe_tests = b.addTest(.{
         .root_module = exe.root_module,
+        .filters = test_filters,
     });
-
-    const test_step = b.step("test", "Run tests");
+    const test_step = b.step("test", "Run all tests");
     test_step.dependOn(&b.addRunArtifact(mod_tests).step);
     test_step.dependOn(&b.addRunArtifact(exe_tests).step);
 

@@ -16,5 +16,11 @@ pub const grapheme = @import("grapheme.zig");
 pub const ScreenBench = @import("screen_bench.zig");
 
 test {
+    _ = @import("term_test.zig");
+    _ = @import("dispatcher_test.zig");
+    _ = @import("screen_test.zig");
+    _ = @import("input_engine_test.zig");
+    _ = @import("grapheme_test.zig");
+    _ = @import("palette_test.zig");
     std.testing.refAllDecls(@This());
 }

@@ -6,13 +6,11 @@ pub const utf8 = @import("utf8.zig");
 pub const wc = @import("wcwidth_v2.zig");
 pub const wcwidth = @import("wcwidth_v2.zig").wcwidth;
 
+test {
+    _ = @import("wcwidth_v2_test.zig");
+    std.testing.refAllDecls(@This());
+}
+
 // const corpus = [_][]const u8{
 //     @embedFile("fuzz/wcwidth/crash-630ff0a4f49ee617.bin"),
 // };
-
-test {
-    // for (corpus) |item| {
-    //     std.debug.print("corpus: {s}\n", .{item});
-    // }
-    std.testing.refAllDecls(@This());
-}

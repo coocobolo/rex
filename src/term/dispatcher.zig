@@ -10,10 +10,6 @@ const sgr = @import("sgr.zig");
 
 const seqIntroducer = @import("term.zig").seqIntroducer;
 
-test {
-    // FIXME!
-    _ = @import("dispatcher_test.zig");
-}
 
 /// helper: get param value or default fallback, skipping sub-params
 fn paramOr(params: []const Parameter, index: usize, default: u16) u16 {

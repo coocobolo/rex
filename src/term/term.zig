@@ -16,8 +16,7 @@ const CursorStyle = @import("cell.zig").CursorStyle;
 const Screen = @import("screen.zig").Screen;
 const dispatcher = @import("dispatcher.zig");
 
-const unicode = @import("../unicode/root.zig");
-const wc = unicode.wc;
+const wc = @import("../unicode/wcwidth_v2.zig");
 
 const InputEngine = @import("InputEngine.zig");
 
@@ -26,11 +25,6 @@ pub const max_title_len = 256;
 pub const max_answerback_len = 32;
 
 const log = std.log.scoped(.term);
-
-test {
-    _ = @import("term_test.zig");
-    _ = InputEngine;
-}
 
 pub const ScreenBuffer = enum { primary, alternate };
 
