@@ -219,6 +219,11 @@ pub const CursorCache = struct {
 
 pub const FrameData = @This();
 
+pub const SplicedRange = struct {
+    offset: usize,
+    count: usize,
+};
+
 /// Slices are views into FrameBuilder's pre-allocated buffers.
 /// FrameData does not own the memory, do not free these slices.
 gray_instances: []const Cell.Instance,
@@ -228,6 +233,9 @@ decoration_instances: []const Decoration.Instance,
 selection_instances: []const Selection.Instance,
 scrollbar_state: Scrollbar.State,
 cursor_state: Cursor.State,
+
+/// Spliced sub-buffer range for background quad updates, or null if full upload needed.
+bg_spliced_range: ?SplicedRange = null,
 
 /// Set by FrameBuilder when instance data changed since the last build.
 /// Renderer skips VBO re-upload when false, but always issues draw calls.
@@ -248,6 +256,8 @@ pub fn Builder(comptime option: Option) type {
         background_buffer: std.ArrayListUnmanaged(Background.Instance),
         decoration_buffer: std.ArrayListUnmanaged(Decoration.Instance),
         selection_buffer: std.ArrayListUnmanaged(Selection.Instance),
+        bg_row_offsets: [max_rows + 1]u32 = undefined,
+        last_bg_len: usize = 0,
         last_cursor: CursorCache,
 
         // last_polygon: ?SelectionPolygon,
@@ -290,6 +300,7 @@ pub fn Builder(comptime option: Option) type {
                 .last_scrollbar = .empty,
                 .last_selection = null,
                 .last_generation = null,
+                .last_bg_len = 0,
             };
         }
 
@@ -419,6 +430,7 @@ pub fn Builder(comptime option: Option) type {
                 // reuse existing buffer contents, only update cursor/Scrollbar
                 return .{
                     .background_instances = self.background_buffer.items,
+                    .bg_spliced_range = null,
                     .decoration_instances = self.decoration_buffer.items,
                     .gray_instances = self.gray_buffer.items,
                     .color_instances = self.color_buffer.items,
@@ -466,6 +478,7 @@ pub fn Builder(comptime option: Option) type {
                 // reuse existing buffer contents, only update cursor/Scrollbar
                 return .{
                     .background_instances = self.background_buffer.items,
+                    .bg_spliced_range = null,
                     .decoration_instances = self.decoration_buffer.items,
                     .gray_instances = self.gray_buffer.items,
                     .color_instances = self.color_buffer.items,
@@ -513,10 +526,7 @@ pub fn Builder(comptime option: Option) type {
 
             var row: u16 = 0;
             while (row < rows_limit) : (row += 1) {
-                // if (row_idx >= screen.viewport_offset) {
-                //     const logical = row_idx - screen.viewport_offset;
-                //     if (!screen.dirty_rows.isSet(logical)) continue;
-                // }
+                self.bg_row_offsets[row] = @intCast(self.background_buffer.items.len);
 
                 const is_cursor_row = row == cursor_row;
                 const cells = frame.displayRow(row);
@@ -602,6 +612,24 @@ pub fn Builder(comptime option: Option) type {
                     }
                 }
             }
+            self.bg_row_offsets[rows_limit] = @intCast(self.background_buffer.items.len);
+
+            var bg_spliced_range: ?FrameData.SplicedRange = null;
+            if (self.last_generation != null and self.background_buffer.items.len == self.last_bg_len) {
+                if (frame.dirtyRange()) |range| {
+                    if (range.min < rows_limit and range.max < rows_limit) {
+                        const start_offset = self.bg_row_offsets[range.min];
+                        const end_offset = self.bg_row_offsets[range.max + 1];
+                        if (end_offset >= start_offset) {
+                            bg_spliced_range = .{
+                                .offset = start_offset,
+                                .count = end_offset - start_offset,
+                            };
+                        }
+                    }
+                }
+            }
+            self.last_bg_len = self.background_buffer.items.len;
 
             self.last_generation = frame.generation;
             self.last_selection = selection_state;
@@ -615,6 +643,7 @@ pub fn Builder(comptime option: Option) type {
                 .gray_instances = self.gray_buffer.items,
                 .color_instances = self.color_buffer.items,
                 .background_instances = self.background_buffer.items,
+                .bg_spliced_range = bg_spliced_range,
                 .decoration_instances = self.decoration_buffer.items,
                 .scrollbar_state = new_scrollbar,
                 .selection_instances = self.selection_buffer.items,

@@ -133,8 +133,14 @@ pub fn Renderer(comptime option: TerminalOption) type {
                 gl.ONE_MINUS_SRC_ALPHA,
             );
 
-            // Pass 1: background quads
-            if (frame.dirty.cells or frame.dirty.selection) self.background.upload(frame.background_instances);
+            // Pass 1: background quads (spliced sub-buffer upload when dirty range is bounded)
+            if (frame.dirty.cells or frame.dirty.selection) {
+                if (frame.bg_spliced_range) |spliced| {
+                    self.background.uploadRange(frame.background_instances, spliced.offset, spliced.count);
+                } else {
+                    self.background.upload(frame.background_instances);
+                }
+            }
             self.background.draw(
                 frame.background_instances.len,
                 .{
@@ -156,8 +162,10 @@ pub fn Renderer(comptime option: TerminalOption) type {
             );
 
             // Pass 2 and 3: decorations and glyphs, in the configured order
-            self.cell.upload(frame.gray_instances, frame.color_instances);
-            if (frame.dirty.cells) self.decoration.upload(frame.decoration_instances);
+            if (frame.dirty.cells) {
+                self.cell.upload(frame.gray_instances, frame.color_instances);
+                self.decoration.upload(frame.decoration_instances);
+            }
             const glyphs: Cell.DrawArgs = .{
                 .atlas = atlas,
                 .ascender = @floatFromInt(self.cell_ascender),

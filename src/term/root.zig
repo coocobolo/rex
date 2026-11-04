@@ -15,6 +15,7 @@ pub const Terminal = term.Terminal;
 pub const Option = term.Option;
 pub const Events = term.Events;
 pub const Response = term.Response;
+pub const max_title_len = term.max_title_len;
 pub const Frame = @import("Frame.zig").Frame;
 
 pub const screen = @import("screen.zig");

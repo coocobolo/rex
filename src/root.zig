@@ -14,6 +14,7 @@ pub const terminal = @import("term/root.zig");
 pub const vt = @import("vt/root.zig");
 pub const termio = @import("termio/root.zig");
 pub const unicode = @import("unicode/root.zig");
+pub const driver = @import("driver/root.zig");
 
 pub const dirs = @import("dirs/root.zig");
 pub const env = @import("env/root.zig");
@@ -24,5 +25,6 @@ test {
     _ = @import("color/root.zig");
     _ = @import("fuzz/root.zig");
     _ = @import("input_test.zig");
+    _ = @import("driver/root.zig");
     std.testing.refAllDecls(@This());
 }

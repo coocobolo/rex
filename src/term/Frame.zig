@@ -14,6 +14,7 @@ const Cell = @import("cell.zig").Cell;
 const Cursor = @import("Cursor.zig");
 const Palette = @import("Palette.zig").Palette;
 const Option = @import("term.zig").Option;
+const Classifier = @import("../unicode/Classifier.zig");
 
 /// Maximum number of codepoints per grapheme cluster. Matches `Screen.max_cluster_len`.
 pub const max_cluster_len = 16;
@@ -72,6 +73,12 @@ pub fn Frame(comptime option: Option) type {
         /// Optional OSC 12 cursor color override.
         cursor_color: ?[3]u8 = null,
 
+        /// Optional OSC 19 selection foreground override (RGB).
+        selection_foreground: ?[3]u8 = null,
+
+        /// Optional OSC 17 selection background override (RGB).
+        selection_background: ?[3]u8 = null,
+
         /// Reverse video mode (DECSCNM).
         reverse_video: bool = false,
 
@@ -84,9 +91,24 @@ pub fn Frame(comptime option: Option) type {
         /// Viewport offset (0 = live view at bottom, >0 = viewing history).
         viewport_offset: u32 = 0,
 
+        /// Total lines scrolled into history since startup.
+        total_lines_scrolled: i64 = 0,
+
         /// Grapheme side-table for interned grapheme sequences visible in this frame.
         graphemes: [max_frame_graphemes]GraphemeEntry = undefined,
         grapheme_count: u16 = 0,
+
+        pub const DirtyRange = struct {
+            min: u16,
+            max: u16, // inclusive
+        };
+
+        /// Returns the bounding range [min, max] of dirty display rows, or null if no rows are dirty.
+        pub fn dirtyRange(self: *const Self) ?DirtyRange {
+            const min = self.dirty_rows.findFirstSet() orelse return null;
+            const max = self.dirty_rows.findLastSet() orelse min;
+            return .{ .min = @intCast(min), .max = @intCast(max) };
+        }
 
         /// Allocates cell memory with 64-byte alignment. Free with `deinit`.
         pub fn init(allocator: Allocator) !Self {
@@ -119,10 +141,90 @@ pub fn Frame(comptime option: Option) type {
             return self.cells[r * max_cols ..][0..self.active_cols];
         }
 
+        /// Copies all cells and viewport metadata from `src` into `self`.
+        pub fn copyFrom(self: *Self, src: *const Self) void {
+            self.active_rows = src.active_rows;
+            self.active_cols = src.active_cols;
+            self.dirty_rows = src.dirty_rows;
+            self.generation = src.generation;
+            self.palette = src.palette;
+            self.cursor = src.cursor;
+            self.cursor_color = src.cursor_color;
+            self.selection_foreground = src.selection_foreground;
+            self.selection_background = src.selection_background;
+            self.reverse_video = src.reverse_video;
+            self.is_alternate = src.is_alternate;
+            self.scrollback_used = src.scrollback_used;
+            self.viewport_offset = src.viewport_offset;
+            self.total_lines_scrolled = src.total_lines_scrolled;
+            self.grapheme_count = src.grapheme_count;
+            @memcpy(self.graphemes[0..src.grapheme_count], src.graphemes[0..src.grapheme_count]);
+            const num_cells = @as(usize, src.active_rows) * max_cols;
+            @memcpy(self.cells[0..num_cells], src.cells[0..num_cells]);
+        }
+
         /// Returns cell at viewport row `r` and column `c`.
         pub inline fn cellAt(self: *const Self, r: usize, c: usize) Cell {
             if (r >= self.active_rows or c >= self.active_cols) return .{};
             return self.cells[r * max_cols + c];
+        }
+
+        /// Resolves the primary codepoint for classification or character display.
+        pub fn resolveCodepoint(self: *const Self, cell: Cell) u21 {
+            return switch (cell.kind) {
+                .empty => ' ',
+                .narrow, .wide_left, .wide_right => std.math.cast(u21, cell.codepoint) orelse ' ',
+                .grapheme, .grapheme_wide => blk: {
+                    if (self.getGrapheme(cell.codepoint)) |cps| {
+                        if (cps.len > 0) break :blk cps[0];
+                    }
+                    break :blk ' ';
+                },
+                .shaped => ' ',
+            };
+        }
+
+        /// Finds word boundary columns [left, right] on display row `r` at column `col`.
+        pub fn wordsBoundsAt(
+            self: *const Self,
+            classifier: *const Classifier,
+            r: usize,
+            col: u16,
+            join_option: Classifier.JoinOption,
+        ) struct { u16, u16 } {
+            if (r >= self.active_rows or col >= self.active_cols) return .{ 0, 0 };
+            const row_cells = self.displayRow(r);
+
+            const origin_col: u16 = if (row_cells[col].kind == .wide_right and col > 0) col - 1 else col;
+            const origin_cp = self.resolveCodepoint(row_cells[origin_col]);
+            const origin_class = classifier.classify(origin_cp);
+
+            var left: u16 = origin_col;
+            while (left > 0) {
+                if (row_cells[left - 1].kind == .wide_right) {
+                    left -= 1;
+                    continue;
+                }
+                const cp = self.resolveCodepoint(row_cells[left - 1]);
+                const class = classifier.classify(cp);
+                if (!origin_class.canJoin(class, join_option)) break;
+                left -= 1;
+            }
+
+            const max_col = self.active_cols - 1;
+            var right: u16 = origin_col;
+            while (right < max_col) {
+                if (row_cells[right + 1].kind == .wide_right) {
+                    right += 1;
+                    continue;
+                }
+                const cp = self.resolveCodepoint(row_cells[right + 1]);
+                const class = classifier.classify(cp);
+                if (!origin_class.canJoin(class, join_option)) break;
+                right += 1;
+            }
+
+            return .{ left, right };
         }
 
         /// Looks up an interned grapheme sequence by synthetic id.
@@ -205,4 +307,24 @@ test "Frame: grapheme side-table" {
     try testing.expect(found != null);
     try testing.expectEqualSlices(u21, &cluster, found.?);
     try testing.expectEqual(null, frame.getGrapheme(0x110002));
+}
+
+test "Frame: dirtyRange bounding range calculation" {
+    const testing = std.testing;
+    const test_option = @import("test_fixtures.zig").test_option;
+    const TestFrame = Frame(test_option);
+
+    var frame = try TestFrame.init(testing.allocator);
+    defer frame.deinit(testing.allocator);
+
+    try testing.expectEqual(@as(?TestFrame.DirtyRange, null), frame.dirtyRange());
+
+    frame.dirty_rows.set(5);
+    try testing.expectEqual(TestFrame.DirtyRange{ .min = 5, .max = 5 }, frame.dirtyRange().?);
+
+    frame.dirty_rows.set(11);
+    try testing.expectEqual(TestFrame.DirtyRange{ .min = 5, .max = 11 }, frame.dirtyRange().?);
+
+    frame.dirty_rows.set(2);
+    try testing.expectEqual(TestFrame.DirtyRange{ .min = 2, .max = 11 }, frame.dirtyRange().?);
 }
