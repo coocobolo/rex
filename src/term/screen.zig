@@ -2127,39 +2127,27 @@ pub fn Screen(comptime option: Option) type {
         }
 
         /// Move cursor up by `n` rows (CSI n A - CUU).
-        /// Stops at `scroll_top` if cursor is inside the scroll region,
-        /// or at `row 0` if cursor is above scroll_top. Clears `wrap_pending`.
+        /// Stops at `scroll_top` if the cursor is at or below it, or at
+        /// row 0 if the cursor is above it (as xterm does, origin mode or
+        /// not). Clears `wrap_pending`.
         pub fn cursorUp(self: *Self, n: usize) void {
             const cursor_row: usize = self.cursor.row;
-            // const top: usize = if (cursor_row >= self.scroll_top and cursor_row <= self.scroll_bottom) self.scroll_top else 0;
-            const top: usize = if (self.cursor.origin)
-                self.scroll_top
-            else if (cursor_row >= self.scroll_top and cursor_row <= self.scroll_bottom)
-                self.scroll_top
-            else
-                0;
+            const top: usize = if (cursor_row >= self.scroll_top) self.scroll_top else 0;
 
             self.dirty_rows.set(cursor_row);
-            self.cursor.row = @intCast(if (n > cursor_row - top) top else cursor_row - n);
+            self.cursor.row = @intCast(@max(cursor_row -| n, top));
             self.cursor.wrap_pending = false;
             self.dirty_rows.set(self.cursor.row);
             self.bump();
         }
 
         /// Move cursor down by `n` rows (CSI n B - CUD).
-        /// Stops at `scroll_bottom` if cursor is inside the scroll region,
-        /// or at `active_rows-1` if cursor is below scroll_bottom. Clears `wrap_pending`.
-        ///
-        /// NOTE
-        /// The xterm behavior for CUD when the cursor is below scroll_bottom is to clamp to
-        /// active_rows-1, not scroll_bottom. The implementation above handles this via the
-        /// if (row >= scroll_top and row <= scroll_bottom) check. Verify this against your
-        /// PTY test cases, some terminals differ here.
+        /// Stops at `scroll_bottom` if the cursor is at or above it, or at
+        /// `active_rows - 1` if the cursor is below it (as xterm does,
+        /// origin mode or not). Clears `wrap_pending`.
         pub fn cursorDown(self: *Self, n: usize) void {
             const cursor_row: usize = self.cursor.row;
-            const bottom: usize = if (self.cursor.origin)
-                self.scroll_bottom
-            else if (cursor_row >= self.scroll_top and cursor_row <= self.scroll_bottom)
+            const bottom: usize = if (cursor_row <= self.scroll_bottom)
                 self.scroll_bottom
             else
                 self.active_rows - 1;
@@ -2296,16 +2284,13 @@ pub fn Screen(comptime option: Option) type {
             // wrap_pending always cleared on restore, see doc comment.
             self.cursor.wrap_pending = false;
 
-            // Clamp to current active area; the screen may have been resized since save.
-            if (self.active_rows > 0) {
-                self.cursor.row = @min(self.cursor.row, self.active_rows - 1);
-            } else {
-                self.cursor.row = 0;
-            }
-            if (self.active_cols > 0) {
-                self.cursor.col = @min(self.cursor.col, self.active_cols - 1);
-            } else {
-                self.cursor.col = 0;
+            // Clamp to the current active area, which may have been resized
+            // since the save, and under DECOM to the current scroll region,
+            // which may have moved since the save.
+            self.cursor.row = @min(self.cursor.row, self.active_rows -| 1);
+            self.cursor.col = @min(self.cursor.col, self.active_cols -| 1);
+            if (self.cursor.origin) {
+                self.cursor.row = std.math.clamp(self.cursor.row, self.scroll_top, self.scroll_bottom);
             }
 
             // Mark the new cursor row dirty (cursor indicator arrives).

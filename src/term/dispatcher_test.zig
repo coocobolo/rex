@@ -3491,3 +3491,16 @@ test "sgr: combined bold + italic + fg in one sequence" {
         t.active().palette.decode(t.active().cursor.attr.fg),
     );
 }
+
+// Regressions: each failed before its fix.
+
+test "m2: CUU after DECRC above the region in origin mode stays in range" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    // Save at row 1 under DECOM, move the region below it, restore, go up.
+    t.feed("\x1b[2;10r\x1b[?6h\x1b7\x1b[6;11r\x1b8\x1b[A");
+    try testing.expectEqual(5, t.active().cursor.row);
+    t.feed("\x1b[B");
+    try testing.expectEqual(6, t.active().cursor.row);
+}
