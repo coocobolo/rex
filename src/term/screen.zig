@@ -51,7 +51,7 @@ pub const Mode = packed struct {
     cursor_blink: bool = false, // xterm     CSI ? 12 h/l
     reverse_video: bool = false, // DECSCNM  CSI ? 5 h/l
     smooth_scroll: bool = false, // DECSCLM  CSI ? 4 h/l   (DEC private mode 4)
-    reverse_wrap: bool = false, // reverse wrap   CSI ? 45 h/l
+    reverse_wrap: bool = false, // xterm reverse wraparound  CSI ? 45 h/l
     _pad: u7 = 0, // 11 bits used; pad to 16 bits
 };
 
@@ -847,7 +847,14 @@ pub fn Screen(comptime option: Option) type {
             for (bytes) |b| self.putChar(b);
         }
 
+        /// Marks the cursor row as continuing onto the next one. Called
+        /// just before every automatic wrap.
+        inline fn markSoftWrap(self: *Self) void {
+            self.rowMutRaw(self.cursor.row)[self.active_cols - 1].wrapped = true;
+        }
+
         inline fn resolveDeferredWrap(self: *Self) void {
+            self.markSoftWrap();
             self.cursor.wrap_pending = false;
             self.cursor.col = 0;
 
@@ -965,7 +972,7 @@ pub fn Screen(comptime option: Option) type {
         ///
         /// This is the internal write path. Callers must supply a fully resolved
         /// `Cell` (codepoint, width, attr). For PTY printable characters, use
-        /// `putChar` instead it handles charset translation and `wcwidth` lookup.
+        /// `putChar` instead, it handles charset translation and `wcwidth` lookup.
         ///
         /// Handles:
         ///   1. Combining characters (width == 0): handled by `putChar`, which
@@ -983,6 +990,7 @@ pub fn Screen(comptime option: Option) type {
             // Deferred wrap
             if (self.cursor.wrap_pending) {
                 self.dirty_rows.set(self.cursor.row); // erase cursor from old row
+                self.markSoftWrap();
                 self.cursor.wrap_pending = false;
                 self.cursor.col = 0;
 
@@ -1059,7 +1067,7 @@ pub fn Screen(comptime option: Option) type {
             // wrap inline, then place the wide char at column 0 of the new row_mut.
             if (wide_at_end) {
                 const old_row = self.cursor.row;
-                row_mut[cursor_col] = Cell{ .background = cell.background };
+                row_mut[cursor_col] = Cell{ .background = cell.background, .wrapped = true };
 
                 // Wrap/scroll logic (same logic as deferred wrap above).
                 self.cursor.col = 0;
@@ -2138,24 +2146,60 @@ pub fn Screen(comptime option: Option) type {
             self.markDirty(self.cursor.row);
         }
 
-        /// Move cursor left by `n` columns (CSI n D / CUB).
-        /// Clamps to 0. Does not respect scroll region.
-        /// Move cursor left by `n` columns (CUB / CSI Ps D, and BS 0x08).
-        /// Clamps at column 0. Clears `wrap_pending`. `n = 0` treated as `n = 1`.
-        /// Clears `wrap_pending`.
+        /// Moves the cursor left by `n` columns (CUB / CSI Ps D, and BS).
+        /// `n = 0` counts as 1. Clears `wrap_pending`.
+        ///
+        /// Without reverse wraparound the cursor stops at column 0. With
+        /// it (mode 45 and DECAWM both set), this follows xterm's
+        /// CursorBack: a pending wrap uses up one step without moving,
+        /// and moving left of column 0 goes to the last column of the
+        /// row above, but only if that row soft-wrapped into this one.
+        /// Otherwise the cursor stops at column 0 of the current row.
+        /// The scroll region is not a boundary; the top of the screen is.
         pub fn cursorLeft(self: *Self, n: usize) void {
-            self.cursor.col = @intCast(self.cursor.col -| @max(n, 1));
+            const count = @max(n, 1);
+            if (!(self.mode.reverse_wrap and self.mode.auto_wrap)) {
+                self.cursor.col = @intCast(self.cursor.col -| count);
+                self.cursor.wrap_pending = false;
+                self.markDirty(self.cursor.row);
+                return;
+            }
+            self.reverseWrapLeft(count);
+        }
+
+        fn reverseWrapLeft(self: *Self, count: usize) void {
+            const last_col = self.active_cols - 1;
+            const start_row = self.cursor.row;
+            var target_row: usize = start_row;
+            var col: usize = self.cursor.col;
+
+            // A pending wrap means the cursor is logically past the last
+            // column, so the first step only cancels it.
+            var steps = if (self.cursor.wrap_pending) count - 1 else count;
+            while (steps > 0) : (steps -= 1) {
+                if (col > 0) {
+                    col -= 1;
+                    continue;
+                }
+                if (target_row == 0 or !self.row(target_row - 1)[last_col].wrapped) break;
+                target_row -= 1;
+                col = last_col;
+            }
+
+            self.cursor.row = @intCast(target_row);
+            self.cursor.col = @intCast(col);
             self.cursor.wrap_pending = false;
-            self.markDirty(self.cursor.row);
+            self.markDirty(start_row);
+            self.markDirty(target_row);
         }
 
         /// Moves the cursor down one line within the scroll region (IND / ESC D).
         ///
         /// [Case]
-        /// 1. Cursor at `scroll_bottom`, the scroll region scrrolls up by one line
+        /// 1. Cursor at `scroll_bottom`, the scroll region scrolls up by one line
         ///    (top line discarded, blank line inserted at bottom). Cursor stays at
         ///    `scroll_bottom`. On the primary screen this adds one line of scrollback.
-        /// 2. Cursor bellow `scroll_bottom`, moves down, clamped to `active_rows - 1`.
+        /// 2. Cursor below `scroll_bottom`, moves down, clamped to `active_rows - 1`.
         /// 3. Otherwise, cursor moves down one row.
         ///
         /// This is the counterpart of `reverseIndex` (RI / ESC M).

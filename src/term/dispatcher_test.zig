@@ -3,6 +3,7 @@ const testing = std.testing;
 
 const Terminal = @import("term.zig").Terminal;
 const Mode = @import("term.zig").Mode;
+const DecModeReport = @import("term.zig").DecModeReport;
 
 const Attr = @import("cell.zig").Attr;
 const Cell = @import("cell.zig").Cell;
@@ -3589,7 +3590,7 @@ test "m2: DECSTR leaves everything outside the VT510 DECSTR table alone" {
     t.feed("\x1b[?5h\x1b[4 q\x1b[?12h\x1b[20h\x1b[?8l\x1b[3g\x1b[1;5H\x1bH");
     t.feed("\x1b[H\x1b#6AB\x1b[2;3H");
     t.active().mode.cursor_blink = true;
-    t.active().mode.reverse_wrap = true; // ?45 is not dispatched yet
+    t.feed("\x1b[?45h");
     t.mode.modify_other_keys = 2;
     const style = t.active().cursor.style;
     t.feed("\x1b[!p");
@@ -3701,4 +3702,119 @@ test "color: OSC 117 and 119 reset the selection colors" {
     try testing.expectEqual(null, t.selection_background);
     t.feed("\x1b]119\x07");
     try testing.expectEqual(null, t.selection_foreground);
+}
+
+// DEC private mode 45, reverse wraparound (xterm ctlseqs).
+
+/// Prints one more character than the row holds, so row 0 soft-wraps
+/// into row 1 and the cursor ends at row 1, column 1.
+fn feedSoftWrappedLine(t: *Term) void {
+    const cols = t.active().active_cols;
+    var i: usize = 0;
+    while (i <= cols) : (i += 1) t.feed("x");
+}
+
+test "mode 45: set and reset reach the active screen" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    try testing.expect(!t.active().mode.reverse_wrap); // power-on default
+    t.feed("\x1b[?45h");
+    try testing.expect(t.active().mode.reverse_wrap);
+    try testing.expectEqual(DecModeReport.set, t.decModeReport(45));
+    t.feed("\x1b[?45l");
+    try testing.expect(!t.active().mode.reverse_wrap);
+    try testing.expectEqual(DecModeReport.reset, t.decModeReport(45));
+}
+
+test "mode 45: BS at column 0 goes to the end of a soft-wrapped row above" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+    const last_col = t.active().active_cols - 1;
+
+    t.feed("\x1b[?45h");
+    feedSoftWrappedLine(&t);
+    t.feed("\x08\x08"); // to column 0, then across the wrap
+    try testing.expectEqual(@as(u16, 0), t.active().cursor.row);
+    try testing.expectEqual(@as(u16, @intCast(last_col)), t.active().cursor.col);
+}
+
+test "mode 45: CUB crosses soft wraps one column per step" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+    const last_col = t.active().active_cols - 1;
+
+    t.feed("\x1b[?45h");
+    feedSoftWrappedLine(&t);
+    t.feed("\x1b[3D"); // column 1, 0, then the last column of row 0
+    try testing.expectEqual(@as(u16, 0), t.active().cursor.row);
+    try testing.expectEqual(@as(u16, @intCast(last_col - 1)), t.active().cursor.col);
+}
+
+test "mode 45: no reverse wrap across a hard line break" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    t.feed("\x1b[?45h");
+    t.feed("ab\r\ncd");
+    t.feed("\x1b[5D");
+    try testing.expectEqual(@as(u16, 1), t.active().cursor.row);
+    try testing.expectEqual(@as(u16, 0), t.active().cursor.col);
+}
+
+test "mode 45: stops at the top of the screen" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    t.feed("\x1b[?45h");
+    t.feed("\x08\x08");
+    try testing.expectEqual(@as(u16, 0), t.active().cursor.row);
+    try testing.expectEqual(@as(u16, 0), t.active().cursor.col);
+}
+
+test "mode 45: BS with a pending wrap only cancels it" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+    const cols = t.active().active_cols;
+
+    t.feed("\x1b[?45h");
+    var i: usize = 0;
+    while (i < cols) : (i += 1) t.feed("x");
+    try testing.expect(t.active().cursor.wrap_pending);
+    t.feed("\x08");
+    try testing.expect(!t.active().cursor.wrap_pending);
+    try testing.expectEqual(@as(u16, @intCast(cols - 1)), t.active().cursor.col);
+}
+
+test "mode 45: needs DECAWM, and is off without it" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    feedSoftWrappedLine(&t);
+    t.feed("\x08\x08"); // mode 45 off: clamps
+    try testing.expectEqual(@as(u16, 1), t.active().cursor.row);
+    try testing.expectEqual(@as(u16, 0), t.active().cursor.col);
+
+    t.feed("\x1b[?45h\x1b[?7l\x08"); // DECAWM off: still clamps
+    try testing.expectEqual(@as(u16, 1), t.active().cursor.row);
+    try testing.expectEqual(@as(u16, 0), t.active().cursor.col);
+}
+
+test "mode 45: DECSTR keeps it (VT510 DECSTR table)" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    t.feed("\x1b[?45h\x1b[!p");
+    try testing.expect(t.active().mode.reverse_wrap);
+}
+
+test "mode 45: erasing the wrapped row ends the soft wrap" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    t.feed("\x1b[?45h");
+    feedSoftWrappedLine(&t);
+    t.feed("\x1b[A\x1b[2K\x1b[B\x08\x08");
+    try testing.expectEqual(@as(u16, 1), t.active().cursor.row);
+    try testing.expectEqual(@as(u16, 0), t.active().cursor.col);
 }

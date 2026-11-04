@@ -2740,8 +2740,9 @@ test "writeChar: wide char at last column fills blank, wraps, writes at col 0" {
     s.cursor.col = s.active_cols - 1;
     s.writeChar(c);
 
-    // Last column of row 0 should be a blank (filled before wrap)
-    const blank: Cell = .{};
+    // Last column of row 0 should be a blank (filled before wrap),
+    // marked as soft-wrapped into row 1.
+    const blank: Cell = .{ .wrapped = true };
     try testing.expectEqualDeep(blank, s.cellAt(0, s.active_cols - 1));
     // Wide char lands at (1, 0)
     try testing.expectEqualDeep(c, s.cellAt(1, 0));
@@ -4989,8 +4990,8 @@ test "putChar: wide char at last column wraps and writes at col 0 of next row" {
     s.cursor.col = s.active_cols - 1;
     s.putChar('中');
 
-    // Last column of row 0 gets a blank fill.
-    const blank: Cell = .{};
+    // Last column of row 0 gets a blank fill, marked as soft-wrapped.
+    const blank: Cell = .{ .wrapped = true };
     try testing.expectEqualDeep(blank, s.cellAt(0, s.active_cols - 1));
     // Wide char lands at (1, 0).
     try testing.expectEqual(@as(u21, '中'), s.cellAt(1, 0).codepoint);
