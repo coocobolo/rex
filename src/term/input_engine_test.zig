@@ -43,7 +43,7 @@ const FakeSink = struct {
 fn feedText(engine: *InputEngine, sink: *FakeSink, bytes: []const u8) void {
     for (bytes) |b| {
         if (b < 0x80) {
-            if (engine.inSequence()) engine.abortSequence();
+            engine.abortSequence(sink);
             engine.flush(sink);
             sink.putChars(&.{b});
         } else {
@@ -85,16 +85,65 @@ test "4-byte utf-8 split across feeds" {
     try testing.expectEqual(FakeSink.Put{ .cp = 0x1F600, .kind = .wide_left }, sink.puts()[0]);
 }
 
-test "invalid sequence is dropped" {
-    // Current policy drops malformed input silently. The M2 UTF-8 item
-    // switches this to U+FFFD; update the expectation then.
+fn expectCps(sink: *const FakeSink, want: []const u21) !void {
+    try testing.expectEqual(want.len, sink.len);
+    for (want, sink.puts()) |cp, put| try testing.expectEqual(cp, put.cp);
+}
+
+const fffd = InputEngine.replacement_char;
+
+/// Feeds each chunk in turn, then ends the stream.
+fn feedChunks(chunks: []const []const u8) FakeSink {
     var engine: InputEngine = .init(.narrow);
     var sink: FakeSink = .{};
-    feedText(&engine, &sink, "\xC3A\xFFB");
-    try testing.expect(!engine.inSequence());
-    try testing.expectEqual(@as(usize, 2), sink.len);
-    try testing.expectEqual(@as(u21, 'A'), sink.puts()[0].cp);
-    try testing.expectEqual(@as(u21, 'B'), sink.puts()[1].cp);
+    for (chunks) |c| feedText(&engine, &sink, c);
+    engine.finish(&sink);
+    return sink;
+}
+
+test "invalid utf-8: cut sequence and bad lead become u+fffd" {
+    const sink = feedChunks(&.{"\xC3A\xFFB"});
+    try expectCps(&sink, &.{ fffd, 'A', fffd, 'B' });
+}
+
+test "invalid utf-8: lead cut by ascii" {
+    const sink = feedChunks(&.{"\xC3\x41"});
+    try expectCps(&sink, &.{ fffd, 'A' });
+}
+
+test "invalid utf-8: overlong C0 AF is two subparts" {
+    const sink = feedChunks(&.{"\xC0\xAF"});
+    try expectCps(&sink, &.{ fffd, fffd });
+}
+
+test "invalid utf-8: surrogate ED A0 80 is three subparts" {
+    const sink = feedChunks(&.{"\xED\xA0\x80"});
+    try expectCps(&sink, &.{ fffd, fffd, fffd });
+}
+
+test "invalid utf-8: above U+10FFFF F4 90 80 80 is four subparts" {
+    const sink = feedChunks(&.{"\xF4\x90\x80\x80"});
+    try expectCps(&sink, &.{ fffd, fffd, fffd, fffd });
+}
+
+test "invalid utf-8: valid prefix then bad continuation" {
+    // E2 82 is a valid prefix of U+20AC; 41 cuts it: one U+FFFD.
+    const sink = feedChunks(&.{"\xE2\x82\x41"});
+    try expectCps(&sink, &.{ fffd, 'A' });
+}
+
+test "invalid utf-8: split across feeds" {
+    var sink = feedChunks(&.{ "\xED", "\xA0\x80" });
+    try expectCps(&sink, &.{ fffd, fffd, fffd });
+    sink = feedChunks(&.{ "\xF0\x9F", "A" });
+    try expectCps(&sink, &.{ fffd, 'A' });
+    sink = feedChunks(&.{ "\xF0\x9F\x98", "\xF0\x9F\x98\x80" });
+    try expectCps(&sink, &.{ fffd, 0x1F600 });
+}
+
+test "invalid utf-8: truncated at end of stream" {
+    const sink = feedChunks(&.{"\xE4\xB8"});
+    try expectCps(&sink, &.{fffd});
 }
 
 test "wide cjk" {

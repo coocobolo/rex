@@ -135,7 +135,7 @@ pub const C0 = struct {
             },
             0x0E => term.active.shiftOut(), // SO | GL = G1
             0x0F => term.active.shiftIn(), // SI | GL = G0
-            0x18, 0x1A => term.input.abortSequence(),
+            0x18, 0x1A => term.input.abortSequence(term.active),
             0x7F => {}, // DEL
             else => {}, // other C0
         }

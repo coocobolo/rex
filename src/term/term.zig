@@ -537,9 +537,13 @@ pub fn Terminal(comptime option: Option) type {
 
                     const j = i + self.input.highBytePrefixLen(bytes[i..]);
                     if (j == i) {
-                        // Decoder is mid-sequence: this byte continues a codepoint
-                        // that started before the string began, not string payload.
-                        self.input.feedByte(self.active, bytes[i]);
+                        // Decoder is mid-sequence: this byte continues (or cuts)
+                        // a codepoint that started before the string began, not
+                        // string payload. ASCII must still reach the parser.
+                        if (bytes[i] < 0x80)
+                            self.feedUtf8Byte(bytes[i])
+                        else
+                            self.input.feedByte(self.active, bytes[i]);
                         i += 1;
                         continue;
                     }
@@ -560,13 +564,10 @@ pub fn Terminal(comptime option: Option) type {
                 //
                 // Treat the previous partial sequence as malformed,
                 // then process this ASCII byte normally.
-                if (self.input.inSequence()) self.input.abortSequence();
-
-                // ESC, CAN, and SUB cancel pending grapheme state.
-                if (byte < 0x20) {
-                    self.input.abortSequence();
-                    self.input.flush(self.active);
-                }
+                // The cut sequence becomes U+FFFD, and it and any pending
+                // cluster must land before the parser acts on this byte.
+                self.input.abortSequence(self.active);
+                self.input.flush(self.active);
 
                 self.parser.feedBytes(self, &.{byte});
                 return;

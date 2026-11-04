@@ -108,20 +108,46 @@ pub inline fn highBytePrefixLen(self: *const InputEngine, bytes: []const u8) usi
     return self.utf8_decoder.highBytePrefixLen(bytes);
 }
 
-/// Discards a partially decoded UTF-8 sequence. Malformed input is
-/// currently dropped silently.
-pub inline fn abortSequence(self: *InputEngine) void {
+/// Replacement for each maximal subpart of an ill-formed sequence.
+pub const replacement_char: u21 = 0xFFFD;
+
+/// Ends a partially decoded UTF-8 sequence that a non-continuation byte
+/// (ASCII, a control, ESC) has cut short, writing one U+FFFD for it to
+/// `sink`. No-op when no sequence is in progress. The caller then
+/// processes the cutting byte as a fresh start.
+pub fn abortSequence(self: *InputEngine, sink: anytype) void {
+    if (!self.inSequence()) return;
     self.utf8_decoder.reset();
+    self.feedCodepoint(sink, replacement_char);
 }
 
 /// Feeds one high byte (>= 0x80) through the UTF-8 decoder and writes any
 /// completed code point to `sink`.
+///
+/// Ill-formed input follows the Unicode "maximal subpart" practice
+/// (Unicode 15, section 3.9): each maximal subpart becomes one U+FFFD.
+/// When the DFA rejects a byte that cut a sequence short, that byte
+/// is not part of the subpart and is decoded again as a fresh lead.
 pub fn feedByte(self: *InputEngine, sink: anytype, byte: u8) void {
+    std.debug.assert(byte >= 0x80);
+    const was_mid = self.inSequence();
     switch (self.utf8_decoder.feed(byte)) {
         .ok => {}, // still accumulating a multibyte sequence
         .codepoint => |cp| self.feedCodepoint(sink, @intCast(cp)),
-        // Discard the malformed sequence so it cannot poison later input.
-        .reject => self.abortSequence(),
+        .reject => {
+            self.utf8_decoder.reset();
+            self.feedCodepoint(sink, replacement_char);
+            if (!was_mid) return; // bad lead byte: it is the whole subpart
+            // Decoder is back in `accept`, so this cannot recurse again.
+            switch (self.utf8_decoder.feed(byte)) {
+                .ok => {},
+                .codepoint => |cp| self.feedCodepoint(sink, @intCast(cp)),
+                .reject => {
+                    self.utf8_decoder.reset();
+                    self.feedCodepoint(sink, replacement_char);
+                },
+            }
+        },
     }
 }
 
@@ -139,8 +165,8 @@ pub fn finish(self: *InputEngine, sink: anytype) void {
         .ok => {},
         // Not produced by the current finish(); kept for exhaustiveness.
         .codepoint => |cp| self.feedCodepoint(sink, @intCast(cp)),
-        // Incomplete trailing sequence: dropped, same as abortSequence().
-        .reject => {},
+        // Incomplete trailing sequence: one U+FFFD, as abortSequence().
+        .reject => self.feedCodepoint(sink, replacement_char),
     };
     self.flush(sink);
 }

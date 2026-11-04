@@ -532,3 +532,32 @@ test "Terminal: xtversion 7-bit reply" {
     // }
     try testing.expectEqualStrings("\x90>|test 0.0.1\x9c", t.events.response.slice());
 }
+
+test "invalid utf-8: sequence cut by ESC is one u+fffd, then ESC runs" {
+    const t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    // F0 9F 98 is a valid 3-byte prefix; ESC [ 2 C moves right by two.
+    t.feed("\xF0\x9F\x98\x1b[2CZ");
+    try testing.expectEqual(@as(u32, 0xFFFD), t.active.cellAt(0, 0).codepoint);
+    try testing.expectEqual(@as(u32, 'Z'), t.active.cellAt(0, 3).codepoint);
+}
+
+test "invalid utf-8: C3 41 prints u+fffd then A" {
+    const t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    t.feed("\xC3");
+    t.feed("A");
+    try testing.expectEqual(@as(u32, 0xFFFD), t.active.cellAt(0, 0).codepoint);
+    try testing.expectEqual(@as(u32, 'A'), t.active.cellAt(0, 1).codepoint);
+}
+
+test "invalid utf-8: truncated sequence at end() is u+fffd" {
+    const t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    t.feed("\xE4\xB8");
+    t.end();
+    try testing.expectEqual(@as(u32, 0xFFFD), t.active.cellAt(0, 0).codepoint);
+}
