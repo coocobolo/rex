@@ -24,6 +24,38 @@ pub const State = struct {
     };
 };
 
+/// Where the thumb sits and how much of the track it fills, as
+/// fractions of the track, for a screen's scrollback state.
+pub const Fractions = struct {
+    /// 0 at the top (oldest line), 1 at the bottom (live view).
+    top: f32,
+    /// Visible rows over all rows, 0 to 1.
+    height: f32,
+
+    /// Fractions for `active_rows` visible rows above `scrollback_used`
+    /// scrollback rows, scrolled `viewport_offset` rows back. With no
+    /// rows at all the thumb fills the track. With no scrollback it
+    /// sits at the bottom. An offset past the scrollback, which a
+    /// resize can leave for a moment, is clamped.
+    pub fn of(active_rows: u32, scrollback_used: u32, viewport_offset: u32) Fractions {
+        const total = @as(u64, active_rows) + scrollback_used;
+        if (total == 0) return .{ .top = 1.0, .height = 1.0 };
+        const height = @as(f32, @floatFromInt(active_rows)) / @as(f32, @floatFromInt(total));
+        if (scrollback_used == 0) return .{ .top = 1.0, .height = height };
+        const offset = @min(viewport_offset, scrollback_used);
+        const scroll = @as(f32, @floatFromInt(offset)) / @as(f32, @floatFromInt(scrollback_used));
+        return .{ .top = 1.0 - scroll, .height = height };
+    }
+
+    /// The viewport offset that puts the thumb at `top`, in rows back
+    /// from the live view, out of `scrollback_used`.
+    pub fn viewportOffsetAt(top: f32, scrollback_used: u32) u32 {
+        const back = 1.0 - std.math.clamp(top, 0.0, 1.0);
+        const offset = @round(back * @as(f32, @floatFromInt(scrollback_used)));
+        return @min(@as(u32, @intFromFloat(offset)), scrollback_used);
+    }
+};
+
 /// The thumb's rectangle on a track, in pixels from the track's top.
 pub const Thumb = struct {
     top: f32,
@@ -71,7 +103,7 @@ pub const Option = struct {
     track_color: [4]f32 = .{ 0.05, 0.05, 0.05, 1.0 },
     thumb_color: [4]f32 = .{ 0.7, 0.7, 0.7, 0.85 },
     thumb_hover_color: [4]f32 = .{ 0.9, 0.9, 0.9, 0.95 },
-    /// linear interpolation animation speed (0..1 per frame)
+    /// Animation speed, as the fraction of the gap closed per ms.
     lerp_speed: f32 = 0.009,
     /// hide when at live view
     auto_hide: bool = true,
@@ -122,21 +154,22 @@ pub fn deinit(self: *Scrollbar) void {
     self.* = undefined;
 }
 
-/// Returns true while still animating (caller should set redraw the frame).
+/// Advances the width and fade animations by `dt_ms`. Returns true
+/// while they are still moving, so the caller should redraw.
 pub fn tick(self: *Scrollbar, dt_ms: u64) bool {
     const target_width: f32 = if (self.hover)
         self.option.hover_width
     else
         self.option.width;
 
-    // always 0.0 at live view, even when hovering
+    // Fades to auto_hide_alpha at the live view, even when hovering.
     const target_alpha: f32 =
         if (self.option.auto_hide and self.at_live_view)
             self.option.auto_hide_alpha
         else
             1.0;
 
-    // dt-normalized lerp: lerp_speed is fraction-per-ms
+    // Lerp scaled by elapsed time: lerp_speed is a fraction per ms.
     const t = @min(1.0, @as(f32, @floatFromInt(dt_ms)) * self.option.lerp_speed);
     self.last_width += (target_width - self.last_width) * t;
     self.last_alpha += (target_alpha - self.last_alpha) * t;

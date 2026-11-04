@@ -285,7 +285,7 @@ pub fn Builder(comptime option: Option) type {
 
                     .prev_col = prev_col,
                     .prev_span = prev_span,
-                    // next_* defaults to self — correct for the last row
+                    // next_* defaults to this span, which is right for the last row.
                     .next_col = span_start,
                     .next_span = cur_span,
                 };
@@ -591,15 +591,12 @@ pub fn Builder(comptime option: Option) type {
                 .thumb_height_frac = 1.0,
             };
 
-            const total = screen.active_rows + screen.scrollback_used;
-            const height_frac = @as(f32, @floatFromInt(screen.active_rows)) / @as(f32, @floatFromInt(total));
-            const scroll_frac = @as(f32, @floatFromInt(screen.viewport_offset)) / @as(f32, @floatFromInt(screen.scrollback_used));
-
+            const fracs: Scrollbar.Fractions = .of(screen.active_rows, screen.scrollback_used, screen.viewport_offset);
             return .{
                 .visibility = true,
                 .at_live_view = screen.viewport_offset == 0,
-                .thumb_height_frac = height_frac,
-                .thumb_top_frac = 1.0 - scroll_frac,
+                .thumb_height_frac = fracs.height,
+                .thumb_top_frac = fracs.top,
             };
         }
 
