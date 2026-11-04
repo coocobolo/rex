@@ -136,3 +136,38 @@ test "anyUnderline: only underlined runs need the ink mask" {
     try testing.expect(!Decoration.anyUnderline(&.{plain}));
     try testing.expect(Decoration.anyUnderline(&.{ plain, underlined }));
 }
+
+// Cell of the default font at 20 px: the baseline sits on row 20 and
+// the 2 px underline fills rows 23 and 24.
+const tight_font: Rasterizer.Metrics = .{
+    .cell_width = 12,
+    .cell_height = 25,
+    .ascender = 20,
+    .descender = 6,
+    .underline_y = 23,
+    .underline_thickness = 2,
+    .strikethrough_y = 14,
+    .strikethrough_thickness = 2,
+};
+
+test "Metrics.resolve: the default double underline stays below the baseline" {
+    const m: Decoration.Metrics = .resolve(tight_font, .{});
+    try testing.expectEqual(20, m.baseline);
+    // One thickness above would be row 19, on the glyphs, where ink
+    // skipping erased it. Row 20 keeps a 1 px gap to the underline.
+    try testing.expectEqual(20, m.double_y);
+    try testing.expect(m.double_y >= m.baseline);
+    try testing.expect(m.double_y + m.underline_thickness < m.underline_y);
+}
+
+test "Metrics.resolve: a double underline without room keeps a 1 px gap" {
+    var f = tight_font;
+    f.underline_y = 21;
+    const m: Decoration.Metrics = .resolve(f, .{});
+    try testing.expectEqual(18, m.double_y);
+}
+
+test "Metrics.resolve: an explicit double gap is kept" {
+    const m: Decoration.Metrics = .resolve(tight_font, .{ .double_gap = 2 });
+    try testing.expectEqual(19, m.double_y);
+}

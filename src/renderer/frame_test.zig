@@ -141,3 +141,31 @@ test "alphaByte: rounds and clamps an opacity to a color byte" {
     try testing.expectEqual(255, Frame.alphaByte(2.0));
     try testing.expectEqual(64, Frame.alphaByte(0.25));
 }
+
+test "decorationInstance: SGR 53 reaches the shader's overline bit on narrow, wide and last column cells" {
+    var t = try Term.create(testing.allocator);
+    defer t.destroy(testing.allocator);
+
+    const cols = t.active().active_cols;
+    var buf: [64]u8 = undefined;
+    // Overline alone, a wide char, then the last column on row 2.
+    t.feed("\x1b[53mA\xe4\xb8\xad\x1b[0m");
+    t.feed(try std.fmt.bufPrint(&buf, "\x1b[2;{d}H\x1b[53mZ\x1b[0m", .{cols}));
+
+    const screen = t.active();
+    const option: Decoration.Option = .{};
+    const cases = [_]struct { row: u16, col: u16, span: u16 }{
+        .{ .row = 0, .col = 0, .span = 1 },
+        .{ .row = 0, .col = 1, .span = 2 },
+        .{ .row = 1, .col = cols - 1, .span = 1 },
+    };
+    for (cases) |case| {
+        const c = screen.row(case.row)[case.col];
+        try testing.expectEqual(case.span, c.kind.columnSpan());
+        const run = Frame.decorationInstance(&option, c, text, 255, case.col, case.row, case.span).?;
+        try testing.expect(run.flags.overline);
+        // decoration.frag reads the overline as bit 2 (FLAG_OVERLINE = 4u).
+        try testing.expectEqual(4, @as(u8, @bitCast(run.flags)));
+        try testing.expectEqual(case.span, run.span);
+    }
+}
