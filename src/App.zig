@@ -1315,7 +1315,6 @@ fn handleScrollbarRelease(self: *App) bool {
 fn handleScrollbarClick(self: *App) bool {
     const screen = &self.terminal.primary;
 
-    // Scrollbar hit test
     const frame_width: f32 = @floatFromInt(self.frame_buffer_size.width);
     const frame_height: f32 = @floatFromInt(self.frame_buffer_size.height);
     const mouse_x = self.mouse_x;
@@ -1324,7 +1323,6 @@ fn handleScrollbarClick(self: *App) bool {
 
     const bar_x: f32 = frame_width - option.width - option.gap;
 
-    // click was not on the scrollbar
     if (mouse_x < bar_x) return false;
 
     const active_rows: f32 = @floatFromInt(screen.active_rows);
@@ -1335,8 +1333,8 @@ fn handleScrollbarClick(self: *App) bool {
     const thumb_h = frame_height * active_rows / total_rows;
     const track_h = frame_height - thumb_h;
 
-    // If viewport_offset somehow exceeds scrollback_used
-    // (e.g., a resize race), scroll_frac > 1.0 and thumb_top_y goes negative.
+    // Clamped, since a resize can leave viewport_offset past
+    // scrollback_used for a moment.
     const scroll_frac = std.math.clamp(viewport_offset / scrollback_used, 0.0, 1.0);
     const thumb_top_y = (1.0 - scroll_frac) * track_h;
     const thumb_bottom_y = thumb_top_y + thumb_h;
@@ -1344,22 +1342,19 @@ fn handleScrollbarClick(self: *App) bool {
     // A click on the thumb drags from that point. A click in the track
     // jumps the thumb's centre to it.
     if (mouse_y >= thumb_top_y and mouse_y <= thumb_bottom_y) {
-        // Click landed on the thumb, drag from where the user clicked
         self.scrollbar_drag_offset_y = mouse_y - thumb_top_y;
     } else {
-        // Click landed in the track, jump thumb center to click position
         const new_thumb_top = std.math.clamp(mouse_y - thumb_h / 2.0, 0.0, track_h);
         const new_frac = 1.0 - (new_thumb_top / track_h);
         const target: f32 = @round(new_frac * scrollback_used);
         screen.viewport_offset = @intFromFloat(@min(target, scrollback_used));
         screen.dirty_rows = .full;
 
-        // Keep the thumb centred under the cursor while dragging.
-        self.scrollbar_drag_offset_y = thumb_h / 2.0;
+        // Drag from where the cursor sits on the moved thumb: its centre,
+        // unless the thumb was clamped at either end of the track.
+        self.scrollbar_drag_offset_y = mouse_y - new_thumb_top;
     }
 
-    // Record where within the thumb the user clicked
-    self.scrollbar_drag_offset_y = mouse_y - thumb_top_y;
     self.scrollbar_dragging = true;
     self.terminal.active().bump();
     self.needs_redraw = true;
