@@ -17,10 +17,9 @@ const Screen = @import("screen.zig").Screen;
 const dispatcher = @import("dispatcher.zig");
 
 const unicode = @import("../unicode/root.zig");
-const Utf8Decoder = unicode.utf8.Decoder;
 const wc = unicode.wc;
 
-const grapheme = @import("grapheme.zig");
+const InputEngine = @import("InputEngine.zig");
 
 const alphabet = "0123456789abcdef";
 pub const max_title_len = 256;
@@ -30,6 +29,7 @@ const log = std.log.scoped(.term);
 
 test {
     _ = @import("term_test.zig");
+    _ = InputEngine;
 }
 
 pub const ScreenBuffer = enum { primary, alternate };
@@ -289,27 +289,7 @@ pub const ControlFormat = enum(u8) {
     s8c1t,
 };
 
-/// Character encoding used to interpret input bytes.
-pub const Encoding = enum {
-    /// Input is UTF-8 byte. Decode the byte stream into code points
-    /// before applying terminal control semantics.
-    ///
-    /// ASCII bytes (0x00...0x7F) represent the corresponding code points.
-    /// Bytes (0x80...0xBF) are continuation bytes and cannot appear alone.
-    /// Valid multibyte sequences represent code points above U+007F.
-    ///
-    /// UTF-8 can encode C1 control code points. For example, `0xC2 0x9B`
-    /// decodes to U+009B (CSI). A standalone `0x9B` byte is not CSI in
-    /// UTF-8; it is an invalid UTF-8 byte.
-    ///
-    /// The input bytes must be interpreted according to UTF-8 rather than as
-    /// single byte byte encoding (8-bit terminal controls).
-    utf8,
-
-    /// Interpret each input byte directly as the code point with the same value.
-    /// In this encoding, bytes `0x80-0x9F` represent C1 controls.
-    latin1,
-};
+pub const Encoding = InputEngine.Encoding;
 
 pub const SequenceType = enum(u2) {
     // zig fmt: off
@@ -337,10 +317,6 @@ pub const sequence_table: [2][SequenceType.count][]const u8 = blk: {
 pub fn seqIntroducer(comptime target: SequenceType, c1_mode: ControlFormat) []const u8 {
     return sequence_table[@intFromEnum(c1_mode)][@intFromEnum(target)];
 }
-
-pub const InputEngine = struct {
-
-};
 
 /// VT/ANSI terminal state machine.
 ///
@@ -402,10 +378,8 @@ pub fn Terminal(comptime option: Option) type {
 
         parser: Parser(Self, .{}),
         events: Events,
-        encoding: Encoding = .utf8,
         conformance_level: ConformanceLevel = .level3,
         control_format: ControlFormat = .s7c1t,
-        utf8_decoder: Utf8Decoder,
 
         // the osc will likely to be send to the events?
         osc_buf: [1024]u8 = undefined,
@@ -415,12 +389,8 @@ pub fn Terminal(comptime option: Option) type {
         dcs_len: usize = 0,
         dcs_kind: enum { unknown, decrqss, sixel } = .unknown,
 
-        grapheme_buf: [16]u21 = undefined, // max grapheme cluster length
-        grapheme_len: u8 = 0,
-        grapheme_breaker: ?grapheme.Breaker = null, // null = no cluster in progress
-
-        wcwidth_cp: u21 = 0,
-        wcwidth_width: wc.Width = .narrow,
+        /// UTF-8 decoding, grapheme clustering and widths for printable text.
+        input: InputEngine = .init(wcwidth_ambiguous_width),
 
         cursor_color: ?Color.Rgb = null,
         selection_foreground: ?Color.Rgb = null,
@@ -456,7 +426,6 @@ pub fn Terminal(comptime option: Option) type {
                 .icon_name = std.mem.zeroes([max_title_len:0]u8),
                 .icon_name_len = 0,
                 .parser = .{},
-                .utf8_decoder = .empty,
                 .mode = .{},
                 .events = .{},
             };
@@ -479,7 +448,7 @@ pub fn Terminal(comptime option: Option) type {
             // governs parser feature availability (an orthogonal axis).
             // utf8 + level1 /.sc7c1t is valid, input is still UTF-8, output-side
             // restrictions live in the sequence-emitting code, not here.
-            switch (self.encoding) {
+            switch (self.input.encoding) {
                 .utf8 => self.feedUtf8(bytes),
                 .latin1 => switch (self.control_format) {
 
@@ -537,11 +506,11 @@ pub fn Terminal(comptime option: Option) type {
         }
 
         /// Feeds a chunk, not necessarily the end of the stream.
-        /// Call finishUtf8() only when the stream actually ends.
+        /// Call end() only when the stream actually ends.
         fn feedUtf8(self: *Self, bytes: []const u8) void {
             var i: usize = 0;
             while (i < bytes.len) {
-                const n = self.utf8_decoder.asciiPrefixLen(bytes[i..]);
+                const n = self.input.asciiPrefixLen(bytes[i..]);
 
                 // Fast path whole ascii run.
                 if (n > 0) {
@@ -550,10 +519,7 @@ pub fn Terminal(comptime option: Option) type {
                     // A pending cluster always predates whatever this run starts
                     // (a sequence, text, a control); it must land on screen before
                     // the parser acts on new bytes.
-                    if (self.grapheme_len > 0) {
-                        self.flushGrapheme();
-                        self.grapheme_breaker = null;
-                    }
+                    if (self.input.hasPendingCluster()) self.input.flush(self.active);
 
                     // The run is all-ASCII (< 0x80), so feedBytes'
                     // internal string-state no C1 can be present.
@@ -569,11 +535,11 @@ pub fn Terminal(comptime option: Option) type {
                 if (self.parser.inStringState()) {
                     @branchHint(.unlikely);
 
-                    const j = i + self.utf8_decoder.highBytePrefixLen(bytes[i..]);
+                    const j = i + self.input.highBytePrefixLen(bytes[i..]);
                     if (j == i) {
                         // Decoder is mid-sequence: this byte continues a codepoint
                         // that started before the string began, not string payload.
-                        self.feedUtf8ByteDecode(bytes[i]);
+                        self.input.feedByte(self.active, bytes[i]);
                         i += 1;
                         continue;
                     }
@@ -594,14 +560,12 @@ pub fn Terminal(comptime option: Option) type {
                 //
                 // Treat the previous partial sequence as malformed,
                 // then process this ASCII byte normally.
-                if (self.utf8_decoder.state != Utf8Decoder.accept) {
-                    self.rejectUtf8();
-                }
+                if (self.input.inSequence()) self.input.abortSequence();
 
                 // ESC, CAN, and SUB cancel pending grapheme state.
                 if (byte < 0x20) {
-                    self.utf8_decoder.reset();
-                    self.flushPendingGrapheme();
+                    self.input.abortSequence();
+                    self.input.flush(self.active);
                 }
 
                 self.parser.feedBytes(self, &.{byte});
@@ -622,219 +586,14 @@ pub fn Terminal(comptime option: Option) type {
                 return;
             }
 
-            self.feedUtf8ByteDecode(byte);
+            self.input.feedByte(self.active, byte);
         }
 
-        /// Feed one high byte (>= 0x80) through the UTF-8 decoder.
-        fn feedUtf8ByteDecode(self: *Self, byte: u8) void {
-            switch (self.utf8_decoder.feed(byte)) {
-                .ok => {
-                    // Still accumulating a multibyte UTF-8 sequence.
-                },
-                .codepoint => |cp| {
-                    self.feedCodepoint(@intCast(cp));
-                },
-                .reject => {
-                    // The current malformed sequence is discarded. Resetting here
-                    // prevents reject from poisoning all future input.
-                    self.rejectUtf8();
-                },
-            }
-        }
-
+        /// Ends the input stream (e.g. the PTY read returned 0 bytes):
+        /// settles a partial UTF-8 sequence and flushes the pending cluster.
         pub fn end(self: *Self) void {
-            if (self.encoding == .utf8) self.finishUtf8();
-
-            // If graphemes are buffered until a boundary
-            // or end-of-input, finalize them here as well.
-            self.flushPendingGrapheme();
+            self.input.finish(self.active);
             self.active.bump();
-        }
-
-        fn finishUtf8(self: *Self) void {
-            switch (self.utf8_decoder.finish()) {
-                .ok => {},
-
-                .codepoint => |cp| {
-                    // Not produced by the current finish() implementation, but
-                    // retained for exhaustive handling.
-                    self.feedCodepoint(@intCast(cp));
-                },
-
-                .reject => {
-                    // The input ended with an incomplete UTF-8 sequence.
-
-                    // Match the same policy used by rejectUtf8().
-                    // self.feedCodepoint(0xFFFD);
-                },
-            }
-        }
-
-        inline fn rejectUtf8(self: *Self) void {
-            self.utf8_decoder.reset();
-
-            // Choose one policy.
-
-            // Policy A: silently discard malformed UTF-8.
-            // Do nothing.
-
-            // Policy B: emit the standard replacement character.
-            // self.feedCodepoint(0xFFFD);
-
-            // Policy C: record/report an input error.
-            // self.invalid_utf8_count += 1;
-        }
-
-        fn feedCodepoint(self: *Self, cp: u21) void {
-            // ASCII printable: always narrow
-            // always a grapheme cluster boundary.
-            // No combining marks, no ZWJ, no VS-16 can attach to ASCII.
-            // Skip the breaker entirely, avoids getProperty() binary search.
-            // if (cp >= 0x20 and cp < 0x7F) {
-            //     self.flushGrapheme();
-            //     self.active.putCharKind(cp, .narrow);
-            //     self.grapheme_breaker = null;
-            //     return;
-            // }
-            std.debug.assert(cp >= 0x80);
-
-            // CJK Unified Ideographs: always wide, never combining
-            if (cp >= 0x4E00 and cp <= 0x9FFF) {
-                self.flushGrapheme();
-                self.active.putCharKind(cp, .wide_left);
-                self.grapheme_breaker = null;
-                return;
-            }
-
-            // Hangul syllables: always single-codepoint, wide
-            if (cp >= 0xAC00 and cp <= 0xD7A3) {
-                self.flushGrapheme();
-                self.active.putCharKind(cp, .wide_left);
-                self.grapheme_breaker = null;
-                return;
-            }
-
-            // Latin Extended, Greek, Cyrillic: always narrow, never combining
-            if (cp >= 0x00C0 and cp <= 0x024F) {
-                self.flushGrapheme();
-                self.active.putCharKind(cp, .narrow);
-                self.grapheme_breaker = null;
-                return;
-            }
-
-            // log.debug("before grapheme_breaker, cp=0x{X}", .{cp});
-            if (self.grapheme_breaker) |*gb| {
-                if (gb.isBreak(cp)) {
-                    // Cluster boundary: flush the accumulated cluster, start a new one.
-                    self.flushGrapheme();
-                    self.grapheme_buf[0] = cp;
-                    self.grapheme_len = 1;
-                    self.grapheme_breaker = grapheme.Breaker.init(cp);
-                } else {
-                    // No break: accumulate into current cluster
-                    if (self.grapheme_len < self.grapheme_buf.len) {
-                        self.grapheme_buf[self.grapheme_len] = cp;
-                        self.grapheme_len += 1;
-                    }
-                    // else  cluster too long (malformed input) silently drop
-                }
-
-                return;
-            }
-
-            // First codepoint ever
-            self.grapheme_buf[0] = cp;
-            self.grapheme_len = 1;
-            self.grapheme_breaker = grapheme.Breaker.init(cp);
-        }
-
-        inline fn wcwidthCached(self: *Self, cp: u21) wc.Width {
-            if (cp == self.wcwidth_cp) return self.wcwidth_width;
-            const width = wc.wcwidth(cp, wcwidth_ambiguous_width);
-            self.wcwidth_cp = cp;
-            self.wcwidth_width = width;
-            return width;
-        }
-
-        inline fn flushGrapheme(self: *Self) void {
-            if (self.grapheme_len > 0) self.flushGraphemeImpl();
-            // if (self.grapheme_len == 0) return;
-            // defer self.grapheme_len = 0;
-            //
-            // const cp = self.grapheme_buf[0];
-            //
-            // // fast path: single codepoint, existing putChar handle everything
-            // if (self.grapheme_len == 1) {
-            //     const w = self.wcwidthCached(cp);
-            //     self.active.putCharKind(cp, if (w == 2) .wide_left else .narrow);
-            //     return;
-            // }
-            //
-            // // Multi-codepoint: delegate to noinline fn that uses Wyhash/HashMap (YMM)
-            // self.flushMultiCodepointGrapheme();
-
-            // const full = self.grapheme_buf[0..self.grapheme_len];
-            // const base_kind: CellKind = if (self.wcwidthCached(full[0]) == 2) .wide_left else .narrow;
-            // self.active.putGrapheme(full, base_kind) catch |err| {
-            //     log.warn("putGrapheme failed: {}", .{err});
-            //     self.active.putChar(cp); // fallback: render base only
-            // };
-        }
-
-        fn flushGraphemeImpl(self: *Self) void {
-            defer self.grapheme_len = 0;
-
-            // log.debug("flush: len={} buf={any}", .{ self.grapheme_len, self.grapheme_buf[0..self.grapheme_len] });
-            const cp = self.grapheme_buf[0];
-            if (self.grapheme_len == 1) {
-                switch (self.wcwidthCached(cp)) {
-                    .wide => self.active.putCharKind(cp, .wide_left),
-                    .narrow => self.active.putCharKind(cp, .narrow),
-                    .zero => {
-                        // Standalone combining mark with no base character (e.g. input
-                        // starts mid-stream with a combining accent). Policy decision:
-                        // drop it, or render as a bare mark over a synthetic space.
-                    },
-                    .control => {
-                        // Should be unreachable in practice, feedCodepoint asserts
-                        // cp >= 0x80, and C0/C1 are handled earlier in feedUtf8Byte —
-                        // but table-driven Cc/format characters outside ASCII (e.g.
-                        // some Cf category codepoints) could still land here. Guard
-                        // defensively rather than assume it's dead code.
-                    },
-                }
-                return;
-            }
-
-            const slice = self.grapheme_buf[0..self.grapheme_len];
-            const base_kind: CellKind = switch (self.wcwidthCached(slice[0])) {
-                .wide => .wide_left,
-                .narrow => .narrow,
-                // FIXME! pick an explicit fallback policy, don't let it fall through implicitly
-                .zero, .control => .narrow,
-            };
-            self.active.putGrapheme(slice, base_kind) catch |err| {
-                log.warn("putGrapheme failed: {}", .{err});
-                self.active.putChar(cp);
-            };
-        }
-
-        fn flushMultiCodepointGrapheme(self: *Self) void {
-            const full = self.grapheme_buf[0..self.grapheme_len];
-            const cp = full[0];
-            const base_kind: CellKind = if (self.wcwidthCached(cp) == 2) .wide_left else .narrow;
-            self.active.putGrapheme(full, base_kind) catch |err| {
-                log.warn("putGrapheme failed: {}", .{err});
-                self.active.putChar(cp);
-            };
-        }
-
-        /// Call at end of input (e.g., PTY read returns 0 bytes) to flush any
-        /// pending cluster.  Also call on cursor movement / screen clear.
-        fn flushPendingGrapheme(self: *Self) void {
-            // cursor movement should never have a pending grapheme in normal input
-            self.flushGrapheme();
-            self.grapheme_breaker = null;
         }
 
         pub inline fn printByte(self: *Self, byte: u8) void {
@@ -1050,12 +809,7 @@ pub fn Terminal(comptime option: Option) type {
             self.parser = .{};
             self.mode = .{};
 
-            self.utf8_decoder.reset();
-
-            self.grapheme_len = 0;
-            self.grapheme_breaker = null;
-
-            self.encoding = .utf8;
+            self.input.reset();
 
             self.title_len = 0;
             self.icon_name_len = 0;
@@ -1063,9 +817,6 @@ pub fn Terminal(comptime option: Option) type {
             self.cursor_color = null;
             self.selection_foreground = null;
             self.selection_background = null;
-
-            self.wcwidth_width = .narrow;
-            self.wcwidth_cp = 0;
 
             self.alternate.hardReset();
             self.primary.hardReset();

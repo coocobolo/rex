@@ -79,8 +79,8 @@ pub const Escape = struct {
             0x2336 => term.active.setLineAttr(.double_width), // DECDWL / ESC # 6
             0x2338 => term.active.decaln(), // DECALN / ESC # 8
 
-            0x2540 => term.encoding = .latin1, // ESC % @ (ISO Latin-1)
-            0x2547 => term.encoding = .utf8, // ESC % G (UTF-8 mode)
+            0x2540 => term.input.encoding = .latin1, // ESC % @ (ISO Latin-1)
+            0x2547 => term.input.encoding = .utf8, // ESC % G (UTF-8 mode)
 
             // ESC ( ) * + Charset designation
             0x2800...0x28FF => term.active.designateCharset(0, Charset.charsetFromByte(final)),
@@ -135,7 +135,7 @@ pub const C0 = struct {
             },
             0x0E => term.active.shiftOut(), // SO | GL = G1
             0x0F => term.active.shiftIn(), // SI | GL = G0
-            0x18, 0x1A => term.utf8_decoder.reset(),
+            0x18, 0x1A => term.input.abortSequence(),
             0x7F => {}, // DEL
             else => {}, // other C0
         }
