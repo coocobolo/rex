@@ -99,6 +99,10 @@ const cursor_option = rex.renderer.Cursor.Option{
 
 pub const BracketPair = struct { open: u21, close: u21 };
 
+/// Terminal limits for the screen types, which App reads at compile
+/// time. Set them in config.terminal.
+pub const rex_terminal_option = config.terminal;
+
 const config: rex.App.Config = .{
     .blink = .{ .half_period = 500, .rapid_half_period = 250 },
     .font = font_config,
