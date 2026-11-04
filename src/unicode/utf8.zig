@@ -185,6 +185,7 @@ pub const Decoder = struct {
     }
 };
 
+/// Encodes one code point as UTF-8.
 pub const Encoder = struct {
     pub const max_bytes = 4;
 
@@ -193,17 +194,19 @@ pub const Encoder = struct {
         NoSpace,
     };
 
+    /// False for surrogates, which UTF-8 cannot encode.
     pub inline fn utf8ValidCodepoint(cp: u21) bool {
         return !(cp >= 0xD800 and cp <= 0xDFFF);
     }
 
-    // Safe single-codepoint encoding.
+    /// Writes `cp` to the start of `out` and returns its length.
+    /// `out` must hold `max_bytes`.
     pub fn encode(cp: u21, out: []u8) Error!u3 {
         if (!utf8ValidCodepoint(cp)) return error.InvalidCodepoint;
         return encodeUnchecked(cp, out);
     }
 
-    // Hot path when cp is already known to be valid.
+    /// As `encode`, for a `cp` already known not to be a surrogate.
     pub inline fn encodeUnchecked(cp: u21, out: []u8) u3 {
         if (cp <= 0x7F) {
             out[0] = @intCast(cp);
@@ -230,7 +233,8 @@ pub const Encoder = struct {
         return 4;
     }
 
-    // For prepend/reverse-buffer construction.
+    /// Writes `cp` so it ends at `out[end]` and returns where it starts,
+    /// for buffers built back to front.
     pub inline fn encodeBackwards(
         cp: u21,
         out: []u8,
@@ -268,3 +272,22 @@ pub const Encoder = struct {
         return end - 4;
     }
 };
+
+/// The longest prefix of `bytes`, at most `max_len` long, that does not
+/// cut a UTF-8 sequence in two. Malformed bytes are not repaired; a
+/// stray continuation byte may be cut anywhere.
+pub fn truncateLen(bytes: []const u8, max_len: usize) usize {
+    if (bytes.len <= max_len) return bytes.len;
+
+    // Walk back from the first dropped byte to the lead of its sequence.
+    var lead = max_len;
+    while (lead > 0 and max_len - lead < Encoder.max_bytes - 1 and isContinuation(bytes[lead])) lead -= 1;
+    if (lead == max_len or isContinuation(bytes[lead])) return max_len;
+
+    const seq_len = std.unicode.utf8ByteSequenceLength(bytes[lead]) catch 1;
+    return if (lead + seq_len > max_len) lead else max_len;
+}
+
+fn isContinuation(byte: u8) bool {
+    return byte & 0xC0 == 0x80;
+}

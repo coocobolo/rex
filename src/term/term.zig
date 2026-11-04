@@ -20,6 +20,7 @@ const Screen = @import("screen.zig").Screen;
 const dispatcher = @import("dispatcher.zig");
 
 const wc = @import("../unicode/wcwidth.zig");
+const utf8 = @import("../unicode/utf8.zig");
 
 const InputEngine = @import("InputEngine.zig");
 
@@ -736,9 +737,10 @@ pub fn Terminal(comptime option: Option) type {
             self.dcs_overflow = false;
         }
 
-        /// Sets the ENQ reply, cut to `max_answerback_len` bytes.
+        /// Sets the ENQ reply, cut to `max_answerback_len` bytes on a
+        /// UTF-8 boundary.
         pub fn setAnswerback(self: *Self, s: []const u8) void {
-            const len = @min(s.len, max_answerback_len);
+            const len = utf8.truncateLen(s, max_answerback_len);
             @memcpy(self.answerback[0..len], s[0..len]);
             self.answerback_len = @intCast(len);
         }
@@ -1080,17 +1082,19 @@ pub fn Terminal(comptime option: Option) type {
             self.alternate.setActive(r, c);
         }
 
-        /// Sets the title (OSC 0 and 2), cut to `max_title_len` bytes.
+        /// Sets the title (OSC 0 and 2), cut to `max_title_len` bytes on
+        /// a UTF-8 boundary.
         pub fn setTitle(self: *Self, title: []const u8) void {
-            const len = @min(title.len, max_title_len);
+            const len = utf8.truncateLen(title, max_title_len);
             @memcpy(self.title[0..len], title[0..len]);
             self.title[len] = 0;
             self.title_len = len;
         }
 
-        /// Sets the icon name (OSC 1), cut to `max_title_len` bytes.
+        /// Sets the icon name (OSC 1), cut to `max_title_len` bytes on a
+        /// UTF-8 boundary.
         pub fn setIconName(self: *Self, name: []const u8) void {
-            const len = @min(name.len, max_title_len);
+            const len = utf8.truncateLen(name, max_title_len);
             @memcpy(self.icon_name[0..len], name[0..len]);
             self.icon_name[len] = 0;
             self.icon_name_len = len;
