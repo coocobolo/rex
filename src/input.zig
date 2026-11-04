@@ -117,6 +117,21 @@ inline fn hasMod(mods: c_int) bool {
     return mods & (mods_mask) != 0;
 }
 
+/// The control code xterm sends for Ctrl+`digit` on a US layout, where
+/// 2 to 8 stand for @, [, \, ], ^, _ and ?. Other digits have none.
+fn ctrlDigit(digit: u8) ?u8 {
+    return switch (digit) {
+        '2' => 0x00, // NUL, Ctrl+@
+        '3' => 0x1b, // ESC, Ctrl+[
+        '4' => 0x1c, // FS, Ctrl+\
+        '5' => 0x1d, // GS, Ctrl+]
+        '6' => 0x1e, // RS, Ctrl+^
+        '7' => 0x1f, // US, Ctrl+_
+        '8' => 0x7f, // DEL, Ctrl+?
+        else => null,
+    };
+}
+
 /// Format [CSI num ~] | [CSI num ; mod ~]
 fn fmtTilde(buf: *[32]u8, num: u16, mod: u8) []const u8 {
     if (mod <= 1) return std.fmt.bufPrint(buf, "\x1b[{d}~", .{num}) catch "";
@@ -289,18 +304,16 @@ pub inline fn encodeKey(
             const digit: u8 = @intCast('0' + (key - c.GLFW_KEY_0));
             if (ctrl or alt) {
                 if (mok >= 1) return fmtMok(buf, mod, digit);
-                // As in xterm on a US layout: Ctrl+2 is Ctrl+@ (NUL) and
-                // Ctrl+6 is Ctrl+^ (RS), with ESC first when Alt is held.
-                if (ctrl and (digit == '2' or digit == '6')) {
-                    const code: u8 = if (digit == '2') 0x00 else 0x1e;
-                    if (alt) {
-                        buf[0] = 0x1b;
-                        buf[1] = code;
-                        return buf[0..2];
+                // As in xterm on a US layout, with ESC first when Alt is held.
+                if (ctrl) if (ctrlDigit(digit)) |code| {
+                    if (!alt) {
+                        buf[0] = code;
+                        return buf[0..1];
                     }
-                    buf[0] = code;
-                    return buf[0..1];
-                }
+                    buf[0] = 0x1b;
+                    buf[1] = code;
+                    return buf[0..2];
+                };
                 if (alt) {
                     buf[0] = 0x1b;
                     buf[1] = digit;
