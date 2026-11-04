@@ -29,10 +29,73 @@ Run them:
 | `zig build test-vt` | the VT parser |
 | `zig build test-unicode` | width tables and decoders |
 | `-Dtest-filter=<substr>` | only tests whose name contains it (repeatable) |
+| `zig build fuzz` | every fuzz target's seeds and mutations (see Fuzzing) |
+| `-Dtest-filter=<substr>` | only tests whose name contains it (repeatable) |
 | `-Dslow` | also the slow exhaustive tests (about 25 s) |
 | `-Doptimize=ReleaseSafe` | tests in another mode (default Debug) |
+| `-Dllvm` | build tests with LLVM instead of the self-hosted backend |
+| `-Dcoverage` | run tests under kcov, reports in `kcov-out/<binary>/` (implies `-Dllvm`) |
 
 Example: `zig build test-term -Dtest-filter=combining`.
+
+Every test binary uses `tools/test_runner.zig`, the stock runner with
+two changes: a failure prints its error return trace, and each fuzz
+input gets a fresh `testing.io`.
+
+## Fuzzing
+
+Fuzz targets live in `src/fuzz/`, one per file:
+
+| Target | Feeds | Checks |
+| --- | --- | --- |
+| `parser` | random bytes to the VT parser | whole, bytewise and split feeds give the same events and state |
+| `terminal` | feed, resize, end, drain and viewport ops to a `Terminal` | invariants on both screens; a twin fed in one chunk shows the same screen |
+| `strings` | OSC and DCS with random payloads and terminators | invariants; BEL/ST end in ground; a dropped OSC 0/1/2 keeps the title |
+| `utf8` | random bytes to `InputEngine` | output matches a table 3-7 reference decoder |
+| `grapheme` | code point sequences | `Breaker` matches a reference UAX #29 segmenter |
+| `wcwidth` | code points | `wcwidth` matches the UCD oracle |
+
+`harness.zig` holds the shared `Source` (Smith under `--fuzz`, a
+seeded PRNG otherwise) and the mutator; `invariants.zig` holds the
+terminal checks: no panic, cursor and margins in bounds, the reply
+queue and string buffers within capacity, and the grapheme intern
+table under its compaction bound.
+
+Each target runs in three ways:
+
+| Command | Runs |
+| --- | --- |
+| `zig build test`, `zig build fuzz` | seeds, regressions and 64 seeded mutations per seed, once |
+| `zig build fuzz-<name>` | the same for one target |
+| `zig build fuzz-<name> -Dllvm --fuzz` | fuzz until stopped, one process per `-j` job, web UI on the printed port |
+| `zig build fuzz-<name> -Dllvm --fuzz=<runs>` | fuzz `<runs>` inputs in one process, then print a report |
+
+`--fuzz` needs `-Dllvm`: the self-hosted backend emits no coverage
+instrumentation. Example, on four cores until it crashes or you stop
+it:
+
+    taskset -c 0-3 zig build fuzz-terminal -Dllvm -j4 --fuzz
+
+A crash fails the step and saves its input to `.zig-cache/f/crash`.
+The fuzzer's corpus is kept under `.zig-cache/f/`. Stopping the run
+by killing it also reports "terminated with signal KILL; input saved";
+that input is not a crash, so replay it before promoting it. To keep
+a real crash:
+
+1. Promote it: `scripts/corpus/crash.sh -d src/fuzz/testdata/<target>`.
+2. Add `@embedFile("testdata/<target>/crash-<hash>.bin")` to the
+   target's `regressions`, so `zig build test` replays it.
+3. Write a unit test next to the code that fails for the same reason,
+   then fix it.
+
+Inputs in `regressions` are raw fuzzer bytes, replayed as they are.
+Seeds are plain byte strings: `harness.fuzz` wraps each one as the
+target's first `chunk`, and `harness.seeded` mutates them.
+
+To add a target, create `src/fuzz/<name>.zig` with a `run(*Source)`
+function and the two tests (`fuzz <name>` and
+`fuzz <name>: seeded mutations`), import it in `src/fuzz/root.zig`,
+and add its name to `fuzz_targets` in `build.zig`.
 
 ## Generated code
 

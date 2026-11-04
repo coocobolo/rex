@@ -10,20 +10,20 @@ Promote Zig fuzz crash files into a persistent testdata directory.
 
 Options:
   -s, --source PATH   Crash file or directory (default: .zig-cache/f/crash)
-  -d, --dest PATH     Destination directory   (default: testdata/wcwidth)
+  -d, --dest PATH     Destination directory   (default: src/fuzz/testdata)
   -p, --prefix NAME   Output filename prefix  (default: crash)
   -h, --help          Show this help
 
 Examples:
   $0
-  $0 --dest testdata/wcwidth
-  $0 --source .zig-cache/f/crash --dest testdata/foo
-  $0 -s /tmp/crashes -d testdata/bar -p fuzz
+  $0 --dest src/fuzz/testdata/terminal
+  $0 --source .zig-cache/f/crash --dest src/fuzz/testdata/parser
+  $0 -s /tmp/crashes -d src/fuzz/testdata/utf8 -p fuzz
 EOF
 }
 
 source=".zig-cache/f/crash"
-dest="testdata/"
+dest="src/fuzz/testdata"
 prefix="crash"
 
 while [[ $# -gt 0 ]]; do
