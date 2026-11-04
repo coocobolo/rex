@@ -1326,13 +1326,13 @@ test "csi: DECSTR origin mode cleared" {
     try testing.expect(!t.active().cursor.origin);
 }
 
-test "csi: DECSTR auto_wrap restored to true" {
+test "csi: DECSTR turns auto_wrap off (VT510 DECSTR table)" {
     var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
-    t.feed("\x1b[?7l"); // DECAWM off
+    try testing.expect(t.active().mode.auto_wrap); // power-on default
     t.feed("\x1b[!p");
-    try testing.expect(t.active().mode.auto_wrap);
+    try testing.expect(!t.active().mode.auto_wrap);
 }
 
 test "csi: DECSTR insert mode cleared" {
@@ -3535,4 +3535,57 @@ test "m2: CAN or SUB inside OSC cancels it, the title is kept" {
     t.feed("\x1b]2;lost\x18");
     t.feed("\x1b]0;lost too\x1a");
     try testing.expectEqualStrings("kept", t.getTitle());
+}
+
+test "m2: DECSTR resets each item in the VT510 DECSTR table" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    // DECTCEM off, IRM on, DECSTBM 2;5, DECOM on, DECAWM on (default),
+    // DECCKM, DECKPAM, G0 = DEC graphics + SO, SGR bold red, DECSC.
+    t.feed("\x1b[?25l\x1b[4h\x1b[2;5r\x1b[?6h\x1b[?1h\x1b=\x1b(0\x0e\x1b[1;31m\x1b[3;4H\x1b7");
+    t.feed("\x1b[!p");
+
+    const s = t.active();
+    try testing.expect(s.mode.cursor_visibility); // DECTCEM: visible
+    try testing.expect(!s.mode.insert); // IRM: replace
+    try testing.expect(!s.cursor.origin); // DECOM: absolute
+    try testing.expect(!s.mode.auto_wrap); // DECAWM: no autowrap
+    try testing.expect(!t.mode.cursor_keys); // DECCKM: normal
+    try testing.expect(!t.mode.keypad_app); // DECNKM: numeric
+    try testing.expectEqual(0, s.scroll_top); // DECSTBM: full page
+    try testing.expectEqual(test_option.max_rows - 1, s.scroll_bottom);
+    try testing.expect(s.charset_is_identity); // G0-G3, GL, GR: default
+    try testing.expectEqualDeep(Attr{}, s.cursor.attr); // SGR: normal
+    try testing.expectEqualDeep(SavedCursor{}, s.saved_cursor); // DECSC: home, defaults
+}
+
+test "m2: DECSTR leaves everything outside the VT510 DECSTR table alone" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    // DECSCNM, cursor blink (?12) and style (DECSCUSR), LNM, DECARM,
+    // reverse wrap, modifyOtherKeys, a tab stop, text, line attribute.
+    t.feed("\x1b[?5h\x1b[4 q\x1b[?12h\x1b[20h\x1b[?8l\x1b[3g\x1b[1;5H\x1bH");
+    t.feed("\x1b[H\x1b#6AB\x1b[2;3H");
+    t.active().mode.cursor_blink = true;
+    t.active().mode.reverse_wrap = true; // ?45 is not dispatched yet
+    t.mode.modify_other_keys = 2;
+    const style = t.active().cursor.style;
+    t.feed("\x1b[!p");
+
+    const s = t.active();
+    try testing.expect(s.mode.reverse_video);
+    try testing.expect(s.mode.cursor_blink);
+    try testing.expectEqual(style, s.cursor.style);
+    try testing.expect(t.mode.linefeed);
+    try testing.expect(!t.mode.auto_repeat);
+    try testing.expect(s.mode.reverse_wrap);
+    try testing.expectEqual(2, t.mode.modify_other_keys);
+    try testing.expect(s.tab_stops.isSet(4));
+    try testing.expect(!s.tab_stops.isSet(8));
+    try testing.expectEqual('A', s.row(0)[0].codepoint);
+    try testing.expectEqual(.double_width, s.line_attrs[s.physRow(0)]);
+    try testing.expectEqual(1, s.cursor.row);
+    try testing.expectEqual(2, s.cursor.col);
 }

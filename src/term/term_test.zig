@@ -392,17 +392,15 @@ test "softReset: active screen modes reset" {
     t.active().mode.reverse_wrap = true;
     t.softReset();
 
-    try testing.expect(t.active().mode.auto_wrap); // default ON
+    // VT510 DECSTR table: DECAWM off; DECSCNM and reverse wrap untouched.
+    try testing.expect(!t.active().mode.auto_wrap);
     try testing.expect(!t.active().mode.insert);
-    try testing.expect(t.active().mode.cursor_visibility); // default ON
-    try testing.expect(!t.active().mode.reverse_video);
-    try testing.expect(!t.active().mode.reverse_wrap);
+    try testing.expect(t.active().mode.cursor_visibility);
+    try testing.expect(t.active().mode.reverse_video);
+    try testing.expect(t.active().mode.reverse_wrap);
 }
 
 test "softReset: active screen non-targeted modes survive" {
-    // TERMV4 M2 item 7: DECSTR reset set is undecided (cursor blink, line attrs).
-    if (true) return error.SkipZigTest;
-
     var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
@@ -427,10 +425,11 @@ test "softReset: terminal modes reset" {
     t.mode.auto_repeat = false;
     t.softReset();
 
-    try testing.expect(!t.mode.linefeed);
+    // VT510 DECSTR table: DECCKM and DECNKM reset; LNM, DECARM are not in it.
+    try testing.expect(t.mode.linefeed);
     try testing.expect(!t.mode.cursor_keys);
     try testing.expect(!t.mode.keypad_app);
-    try testing.expect(t.mode.auto_repeat); // default ON
+    try testing.expect(!t.mode.auto_repeat);
 }
 
 test "softReset: mouse modes survive" {

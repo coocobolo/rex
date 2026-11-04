@@ -726,33 +726,17 @@ pub fn Terminal(comptime option: Option) type {
 
         /// Soft Terminal Reset (DECSTR / CSI ! p).
         ///
-        /// Resets a subset of terminal state to defaults without disturbing cell
-        /// content, tab stops, cursor position, scrollback history, or
-        /// mouse/paste/focus modes.
-        ///
-        /// Delegates screen-level resets to `Screen.softReset()` on the active screen only.
-        /// The inactive screen (primary or alternate) is NOT touched.
-        ///
-        /// Terminal.Modes reset:
-        ///   - newline       false  (LNM)
-        ///   - cursor_keys   false  (DECCKM)
-        ///   - keypad_app    false  (DECKPAM)
-        ///   - auto_repeat   true   (DECARM — default ON)
-        ///
-        /// Terminal.Modes intentionally NOT reset:
-        ///   - mouse_x10, mouse_normal, mouse_button, mouse_any, mouse_sgr
-        ///   - bracketed_paste, focus_events, synchronized_output, modify_other_keys
+        /// Follows the VT510 DECSTR table (DEC STD 070): of the terminal
+        /// modes it resets only DECCKM (normal) and DECNKM (numeric
+        /// keypad, `keypad_app`); KAM has no state here. The screen items
+        /// go to `Screen.softReset` on the active screen; the inactive
+        /// screen is not touched. LNM, DECARM, mouse, paste, focus,
+        /// synchronized output and modifyOtherKeys are not in the table
+        /// and survive.
         pub fn softReset(self: *Self) void {
-
-            // DECSTR also resets these terminal-level modes
-            self.mode.linefeed = false;
             self.mode.cursor_keys = false;
             self.mode.keypad_app = false;
-            self.mode.auto_repeat = true;
-
             self.active().softReset();
-            // Mouse modes, bracketed_paste, focus_events, synchronized_output,
-            // and modify_other_keys survive DECSTR intentionally left untouched.
         }
 
         /// Hard Terminal Reset (RIS / ESC c).

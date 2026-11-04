@@ -2631,10 +2631,15 @@ pub fn Screen(comptime option: Option) type {
             self.bump();
         }
 
-        /// Soft Terminal Reset (DECSTR / CSI ! p).
+        /// Soft Terminal Reset (DECSTR / CSI ! p), screen part.
         ///
-        /// Resets a subset of terminal state to defaults without disturbing cell
-        /// content, tab stops, cursor position, or scrollback history.
+        /// Resets exactly the screen items of the VT510 DECSTR table
+        /// (DEC STD 070): DECTCEM visible, IRM replace, DECOM absolute,
+        /// DECAWM off, DECSTBM full page, G0-G3/GL/GR default, SGR normal,
+        /// and the DECSC save slot to home with default attributes and
+        /// charsets. Everything else stays, including DECSCNM, cursor
+        /// blink and style, tab stops, cells, line attributes and the
+        /// cursor position. `Terminal.softReset` does the terminal items.
         pub fn softReset(self: *Self) void {
             self.scroll_top = 0;
             self.scroll_bottom = @intCast(self.active_rows - 1);
@@ -2643,21 +2648,14 @@ pub fn Screen(comptime option: Option) type {
 
             self.cursor.attr = .{};
             self.cursor.charset = .{};
-            self.cursor.origin = false; // DECOM
-            self.cursor.wrap_pending = false;
+            self.cursor.origin = false;
+            self.cursor.wrap_pending = false; // DECAWM goes off below
 
-            // Reset only the mode that DECSTR targets.
-            self.mode.auto_wrap = true;
-            self.mode.insert = false;
-            // self.mode.origin, removed, origin is on Cursor now
             self.mode.cursor_visibility = true;
-            self.mode.cursor_blink = false;
-            self.mode.reverse_video = false;
-            self.mode.reverse_wrap = false;
-            self.last_char = 0;
+            self.mode.insert = false;
+            self.mode.auto_wrap = false;
 
             self.saved_cursor = .{};
-
             self.charset_is_identity = true;
 
             self.cached_row_phys = max_u16;

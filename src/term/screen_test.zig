@@ -5997,10 +5997,7 @@ test "softReset: generation bump" {
     try testing.expectEqual(gen + 1, s.generation);
 }
 
-test "softReset: resets all line_attrs to normal" {
-    // TERMV4 M2 item 7: DECSTR reset set is undecided (cursor blink, line attrs).
-    if (true) return error.SkipZigTest;
-
+test "softReset: line_attrs survive" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
     defer s.destroy(alloc);
@@ -6017,19 +6014,21 @@ test "softReset: resets all line_attrs to normal" {
 
     s.softReset();
 
-    for (0..s.active_rows) |r| {
-        try testing.expectEqual(LineAttr.normal, s.line_attrs[s.physRow(r)]);
-    }
+    try testing.expectEqual(LineAttr.double_width, s.line_attrs[s.physRow(0)]);
+    try testing.expectEqual(LineAttr.double_top, s.line_attrs[s.physRow(3)]);
+    try testing.expectEqual(LineAttr.double_bottom, s.line_attrs[s.physRow(4)]);
 }
 
-test "softReset: auto_wrap reset to true" {
+test "softReset: auto_wrap off (VT510 DECSTR table)" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
     defer s.destroy(alloc);
 
     s.mode.auto_wrap = false;
     s.softReset();
-    try testing.expect(s.mode.auto_wrap); // default is ON
+    s.mode.auto_wrap = true;
+    s.softReset();
+    try testing.expect(!s.mode.auto_wrap);
 }
 
 test "softReset: cursor_visible reset to true" {
@@ -6042,30 +6041,27 @@ test "softReset: cursor_visible reset to true" {
     try testing.expect(s.mode.cursor_visibility); // default is ON
 }
 
-test "softReset: reverse_video reset to false" {
+test "softReset: reverse_video survives" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
     defer s.destroy(alloc);
 
     s.mode.reverse_video = true;
     s.softReset();
-    try testing.expect(!s.mode.reverse_video);
+    try testing.expect(s.mode.reverse_video);
 }
 
-test "softReset: reverse_wrap reset to false" {
+test "softReset: reverse_wrap survives" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
     defer s.destroy(alloc);
 
     s.mode.reverse_wrap = true;
     s.softReset();
-    try testing.expect(!s.mode.reverse_wrap);
+    try testing.expect(s.mode.reverse_wrap);
 }
 
 test "softReset: non-targeted modes survive" {
-    // TERMV4 M2 item 7: DECSTR reset set is undecided (cursor blink, line attrs).
-    if (true) return error.SkipZigTest;
-
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
     defer s.destroy(alloc);
