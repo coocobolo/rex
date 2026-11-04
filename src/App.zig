@@ -7,7 +7,7 @@ const builtin = @import("builtin");
 const log = std.log.scoped(.app);
 
 pub const std_options: std.Options = .{
-    .log_level = .debug,
+    .log_level = .warn,
 };
 
 const native_os = builtin.os.tag;
@@ -797,9 +797,9 @@ fn pasteFromClipboard(self: *App) void {
     const raw = c.glfwGetClipboardString(self.window.handle) orelse return;
     const text: []const u8 = std.mem.span(raw);
 
-    log.debug("paste text: 0x{x} | '{s}'", .{ text, text });
-    log.debug("terminal modes: {any}", .{self.terminal.mode});
-    log.debug("active screen buffer modes: {any}", .{self.terminal.active().mode});
+    // log.debug("paste text: 0x{x} | '{s}'", .{ text, text });
+    // log.debug("terminal modes: {any}", .{self.terminal.mode});
+    // log.debug("active screen buffer modes: {any}", .{self.terminal.active().mode});
 
     self.selection = .empty;
     self.terminal.active().dirty_rows = .full;
@@ -1272,8 +1272,8 @@ fn handleSelectionPress(self: *App, row: u16, col: u16, mods: c_int) void {
 
 fn handleSelectionRelease(self: *App) void {
     if (self.selection.phase == .dragging) {
-        log.debug("release: dragged={} phase_before={t}", .{ self.selection.dragged(), self.selection.phase });
-        log.debug("release: start={} end={} dragged={}", .{ self.selection.range.start, self.selection.range.end, self.selection.dragged() });
+        // log.debug("release: dragged={} phase_before={t}", .{ self.selection.dragged(), self.selection.phase });
+        // log.debug("release: start={} end={} dragged={}", .{ self.selection.range.start, self.selection.range.end, self.selection.dragged() });
         self.selection.phase = if (self.selection.dragged()) .selected else .none;
     }
 }
@@ -1306,7 +1306,7 @@ const mouseButtonCb: c.GLFWmousebuttonfun = struct {
         if (scrollback_used > 0 and app.handleScrollbarClick()) return;
 
         const is_primary = terminal.active_buffer == .primary;
-        log.debug("mouse_reporting={} shift_held={} is_primary={}", .{ mouse_reporting, shift_held, is_primary });
+        // log.debug("mouse_reporting={} shift_held={} is_primary={}", .{ mouse_reporting, shift_held, is_primary });
         if (is_primary and (!mouse_reporting or shift_held)) {
             if (press and button == c.GLFW_MOUSE_BUTTON_LEFT) {
                 app.handleSelectionPress(row, col, mods);

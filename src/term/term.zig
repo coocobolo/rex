@@ -1121,7 +1121,13 @@ pub fn Terminal(comptime option: Option) type {
         pub fn resize(self: *Self, rows: u16, cols: u16) void {
             const r = @max(rows, 1);
             const c = @max(cols, 1);
-            self.primary.setActive(r, c);
+
+            if (c != self.primary.active_cols) {
+                self.primary.reflowBuffer(r, c);
+            } else {
+                self.primary.setActive(r, c);
+            }
+
             self.alternate.setActive(r, c);
         }
 
