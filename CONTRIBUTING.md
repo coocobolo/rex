@@ -1,5 +1,31 @@
 # Contributing
 
+## Code style
+
+Check each file you touch against this list.
+
+- **One concern per file.** A `//!` header says what the file owns and
+  what it must not touch. `term/` never imports `renderer/`.
+- **A pure parser.** `vt/` turns bytes into actions and holds no
+  terminal state.
+- **Typed invariants.** Use enums and distinct types, not magic
+  integers.
+- **One bounds policy for input.** Clamp counts and positions, cap
+  buffers, and never write half a result: a reply or string that does
+  not fit is dropped whole.
+- **Asserts guard internal invariants only,** never bytes from the
+  host or the pty.
+- **Comptime for tables and layout only,** with a clear
+  `@compileError` when a guard fails.
+- **Descriptive names.** A builder that does not allocate is
+  `make*`, one that does is `create*`.
+- **Doc comments.** Every public function has a `///` stating its
+  contract. Comment non-obvious constants and spec quirks, citing a
+  public spec (xterm ctlseqs, ECMA-48, VT510). Do not restate the code.
+- **Tests next to the code,** named after the spec behaviour they
+  check, for example `"mode 45: CUB crosses soft wraps one column
+  per step"`.
+
 ## Tests
 
 Tests live in `<name>_test.zig` next to the code they test. Each
@@ -30,7 +56,6 @@ Run them:
 | `zig build test-unicode` | width tables and decoders |
 | `-Dtest-filter=<substr>` | only tests whose name contains it (repeatable) |
 | `zig build fuzz` | every fuzz target's seeds and mutations (see Fuzzing) |
-| `-Dtest-filter=<substr>` | only tests whose name contains it (repeatable) |
 | `-Dslow` | also the slow exhaustive tests (about 25 s) |
 | `-Doptimize=ReleaseSafe` | tests in another mode (default Debug) |
 | `-Dllvm` | build tests with LLVM instead of the self-hosted backend |
