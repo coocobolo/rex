@@ -13,6 +13,8 @@ pub const Style = @import("Style.zig").Style;
 pub const term = @import("term.zig");
 pub const Terminal = term.Terminal;
 pub const Option = term.Option;
+pub const Events = term.Events;
+pub const Response = term.Response;
 
 pub const screen = @import("screen.zig");
 pub const Screen = screen.Screen;

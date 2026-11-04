@@ -243,8 +243,58 @@ pub const Option = struct {
     }
 };
 
-/// What a `feed` asks the caller to do. The caller acts on these after
-/// each feed, then calls `clear`.
+/// Bounded reply queue, in query order. A reply is queued whole or
+/// dropped whole and counted, never truncated.
+pub const Response = struct {
+    pub const capacity = 1024;
+
+    buf: [capacity]u8 = undefined,
+    len: usize = 0,
+    /// Replies dropped because they did not fit whole.
+    dropped: u32 = 0,
+
+    /// Queues `bytes` as one reply, or drops it whole.
+    pub fn append(self: *Response, bytes: []const u8) void {
+        if (bytes.len > capacity - self.len) {
+            self.dropped +|= 1;
+            return;
+        }
+        @memcpy(self.buf[self.len..][0..bytes.len], bytes);
+        self.len += bytes.len;
+    }
+
+    /// Queues `fmt` formatted with `args` as one reply, or drops it
+    /// whole.
+    pub fn print(self: *Response, comptime fmt: []const u8, args: anytype) void {
+        const written = std.fmt.bufPrint(self.buf[self.len..], fmt, args) catch {
+            self.dropped +|= 1;
+            return;
+        };
+        self.len += written.len;
+    }
+
+    /// The queued replies, oldest first. Valid until the next write
+    /// or `clear`.
+    pub fn slice(self: *const Response) []const u8 {
+        return self.buf[0..self.len];
+    }
+
+    /// True when no reply is queued.
+    pub fn isEmpty(self: *const Response) bool {
+        return self.len == 0;
+    }
+
+    /// Empties the queue after the host has written it. Keeps
+    /// `dropped`.
+    pub fn clear(self: *Response) void {
+        self.len = 0;
+    }
+};
+
+pub const ResponseQueue = Response;
+
+/// What a `feed` asks the caller to do. Coalesced host signals inspected
+/// by the caller on each update.
 pub const Events = struct {
     /// BEL arrived.
     bell: bool = false,
@@ -259,61 +309,11 @@ pub const Events = struct {
     selection_reset: bool = false,
     /// RIS ran.
     hard_reset: bool = false,
-    /// Replies for the pty. Write `slice()`, then `clear()`.
-    response: Response = .{},
     /// CSI 8 ; rows ; cols t asked for this size. The caller resizes the
     /// pty, then calls `Terminal.resize`.
     resize: ?Resize = null,
 
-    /// Bounded reply queue, in query order. A reply is queued whole or
-    /// dropped whole and counted, never truncated.
-    pub const Response = struct {
-        pub const capacity = 1024;
-
-        buf: [capacity]u8 = undefined,
-        len: usize = 0,
-        /// Replies dropped because they did not fit whole.
-        dropped: u32 = 0,
-
-        /// Queues `bytes` as one reply, or drops it whole.
-        pub fn append(self: *Response, bytes: []const u8) void {
-            if (bytes.len > capacity - self.len) {
-                self.dropped +|= 1;
-                return;
-            }
-            @memcpy(self.buf[self.len..][0..bytes.len], bytes);
-            self.len += bytes.len;
-        }
-
-        /// Queues `fmt` formatted with `args` as one reply, or drops it
-        /// whole.
-        pub fn print(self: *Response, comptime fmt: []const u8, args: anytype) void {
-            const written = std.fmt.bufPrint(self.buf[self.len..], fmt, args) catch {
-                self.dropped +|= 1;
-                return;
-            };
-            self.len += written.len;
-        }
-
-        /// The queued replies, oldest first. Valid until the next write
-        /// or `clear`.
-        pub fn slice(self: *const Response) []const u8 {
-            return self.buf[0..self.len];
-        }
-
-        /// True when no reply is queued.
-        pub fn isEmpty(self: *const Response) bool {
-            return self.len == 0;
-        }
-
-        /// Empties the queue after the host has written it. Keeps
-        /// `dropped`.
-        pub fn clear(self: *Response) void {
-            self.len = 0;
-        }
-    };
-
-    const Resize = struct { rows: u16, cols: u16 };
+    pub const Resize = struct { rows: u16, cols: u16 };
 
     /// True when any event is pending.
     pub fn any(self: *const Events) bool {
@@ -321,11 +321,12 @@ pub const Events = struct {
             self.title or
             self.icon_name or
             self.cursor_color or
-            !self.response.isEmpty() or
+            self.selection_reset or
+            self.hard_reset or
             self.resize != null;
     }
 
-    /// Clears every event, including queued replies.
+    /// Clears every event.
     pub fn clear(self: *Events) void {
         self.* = .{};
     }
@@ -418,7 +419,8 @@ pub fn Terminal(comptime option: Option) type {
         answerback_len: u8 = 0,
 
         parser: Parser(Self, .{}),
-        events: Events,
+        events: Events = .{},
+        response: Response = .{},
         conformance_level: ConformanceLevel = .level3,
         control_format: ControlFormat = .s7c1t,
 
@@ -841,6 +843,7 @@ pub fn Terminal(comptime option: Option) type {
             self.primary.hardReset();
 
             self.events.clear();
+            self.response.clear();
             self.events.hard_reset = true;
             self.events.selection_reset = true;
         }
@@ -1063,11 +1066,32 @@ pub fn Terminal(comptime option: Option) type {
             self.mode.mouse_tracking = if (set) tracking else .off;
         }
 
+        /// Takes pending host events and clears them internally in one step.
+        pub fn takeEvents(self: *Self) Events {
+            const ev = self.events;
+            self.events = .{};
+            return ev;
+        }
+
+        /// Copies queued replies into caller's buffer and empties the reply queue.
+        /// Returns the number of bytes copied.
+        pub fn drainReplies(self: *Self, out: []u8) usize {
+            const count = @min(out.len, self.response.len);
+            @memcpy(out[0..count], self.response.buf[0..count]);
+            self.response.len = 0;
+            return count;
+        }
+
+        /// True when replies are queued for the PTY.
+        pub fn hasReplies(self: *const Self) bool {
+            return !self.response.isEmpty();
+        }
+
         /// Queues `r` in the current C1 format. When it does not fit, it
-        /// is dropped whole and counted in `events.response.dropped`.
+        /// is dropped whole and counted in `response.dropped`.
         pub fn reply(self: *Self, r: Reply) void {
             switch (r) {
-                .answerback => |bytes| self.events.response.append(bytes),
+                .answerback => |bytes| self.response.append(bytes),
                 .primary_attributes => self.replyFmt(.csi, "?62;22;52c", .{}),
                 .secondary_attributes => self.replyFmt(.csi, ">1;0;0c", .{}),
                 .status_ok => self.replyFmt(.csi, "0n", .{}),
@@ -1109,7 +1133,7 @@ pub fn Terminal(comptime option: Option) type {
                 .dcs, .osc => seqIntroducer(.st, c1),
                 .csi, .st => "",
             };
-            self.events.response.print("{s}" ++ fmt ++ "{s}", .{seqIntroducer(intro, c1)} ++ args ++ .{st});
+            self.response.print("{s}" ++ fmt ++ "{s}", .{seqIntroducer(intro, c1)} ++ args ++ .{st});
         }
 
         /// Queues the XTVERSION reply.

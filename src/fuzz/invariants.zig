@@ -13,7 +13,7 @@ const term = @import("../term/term.zig");
 pub fn expectTerminal(t: anytype) !void {
     try expectScreen(&t.primary);
     try expectScreen(&t.alternate);
-    try testing.expect(t.events.response.len <= term.Events.Response.capacity);
+    try testing.expect(t.response.len <= term.Response.capacity);
     try testing.expect(t.osc_len <= t.osc_buf.len);
     try testing.expect(t.dcs_len <= t.dcs_buf.len);
     try testing.expect(t.title_len <= term.max_title_len);

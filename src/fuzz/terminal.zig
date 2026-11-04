@@ -99,9 +99,11 @@ fn runOn(comptime option: term.Option, src: *Source) !void {
                 twin.end();
             },
             .drain => {
-                try testing.expectEqualStrings(t.events.response.slice(), twin.events.response.slice());
+                try testing.expectEqualStrings(t.response.slice(), twin.response.slice());
                 t.events.clear();
+                t.response.clear();
                 twin.events.clear();
+                twin.response.clear();
             },
             .viewport => if (option.max_scrollback > 0) {
                 const lines = src.range("lines", u32, 0, option.max_scrollback + 2);
@@ -115,7 +117,7 @@ fn runOn(comptime option: term.Option, src: *Source) !void {
     }
     twin.feed(pending[0..pending_len]);
     invariants.expectSameTerminal(&t, &twin) catch |err| return log.report(err);
-    try testing.expectEqualStrings(t.events.response.slice(), twin.events.response.slice());
+    try testing.expectEqualStrings(t.response.slice(), twin.response.slice());
 }
 
 fn run(src: *Source) !void {
