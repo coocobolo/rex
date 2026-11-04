@@ -210,7 +210,7 @@ fn testCreateAndPreRasterize(win: *c.GLFWwindow) !void {
     atlas.preRasterize(alloc, &rasterizer, .{ .start = 0x20, .end = 0x7F });
 
     for (0x20..0x7F) |cp| {
-        const m = try atlas.get(alloc, &rasterizer, @intCast(cp), .regular);
+        const m = try atlas.get(alloc, &rasterizer, @intCast(cp), .regular, .single);
         try testing.expect(m.atlas_x < Atlas.texture_width);
         try testing.expect(m.atlas_y < Atlas.texture_height);
     }
@@ -224,8 +224,8 @@ fn testCacheHit(win: *c.GLFWwindow) !void {
     var atlas = try Atlas.create(alloc);
     defer atlas.destroy();
 
-    const m1 = try atlas.get(alloc, &rasterizer, 'A', .regular);
-    const m2 = try atlas.get(alloc, &rasterizer, 'A', .regular);
+    const m1 = try atlas.get(alloc, &rasterizer, 'A', .regular, .single);
+    const m2 = try atlas.get(alloc, &rasterizer, 'A', .regular, .single);
     try testing.expectEqual(m1, m2);
 }
 
@@ -237,8 +237,8 @@ fn testBoldVsRegular(win: *c.GLFWwindow) !void {
     var atlas = try Atlas.create(alloc);
     defer atlas.destroy();
 
-    const m_reg = try atlas.get(alloc, &rasterizer, 'A', .regular);
-    const m_bold = try atlas.get(alloc, &rasterizer, 'A', .bold);
+    const m_reg = try atlas.get(alloc, &rasterizer, 'A', .regular, .single);
+    const m_bold = try atlas.get(alloc, &rasterizer, 'A', .bold, .single);
     try testing.expect(m_reg.atlas_x != m_bold.atlas_x or m_reg.atlas_y != m_bold.atlas_y);
 }
 
@@ -250,12 +250,12 @@ fn testZeroSizeMetric(win: *c.GLFWwindow) !void {
     var atlas = try Atlas.create(alloc);
     defer atlas.destroy();
 
-    const m1 = try atlas.get(alloc, &rasterizer, 0x20, .regular);
+    const m1 = try atlas.get(alloc, &rasterizer, 0x20, .regular, .single);
     try testing.expectEqual(@as(u16, 0), m1.width);
     try testing.expectEqual(@as(u16, 0), m1.height);
     try testing.expect(m1.advance > 0);
 
-    const m2 = try atlas.get(alloc, &rasterizer, 0x20, .regular);
+    const m2 = try atlas.get(alloc, &rasterizer, 0x20, .regular, .single);
     try testing.expectEqual(m1, m2);
 }
 
@@ -269,7 +269,7 @@ fn testGetSequenceCacheMiss(win: *c.GLFWwindow) !void {
     // Phase 1 stub: rasterizeSequence falls back to cps[0].
     // Use a real emoji sequence — the result is the base codepoint glyph.
     const cps = [_]u21{ 0x1F468, 0x200D, 0x1F469 }; // 👨‍👩 ZWJ sequence
-    const m = try atlas.getSequence(alloc, &rasterizer, &cps, .emoji);
+    const m = try atlas.getSequence(alloc, &rasterizer, &cps, .emoji, .double);
 
     // Must have been packed somewhere in the color atlas
     try testing.expect(m.atlas_x < Atlas.texture_width);
@@ -285,8 +285,8 @@ fn testGetSequenceCacheHit(win: *c.GLFWwindow) !void {
     defer atlas.destroy();
 
     const cps = [_]u21{ 0x1F468, 0x200D, 0x1F469 };
-    const m1 = try atlas.getSequence(alloc, &rasterizer, &cps, .emoji);
-    const m2 = try atlas.getSequence(alloc, &rasterizer, &cps, .emoji); // cache hit
+    const m1 = try atlas.getSequence(alloc, &rasterizer, &cps, .emoji, .double);
+    const m2 = try atlas.getSequence(alloc, &rasterizer, &cps, .emoji, .double); // cache hit
     try testing.expectEqual(m1, m2);
 }
 
@@ -298,7 +298,7 @@ fn testGetSequenceEmptyReturnsError(win: *c.GLFWwindow) !void {
     defer atlas.destroy();
 
     const cps = [_]u21{};
-    try testing.expectError(error.EmptySequence, atlas.getSequence(alloc, &rasterizer, &cps, .emoji));
+    try testing.expectError(error.EmptySequence, atlas.getSequence(alloc, &rasterizer, &cps, .emoji, .double));
 }
 
 test "atlas integration" {

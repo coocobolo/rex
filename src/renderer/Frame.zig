@@ -96,6 +96,7 @@ pub const CursorCache = struct {
         atlas: *Atlas,
         cursor: *const term.cell.Cursor,
         palette: *const Palette,
+        screen: anytype,
         cursor_cell: *const term.Cell,
     ) bool {
         const row = cursor.row;
@@ -117,8 +118,7 @@ pub const CursorCache = struct {
             return true;
         }
 
-        const face = faceKindFromCell(cursor_cell.flags);
-        self.glyph = atlas.get(gpa, rasterizer, @intCast(cursor_cell.codepoint), face) catch null;
+        self.glyph = cellGlyph(gpa, rasterizer, atlas, screen, cursor_cell);
 
         var fg: u32 = palette.resolve(cursor_cell.foreground, .foreground);
         var bg: u32 = palette.resolve(cursor_cell.background, .background);
@@ -322,6 +322,7 @@ pub fn Builder(comptime option: Option) type {
                     atlas,
                     cursor,
                     palette,
+                    screen,
                     &cursor_cell,
                 );
 
@@ -367,6 +368,7 @@ pub fn Builder(comptime option: Option) type {
                     atlas,
                     cursor,
                     palette,
+                    screen,
                     &cursor_cell,
                 );
 
@@ -495,56 +497,8 @@ pub fn Builder(comptime option: Option) type {
                     });
 
                     if (c.kind == .empty) continue;
-                    const codepoint = c.codepoint;
+                    const metric = cellGlyph(gpa, rasterizer, atlas, screen, &c) orelse continue;
 
-                    // log.debug(
-                    //     \\cell: {any}
-                    //     \\codepoint: '{c}'
-                    //     \\background: {any}
-                    //     \\foregound: {any}
-                    //     \\do_reverse: {}
-                    //     \\in_selection: {}
-                    // ,
-                    //     .{
-                    //         c,
-                    //         @as(u8, @intCast(codepoint)),
-                    //         background,
-                    //         foreground,
-                    //         do_reverse,
-                    //         in_selection,
-                    //     },
-                    // );
-
-                    const requested_kind = faceKindFromCell(c.flags);
-
-                    // Frame builder only passes the requested style + codepoint:
-                    const metric: Atlas.Metric = if (c.kind.isGrapheme()) blk: {
-                        const cps = screen.getGrapheme(codepoint) orelse continue;
-                        break :blk atlas.getSequence(gpa, rasterizer, cps, requested_kind) catch continue;
-                    } else if (c.kind == .shaped) {
-                        // FIXME requires HarfBuzz shaped run
-                        continue;
-                    } else blk: {
-                        // FIXME consider changing atlas.get's signature to take u32 instead of u21
-                        // it removes the cast entirely and is more honest about the fact that the atlas
-                        // doesn't care about Unicode validity, only about using the value as a cache key
-
-                        // safe: kind ∈ {.narrow, .wide_left} which a valid Unicode
-                        const cp21: u21 = @intCast(codepoint);
-                        break :blk atlas.get(gpa, rasterizer, cp21, requested_kind) catch continue;
-                    };
-
-                    // log.debug(
-                    //     \\ cell.codepoint: 0x{X}
-                    //     \\ cell.kind: {t}
-                    //     \\ cell.kind.isGrapheme: {}
-                    //     \\ metric: {any}
-                    // , .{
-                    //     c.codepoint,
-                    //     c.kind,
-                    //     c.kind.isGrapheme(),
-                    //     metric,
-                    // });
                     // Skip zero-size glyphs (space, combining marks with no bitmap)
                     if (metric.width == 0 or metric.height == 0) continue;
 
@@ -670,6 +624,29 @@ pub fn Builder(comptime option: Option) type {
             };
         }
     };
+}
+
+/// Returns the atlas glyph for a non-empty cell, sized from the width
+/// the terminal stored in `cell.kind`, or null if it has none.
+fn cellGlyph(
+    gpa: Allocator,
+    rasterizer: *Rasterizer,
+    atlas: *Atlas,
+    screen: anytype,
+    cell: *const term.Cell,
+) ?Atlas.Metric {
+    const face = faceKindFromCell(cell.flags);
+    const span: Rasterizer.Span = switch (cell.kind) {
+        .empty, .wide_right, .shaped => return null, // shaped needs HarfBuzz
+        .narrow, .grapheme => .single,
+        .wide_left, .grapheme_wide => .double,
+    };
+    if (cell.kind.isGrapheme()) {
+        const cps = screen.getGrapheme(cell.codepoint) orelse return null;
+        return atlas.getSequence(gpa, rasterizer, cps, face, span) catch null;
+    }
+    // narrow and wide_left cells always hold a valid scalar value.
+    return atlas.get(gpa, rasterizer, @intCast(cell.codepoint), face, span) catch null;
 }
 
 fn faceKindFromCell(flags: AttrFlags) FaceKind {

@@ -7,7 +7,6 @@ const log = std.log.scoped(.rasterizer);
 const Config = @import("Config.zig");
 const ft = @import("root.zig");
 const c = @import("root.zig").c;
-const wcwidth = @import("../unicode/wcwidth.zig").wcwidth;
 
 test {
     _ = @import("rasterizer_test.zig");
@@ -15,6 +14,11 @@ test {
 
 pub const FaceKind = enum(u3) { regular, bold, italic, bold_italic, emoji };
 pub const GlyphKind = enum { gray, color };
+
+/// Number of grid cells a glyph is drawn across, taken from the cell
+/// the terminal stored rather than recomputed from the codepoint, so
+/// VS16 emoji, clusters and the ambiguous-width option match the grid.
+pub const Span = enum(u1) { single, double };
 
 /// FreeType stores all metrics internally in 26.6 fixed point, the top 26 bits
 /// are the integer pixel part, the bottom 6 bits are the fractional part
@@ -391,11 +395,12 @@ pub fn destroy(self: *Rasterizer, gpa: Allocator) void {
 }
 
 /// Rasterizes a codepoint using the requested font face and returns
-/// the resulting glyph bitmap and metrics.
+/// the resulting glyph bitmap and metrics. Color glyphs are scaled to
+/// fit `span` cells.
 ///
 /// The returned bitmap is owned by FreeType and remains valid only
 /// until the next rasterize() call on the same face.
-pub fn rasterize(self: *Rasterizer, gpa: Allocator, codepoint: u21, kind: FaceKind) !Glyph {
+pub fn rasterize(self: *Rasterizer, gpa: Allocator, codepoint: u21, kind: FaceKind, span: Span) !Glyph {
     const face, const is_color = self.findFace(codepoint, kind);
 
     // load flags depend on whether this is an emoji face which requires color texture
@@ -449,11 +454,11 @@ pub fn rasterize(self: *Rasterizer, gpa: Allocator, codepoint: u21, kind: FaceKi
     const bearing_y = std.math.cast(i16, glyph.*.bitmap_top) orelse 0;
 
     if (is_color) {
-        // Scale emoji proportionally to fit the terminal cell height.
-        // const scale = @as(f32, @floatFromInt(self.cell_height)) / @as(f32, @floatFromInt(bmp_rows));
-
-        const is_wide = wcwidth(codepoint, .narrow) == .wide;
-        const max_w: u16 = if (is_wide) self.cell_width * 2 else self.cell_width;
+        // Scale emoji proportionally to fit the cells it spans.
+        const max_w: u16 = switch (span) {
+            .single => self.cell_width,
+            .double => self.cell_width * 2,
+        };
         const max_h: u16 = self.cell_height;
 
         const scale_by_w = @as(f32, @floatFromInt(max_w)) / @as(f32, @floatFromInt(bmp_width));
@@ -463,9 +468,6 @@ pub fn rasterize(self: *Rasterizer, gpa: Allocator, codepoint: u21, kind: FaceKi
 
         const dst_w: u16 = @max(1, @as(u16, @intFromFloat(@round(@as(f32, @floatFromInt(bmp_width)) * scale))));
         const dst_h: u16 = @max(1, @as(u16, @intFromFloat(@round(@as(f32, @floatFromInt(bmp_rows)) * scale))));
-
-        // const dst_w: u16 = if (is_wide) self.cell_width * 2 else self.cell_width;
-        // const dst_h: u16 = self.cell_height;
 
         try self.scratch.resize(
             gpa,
@@ -607,14 +609,14 @@ pub fn classifySequence(cps: []const u21) SequenceKind {
 /// FIXME
 /// Phase 2: Add HarfBuzz, shape sequences
 /// Phase 3: multi-glyph compositing (defer)
-pub fn rasterizeSequence(self: *Rasterizer, gpa: Allocator, cps: []const u21, face: FaceKind) !Glyph {
+pub fn rasterizeSequence(self: *Rasterizer, gpa: Allocator, cps: []const u21, face: FaceKind, span: Span) !Glyph {
     if (cps.len == 0) return error.EmptySequence;
-    return self.rasterize(gpa, cps[0], face);
+    return self.rasterize(gpa, cps[0], face, span);
 }
 
-pub fn rasterizeSequenceDraft(self: *Rasterizer, gpa: Allocator, cps: []const u21, face: FaceKind) !Glyph {
+pub fn rasterizeSequenceDraft(self: *Rasterizer, gpa: Allocator, cps: []const u21, face: FaceKind, span: Span) !Glyph {
     if (cps.len == 0) return error.EmptySequence;
-    if (cps.len == 1) return self.rasterize(gpa, cps[0], face);
+    if (cps.len == 1) return self.rasterize(gpa, cps[0], face, span);
 
     // Phase 2 (deferred): try a real GSUB/ligature lookup here first.
     // if (self.tryLigatureLookup(cps, face)) |glyph_id| {
@@ -624,24 +626,24 @@ pub fn rasterizeSequenceDraft(self: *Rasterizer, gpa: Allocator, cps: []const u2
     return switch (classifySequence(cps)) {
         // Base is still semantically valid without the modifier — degrade
         // gracefully rather than treating this as "unknown."
-        .modifier_sequence => self.rasterize(gpa, cps[0], face),
+        .modifier_sequence => self.rasterize(gpa, cps[0], face, span),
 
         // Regional indicator pairs: until compositing/ligature lookup lands,
         // fall back to the first flag letter rather than silently claiming
         // it's a country it isn't. Same honesty argument as ZWJ.
-        .regional_pair => self.rasterize(gpa, cps[0], face),
+        .regional_pair => self.rasterize(gpa, cps[0], face, span),
 
         // ZWJ-joined sequence with no font ligature available: rendering
         // just cps[0] silently asserts a wrong meaning (see doc comment
         // above). Composite fallback lands in a follow-up change; for now
         // route through the same explicit function so the call site is
         // ready for it and the intent is documented in one place.
-        .zwj_sequence => self.rasterizeUnknownZwjFallback(gpa, cps, face),
+        .zwj_sequence => self.rasterizeUnknownZwjFallback(gpa, cps, face, span),
 
-        .unknown => self.rasterize(gpa, cps[0], face),
+        .unknown => self.rasterize(gpa, cps[0], face, span),
     };
 
-    // return self.rasterize(gpa, cps[0], face);
+    // return self.rasterize(gpa, cps[0], face, span);
 }
 
 /// Placeholder until Phase 3 (multi-glyph compositing) lands.
@@ -649,8 +651,8 @@ pub fn rasterizeSequenceDraft(self: *Rasterizer, gpa: Allocator, cps: []const u2
 /// but isolated here so the "this is a known limitation" fact is
 /// localized to one call site instead of being implicit in
 /// rasterizeSequence's switch.
-fn rasterizeUnknownZwjFallback(self: *Rasterizer, gpa: Allocator, cps: []const u21, face: FaceKind) !Glyph {
-    return self.rasterize(gpa, cps[0], face);
+fn rasterizeUnknownZwjFallback(self: *Rasterizer, gpa: Allocator, cps: []const u21, face: FaceKind, span: Span) !Glyph {
+    return self.rasterize(gpa, cps[0], face, span);
 }
 
 fn faceFromKind(self: *Rasterizer, kind: FaceKind) c.FT_Face {

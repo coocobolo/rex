@@ -10,6 +10,7 @@ const ft = @import("../freetype/root.zig");
 const Rasterizer = ft.Rasterizer;
 const FaceKind = Rasterizer.FaceKind;
 const GlyphKind = Rasterizer.GlyphKind;
+const Span = Rasterizer.Span;
 
 const gl = @import("gl.zig");
 
@@ -123,10 +124,11 @@ pub const Metric = struct {
 
 };
 
-pub const Key = packed struct {
+pub const Key = packed struct(u32) {
     codepoint: u21,
     face: FaceKind,
-    _pad: u8 = 0, // NOTE pad to 32 bits for hashing
+    span: Span,
+    _pad: u7 = 0,
 };
 
 // Atlas packing cursor state
@@ -175,7 +177,7 @@ state: struct {
 } = .{},
 
 /// Single glyph cache,
-/// Keyed by (codepoint, face)
+/// Keyed by (codepoint, face, span)
 /// Value by Glyph Metrics
 glyph_cache: std.AutoHashMap(Key, Metric),
 
@@ -276,7 +278,7 @@ pub fn create(gpa: Allocator) !Atlas {
 pub fn preRasterize(self: *Atlas, gpa: Allocator, rasterizer: *Rasterizer, range: struct { start: u21, end: u21 }) void {
     for (range.start..range.end) |cp| {
         for ([_]FaceKind{ .regular, .bold, .italic, .bold_italic }) |face| {
-            _ = self.get(gpa, rasterizer, @intCast(cp), face) catch |err| {
+            _ = self.get(gpa, rasterizer, @intCast(cp), face, .single) catch |err| {
                 log.warn("warmup: failed to rasterize U+{X} face={t}: {}", .{ cp, face, err });
             };
         }
@@ -293,8 +295,10 @@ pub fn destroy(self: *Atlas) void {
     self.* = undefined;
 }
 
-pub fn get(self: *Atlas, gpa: Allocator, rasterizer: *Rasterizer, codepoint: u21, face: FaceKind) !Metric {
-    const key: Key = .{ .codepoint = codepoint, .face = face };
+/// Returns the cached metric for `codepoint` drawn across `span` cells,
+/// rasterizing and uploading it on a miss.
+pub fn get(self: *Atlas, gpa: Allocator, rasterizer: *Rasterizer, codepoint: u21, face: FaceKind, span: Span) !Metric {
+    const key: Key = .{ .codepoint = codepoint, .face = face, .span = span };
 
     // If rasterize succeeds but glyph_cache.put fails (OOM),
     // the glyph was uploaded to the GPU atlas but not cached.
@@ -304,7 +308,7 @@ pub fn get(self: *Atlas, gpa: Allocator, rasterizer: *Rasterizer, codepoint: u21
     if (gop.found_existing) return gop.value_ptr.*;
     errdefer _ = self.glyph_cache.remove(key);
 
-    const glyph = try rasterizer.rasterize(gpa, codepoint, face);
+    const glyph = try rasterizer.rasterize(gpa, codepoint, face, span);
     const metric = try self.upload(glyph);
     // std.debug.print("upload '{u}' face={s} atlas={}x{} size={}x{} pitch={}\n", .{
     //     codepoint,      @tagName(face),
@@ -437,35 +441,30 @@ pub fn bindTextures(self: *const Atlas, gray_unit: gl.GLenum, color_unit: gl.GLe
     gl.bindTexture(gl.TEXTURE_2D, self.color_texture);
 }
 
-pub fn getSequence(self: *Atlas, gpa: Allocator, rasterizer: *Rasterizer, cps: []const u21, face: FaceKind) !Metric {
-    const key = hashSequence(cps, face);
+/// Like `get`, for a multi-codepoint grapheme cluster.
+pub fn getSequence(self: *Atlas, gpa: Allocator, rasterizer: *Rasterizer, cps: []const u21, face: FaceKind, span: Span) !Metric {
+    const key = hashSequence(cps, face, span);
     const gop = try self.sequence_cache.getOrPut(key);
     if (gop.found_existing) return gop.value_ptr.*;
     errdefer _ = self.sequence_cache.remove(key);
-    const glyph = try rasterizer.rasterizeSequence(gpa, cps, face);
+    const glyph = try rasterizer.rasterizeSequence(gpa, cps, face, span);
     gop.value_ptr.* = try self.upload(glyph);
     return gop.value_ptr.*;
 }
 
-fn hashSequence(cps: []const u21, face: FaceKind) u64 {
+fn hashSequence(cps: []const u21, face: FaceKind, span: Span) u64 {
     var h = std.hash.Wyhash.init(0);
     for (cps) |cp| {
         const v: u32 = cp;
         h.update(std.mem.asBytes(&v));
     }
-    h.update(std.mem.asBytes(&@intFromEnum(face)));
+    h.update(&.{ @intFromEnum(face), @intFromEnum(span) });
     return h.final();
 }
 
 fn pack(self: *Atlas, kind: GlyphKind, w: u16, h: u16) !struct { u16, u16 } {
     const state = if (kind == .color) &self.state.color else &self.state.gray;
     return state.pack(w, h, texture_width, texture_height);
-}
-
-fn hashSequence1(cps: []const u21) u64 {
-    var h = std.hash.Wyhash.init(0);
-    h.update(std.mem.sliceAsBytes(cps));
-    return h.final();
 }
 
 /// Clears all cached glyph metrics and resets packing state.
@@ -532,28 +531,33 @@ test "PackingState: atlas full returns AtlasFull" {
 
 test "hashSequence: same sequence produces same hash" {
     const cps = [_]u21{ 0x1F468, 0x200D, 0x1F469 };
-    try testing.expectEqual(hashSequence1(&cps), hashSequence1(&cps));
+    try testing.expectEqual(hashSequence(&cps, .emoji, .single), hashSequence(&cps, .emoji, .single));
 }
 
 test "hashSequence: order matters" {
     const a = [_]u21{ 0x41, 0x42 }; // A, B
     const b = [_]u21{ 0x42, 0x41 }; // B, A
-    try testing.expect(hashSequence1(&a) != hashSequence1(&b));
+    try testing.expect(hashSequence(&a, .emoji, .single) != hashSequence(&b, .emoji, .single));
 }
 
 test "hashSequence: different sequences differ" {
     const a = [_]u21{ 0x1F468, 0x200D, 0x1F469 };
     const b = [_]u21{ 0x1F469, 0x200D, 0x1F468 }; // reversed
-    try testing.expect(hashSequence1(&a) != hashSequence1(&b));
+    try testing.expect(hashSequence(&a, .emoji, .single) != hashSequence(&b, .emoji, .single));
 }
 
 test "hashSequence: single codepoint is stable" {
     const cps = [_]u21{0x1F600}; // 😀
-    try testing.expectEqual(hashSequence1(&cps), hashSequence1(&cps));
+    try testing.expectEqual(hashSequence(&cps, .emoji, .single), hashSequence(&cps, .emoji, .single));
 }
 
 test "hashSequence: length-1 vs length-2 differ" {
     const a = [_]u21{0x41};
     const b = [_]u21{ 0x41, 0x41 };
-    try testing.expect(hashSequence1(&a) != hashSequence1(&b));
+    try testing.expect(hashSequence(&a, .emoji, .single) != hashSequence(&b, .emoji, .single));
+}
+
+test "hashSequence: span is part of the key" {
+    const cps = [_]u21{ 0x2764, 0xFE0F }; // ❤️
+    try testing.expect(hashSequence(&cps, .emoji, .single) != hashSequence(&cps, .emoji, .double));
 }
