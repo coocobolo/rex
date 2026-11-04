@@ -86,6 +86,9 @@ pub const Config = struct {
         bell: enum { on, off } = .on,
         scrollbar: Scrollbar.Option,
         cursor: Cursor.Option,
+        /// Positions, thicknesses and looks of underline, strikethrough
+        /// and overline. The defaults follow the font.
+        decoration: renderer_mod.Decoration.Option = .{},
         selection: renderer_mod.Selection.Option,
         buffer_size: Dimension(u16),
     },
@@ -278,6 +281,7 @@ pub fn init(
         .background = config.window.background,
         .font_metrics = rasterizer.metrics,
         .cursor = config.window.cursor,
+        .decoration = config.window.decoration,
         .scrollbar = config.window.scrollbar,
         .selection = config.window.selection,
     });

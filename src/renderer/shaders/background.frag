@@ -13,6 +13,7 @@ uniform int u_blink_rapid_on;
 // Decoration lines, in pixels down from the top of the cell
 uniform float u_underline_y;
 uniform float u_underline_thickness;
+uniform float u_double_y; // top of the upper line of a double underline
 uniform float u_strikethrough_y;
 uniform float u_strikethrough_thickness;
 uniform float u_overline_y;
@@ -80,8 +81,7 @@ void main() {
     break;
 
   case UL_DOUBLE:
-    // A second line one thickness above the first
-    if (on_line || (y >= ul_y - t * 2.0 && y < ul_y - t))
+    if (on_line || (y >= u_double_y && y < u_double_y + t))
       frag_color = line_color;
     break;
 
