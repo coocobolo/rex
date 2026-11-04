@@ -232,6 +232,19 @@ pub fn build(b: *std.Build) !void {
     test_options.addOption(bool, "slow", slow_tests);
     const test_options_mod = test_options.createModule();
 
+    // UCD conformance data for tests, as `@import("ucd_test_data")`.
+    // The .txt files sit outside src/, so they are copied next to a
+    // generated root that embeds them.
+    const ucd = "tools/ucd/" ++ comptime std.mem.trim(u8, @embedFile("tools/ucd/VERSION"), " \n") ++ "/";
+    const ucd_files = b.addWriteFiles();
+    _ = ucd_files.addCopyFile(b.path(ucd ++ "GraphemeBreakTest.txt"), "GraphemeBreakTest.txt");
+    const ucd_test_data = b.createModule(.{
+        .root_source_file = ucd_files.add("root.zig",
+            \\pub const grapheme_break_test = @embedFile("GraphemeBreakTest.txt");
+            \\
+        ),
+    });
+
     // How tests are organised (see CONTRIBUTING.md, "Tests"):
     //   - Tests live in `<name>_test.zig` next to the code they test.
     //   - Each folder's root.zig lists its test files in a `test {}` block.
@@ -257,6 +270,7 @@ pub fn build(b: *std.Build) !void {
                 .optimize = optimize,
                 .imports = &.{
                     .{ .name = "test_options", .module = test_options_mod },
+                    .{ .name = "ucd_test_data", .module = ucd_test_data },
                 },
             }),
             .filters = test_filters,
@@ -266,6 +280,7 @@ pub fn build(b: *std.Build) !void {
     }
 
     mod.addImport("test_options", test_options_mod);
+    mod.addImport("ucd_test_data", ucd_test_data);
     const mod_tests = b.addTest(.{
         .root_module = mod,
         .filters = test_filters,
@@ -285,7 +300,6 @@ pub fn build(b: *std.Build) !void {
     // `zig build gen-<name>` or all with `zig build gen`, then commit the
     // result. UCD inputs live in tools/ucd/<version>/, picked by
     // tools/ucd/VERSION. Adding a table is one row here.
-    const ucd = "tools/ucd/" ++ comptime std.mem.trim(u8, @embedFile("tools/ucd/VERSION"), " \n") ++ "/";
     const generators = .{
         // name, output, inputs
         .{ "wcwidth-table", "src/unicode/wcwidth_table.zig", .{ ucd ++ "EastAsianWidth.txt", ucd ++ "UnicodeData.txt" } },
