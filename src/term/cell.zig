@@ -85,14 +85,6 @@ pub const Color = union(enum) {
             };
         }
 
-        pub fn fromColorKey(key: u32) Rgb {
-            return .{
-                .r = @intCast((key >> 16) & 0xFF),
-                .g = @intCast((key >> 8) & 0xFF),
-                .b = @intCast(key & 0xFF),
-            };
-        }
-
         /// Parse an X11/CSS color specification into an RGB triple.
         ///
         /// Supported formats:
