@@ -28,7 +28,7 @@ float roundedBoxCorners(vec2 pixel, vec2 size, vec4 radii) {
   float r = p.x < 0.0
                 ? (p.y < 0.0 ? radii.x : radii.w)  // left side  = TL or BL
                 : (p.y < 0.0 ? radii.y : radii.z); // right side = TR or BR
-  vec2 q = abs(p) - half + r;
+  vec2 q = abs(p) - half_size + r;
   return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r;
 }
 
