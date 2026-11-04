@@ -1044,9 +1044,6 @@ test "scrollUp: full screen, new bottom row line_attr is normal" {
 }
 
 test "scrollDown: n=1 shifts rows down, top row cleared" {
-    // TERMV4 M2 item 9: full-screen scrollDown trips wrapAdd assert (b > max_rows) when scrollback is on.
-    if (true) return error.SkipZigTest;
-
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
     defer s.destroy(alloc);
@@ -1068,9 +1065,6 @@ test "scrollDown: n=1 shifts rows down, top row cleared" {
 }
 
 test "scrollDown: n=3 bulk shift" {
-    // TERMV4 M2 item 9: full-screen scrollDown trips wrapAdd assert (b > max_rows) when scrollback is on.
-    if (true) return error.SkipZigTest;
-
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
     defer s.destroy(alloc);
@@ -1157,9 +1151,6 @@ test "scrollDown: scroll_top >= scroll_bottom, early return" {
 }
 
 test "scrollDown: generation bumped" {
-    // TERMV4 M2 item 9: full-screen scrollDown trips wrapAdd assert (b > max_rows) when scrollback is on.
-    if (true) return error.SkipZigTest;
-
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
     defer s.destroy(alloc);
@@ -3190,9 +3181,6 @@ test "reverseIndex: cursor at row 0 above scroll_top, already at 0, stay 0" {
 }
 
 test "reverseIndex: cursor at scroll_top (full screen), scrolls region down" {
-    // TERMV4 M2 item 9: full-screen scrollDown trips wrapAdd assert (b > max_rows) when scrollback is on.
-    if (true) return error.SkipZigTest;
-
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
     defer s.destroy(alloc);
@@ -3231,9 +3219,6 @@ test "reverseIndex: clears wrap_pending" {
 }
 
 test "reverseIndex: clears wrap_pending even when scrolling" {
-    // TERMV4 M2 item 9: full-screen scrollDown trips wrapAdd assert (b > max_rows) when scrollback is on.
-    if (true) return error.SkipZigTest;
-
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
     defer s.destroy(alloc);
@@ -3256,9 +3241,6 @@ test "reverseIndex: generation bumped (cursor move)" {
 }
 
 test "reverseIndex: generation bumped (scroll path)" {
-    // TERMV4 M2 item 9: full-screen scrollDown trips wrapAdd assert (b > max_rows) when scrollback is on.
-    if (true) return error.SkipZigTest;
-
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
     defer s.destroy(alloc);
@@ -3287,9 +3269,6 @@ test "reverseIndex: dirty_rows set (cursor move)" {
 }
 
 test "reverseIndex: dirty_rows = full (scroll path)" {
-    // TERMV4 M2 item 9: full-screen scrollDown trips wrapAdd assert (b > max_rows) when scrollback is on.
-    if (true) return error.SkipZigTest;
-
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
     defer s.destroy(alloc);
@@ -3320,9 +3299,6 @@ test "reverseIndex: not at scroll top, cursor moves up, line_attrs unchanged" {
 }
 
 test "reverseIndex: at scroll top, new blank row inserted at top has .normal line_attr" {
-    // TERMV4 M2 item 9: full-screen scrollDown trips wrapAdd assert (b > max_rows) when scrollback is on.
-    if (true) return error.SkipZigTest;
-
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
     defer s.destroy(alloc);
@@ -3341,9 +3317,6 @@ test "reverseIndex: at scroll top, new blank row inserted at top has .normal lin
 }
 
 test "reverseIndex: at scroll_top, existing rows shift down, their line_attrs shift too" {
-    // TERMV4 M2 item 9: full-screen scrollDown trips wrapAdd assert (b > max_rows) when scrollback is on.
-    if (true) return error.SkipZigTest;
-
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
     defer s.destroy(alloc);

@@ -375,9 +375,9 @@ pub fn Screen(comptime option: Option) type {
         charset_is_identity: bool = true,
         row_map_is_identity: bool = false,
 
-        /// Net number of lines moved by full-screen scrolling branch only since screen
-        /// creation. It increases when content scrolls up and decreases for reverse scrolling.
-        /// Partial-region scrolling does not affect this value.
+        /// Net number of lines the ring head has advanced (full-screen
+        /// scroll up) since screen creation. Region scrolls and reverse
+        /// scrolls rotate `row_map` instead and do not change it.
         ///
         /// Used to detect scrollback drift or eviction when resolving stable selection
         /// anchors caputred earlier.
@@ -1718,13 +1718,11 @@ pub fn Screen(comptime option: Option) type {
         /// Scroll the scroll region down by `n` lines (reverse scroll / RI).
         /// Lines that scroll off the bottom are discarded.
         ///
-        /// Always O(region_height × active_cols). Reverse scroll is uncommon
-        /// (only RI / CSI T), so no O(1) optimization is applied, doing so
-        /// would corrupt scrollback history.
-        ///
-        /// A reverse (descending) copy pass is required: because each destination
-        /// row index is greater than its source, a forward pass would overwrite
-        /// source rows before they are read.
+        /// Always a row_map rotation, O(region_height), full screen
+        /// included. Moving the ring head back instead would overwrite the
+        /// newest scrollback lines, and xterm leaves scrollback untouched
+        /// on reverse scroll. Reverse scroll is rare (RI, SD), so the
+        /// canonicalize cost on the next full-screen scrollUp is fine.
         pub noinline fn scrollDown(self: *Self, n: usize) void {
             if (self.scroll_top >= self.scroll_bottom) return;
 
@@ -1734,63 +1732,23 @@ pub fn Screen(comptime option: Option) type {
 
             const count: usize = @min(@max(n, 1), region_height);
             const blank: Cell = .{ .background = self.cursor.attr.bg };
-            const is_full_screen = self.scroll_top == 0 and self.scroll_bottom == self.active_rows - 1;
 
-            if (is_full_screen) {
-                // NOTE! Reset row_map to identity once, canonicalize under the OLD scroll_offset,
-                // row_map's coordinate space before it changes.
-                self.canonicalizeRowMap();
+            self.rotateRowMapRegion(region_top, region_bot, count, .right);
 
-                // Ring buffer: advance scroll_offset backwards by count
-                const next_scroll_offset = wrapAdd(@intCast(self.scroll_offset), ring_rows - count);
-                self.scroll_offset = @intCast(next_scroll_offset);
-                self.total_lines_scrolled -= @intCast(count);
-
-                const phys_start = self.scroll_offset;
-                if (phys_start + count <= ring_rows) {
-                    if (blank.background == 0) {
-                        zeroRow(@ptrCast(&self.cells[phys_start * max_cols]), count * max_cols);
-                    } else {
-                        @memset(self.cells[phys_start * max_cols .. (phys_start + count) * max_cols], blank);
-                    }
+            // Clear the count vacated rows at the TOP of the region
+            for (region_top..region_top + count) |r| {
+                const phys = self.physRow(r);
+                const row_mut = self.cells[phys * max_cols ..][0..self.active_cols];
+                if (blank.background == 0) {
+                    zeroRow(row_mut.ptr, row_mut.len);
                 } else {
-                    const second = phys_start + count - ring_rows;
-                    if (blank.background == 0) {
-                        zeroRow(@ptrCast(&self.cells[phys_start * max_cols]), (ring_rows - phys_start) * max_cols);
-                        zeroRow(@ptrCast(&self.cells[0]), second * max_cols);
-                    } else {
-                        @memset(self.cells[phys_start * max_cols .. ring_rows * max_cols], blank);
-                        @memset(self.cells[0 .. second * max_cols], blank);
-                    }
+                    @memset(row_mut, blank);
                 }
-
-                if (phys_start + count <= ring_rows) {
-                    for (self.line_attrs[phys_start .. phys_start + count]) |*a| a.* = .normal;
-                } else {
-                    for (self.line_attrs[phys_start..ring_rows]) |*a| a.* = .normal;
-                    for (self.line_attrs[0 .. phys_start + count - ring_rows]) |*a| a.* = .normal;
-                }
-
-                self.setDirtyAll();
-            } else {
-                self.rotateRowMapRegion(region_top, region_bot, count, .right);
-
-                // Clear the count vacated rows at the TOP of the region
-                for (region_top..region_top + count) |r| {
-                    const phys = self.physRow(r);
-                    const row_mut = self.cells[phys * max_cols ..][0..self.active_cols];
-                    if (blank.background == 0) {
-                        zeroRow(row_mut.ptr, row_mut.len);
-                    } else {
-                        @memset(row_mut, blank);
-                    }
-                    self.line_attrs[phys] = .normal;
-                }
-
-                self.dirty_rows.setRangeValue(.{ .start = region_top, .end = region_bot + 1 }, true);
+                self.line_attrs[phys] = .normal;
             }
 
-            self.cached_row_phys = max_u16; // ring buffer rotated, cache is stale
+            self.dirty_rows.setRangeValue(.{ .start = region_top, .end = region_bot + 1 }, true);
+            self.cached_row_phys = max_u16; // row_map rotated, cache is stale
             self.bump();
         }
 

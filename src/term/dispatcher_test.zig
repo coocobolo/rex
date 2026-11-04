@@ -596,9 +596,6 @@ test "escape: ESC M moves cursor up (RI)" {
 }
 
 test "escape: ESC M at scroll_top scrolls down" {
-    // TERMV4 M2 item 9: full-screen scrollDown trips wrapAdd assert (b > max_rows) when scrollback is on.
-    if (true) return error.SkipZigTest;
-
     var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
@@ -2339,9 +2336,6 @@ test "csi: SU does not move cursor" {
 }
 
 test "csi: SD 1 scrolls content down, blank line at top" {
-    // TERMV4 M2 item 9: full-screen scrollDown trips wrapAdd assert (b > max_rows) when scrollback is on.
-    if (true) return error.SkipZigTest;
-
     var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
@@ -2359,9 +2353,6 @@ test "csi: SD 1 scrolls content down, blank line at top" {
 }
 
 test "csi: SD n=0 treated as n=1" {
-    // TERMV4 M2 item 9: full-screen scrollDown trips wrapAdd assert (b > max_rows) when scrollback is on.
-    if (true) return error.SkipZigTest;
-
     var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
@@ -2376,9 +2367,6 @@ test "csi: SD n=0 treated as n=1" {
 }
 
 test "csi: SD 2 scrolls down by 2" {
-    // TERMV4 M2 item 9: full-screen scrollDown trips wrapAdd assert (b > max_rows) when scrollback is on.
-    if (true) return error.SkipZigTest;
-
     var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
@@ -2396,9 +2384,6 @@ test "csi: SD 2 scrolls down by 2" {
 }
 
 test "csi: SD n >= region height clears entire scroll region" {
-    // TERMV4 M2 item 9: full-screen scrollDown trips wrapAdd assert (b > max_rows) when scrollback is on.
-    if (true) return error.SkipZigTest;
-
     var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
@@ -2435,9 +2420,6 @@ test "csi: SD respects scroll region" {
 }
 
 test "csi: SD blank lines use current background color" {
-    // TERMV4 M2 item 9: full-screen scrollDown trips wrapAdd assert (b > max_rows) when scrollback is on.
-    if (true) return error.SkipZigTest;
-
     var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
@@ -2456,9 +2438,6 @@ test "csi: SD blank lines use current background color" {
 }
 
 test "csi: SD does not move cursor" {
-    // TERMV4 M2 item 9: full-screen scrollDown trips wrapAdd assert (b > max_rows) when scrollback is on.
-    if (true) return error.SkipZigTest;
-
     var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
@@ -2472,9 +2451,6 @@ test "csi: SD does not move cursor" {
 }
 
 test "csi: SU then SD round-trips content" {
-    // TERMV4 M2 item 9: full-screen scrollDown trips wrapAdd assert (b > max_rows) when scrollback is on.
-    if (true) return error.SkipZigTest;
-
     var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
@@ -3530,4 +3506,26 @@ test "m2: wide char at the last column with DECAWM off stays on the row" {
     try testing.expectEqual('A', s.row(0)[last - 1].codepoint);
     try testing.expectEqual(0, s.row(0)[last].codepoint); // dropped, not split
     try testing.expectEqual(0, s.row(1)[0].codepoint);
+}
+
+test "m2: RI at the top of a full screen keeps scrollback" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    // 14 numbered lines plus the final LF on 12 rows: 0 to 2 scroll off.
+    for (0..14) |i| {
+        var buf: [8]u8 = undefined;
+        t.feed(std.fmt.bufPrint(&buf, "{d}\r\n", .{i}) catch unreachable);
+    }
+    const s = t.active();
+    const used = s.scrollback_used;
+    const scrolled = s.total_lines_scrolled;
+
+    t.feed("\x1b[H\x1bM");
+    try testing.expectEqual(used, s.scrollback_used);
+    try testing.expectEqual(scrolled, s.total_lines_scrolled);
+    try testing.expectEqual(0, s.row(0)[0].codepoint); // blank line inserted
+
+    s.scrollViewportBack(1);
+    try testing.expectEqual('2', s.displayRow(0)[0].codepoint); // newest history line intact
 }
