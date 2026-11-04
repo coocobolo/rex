@@ -13,8 +13,8 @@ out vec4 frag_color;
 // Returns < 0 inside, 0 on edge, > 0 outside.
 float roundedBox(vec2 uv, vec2 size, float r) {
   vec2 pixel = uv * size;
-  vec2 half = size * 0.5;
-  vec2 q = abs(pixel - half) - (half - r);
+  vec2 half_size = size * 0.5;
+  vec2 q = abs(pixel - half_size) - (half_size - r);
   return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r;
 }
 

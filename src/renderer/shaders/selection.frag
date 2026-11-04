@@ -21,8 +21,8 @@ const uint BORDER_STYLE_UNIFIED = 1u;
 // Per-corner rounded rectangle SDF.
 // radii = (TL, TR, BR, BL) | (top-left, top-right, bottom-right, bottom-left)
 float roundedBoxCorners(vec2 pixel, vec2 size, vec4 radii) {
-  vec2 half = size * 0.5;
-  vec2 p = pixel - half;
+  vec2 half_size = size * 0.5;
+  vec2 p = pixel - half_size;
 
   // pick radius for the quadrant we're in
   float r = p.x < 0.0
