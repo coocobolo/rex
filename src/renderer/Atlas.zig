@@ -112,10 +112,10 @@ pub const Metric = struct {
     /// Top-left X of the glyph's region in the atlas texture.
     /// Undefined (do not use) when width == 0 or height == 0.
     atlas_x: u16,
+    /// Top-left Y of the glyph's region; same caveat as `atlas_x`.
     atlas_y: u16,
 
     kind: GlyphKind, // NOTE wasted 2 bytes - 1 bit
-
 };
 
 pub const Key = packed struct(u32) {
@@ -125,7 +125,7 @@ pub const Key = packed struct(u32) {
     _pad: u7 = 0,
 };
 
-// Atlas packing cursor state
+/// Shelf-packing cursor for one atlas texture.
 pub const PackingState = struct {
     /// next free X on the current shelf
     next_x: u16,
@@ -156,8 +156,18 @@ pub const PackingState = struct {
     }
 };
 
-// Default atlas dimensions set for HiDPI
+/// Atlas texture size in pixels. It has no effect on rendering
+/// quality or window size; it only bounds how many distinct glyphs
+/// fit before packing fails with `error.AtlasFull`.
+///
+/// 1024x1024 is usually enough for gray glyphs (ASCII plus common
+/// Unicode). Color emoji are larger (typically 64x64 or 128x128 per
+/// glyph), so the color atlas fills faster. On HiDPI the cell height
+/// is 32-40px instead of 16-20px, so both atlases default to
+/// 2048x2048. Make these runtime values if a smaller atlas is ever
+/// needed.
 pub const texture_width: u16 = 2048;
+/// See `texture_width`.
 pub const texture_height: u16 = 2048;
 
 const Atlas = @This();
@@ -170,34 +180,11 @@ state: struct {
     color: PackingState = .init,
 } = .{},
 
-/// Single glyph cache,
-/// Keyed by (codepoint, face, span)
-/// Value by Glyph Metrics
+/// Single-glyph cache, keyed by (codepoint, face, span), holding
+/// each glyph's metrics and atlas position.
 glyph_cache: std.AutoHashMap(Key, Metric),
 
 sequence_cache: std.AutoHashMap(u64, Metric),
-
-/// Atlas dimensions (in pixels), the size imposes
-/// when the atlas is too small to hold all the glyph
-/// (LRU cache) or grow the atlas. The atlas sze has
-/// no effect on rendering quality or window size, it
-/// only affects how many distinct glyphs you can cache
-/// before needng to re-upload.
-///
-/// For terminal emulator, the 1024x1024 is usually sufficient
-/// for gray glyphs (ASCII + common Unicode). Color emoji are
-/// larger (typically 64x64 or 128x128 per glyph), so a separate
-/// 512x512 or 1024x1024 color atlas is reasonable. If we're on
-/// HiDPI, the cell height might be 32-40px instead of 16-20px,
-/// so glyphs are larger and the atlas fills faster, consider for
-/// 2048x2048 for HiDPI.
-///
-/// NOTE future if we need runtime value for dimension
-/// for now keep with comptime default to HiDPI
-// dimension: Dimension = .{
-//     .width = texture_width,
-//     .height = texture_height,
-// ,
 
 pub const empty: Atlas = .{
     .color_texture = undefined,
