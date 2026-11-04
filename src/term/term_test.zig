@@ -4,6 +4,8 @@ const testing = std.testing;
 const Mode = @import("term.zig").Mode;
 const Terminal = @import("term.zig").Terminal;
 const Events = @import("term.zig").Events;
+const Reply = @import("term.zig").Reply;
+const Rgb = @import("cell.zig").Color.Rgb;
 const Attr = @import("cell.zig").Attr;
 const Cell = @import("cell.zig").Cell;
 
@@ -196,6 +198,51 @@ test "reply: one that doesn't fit whole is dropped, not half-written" {
     var it = std.mem.window(u8, s, cpr.len, cpr.len);
     while (it.next()) |r| try testing.expectEqualStrings(cpr, r);
     try testing.expectEqual(1, t.events.response.dropped);
+}
+
+test "reply: an answerback longer than the queue is dropped whole" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    const long = [_]u8{'x'} ** (Response.capacity + 1);
+    t.reply(.{ .answerback = &long });
+    try testing.expect(t.events.response.isEmpty());
+    try testing.expectEqual(1, t.events.response.dropped);
+}
+
+test "reply: osc color queries follow the c1 format" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    const rgb: Rgb = .{ .r = 0x12, .g = 0xab, .b = 0xff };
+    t.reply(.{ .palette_color = .{ .index = 7, .rgb = rgb } });
+    t.reply(.{ .dynamic_color = .{ .slot = .cursor, .rgb = rgb } });
+    try testing.expectEqualStrings(
+        "\x1b]4;7;rgb:12/ab/ff\x1b\\\x1b]12;rgb:1212/abab/ffff\x1b\\",
+        t.events.response.slice(),
+    );
+}
+
+test "reply: x10 mouse encodes each byte offset by 32" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    t.reply(.{ .mouse_x10 = .{ .code = 1, .at = .{ .row = 4, .col = 9 } } });
+    try testing.expectEqualStrings("\x1b[M\x21\x2a\x25", t.events.response.slice());
+}
+
+test "reply: x10 mouse past the encodable range is dropped" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    const max = Reply.mouse_x10_max;
+    t.reply(.{ .mouse_x10 = .{ .code = 0, .at = .{ .row = 0, .col = max + 1 } } });
+    t.reply(.{ .mouse_x10 = .{ .code = 0, .at = .{ .row = max + 1, .col = 0 } } });
+    t.reply(.{ .mouse_x10 = .{ .code = 255 - 31, .at = .{ .row = 0, .col = 0 } } });
+    try testing.expect(t.events.response.isEmpty());
+
+    t.reply(.{ .mouse_x10 = .{ .code = 0, .at = .{ .row = max, .col = max } } });
+    try testing.expectEqualStrings("\x1b[M\x20\xff\xff", t.events.response.slice());
 }
 
 test "reply: a mouse report queues after pending replies" {
@@ -561,17 +608,13 @@ test "hardReset: answerback preserved" {
     try testing.expectEqualStrings("xterm", t.getAnswerback());
 }
 
-test "Terminal: xtversion 7-bit reply" {
+test "Terminal: xtversion replies with 8-bit controls under s8c1t" {
     var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.control_format = .s8c1t;
     t.xtversion();
 
-    // const out = t.events.response.slice();
-    // for (out) |b| {
-    //     std.debug.print("'{c}'\n{x:0>2}\n", .{ b, b });
-    // }
     try testing.expectEqualStrings("\x90>|test 0.0.1\x9c", t.events.response.slice());
 }
 
