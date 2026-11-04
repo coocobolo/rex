@@ -278,77 +278,46 @@ pub fn build(b: *std.Build) !void {
     test_step.dependOn(&b.addRunArtifact(mod_tests).step);
     test_step.dependOn(&b.addRunArtifact(exe_tests).step);
 
-    // Code generation
-    const gen_x11_colors = b.addExecutable(
-        .{
-            .name = "gen_x11_colors",
+    // Code generation (see CONTRIBUTING.md, "Generated code").
+    //
+    // Each generator in tools/gen/ is run as `<gen> <out.zig> <inputs>...`,
+    // logs what it reads and writes, and its output is copied into src/. Run one with
+    // `zig build gen-<name>` or all with `zig build gen`, then commit the
+    // result. UCD inputs live in tools/ucd/<version>/, picked by
+    // tools/ucd/VERSION. Adding a table is one row here.
+    const ucd = "tools/ucd/" ++ comptime std.mem.trim(u8, @embedFile("tools/ucd/VERSION"), " \n") ++ "/";
+    const generators = .{
+        // name, output, inputs
+        .{ "wcwidth-table", "src/unicode/wcwidth_table.zig", .{ ucd ++ "EastAsianWidth.txt", ucd ++ "UnicodeData.txt" } },
+        .{ "wcwidth-expected", "src/unicode/wcwidth_expected.zig", .{ ucd ++ "DerivedGeneralCategory.txt", ucd ++ "EastAsianWidth.txt", ucd ++ "emoji-data.txt" } },
+        .{ "grapheme-table", "src/term/grapheme_table.zig", .{ ucd ++ "GraphemeBreakProperty.txt", ucd ++ "emoji-data.txt" } },
+        .{ "x11-colors", "src/color/x11.zig", .{"tools/x11/rgb.txt"} },
+    };
+    const gen_all = b.step("gen", "Regenerate every generated table");
+    inline for (generators) |g| {
+        // tools/gen/<name with _>.zig
+        const exe_name = comptime blk: {
+            var n: [g[0].len]u8 = g[0][0..g[0].len].*;
+            std.mem.replaceScalar(u8, &n, '-', '_');
+            break :blk n;
+        };
+        const gen_exe = b.addExecutable(.{
+            .name = "gen-" ++ g[0],
             .root_module = b.createModule(.{
-                .root_source_file = b.path("tools/gen_x11_colors.zig"),
-                .optimize = optimize,
-                .target = target,
+                .root_source_file = b.path("tools/gen/" ++ exe_name ++ ".zig"),
+                .target = b.graph.host,
+                .optimize = .ReleaseFast,
             }),
-        },
-    );
-
-    const run_gen_x11_colors = b.addRunArtifact(gen_x11_colors);
-    run_gen_x11_colors.addFileArg(b.path("tools/rgb.txt"));
-    const x11_colors_source = run_gen_x11_colors.captureStdOut(.{});
-
-    const update_x11_colors = b.addUpdateSourceFiles();
-    update_x11_colors.addCopyFileToSource(x11_colors_source, "src/color/x11.zig");
-
-    {
-        const gen_step = b.step("gen-x11-colors", "Regenerate x11 color table from rgb.txt");
-        gen_step.dependOn(&update_x11_colors.step);
-    }
-
-    // Regenerates src/term/nfc_table.zig from tools/UnicodeData.txt.
-    // Run manually after updating UnicodeData.txt, then commit the result.
-
-    const gen_nfc = b.addExecutable(.{
-        .name = "gen_nfc_table",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("tools/gen_nfc_table.zig"),
-            .target = b.graph.host,
-            .optimize = .ReleaseFast,
-        }),
-    });
-
-    const run_gen_nfc = b.addRunArtifact(gen_nfc);
-    run_gen_nfc.addFileArg(b.path("tools/UnicodeData.txt"));
-    const nfc_source = run_gen_nfc.captureStdOut(.{});
-
-    const update_nfc = b.addUpdateSourceFiles();
-    update_nfc.addCopyFileToSource(nfc_source, "src/term/nfc_table.zig");
-
-    {
-        const gen_step = b.step("gen-nfc", "Regenerate src/term/nfc_table.zig from UnicodeData.txt");
-        gen_step.dependOn(&update_nfc.step);
-    }
-
-    // Regenerates src/unicode/wcwidth_expected.zig, the test oracle for
-    // the wcwidth table. Run after updating the UCD files in tools/, then
-    // commit the result.
-    const gen_wcwidth = b.addExecutable(.{
-        .name = "gen_wcwidth_expected",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("tools/gen_wcwidth_expected.zig"),
-            .target = b.graph.host,
-            .optimize = .ReleaseFast,
-        }),
-    });
-    const run_gen_wcwidth = b.addRunArtifact(gen_wcwidth);
-    run_gen_wcwidth.addFileArg(b.path("tools/DerivedGeneralCategory.txt"));
-    run_gen_wcwidth.addFileArg(b.path("tools/EastAsianWidth.txt"));
-    run_gen_wcwidth.addFileArg(b.path("tools/emoji-data.txt"));
-    const update_wcwidth = b.addUpdateSourceFiles();
-    update_wcwidth.addCopyFileToSource(
-        run_gen_wcwidth.captureStdOut(.{}),
-        "src/unicode/wcwidth_expected.zig",
-    );
-    {
-        const gen_step = b.step("gen-wcwidth", "Regenerate src/unicode/wcwidth_expected.zig from the UCD");
-        gen_step.dependOn(&update_wcwidth.step);
+        });
+        const run_gen = b.addRunArtifact(gen_exe);
+        run_gen.stdio = .inherit; // show the generator's read/write log
+        const out = run_gen.addOutputFileArg(std.fs.path.basename(g[1]));
+        inline for (g[2]) |input| run_gen.addFileArg(b.path(input));
+        const update = b.addUpdateSourceFiles();
+        update.addCopyFileToSource(out, g[1]);
+        const step = b.step("gen-" ++ g[0], "Regenerate " ++ g[1]);
+        step.dependOn(&update.step);
+        gen_all.dependOn(&update.step);
     }
 }
 
