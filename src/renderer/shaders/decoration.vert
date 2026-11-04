@@ -13,6 +13,8 @@ uniform vec2 u_screen_size;
 
 // Pixel inside the run, from its top left corner
 out vec2 v_pixel;
+// Left edge of the run, in pixels from the left of the window
+flat out float v_run_x;
 flat out vec4 v_underline;
 flat out vec4 v_strikethrough;
 flat out vec4 v_overline;
@@ -26,6 +28,7 @@ void main() {
   gl_Position = vec4(ndc.x, -ndc.y, 0.0, 1.0);
 
   v_pixel = a_quad * span_size;
+  v_run_x = cell_tl.x;
   v_underline = a_underline;
   v_strikethrough = a_strikethrough;
   v_overline = a_overline;

@@ -1,6 +1,7 @@
 #version 330 core
 
 in vec2 v_pixel;
+flat in float v_run_x;
 flat in vec4 v_underline;
 flat in vec4 v_strikethrough;
 flat in vec4 v_overline;
@@ -10,11 +11,19 @@ uniform vec2 u_cell_size;
 uniform float u_alpha;
 uniform int u_blink_on;
 uniform int u_blink_rapid_on;
+uniform int u_phase_grid; // 1: patterns start at the window edge, 0: at the run
 
 // Decoration lines, in whole pixels down from the top of the cell
 uniform float u_underline_y;
 uniform float u_underline_thickness;
 uniform float u_double_y; // top of the upper line of a double underline
+uniform float u_curly_y;  // centre line of the curly wave
+uniform float u_curly_amplitude;
+uniform float u_curly_wavelength;
+uniform float u_dot_length;
+uniform float u_dot_gap;
+uniform float u_dash_length;
+uniform float u_dash_gap;
 uniform float u_strikethrough_y;
 uniform float u_strikethrough_thickness;
 uniform float u_overline_y;
@@ -44,6 +53,22 @@ float band(float y, float top, float thickness) {
   return (y >= top && y < top + thickness) ? 1.0 : 0.0;
 }
 
+// 1.0 on the dots or dashes of a pattern, centred in each period
+float pattern(float x, float on, float off) {
+  return mod(x - off * 0.5, on + off) < on ? 1.0 : 0.0;
+}
+
+// Antialiased coverage of a sine wave `t` pixels thick, from the
+// vertical distance to the curve divided by its slope.
+float curly(vec2 p, float t) {
+  float k = 6.2831853 / u_curly_wavelength;
+  float phase = k * p.x;
+  float wave = u_curly_y + u_curly_amplitude * sin(phase);
+  float slope = u_curly_amplitude * k * cos(phase);
+  float dist = abs(p.y - wave) / sqrt(1.0 + slope * slope);
+  return clamp(t * 0.5 + 0.5 - dist, 0.0, 1.0);
+}
+
 float underlineCoverage(uint style, vec2 p) {
   float t = u_underline_thickness;
   float line = band(p.y, u_underline_y, t);
@@ -52,17 +77,12 @@ float underlineCoverage(uint style, vec2 p) {
     return line;
   case UL_DOUBLE:
     return max(line, band(p.y, u_double_y, t));
-  case UL_CURLY: {
-    float amplitude = t + 0.5;
-    float center = u_underline_y - amplitude;
-    float wave = sin((p.x / u_cell_size.x) * 6.2831853) * amplitude;
-    float dist = abs(p.y - center - wave);
-    return 1.0 - smoothstep(t * 0.5, t * 0.75, dist);
-  }
+  case UL_CURLY:
+    return curly(p, t);
   case UL_DOTTED:
-    return mod(p.x, t * 4.0) < t * 2.0 ? line : 0.0;
+    return line * pattern(p.x, u_dot_length, u_dot_gap);
   case UL_DASHED:
-    return mod(p.x, t * 8.0) < t * 4.0 ? line : 0.0;
+    return line * pattern(p.x, u_dash_length, u_dash_gap);
   default:
     return 0.0;
   }
@@ -80,8 +100,10 @@ void main() {
   if (blink_off)
     discard;
 
-  // Pixel centre inside the cell row, x along the run
+  // Pixel centre inside the cell row, x along the run or the window
   vec2 p = v_pixel;
+  if (u_phase_grid != 0)
+    p.x += v_run_x;
   vec4 color = vec4(0.0);
 
   uint ul_style = (v_flags & UNDERLINE_MASK) >> UNDERLINE_SHIFT;
