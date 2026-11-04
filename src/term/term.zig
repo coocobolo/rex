@@ -1009,10 +1009,13 @@ pub fn Terminal(comptime option: Option) type {
         ///
         /// Called by the Tab when the window is resized (SIGWINCH).
         /// Both screens are resized so the alternate screen has the correct
-        /// dimensions when it becomes active.
+        /// dimensions when it becomes active. A zero-sized grid has nowhere
+        /// for the cursor to be, so each side is at least 1.
         pub fn resize(self: *Self, rows: u16, cols: u16) void {
-            self.primary.setActive(rows, cols);
-            self.alternate.setActive(rows, cols);
+            const r = @max(rows, 1);
+            const c = @max(cols, 1);
+            self.primary.setActive(r, c);
+            self.alternate.setActive(r, c);
         }
 
         /// Set the window title (OSC 0 / OSC 2).

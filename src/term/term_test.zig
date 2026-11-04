@@ -732,3 +732,21 @@ test "setIconName: a name of max_title_len or more is kept, truncated" {
     t.feed("\x1b]1;" ++ "n" ** (max_title_len + 10) ++ "\x07");
     try testing.expectEqual(max_title_len, t.getIconName().len);
 }
+
+test "resize: zero rows or columns keeps a one-cell grid" {
+    // Found by the terminal fuzz target: with no rows, LF computed
+    // `active_rows - 1` and underflowed.
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    t.resize(0, 0);
+    try testing.expectEqual(1, t.active().active_rows);
+    try testing.expectEqual(1, t.active().active_cols);
+    t.feed("a\nb\r\n\x1b[5;5Hc\x1bM\x1b[L\x1b[P");
+    try testing.expectEqual(0, t.active().cursor.row);
+    try testing.expectEqual(0, t.active().cursor.col);
+
+    t.resize(4, 0);
+    try testing.expectEqual(4, t.alternate.active_rows);
+    try testing.expectEqual(1, t.alternate.active_cols);
+}
