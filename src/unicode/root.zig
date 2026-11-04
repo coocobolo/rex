@@ -3,8 +3,7 @@
 
 const std = @import("std");
 
-pub const classifier = @import("char_class.zig");
-pub const Classifier = @import("char_class.zig").Classifier;
+pub const Classifier = @import("Classifier.zig");
 pub const utf8 = @import("utf8.zig");
 pub const wcwidth = @import("wcwidth.zig");
 

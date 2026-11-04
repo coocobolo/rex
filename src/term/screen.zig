@@ -22,8 +22,7 @@ const Palette = @import("Palette.zig").Palette;
 const Option = @import("term.zig").Option;
 
 const wc = @import("../unicode/wcwidth.zig");
-const char_class = @import("../unicode/char_class.zig");
-const Classifier = char_class.Classifier;
+const Classifier = @import("../unicode/Classifier.zig");
 
 // extern fn memset(dest: ?*anyopaque, c: c_int, n: usize) ?*anyopaque;
 // extern fn memmove(dest: ?*anyopaque, src: ?*const anyopaque, n: usize) ?*anyopaque;
@@ -1189,7 +1188,7 @@ pub fn Screen(comptime option: Option) type {
             classifier: *const Classifier,
             anchor: i64,
             col: u16,
-            join_option: char_class.JoinOption,
+            join_option: Classifier.JoinOption,
         ) struct { u16, u16 } {
             const row_cells = self.rowCellsAtAnchor(anchor);
 

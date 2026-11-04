@@ -1,10 +1,26 @@
-//! Character classes for word selection (`Classifier`).
+//! Classifies decoded Unicode codepoints for terminal-style word
+//! selection.
+//!
+//! The classifier intentionally uses a simple terminal-style policy
+//! rather than Unicode word-boundary rules:
+//! 1. ASCII alphanumerics and '_' are words.
+//! 2. Configured ASCII characters are words.
+//! 3. Space and tab are blank boundaries.
+//! 4. Newline and carriage return are line boundaries.
+//! 5. Other ASCII controls follow the `Option.control` policy.
+//! 6. Other ASCII characters are punctuation.
+//! 7. Non-ASCII codepoints follow the `Option.non_ascii` policy.
+//!
+//! `Option.extra_word_chars` only supports ASCII characters for now.
+//!
+//! The input must already be decoded from UTF-8: each `u21` must be a
+//! valid Unicode scalar value.
 
 const std = @import("std");
 
 /// The broad category used for terminal word selection.
 pub const Kind = enum {
-    /// A space or tab. Thse act as selection boundaries.
+    /// A space or tab. These act as selection boundaries.
     blank,
 
     /// A character that belongs to a word.
@@ -98,24 +114,7 @@ pub const Option = struct {
     control: ControlPolicy = .boundary,
 };
 
-/// Classifies decoded Unicode codepoints for terminal-style word selection.
-///
-/// The classifier intentionally uses a simple terminal-style policy rather tahn Unicode
-/// word-boundary rules:
-/// 1. ASCII alphanumerics and ('_') are words.
-/// 2. Configured ASCII characters are words.
-/// 3. Space and tab are blank boundaries.
-/// 4. Newline and carriage return are line boundaries.
-/// 5. Other ASCII controls follow Option.control policy.
-/// 6. Other ASCII characters are punctuation.
-/// 7. non-ASCII codepoints follow Option.non_ascii policy.
-///
-///
-/// NOTE! `extra_word_chars` only support ASCII character only (YET).
-///
-/// The input text must already have been decoded from UTF-8 into Unicode codepoints,
-/// each `u21` must represent a valid Unicode scalar value.
-pub const Classifier = @This();
+const Classifier = @This();
 
 /// Classification table for all ASCII code points.
 ascii_kind: [128]Kind,
@@ -184,7 +183,8 @@ pub inline fn classify(self: *const Classifier, cp: u21) CharClass {
         };
     } else {
         @branchHint(.unlikely);
-        // Deliberately treat every non-ASCII code point as word-like.
+        // Non-ASCII is classified by policy alone, not by Unicode
+        // properties.
         return .{
             .kind = switch (self.option.non_ascii) {
                 .word => .word,
@@ -197,7 +197,7 @@ pub inline fn classify(self: *const Classifier, cp: u21) CharClass {
 
 const testing = std.testing;
 
-test "Classifier: default ASCII clasification" {
+test "Classifier: default ASCII classification" {
     const classifier = try Classifier.init(.{});
 
     try testing.expectEqual(Kind.word, classifier.classify('a').kind);
