@@ -573,8 +573,8 @@ comptime {
 /// Cursor rendering styles.
 ///
 /// IMPORTANT: The numeric values are part of the implemenation.
-/// * even discriminants reprsents blinking styles.
-/// * odd discriminants reprsents steady styles.
+/// * even discriminants represents blinking styles.
+/// * odd discriminants represents steady styles.
 ///
 /// DO NOT reorder or renumber these values unless all parity-based
 /// code (e.g. `CursorStyle.blink()`, shaders instance flags) is updated.
@@ -713,7 +713,7 @@ pub const Kind = enum(u3) {
 
     pub fn columnSpan(self: Kind) u2 {
         return switch (self) {
-            .empty => 1, // ocupies 1 column (blank)
+            .empty => 1, // occupies 1 column (blank)
             .narrow => 1,
             .grapheme => 1,
             .wide_left, .grapheme_wide => 2,
@@ -746,7 +746,7 @@ pub const ExtAttr = struct {
 
 /// A single terminal grid cell.
 pub const Cell = packed struct(u64) {
-    /// Unicode scalar value (U+0000–U+10FFFF) or grapheme sequence ID.
+    /// Unicode scalar value (U+0000...U+10FFFF) or grapheme sequence ID.
     /// default: 0 (NUL) means the cell is empty.
     codepoint: u32 = 0,
 
@@ -755,8 +755,8 @@ pub const Cell = packed struct(u64) {
     flags: AttrFlags = .default,
 
     // HACK: The bottleneck is not palette size, but it's
-    // eviction policy. With index 0 = default and indicies 1-15 ANSI colors,
-    // 8-bit gives 240 dynamic slots. A typical terminal session (vim,tmux,syntax,higlighting)
+    // eviction policy. With index 0 = default and indices 1-15 ANSI colors,
+    // 8-bit gives 240 dynamic slots. A typical terminal session (vim,tmux,syntax,highlighting)
     // uses 20-50 distinct colors simultaneously. I think 240 is still overkill.
     /// store palette index (0 = default)
     foreground: u8 = 0,
@@ -764,7 +764,12 @@ pub const Cell = packed struct(u64) {
     /// store palette index (0 = default)
     background: u8 = 0,
 
-    _: u1 = 0,
+    /// Set on the last column of a row when printing continued onto the
+    /// next row (a soft wrap, as xterm's LINEWRAPPED line flag). Reverse
+    /// wraparound (DEC private mode 45) only crosses such rows. Erasing
+    /// or overwriting the cell clears it, as any blank or new cell has it
+    /// false.
+    wrapped: bool = false,
 
     pub const empty: Cell = .{};
 };

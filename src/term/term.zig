@@ -31,6 +31,20 @@ const log = std.log.scoped(.term);
 
 pub const ScreenBuffer = enum { primary, alternate };
 
+/// Mode state as DECRPM reports it (VT510, DECRQM/DECRPM): the reply's
+/// Ps value for one mode.
+pub const DecModeReport = enum(u3) {
+    not_recognized = 0,
+    set = 1,
+    reset = 2,
+    permanently_set = 3,
+    permanently_reset = 4,
+
+    pub fn of(is_set: bool) DecModeReport {
+        return if (is_set) .set else .reset;
+    }
+};
+
 /// Terminal modes (ANSI + DEC private).
 ///
 /// Stored here rather than on Screen because modes are terminal-level state:
@@ -832,6 +846,31 @@ pub fn Terminal(comptime option: Option) type {
             }
         }
 
+        /// Returns the state of DEC private mode `mode` as DECRPM reports
+        /// it. Modes that `setDecMode` ignores, or whose state is not
+        /// stored as a plain flag yet (mouse tracking, 12), report
+        /// `.not_recognized`.
+        pub fn decModeReport(self: *Self, mode: u16) DecModeReport {
+            const screen_mode = self.active().mode;
+            return switch (mode) {
+                1 => .of(self.mode.cursor_keys), // DECCKM
+                3 => .of(self.mode.column_132), // DECCOLM
+                5 => .of(screen_mode.reverse_video), // DECSCNM
+                6 => .of(self.active().cursor.origin), // DECOM
+                7 => .of(screen_mode.auto_wrap), // DECAWM
+                8 => .of(self.mode.auto_repeat), // DECARM
+                25 => .of(screen_mode.cursor_visibility), // DECTCEM
+                40 => .of(self.mode.allow_column_132),
+                45 => .of(screen_mode.reverse_wrap),
+                47, 1047, 1049 => .of(self.active_buffer == .alternate),
+                1004 => .of(self.mode.focus_events),
+                1006 => .of(self.mode.mouse_sgr),
+                2004 => .of(self.mode.bracketed_paste),
+                2026 => .of(self.mode.synchronized_output),
+                else => .not_recognized,
+            };
+        }
+
         /// DEC private mode set/reset (DECSET = CSI ? h, DECRST = CSI ? l).
         pub fn setDecMode(self: *Self, mode: u16, set: bool) void {
             switch (mode) {
@@ -864,6 +903,7 @@ pub fn Terminal(comptime option: Option) type {
                 },
                 6 => self.setDecom(set), // DECOM — origin mode
                 7 => self.active().mode.auto_wrap = set, // DECAWM
+                45 => self.active().mode.reverse_wrap = set, // xterm reverse wraparound
                 8 => self.mode.auto_repeat = set, // DECARM
                 9 => self.setMouseMode(.x10, set),
                 12 => {
