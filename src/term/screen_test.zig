@@ -6436,3 +6436,32 @@ test "setLineAttr: default is .normal before any call" {
         try testing.expectEqual(LineAttr.normal, s.line_attrs[s.physRow(r)]);
     }
 }
+
+test "internGrapheme: equal sequence on hash hit reuses the id" {
+    const alloc = testing.allocator;
+    var s = try altScreen(alloc);
+    defer s.destroy(alloc);
+
+    try s.putGrapheme(&.{ 'a', 0x0301 }, .narrow);
+    try s.putGrapheme(&.{ 'a', 0x0301 }, .narrow);
+    try testing.expectEqual(s.cellAt(0, 0).codepoint, s.cellAt(0, 1).codepoint);
+    try testing.expectEqual(@as(u32, 1), s.grapheme_table.count());
+}
+
+test "internGrapheme: hash collision does not alias another cluster" {
+    const alloc = testing.allocator;
+    var s = try altScreen(alloc);
+    defer s.destroy(alloc);
+
+    try s.putGrapheme(&.{ 'a', 0x0301 }, .narrow);
+    const id_a = s.cellAt(0, 0).codepoint;
+
+    // Force a collision: make b's hash resolve to a's id.
+    const b = [_]u21{ 'b', 0x0301 };
+    try s.grapheme_reverse.put(@TypeOf(s).graphemeKey(&b), id_a);
+
+    try s.putGrapheme(&b, .narrow);
+    try testing.expect(s.cellAt(0, 1).codepoint != id_a);
+    try expectClusterAt(&s, 0, 0, &.{ 'a', 0x0301 });
+    try expectClusterAt(&s, 0, 1, &b);
+}

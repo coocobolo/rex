@@ -648,16 +648,37 @@ pub fn Screen(comptime option: Option) type {
             });
         }
 
+        /// Hash key of a code point sequence in `grapheme_reverse`.
+        pub fn graphemeKey(cps: []const u21) u64 {
+            return std.hash.Wyhash.hash(0, std.mem.sliceAsBytes(cps));
+        }
+
+        /// Returns the synthetic ID for `cps`, reusing an existing one when
+        /// the stored sequence is equal. A hash hit is only a candidate: on
+        /// a collision the newcomer gets an ID of its own with no reverse
+        /// entry, so it is not deduplicated but never aliases the other.
         fn internGrapheme(self: *Self, cps: []const u21) !u32 {
-            const key = std.hash.Wyhash.hash(0, std.mem.sliceAsBytes(cps));
-            if (self.grapheme_reverse.get(key)) |existing_id| return existing_id;
+            const gop = try self.grapheme_reverse.getOrPut(graphemeKey(cps));
+            if (gop.found_existing) {
+                const stored = self.grapheme_table.get(gop.value_ptr.*) orelse {
+                    // Stale reverse entry: take it over.
+                    gop.value_ptr.* = try self.addGrapheme(cps);
+                    return gop.value_ptr.*;
+                };
+                if (std.mem.eql(u21, stored, cps)) return gop.value_ptr.*;
+                return self.addGrapheme(cps); // collision
+            }
+            errdefer self.grapheme_reverse.removeByPtr(gop.key_ptr);
+            gop.value_ptr.* = try self.addGrapheme(cps);
+            return gop.value_ptr.*;
+        }
 
-            const id = self.next_grapheme_id;
-            self.next_grapheme_id += 1;
+        /// Stores a copy of `cps` under a fresh ID, without a reverse entry.
+        fn addGrapheme(self: *Self, cps: []const u21) !u32 {
             const owned = try self.grapheme_arena.allocator().dupe(u21, cps);
-
+            const id = self.next_grapheme_id;
             try self.grapheme_table.put(id, owned);
-            try self.grapheme_reverse.put(key, id);
+            self.next_grapheme_id += 1;
             return id;
         }
 
