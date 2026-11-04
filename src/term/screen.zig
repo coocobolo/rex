@@ -374,8 +374,12 @@ pub fn Screen(comptime option: Option) type {
 
         grapheme_reverse: std.AutoHashMap(u64, u32), // wyhash(cps) to id
 
-        /// Next synthetic ID to assign.
+        /// Next synthetic ID to assign. IDs are never reused, so a cell's ID
+        /// stays valid across compaction.
         next_grapheme_id: u32,
+
+        /// `grapheme_table` size that triggers the next `compactGraphemes`.
+        grapheme_compact_at: u32 = grapheme_compact_min,
 
         ext_attrs: std.AutoHashMapUnmanaged(ExtAttr.Coordinate, ExtAttr) = .{},
         url_table: std.ArrayListUnmanaged([]const u8) = .empty, // interned URL strings
@@ -648,6 +652,9 @@ pub fn Screen(comptime option: Option) type {
             });
         }
 
+        /// Smallest intern table size at which compaction runs.
+        pub const grapheme_compact_min: u32 = 4096;
+
         /// Hash key of a code point sequence in `grapheme_reverse`.
         pub fn graphemeKey(cps: []const u21) u64 {
             return std.hash.Wyhash.hash(0, std.mem.sliceAsBytes(cps));
@@ -657,7 +664,11 @@ pub fn Screen(comptime option: Option) type {
         /// the stored sequence is equal. A hash hit is only a candidate: on
         /// a collision the newcomer gets an ID of its own with no reverse
         /// entry, so it is not deduplicated but never aliases the other.
+        ///
+        /// Table growth is bounded by `compactGraphemes`, which runs here
+        /// before a new entry once the table reaches `grapheme_compact_at`.
         fn internGrapheme(self: *Self, cps: []const u21) !u32 {
+            if (self.grapheme_table.count() >= self.grapheme_compact_at) self.compactGraphemes();
             const gop = try self.grapheme_reverse.getOrPut(graphemeKey(cps));
             if (gop.found_existing) {
                 const stored = self.grapheme_table.get(gop.value_ptr.*) orelse {
@@ -671,6 +682,48 @@ pub fn Screen(comptime option: Option) type {
             errdefer self.grapheme_reverse.removeByPtr(gop.key_ptr);
             gop.value_ptr.* = try self.addGrapheme(cps);
             return gop.value_ptr.*;
+        }
+
+        /// Bounds the intern table: rebuilds it from the clusters still
+        /// referenced by a cell anywhere in the ring (screen and scrollback),
+        /// keeping their IDs, and frees everything else. The next run is
+        /// set at twice the live count (at least `grapheme_compact_min`), so
+        /// the table stays within 2x the live clusters and the O(cells) scan
+        /// is amortized over at least as many new interns. On allocation
+        /// failure the old table is kept and the next try is postponed.
+        fn compactGraphemes(self: *Self) void {
+            self.rebuildGraphemes() catch {
+                self.grapheme_compact_at = self.grapheme_table.count() *| 2;
+                return;
+            };
+            self.grapheme_compact_at = @max(grapheme_compact_min, self.grapheme_table.count() *| 2);
+        }
+
+        fn rebuildGraphemes(self: *Self) !void {
+            const gpa = self.grapheme_table.allocator;
+            var arena = std.heap.ArenaAllocator.init(self.grapheme_arena.child_allocator);
+            errdefer arena.deinit();
+            var table = std.AutoHashMap(u32, []const u21).init(gpa);
+            errdefer table.deinit();
+            var reverse = std.AutoHashMap(u64, u32).init(gpa);
+            errdefer reverse.deinit();
+
+            for (self.cells) |cell| {
+                if (!cell.kind.isGrapheme()) continue;
+                const cps = self.grapheme_table.get(cell.codepoint) orelse continue;
+                const gop = try table.getOrPut(cell.codepoint);
+                if (gop.found_existing) continue;
+                gop.value_ptr.* = try arena.allocator().dupe(u21, cps);
+                const rev = try reverse.getOrPut(graphemeKey(cps));
+                if (!rev.found_existing) rev.value_ptr.* = cell.codepoint;
+            }
+
+            self.grapheme_table.deinit();
+            self.grapheme_reverse.deinit();
+            self.grapheme_arena.deinit();
+            self.grapheme_table = table;
+            self.grapheme_reverse = reverse;
+            self.grapheme_arena = arena;
         }
 
         /// Stores a copy of `cps` under a fresh ID, without a reverse entry.
@@ -1894,11 +1947,8 @@ pub fn Screen(comptime option: Option) type {
                         //                         @memset(self.rowMutRaw(r)[0..self.active_cols], blank);
                         //                         self.line_attrs[self.physRow(r)] = .normal;
                     }
-
-                    _ = self.grapheme_arena.reset(.retain_capacity);
-                    self.grapheme_table.clearRetainingCapacity();
-                    self.grapheme_reverse.clearRetainingCapacity();
-                    self.next_grapheme_id = 0x110000;
+                    // The intern table is not reset here: scrollback cells
+                    // still reference it. `compactGraphemes` reclaims it.
                 },
                 3 => {
                     // Erase scrollback history without touching the active area.
@@ -2785,6 +2835,7 @@ pub fn Screen(comptime option: Option) type {
             self.grapheme_table.clearRetainingCapacity();
             self.grapheme_reverse.clearRetainingCapacity();
             self.next_grapheme_id = 0x110000;
+            self.grapheme_compact_at = grapheme_compact_min;
 
             if (comptime is_scrollback_used) {
                 self.scrollback_used = 0;

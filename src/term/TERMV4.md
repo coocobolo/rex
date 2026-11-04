@@ -158,17 +158,20 @@ Scope:
   - DECAWM off: it must not wrap. Behaviour is **verify**; xterm
     overwrites in place.
 - Attach combining marks to the previous cell, including after ASCII
-  and fast-path bases. This needs grapheme storage on the previous
-  cell, not only an NFC compose.
-- Decide grapheme intern lifetime. Today the table is reset only by
-  ED 2. Reset on RIS too and cap its size.
+  and fast-path bases. Done: `Screen.attachCombining` stores them as a
+  cluster on the previous cell; the NFC compose path is gone.
+- Grapheme intern lifetime. Done: RIS resets the table; ED 2 no longer
+  does, since scrollback still references it. `compactGraphemes`
+  rebuilds it from live cells once it reaches 2x the live count (min
+  4096), keeping IDs. A hash hit compares code points before reuse.
 - Free `ext_attrs` and `url_table` in `destroy`.
 
 Files: src/term/screen.zig, cell.zig, term.zig (feedCodepoint and
 flushGrapheme), grapheme.zig, nfc_table.zig.
 
 Done when, as golden tests:
-- `e` + U+0301 → one cell holding é, in both split and unsplit feeds.
+- `e` + U+0301 → one cell holding the cluster e, U+0301, in both split
+  and unsplit feeds.
 - `CSI ?7l` + 30 × `A` on 24 columns leaves the cursor on row 0, with
   the last cell `A`.
 - A wide char at the last column with DECAWM off stays on the row.

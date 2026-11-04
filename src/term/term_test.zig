@@ -617,3 +617,40 @@ test "combining: mark on wide CJK attaches to the left half" {
     try testing.expectEqual(.wide_right, t.active.cellAt(0, 1).kind);
     try testing.expectEqual(@as(u16, 2), t.active.cursor.col);
 }
+
+fn expectAllClustersResolve(t: *Term) !void {
+    for (t.active.cells) |cell| {
+        if (cell.kind.isGrapheme()) try testing.expect(t.active.getGrapheme(cell.codepoint) != null);
+    }
+}
+
+test "grapheme intern: table stays bounded while scrolling" {
+    const t = try Term.create(alloc);
+    defer t.destroy(alloc);
+    const S = @TypeOf(t.active.*);
+
+    const n = 3 * S.grapheme_compact_min;
+    for (0..n) |i| {
+        const base: u21 = @intCast(0x20000 + i);
+        try t.active.putGrapheme(&.{ base, 0x0301 }, .narrow);
+    }
+    try testing.expect(t.active.grapheme_table.count() <= S.grapheme_compact_min);
+    try expectAllClustersResolve(t);
+
+    // The last written cell still holds the last cluster.
+    const col: usize = if (t.active.cursor.wrap_pending) t.active.cursor.col else t.active.cursor.col - 1;
+    const cell = t.active.cellAt(t.active.cursor.row, col);
+    const want = [_]u21{ @intCast(0x20000 + n - 1), 0x0301 };
+    try testing.expectEqualSlices(u21, &want, t.active.getGrapheme(cell.codepoint).?);
+}
+
+test "grapheme intern: ED 2 keeps clusters referenced by scrollback" {
+    const t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    t.feed("e\xCC\x81");
+    for (0..option.max_rows) |_| t.feed("\n");
+    t.feed("\x1b[2J");
+    try testing.expect(t.active.grapheme_table.count() > 0);
+    try expectAllClustersResolve(t);
+}
