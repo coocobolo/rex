@@ -78,3 +78,10 @@ test "rasterizer: color glyph is scaled to its span" {
     try testing.expect(double.width <= r.cell_width * 2);
     try testing.expect(double.width >= single.width);
 }
+
+test "rowPitch: keeps a top-down pitch and rejects a bottom-up one" {
+    try testing.expectEqual(24, try Rasterizer.rowPitch(24));
+    try testing.expectEqual(0, try Rasterizer.rowPitch(0));
+    try testing.expectError(error.BottomUpBitmap, Rasterizer.rowPitch(-24));
+    try testing.expectError(error.GlyphTooLarge, Rasterizer.rowPitch(70000));
+}

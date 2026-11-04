@@ -99,8 +99,8 @@ pub const Glyph = struct {
     /// Horizontal distance to advance the pen after drawing this glyph.
     advance: u16,
 
-    /// Row stride in bytes (may differ from width for padded bitmaps).
-    /// Always positive (FT_LOAD_RENDER produces top-down bitmaps).
+    /// Row stride in bytes, at least width times bytes per pixel. Rows
+    /// run top-down: `rowPitch` rejects bottom-up bitmaps.
     pitch: u16,
 
     /// Bitmap format produced by the rasterizer.
@@ -448,7 +448,7 @@ pub fn rasterize(self: *Rasterizer, gpa: Allocator, codepoint: u21, kind: FaceKi
 
     const bmp_width = std.math.cast(u16, bmp.width) orelse return error.GlyphTooLarge;
     const bmp_rows = std.math.cast(u16, bmp.rows) orelse return error.GlyphTooLarge;
-    const pitch = std.math.cast(u16, @abs(bmp.pitch)) orelse return error.GlyphTooLarge;
+    const pitch = try rowPitch(bmp.pitch);
 
     const bearing_x = std.math.cast(i16, glyph.*.bitmap_left) orelse 0;
     const bearing_y = std.math.cast(i16, glyph.*.bitmap_top) orelse 0;
@@ -509,6 +509,15 @@ pub fn rasterize(self: *Rasterizer, gpa: Allocator, codepoint: u21, kind: FaceKi
         .pitch = pitch,
         .width = bmp_width,
     };
+}
+
+/// The row stride of a FreeType bitmap whose `FT_Bitmap.pitch` is
+/// `ft_pitch`. A negative pitch means the rows run bottom-up, which
+/// FT_LOAD_RENDER never produces and the atlas cannot upload, so it is
+/// rejected rather than drawn upside down.
+pub fn rowPitch(ft_pitch: c_int) error{ BottomUpBitmap, GlyphTooLarge }!u16 {
+    if (ft_pitch < 0) return error.BottomUpBitmap;
+    return std.math.cast(u16, ft_pitch) orelse error.GlyphTooLarge;
 }
 
 /// Returns the best FT_Face for the given codepoint, falling back from

@@ -171,6 +171,26 @@ test "upload: gray and color packing states are independent" {
     try testing.expectEqual(@as(u16, 32), atlas.state.color.next_x);
 }
 
+test "upload: a pitch shorter than a row returns InvalidPitch" {
+    try testGlContext();
+
+    var atlas = try Atlas.create(alloc);
+    defer atlas.destroy();
+
+    var buf: [8 * 16 * 4]u8 = undefined;
+    var gray = fakeGrayGlyph(&buf, 8, 16);
+    gray.pitch = 7;
+    try testing.expectError(error.InvalidPitch, atlas.upload(gray));
+
+    var color = fakeColorGlyph(&buf, 8, 16);
+    color.pitch = 8 * 4 - 2; // not whole pixels
+    try testing.expectError(error.InvalidPitch, atlas.upload(color));
+
+    // Nothing was packed.
+    try testing.expectEqual(0, atlas.state.gray.next_x);
+    try testing.expectEqual(0, atlas.state.color.next_x);
+}
+
 test "upload: glyph wider than atlas returns GlyphTooWide" {
     try testGlContext();
 
