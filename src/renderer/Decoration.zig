@@ -80,6 +80,24 @@ pub const Line = struct {
     }
 };
 
+/// On and off lengths of a dotted or dashed underline, in pixels.
+pub const Pattern = struct {
+    /// Length of each dot or dash. null derives it from the cell width.
+    length: ?f32 = null,
+    /// Space after each dot or dash. null derives it from the cell width,
+    /// or uses `length` when only that is set.
+    gap: ?f32 = null,
+};
+
+/// Where dotted, dashed and curly patterns start.
+pub const Phase = enum {
+    /// From the left edge of the window, so a pattern lines up across
+    /// rows and does not move when the run around it changes.
+    grid,
+    /// From the first cell of each run of decorated cells.
+    run,
+};
+
 /// Whether decorations are drawn over or under the glyphs.
 pub const Order = enum {
     /// Lines cross the glyphs, descenders do not hide the underline.
@@ -96,6 +114,26 @@ pub const Option = struct {
     /// Gap between the two lines of a double underline, in pixels.
     /// null uses the underline thickness.
     double_gap: ?f32 = null,
+
+    /// Curly underline, a sine wave centred on the underline.
+    curly: struct {
+        /// Height of a crest above the centre, in pixels. null uses one and
+        /// a half underline thicknesses. The wave is kept inside the cell.
+        amplitude: ?f32 = null,
+        /// Length of one full wave, in pixels. null uses the cell width,
+        /// one wave per cell.
+        wavelength: ?f32 = null,
+    } = .{},
+
+    /// null fields fit whole dots into each cell, each as long as the
+    /// space after it.
+    dotted: Pattern = .{},
+
+    /// null fields draw one dash per cell, half the cell long and
+    /// centred in it.
+    dashed: Pattern = .{},
+
+    phase: Phase = .grid,
 
     strikethrough: Line = .{},
 
@@ -131,6 +169,14 @@ pub const Metrics = struct {
     /// Top of the upper line of a double underline. The lower line is
     /// the underline itself.
     double_y: f32,
+    /// Centre line and size of the curly underline wave.
+    curly_y: f32,
+    curly_amplitude: f32,
+    curly_wavelength: f32,
+    dot_length: f32,
+    dot_gap: f32,
+    dash_length: f32,
+    dash_gap: f32,
     strikethrough_y: f32,
     strikethrough_thickness: f32,
     overline_y: f32,
@@ -152,10 +198,35 @@ pub const Metrics = struct {
             .thickness = underline.thickness,
         }, height);
         const gap = @round(@max(0, option.double_gap orelse underline.thickness));
+        const cell_width: f32 = @floatFromInt(@max(font.cell_width, 1));
+        const cell_height: f32 = @floatFromInt(@max(height, 1));
+        const t = underline.thickness;
+
+        // The wave and its thickness must fit in the cell: shrink the
+        // amplitude to half the free height, then move the centre so the
+        // troughs stay above the cell bottom.
+        const reach_max = @max(0, (cell_height - t) * 0.5);
+        const amplitude = std.math.clamp(option.curly.amplitude orelse t * 1.5, 0, reach_max);
+        const reach = amplitude + t * 0.5;
+        const curly_y = std.math.clamp(underline.y + t * 0.5, reach, cell_height - reach);
+
+        const dots_per_cell = @max(1.0, @round(cell_width / (2.0 * t)));
+        const dot_half = cell_width / dots_per_cell * 0.5;
+        const dot = resolvePattern(option.dotted, dot_half, dot_half);
+        const dash_length = @round(cell_width * 0.5);
+        const dash = resolvePattern(option.dashed, dash_length, cell_width - dash_length);
+
         return .{
             .underline_y = underline.y,
             .underline_thickness = underline.thickness,
             .double_y = @max(0, underline.y - gap - underline.thickness),
+            .curly_y = curly_y,
+            .curly_amplitude = amplitude,
+            .curly_wavelength = @max(2.0, option.curly.wavelength orelse cell_width),
+            .dot_length = dot.length,
+            .dot_gap = dot.gap,
+            .dash_length = dash.length,
+            .dash_gap = dash.gap,
             .strikethrough_y = strikethrough.y,
             .strikethrough_thickness = strikethrough.thickness,
             .overline_y = overline.y,
@@ -163,12 +234,28 @@ pub const Metrics = struct {
         };
     }
 
-    /// Sets the `u_underline_*`, `u_double_y`, `u_strikethrough_*` and
-    /// `u_overline_*` uniforms on the bound `shader`.
+    const Resolved = struct { length: f32, gap: f32 };
+
+    fn resolvePattern(pattern: Pattern, length: f32, gap: f32) Resolved {
+        const on = @max(1.0, pattern.length orelse length);
+        const off = @max(0.0, pattern.gap orelse (if (pattern.length != null) on else gap));
+        return .{ .length = on, .gap = off };
+    }
+
+    /// Sets the `u_underline_*`, `u_double_y`, `u_curly_*`, `u_dot_*`,
+    /// `u_dash_*`, `u_strikethrough_*` and `u_overline_*` uniforms on the
+    /// bound `shader`.
     pub fn apply(self: Metrics, shader: Shader) void {
         shader.set1f("u_underline_y", self.underline_y);
         shader.set1f("u_underline_thickness", self.underline_thickness);
         shader.set1f("u_double_y", self.double_y);
+        shader.set1f("u_curly_y", self.curly_y);
+        shader.set1f("u_curly_amplitude", self.curly_amplitude);
+        shader.set1f("u_curly_wavelength", self.curly_wavelength);
+        shader.set1f("u_dot_length", self.dot_length);
+        shader.set1f("u_dot_gap", self.dot_gap);
+        shader.set1f("u_dash_length", self.dash_length);
+        shader.set1f("u_dash_gap", self.dash_gap);
         shader.set1f("u_strikethrough_y", self.strikethrough_y);
         shader.set1f("u_strikethrough_thickness", self.strikethrough_thickness);
         shader.set1f("u_overline_y", self.overline_y);
@@ -222,6 +309,7 @@ pub fn draw(
     self.shader.set1f("u_alpha", std.math.clamp(self.option.alpha, 0.0, 1.0));
     self.shader.set1i("u_blink_on", @intFromBool(blink_on));
     self.shader.set1i("u_blink_rapid_on", @intFromBool(blink_rapid_on));
+    self.shader.set1i("u_phase_grid", @intFromBool(self.option.phase == .grid));
     metrics.apply(self.shader);
     self.buffer.draw(instance_length);
 }

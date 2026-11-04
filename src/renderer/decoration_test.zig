@@ -53,3 +53,39 @@ test "Metrics.resolve: lines pushed out of the cell are clamped back" {
     try testing.expectEqual(0, m.double_y);
     try testing.expectEqual(0, m.overline_y);
 }
+
+test "Metrics.resolve: default patterns fit whole periods into a cell" {
+    const m: Decoration.Metrics = .resolve(font, .{});
+    // 10 px cell, 1 px underline: 5 dots of 1 px on, 1 px off.
+    try testing.expectEqual(1, m.dot_length);
+    try testing.expectEqual(1, m.dot_gap);
+    // One 5 px dash per cell.
+    try testing.expectEqual(5, m.dash_length);
+    try testing.expectEqual(5, m.dash_gap);
+    // One wave per cell, 1.5 px crests around the underline centre.
+    try testing.expectEqual(10, m.curly_wavelength);
+    try testing.expectEqual(1.5, m.curly_amplitude);
+    try testing.expectEqual(17.5, m.curly_y);
+}
+
+test "Metrics.resolve: pattern and wave overrides" {
+    const m: Decoration.Metrics = .resolve(font, .{
+        .dotted = .{ .length = 2 },
+        .dashed = .{ .length = 4, .gap = 1 },
+        .curly = .{ .amplitude = 3, .wavelength = 7 },
+    });
+    try testing.expectEqual(2, m.dot_length);
+    try testing.expectEqual(2, m.dot_gap);
+    try testing.expectEqual(4, m.dash_length);
+    try testing.expectEqual(1, m.dash_gap);
+    try testing.expectEqual(3, m.curly_amplitude);
+    try testing.expectEqual(7, m.curly_wavelength);
+    // Troughs reach 17.5 + 3 + 0.5 = 21 > 20: the centre moves up.
+    try testing.expectEqual(16.5, m.curly_y);
+}
+
+test "Metrics.resolve: the curly wave never leaves the cell" {
+    const m: Decoration.Metrics = .resolve(font, .{ .curly = .{ .amplitude = 100 } });
+    try testing.expectEqual(9.5, m.curly_amplitude);
+    try testing.expectEqual(10, m.curly_y);
+}
