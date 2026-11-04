@@ -1,5 +1,5 @@
 const std = @import("std");
-const lookup = @import("wcwidth_v2.zig").lookup;
+const lookup = @import("wcwidth.zig").lookup;
 // Set this from turbostat if desired, for example:
 //
 //     const cpu_frequency_ghz: ?f64 = 3.0;
@@ -245,7 +245,7 @@ fn runBenchmark(io: std.Io, gpa: std.mem.Allocator, name: []const u8, inputs: []
 
 // run cmd:
 // $sudo cpupower frequency-set -g performance
-// $sudo chrt -r 1 taskset -c 6 ./wcwidth_v2_bench
+// $sudo chrt -r 1 taskset -c 6 ./wcwidth_bench
 pub fn main(init: std.process.Init) !void {
     const io = init.io;
     const gpa = init.gpa;

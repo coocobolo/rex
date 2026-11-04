@@ -20,7 +20,7 @@ const CursorStyle = @import("cell.zig").CursorStyle;
 const Screen = @import("screen.zig").Screen;
 const dispatcher = @import("dispatcher.zig");
 
-const wc = @import("../unicode/wcwidth_v2.zig");
+const wc = @import("../unicode/wcwidth.zig");
 
 const InputEngine = @import("InputEngine.zig");
 
@@ -85,6 +85,9 @@ pub const Option = struct {
     max_cols: usize,
     tab_width: usize = 8,
     max_scrollback: usize,
+    /// Width of East Asian Ambiguous code points, for every path that
+    /// places text on the grid. `.wide` suits CJK locales.
+    ambiguous_width: wc.AmbiguousWidth = .narrow,
     name: []const u8 = "rex",
     version: []const u8 = "0.1.0",
 
@@ -356,8 +359,6 @@ pub fn Terminal(comptime option: Option) type {
     // FIXME screen mode .alternate shouldn't has scrollback
     const ScreenType = Screen(option);
 
-    const wcwidth_ambiguous_width: wc.AmbiguousWidth = .narrow;
-
     return struct {
         const Self = @This();
 
@@ -394,7 +395,7 @@ pub fn Terminal(comptime option: Option) type {
         dcs_kind: enum { unknown, decrqss, sixel } = .unknown,
 
         /// UTF-8 decoding, grapheme clustering and widths for printable text.
-        input: InputEngine = .init(wcwidth_ambiguous_width),
+        input: InputEngine = .init(option.ambiguous_width),
 
         cursor_color: ?Color.Rgb = null,
         selection_foreground: ?Color.Rgb = null,

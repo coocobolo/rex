@@ -1,5 +1,5 @@
 //! `zig build gen-wcwidth-expected`: src/unicode/wcwidth_expected.zig,
-//! the oracle that wcwidth_v2_test.zig checks wcwidth_table.zig against.
+//! the oracle that wcwidth_test.zig checks wcwidth_table.zig against.
 //!
 //! It is derived from different UCD files than tools/gen/
 //! wcwidth_table.zig (DerivedGeneralCategory.txt instead of
@@ -118,7 +118,7 @@ pub fn main(init: std.process.Init) !void {
     try w.print(
         \\//! Expected terminal width class of every code point, generated
         \\//! from the UCD independently of wcwidth_table.zig. It is the oracle
-        \\//! for wcwidth_v2_test.zig; see tools/gen/wcwidth_expected.zig for
+        \\//! for wcwidth_test.zig; see tools/gen/wcwidth_expected.zig for
         \\//! the rules.
         \\//!
         \\//! Sources: DerivedGeneralCategory.txt, EastAsianWidth.txt,

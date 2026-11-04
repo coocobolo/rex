@@ -6,12 +6,12 @@ const testing = std.testing;
 const tables = @import("wcwidth_table.zig");
 const expected = @import("wcwidth_expected.zig");
 
-const wcwidth_mod = @import("wcwidth_v2.zig");
+const wc = @import("wcwidth.zig");
 
-const wcwidth = wcwidth_mod.wcwidth;
-const lookup = wcwidth_mod.lookup;
-const Width = wcwidth_mod.Width;
-const AmbiguousWidth = wcwidth_mod.AmbiguousWidth;
+const wcwidth = wc.wcwidth;
+const lookup = wc.lookup;
+const Width = wc.Width;
+const AmbiguousWidth = wc.AmbiguousWidth;
 
 const Property = tables.Property;
 

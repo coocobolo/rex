@@ -4955,6 +4955,33 @@ test "putChar: marks the cursor row dirty, generation bump is deferred" {
     try testing.expectEqual(gen, s.generation);
 }
 
+test "putChar: widths follow the Unicode table, not emoji guesses" {
+    const alloc = testing.allocator;
+    var s = try altScreen(alloc);
+    defer s.destroy(alloc);
+
+    // Text-presentation pictographs are East_Asian_Width=N: one cell.
+    s.putChar(0x2194); // ↔
+    s.putChar(0x2764); // ❤ (wide only with VS16, via the cluster path)
+    try testing.expectEqual(.narrow, s.cellAt(0, 0).kind);
+    try testing.expectEqual(.narrow, s.cellAt(0, 1).kind);
+    try testing.expectEqual(2, s.cursor.col);
+
+    // Trigrams are East_Asian_Width=W: two cells.
+    s.putChar(0x2630); // ☰
+    try testing.expectEqual(.wide_left, s.cellAt(0, 2).kind);
+    try testing.expectEqual(4, s.cursor.col);
+
+    // Format characters are zero width and join the previous cell.
+    s.putChar(0x200B); // ZERO WIDTH SPACE
+    try testing.expectEqual(4, s.cursor.col);
+
+    // Unassigned code points still take one cell.
+    s.putChar(0x1F2FF);
+    try testing.expectEqual(.narrow, s.cellAt(0, 4).kind);
+    try testing.expectEqual(5, s.cursor.col);
+}
+
 test "putChar: wide char gets width 2 and continuation placeholder" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);

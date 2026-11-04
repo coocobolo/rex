@@ -25,7 +25,7 @@ const std = @import("std");
 const CellKind = @import("cell.zig").Kind;
 const grapheme = @import("grapheme.zig");
 const Utf8Decoder = @import("../unicode/utf8.zig").Decoder;
-const wc = @import("../unicode/wcwidth_v2.zig");
+const wc = @import("../unicode/wcwidth.zig");
 
 const log = std.log.scoped(.term);
 

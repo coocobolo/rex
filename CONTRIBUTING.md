@@ -68,4 +68,4 @@ To move to a new Unicode version:
     zig build test -Dslow
 
 Review the diff of the generated tables (and any new
-`wcwidth_v2_test.zig` oracle disagreements) before committing.
+`wcwidth_test.zig` oracle disagreements) before committing.

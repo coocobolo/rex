@@ -2910,6 +2910,21 @@ test "csi: REP repeats last char" {
     try testing.expectEqual(@as(u32, 'A'), t.active().row(0)[3].codepoint);
 }
 
+test "csi: REP keeps the width the character was printed with" {
+    var t = try T.create(alloc);
+    defer t.destroy(alloc);
+
+    // UTF-8 input and REP share one width table: ❤ is one cell both ways.
+    t.feed("\u{2764}\x1b[2b");
+    try testing.expectEqual(@as(u16, 3), t.active().cursor.col);
+    for (0..3) |c| try testing.expectEqual(.narrow, t.active().row(0)[c].kind);
+
+    t.feed("\r\x1b[K\u{4E2D}\x1b[b"); // 中 is two cells both ways
+    try testing.expectEqual(@as(u16, 4), t.active().cursor.col);
+    try testing.expectEqual(.wide_left, t.active().row(0)[0].kind);
+    try testing.expectEqual(.wide_left, t.active().row(0)[2].kind);
+}
+
 test "csi: REP n=0 treated as n=1" {
     var t = try T.create(alloc);
     defer t.destroy(alloc);

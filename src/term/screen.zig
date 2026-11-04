@@ -25,7 +25,7 @@ const CharsetState = @import("cell.zig").CharsetState;
 const Palette = @import("Palette.zig").Palette;
 const Option = @import("term.zig").Option;
 
-const wcwidth = @import("../unicode/wcwidth.zig").wcwidth;
+const wc = @import("../unicode/wcwidth.zig");
 const char_class = @import("../unicode/char_class.zig");
 const Classifier = char_class.Classifier;
 
@@ -782,6 +782,14 @@ pub fn Screen(comptime option: Option) type {
             };
         }
 
+        /// Cell width of `cp`, with the same table and ambiguous-width
+        /// policy as the UTF-8 path (`InputEngine`), so a code point gets
+        /// the same width however it reaches the screen.
+        inline fn width(cp: u21) wc.Width {
+            if (cp < 0x80) return .narrow; // printable ASCII; C0 never gets here
+            return wc.wcwidth(cp, option.ambiguous_width);
+        }
+
         /// Write a raw codepoint from the PTY stream at the cursor position.
         ///
         /// This is the dispatcher's entry point for printable characters. It applies the active
@@ -804,17 +812,18 @@ pub fn Screen(comptime option: Option) type {
                 self.cursor.charset.ss = CharsetState.no_shift;
                 self.charset_is_identity = self.cursor.charset.isIdentity(); // may become true again
             }
-            const wc: i32 = if (translated < 0x80) 1 else wcwidth(translated);
-
-            if (wc == 0) {
-                // Zero-width: extend the previous cell's cluster.
-                // NOTE: last_char is NOT updated, REP repeats graphic chars only.
-                self.attachCombining(translated);
-                return;
-            }
-
-            // -1, 1, or unexpected, fallback to narrow
-            const kind: CellKind = if (wc == 2) .wide_left else .narrow;
+            const kind: CellKind = switch (width(translated)) {
+                .wide => .wide_left,
+                // Unassigned and other non-printing code points still take
+                // a cell, so the cursor and the app agree on the column.
+                .narrow, .control => .narrow,
+                .zero => {
+                    // Zero-width: extend the previous cell's cluster.
+                    // NOTE: last_char is NOT updated, REP repeats graphic chars only.
+                    self.attachCombining(translated);
+                    return;
+                },
+            };
             self.writeChar(.{
                 .kind = kind,
                 .codepoint = translated,
@@ -1138,11 +1147,12 @@ pub fn Screen(comptime option: Option) type {
             //
             // This matches the ECMA-48 REP spec (repeats the last graphic character,
             // not a composed sequence).
-            const raw_w: i32 = if (self.last_char < 0x80) 1 else wcwidth(self.last_char);
-            // guard: combining or non-printable (last_char should never be these)
-            if (raw_w <= 0) return;
-
-            const kind: CellKind = if (raw_w == 2) .wide_left else .narrow;
+            const kind: CellKind = switch (width(self.last_char)) {
+                .wide => .wide_left,
+                .narrow => .narrow,
+                // guard: combining or non-printable (last_char should never be these)
+                .zero, .control => return,
+            };
             const count = @max(n, 1);
 
             for (0..count) |_| {

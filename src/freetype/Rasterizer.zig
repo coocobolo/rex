@@ -452,7 +452,7 @@ pub fn rasterize(self: *Rasterizer, gpa: Allocator, codepoint: u21, kind: FaceKi
         // Scale emoji proportionally to fit the terminal cell height.
         // const scale = @as(f32, @floatFromInt(self.cell_height)) / @as(f32, @floatFromInt(bmp_rows));
 
-        const is_wide = wcwidth(codepoint) == 2;
+        const is_wide = wcwidth(codepoint, .narrow) == .wide;
         const max_w: u16 = if (is_wide) self.cell_width * 2 else self.cell_width;
         const max_h: u16 = self.cell_height;
 
