@@ -1,8 +1,5 @@
-//! The terminal: `Terminal(option)` owns the primary and alternate
-//! screens, modes, palette and parser state, applies the actions the
-//! dispatcher decodes, and queues replies for the pty. Every reply
-//! goes through `Terminal.reply` and the bounded `Events.Response`
-//! queue. It must not import renderer/ or touch the pty itself.
+//! Terminal state: both screens, modes, the parser and the reply queue.
+//! It does no I/O and must not import renderer/.
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -82,8 +79,7 @@ pub const Reply = union(enum) {
     pub const mouse_x10_max: u16 = 255 - 32 - 1;
 };
 
-/// Mode state as DECRPM reports it (VT510, DECRQM/DECRPM): the reply's
-/// Ps value for one mode.
+/// A mode's state as DECRPM reports it (VT510): the reply's Ps value.
 pub const DecModeReport = enum(u3) {
     not_recognized = 0,
     set = 1,
@@ -96,39 +92,34 @@ pub const DecModeReport = enum(u3) {
     }
 };
 
-/// Terminal modes (ANSI + DEC private).
-///
-/// Stored here rather than on Screen because modes are terminal-level state:
-/// they survive alternate-screen switches and are not saved/restored by DECSC.
+/// Terminal-wide modes. They survive screen switches and DECSC.
 pub const Mode = struct {
-    // DECCKM  CSI ? 1 h/l, app vs normal cursor keys
+    /// DECCKM (CSI ? 1 h): application cursor keys.
     cursor_keys: bool = false,
-    /// LNM — Line Feed / New Line Mode (CSI 20 h / CSI 20 l).
-    /// When set, LF/VT/FF also perform CR.
+    /// LNM (CSI 20 h): LF, VT and FF also do CR.
     linefeed: bool = false,
-    /// DECKPAM ESC = / ESC >
+    /// DECKPAM (ESC =) and DECKPNM (ESC >): application keypad.
     keypad_app: bool = false,
-    /// DECARM  CSI ? 8 h/l
+    /// DECARM (CSI ? 8 h): key auto-repeat.
     auto_repeat: bool = true,
     /// Which mouse events are reported. Only one tracking mode is active.
     mouse_tracking: MouseTracking = .off,
     /// SGR mouse encoding (CSI ? 1006 h / l).
     mouse_sgr: bool = false,
-    /// Bracketed paste mode (CSI ? 2004 h / l).
+    /// Bracketed paste (CSI ? 2004 h).
     bracketed_paste: bool = false,
-    /// Focus event reporting (CSI ? 1004 h / l).
+    /// Focus in and out reports (CSI ? 1004 h).
     focus_events: bool = false,
-    /// Synchronized output (CSI ? 2026 h / l).
+    /// Synchronized output (CSI ? 2026 h).
     synchronized_output: bool = false,
-    /// xterm modifyOtherKeys (CSI > 4 ; Pv m). 0=off, 1=partial, 2=full.
+    /// xterm modifyOtherKeys level (CSI > 4 ; Pv m): 0 off, 1 partial,
+    /// 2 full.
     modify_other_keys: u2 = 0,
-
+    /// Alternate scroll (xterm mode 1007). Nothing sets it yet.
     alt_scroll: bool = false,
-
-    /// DECCOLM  CSI ? 3 h/l
+    /// DECCOLM (CSI ? 3 h): 132 columns.
     column_132: bool = false,
-
-    /// DECCOLM guard  CSI ? 40 h/l
+    /// CSI ? 40 h: allow DECCOLM to switch columns.
     allow_column_132: bool = true,
 
     const Self = @This();
@@ -140,8 +131,8 @@ pub const Mode = struct {
 };
 
 /// Mouse tracking modes (xterm ctlseqs, "Mouse Tracking"). Setting one
-/// replaces the current one; resetting any of them turns tracking off,
-/// as xterm does.
+/// replaces the current one, and resetting any of them turns tracking
+/// off, as xterm does.
 pub const MouseTracking = enum {
     off,
     /// Mode 9: button presses only, without modifiers.
@@ -173,29 +164,29 @@ pub const Option = struct {
     name: []const u8 = "rex",
     version: []const u8 = "0.1.0",
 
-    /// Total logcail rows = 4096 (Exact power of two, 0% waste).
+    /// 4096 ring rows, a power of two.
     pub const compact = Option{
         .max_rows = 200,
         .max_cols = 80,
         .max_scrollback = 3896,
     };
 
-    /// Total logical rows = 8,192 (Exact power of two, 0% waste)
+    /// 8192 ring rows, a power of two.
     pub const standard = Option{
         .max_rows = 500,
         .max_cols = 120,
         .max_scrollback = 7692,
     };
 
-    /// Total logical rows = 16,384 (Exact power of two, 0% waste)
+    /// 16384 ring rows, a power of two.
     pub const heavy = Option{
         .max_rows = 1000,
         .max_cols = 200,
         .max_scrollback = 15384,
     };
 
-    /// Automatically adjusts max_scrollback so the resulting ring buffer
-    /// is 100% memory-efficient (no wasted power-of-two space).
+    /// An option with at least `min_scrollback` lines, grown so the ring
+    /// fills a power of two.
     pub fn optimized(max_rows: usize, max_cols: usize, min_scrollback: usize) Option {
         const target_logical = max_rows + min_scrollback;
         const ring_rows = std.math.ceilPowerOfTwo(usize, target_logical) catch target_logical;
@@ -203,45 +194,35 @@ pub const Option = struct {
         return .{
             .max_rows = max_rows,
             .max_cols = max_cols,
-            // Snap scollback up so it fills the power-of-two boundary perfectly
             .max_scrollback = ring_rows -| max_rows,
         };
     }
 };
 
-/// Events produced by `Terminal` after feed bytes.
-///
-/// Terminal is pure state, it has no access to I/O (i.e cannot ring a
-/// bell or write to the fd itself). After each `feed` call, the caller
-/// must checks these fields and acts on them, then flush the events.
+/// What a `feed` asks the caller to do. The caller acts on these after
+/// each feed, then calls `clear`.
 pub const Events = struct {
-    /// BEL (0x07) was received. Ring a bell or flash the window.
+    /// BEL arrived.
     bell: bool = false,
-
-    /// OSC 0 or OSC 2 updated `title`.
+    /// OSC 0 or 2 changed the title.
     title: bool = false,
-
-    /// OSC 1 updated `icon_name`
+    /// OSC 1 changed the icon name.
     icon_name: bool = false,
-
-    cursor_color: bool = false, // OSC 12
-
+    /// OSC 12 changed the cursor colour.
+    cursor_color: bool = false,
+    /// The selection no longer matches the screen (RIS or a screen
+    /// switch).
     selection_reset: bool = false,
-
+    /// RIS ran.
     hard_reset: bool = false,
-
-    /// Replies to write back to the pty master: DA1, CPR, XTVERSION,
-    /// colour queries and mouse reports. Write `slice()`, then `clear()`.
+    /// Replies for the pty. Write `slice()`, then `clear()`.
     response: Response = .{},
-
-    /// `CSI 8 ; rows ; cols t` the application requested a terminal resize.
-    /// The caller should resize the PTY and call `terminal.resize(rows, cols)`.
+    /// CSI 8 ; rows ; cols t asked for this size. The caller resizes the
+    /// pty, then calls `Terminal.resize`.
     resize: ?Resize = null,
 
-    /// Bounded queue of replies for the pty, in the order the queries
-    /// were parsed. Each write is one whole reply:
-    /// it is queued entirely or dropped entirely and counted, so the
-    /// host never sends a truncated sequence.
+    /// Bounded reply queue, in query order. A reply is queued whole or
+    /// dropped whole and counted, never truncated.
     pub const Response = struct {
         pub const capacity = 1024;
 
@@ -290,7 +271,7 @@ pub const Events = struct {
 
     const Resize = struct { rows: u16, cols: u16 };
 
-    /// Returns true if any event is pending.
+    /// True when any event is pending.
     pub fn any(self: *const Events) bool {
         return self.bell or
             self.title or
@@ -300,51 +281,36 @@ pub const Events = struct {
             self.resize != null;
     }
 
-    /// Reset all events. Call after Tab has processed them.
+    /// Clears every event, including queued replies.
     pub fn clear(self: *Events) void {
         self.* = .{};
     }
 };
 
-/// DEC terminal compatibility levels selected by DECSCL.
-///
-/// DECSCL selects the terminal's operating level for compatibility with
-/// applications written for that level. It does not designate or map
-/// character sets. The sequence also selects the representation of C1
-/// controls and performs a soft reset.
-///
-/// Level values:
-///   61  Level 1 — VT100
-///   62  Level 2 — VT200
-///   63  Level 3 — VT300
-///   64  Level 4
-///
-/// For levels 2 and above, the separate control-format parameter selects
-/// 7-bit controls (`1`) or 8-bit controls (`0` or `2`). Level 1 uses
-/// 7-bit controls.
-/// https://vt100.net/docs/vt510-rm/ANSI
+/// Operating level set by DECSCL (VT510). The tag is the DECSCL
+/// parameter.
 pub const ConformanceLevel = enum(u8) {
-    /// VT100, 7-bit controls only
+    /// VT100, 7-bit controls only.
     level1 = 61,
-    /// VT200
+    /// VT200.
     level2 = 62,
-    /// VT300
+    /// VT300.
     level3 = 63,
-    /// VT400/VT510, (TODO! unimplemented/future)
+    /// VT400. Accepted, with no level 4 features yet.
     level4 = 64,
 };
 
-/// Controls whether the terminal sends 7-bit or 8-bit C1 control sequences format.
-/// Set by S7C1T (ESC SP F) / S8C1T (ESC SP G) independently of conformance level.
+/// How replies send C1 controls: S7C1T (ESC SP F) or S8C1T (ESC SP G).
 pub const ControlFormat = enum(u8) {
-    /// 7-bit format.
+    /// As ESC plus a 7-bit byte.
     s7c1t,
-    /// 8-bit format; DECSCL 62;0 also maps here (0 ≡ 2)
+    /// As one 8-bit byte.
     s8c1t,
 };
 
 pub const Encoding = InputEngine.Encoding;
 
+/// A control that opens or closes a reply sequence.
 pub const SequenceType = enum(u2) {
     // zig fmt: off
     st  = 0, csi = 1, dcs = 2, osc = 3,
@@ -352,6 +318,7 @@ pub const SequenceType = enum(u2) {
     // zig fmt: on
 };
 
+/// Each `SequenceType` in each `ControlFormat`.
 pub const sequence_table: [2][SequenceType.count][]const u8 = blk: {
     const vt_fmt = [SequenceType.count][2][]const u8{
         .{ "\x9c", "\x1b\\" }, // st
@@ -368,48 +335,22 @@ pub const sequence_table: [2][SequenceType.count][]const u8 = blk: {
     break :blk t;
 };
 
+/// The bytes for `target` in `c1_mode`.
 pub fn seqIntroducer(comptime target: SequenceType, c1_mode: ControlFormat) []const u8 {
     return sequence_table[@intFromEnum(c1_mode)][@intFromEnum(target)];
 }
 
-/// VT/ANSI terminal state machine.
+/// A terminal: feed it pty output, then read `active()` and `events`.
 ///
-/// Owns primary/alternate screens, the VT parser, and terminal-wide modes.
-/// Pure state only: no I/O, threads, or allocations after `init`.
-/// The caller owns the PTY and feeds bytes via `feed`.
-///
-/// Both screens use the same `Screen(option)` type, so `active()` is a
-/// branch-free select between two fields and every screen method is
-/// compiled once. The alternate screen therefore allocates unused
-/// scrollback by design, matching xterm, wezterm, and Alacritty.
-///
-/// `Terminal` holds no pointers into itself: the active screen is an
-/// enum, resolved per call. It can be returned by value and moved freely;
-/// the screens' cell storage is on the heap and does not move with it.
-///
-/// NOTE (future dapa)
-/// If memory is a hard constraint (e.g. hundreds of simultaneous sessions),
-/// replace `alternate` with `Screen(..., 0)` and dispatch once per `feed`
-/// on `active_buffer`. See the `ActiveScreen` union pattern for that
-/// approach.
-///
-/// Terminal modes live here instead of `Screen` because they persist across
-/// alternate-screen switches. `DECOM` is stored on the cursor since DECSC
-/// saves/restores it.
-///
-/// Usage:
+/// It allocates only in `create` and does no I/O. It holds no pointers
+/// into itself, so it can be moved. Both screens share one type, so the
+/// alternate screen carries scrollback it never uses.
 ///
 ///   var t = try Terminal(opt).create(alloc);
 ///   defer t.destroy(alloc);
-///
 ///   t.feed(chunk);
-///
-///   const s = t.active();
-///   for (0..s.active_rows) |r| {
-///       const row = s.displayRow(r);
-///   }
 pub fn Terminal(comptime option: Option) type {
-    // FIXME screen mode .alternate shouldn't has scrollback
+    // FIXME: the alternate screen should not carry scrollback.
     const ScreenType = Screen(option);
 
     return struct {
@@ -418,19 +359,17 @@ pub fn Terminal(comptime option: Option) type {
         primary: ScreenType,
         alternate: ScreenType,
 
-        /// Which of `primary` or `alternate` receives output; see `active`.
+        /// The screen that receives output. Read it through `active`.
         active_buffer: ScreenBuffer = .primary,
-
-        /// Terminal-level modes (survive alternate-screen switches).
         mode: Mode = .{},
 
+        /// Window title (OSC 0 and 2). Read it with `getTitle`.
         title: [max_title_len:0]u8 = std.mem.zeroes([max_title_len:0]u8),
         title_len: usize = 0,
-
-        /// Icon name (OSC 1). Rarely used; stored separately from title.
+        /// Icon name (OSC 1). Read it with `getIconName`.
         icon_name: [max_title_len:0]u8 = std.mem.zeroes([max_title_len:0]u8),
         icon_name_len: usize = 0,
-
+        /// ENQ reply, set by the user. RIS keeps it.
         answerback: [max_answerback_len]u8 = std.mem.zeroes([max_answerback_len]u8),
         answerback_len: u8 = 0,
 
@@ -439,28 +378,28 @@ pub fn Terminal(comptime option: Option) type {
         conformance_level: ConformanceLevel = .level3,
         control_format: ControlFormat = .s7c1t,
 
-        // the osc will likely to be send to the events?
+        /// The OSC string being collected. One longer than the buffer is dropped.
         osc_buf: [1024]u8 = undefined,
         osc_len: usize = 0,
+        osc_overflow: bool = false,
 
+        /// The DCS string being collected. One longer than the buffer is dropped.
         dcs_buf: [1024]u8 = undefined,
         dcs_len: usize = 0,
+        dcs_overflow: bool = false,
         dcs_kind: enum { unknown, decrqss, sixel } = .unknown,
 
-        /// UTF-8 decoding, grapheme clustering and widths for printable text.
+        /// UTF-8 decoding, grapheme clustering and widths for text.
         input: InputEngine = .init(option.ambiguous_width),
 
+        /// Colours set by OSC 12, 17 and 19. Null means the default.
         cursor_color: ?Color.Rgb = null,
         selection_foreground: ?Color.Rgb = null,
         selection_background: ?Color.Rgb = null,
 
-        osc_overflow: bool = false,
-        dcs_overflow: bool = false,
-
         pub const ColorTarget = DynamicColor;
 
-        /// Allocates both screens' cell storage. The returned value owns
-        /// it; release with `destroy`.
+        /// Allocates both screens. Release with `destroy`.
         pub fn create(alloc: std.mem.Allocator) !Self {
             var primary: ScreenType = try .create(alloc);
             errdefer primary.destroy(alloc);
@@ -473,6 +412,7 @@ pub fn Terminal(comptime option: Option) type {
             };
         }
 
+        /// Frees both screens. `alloc` must be the one `create` used.
         pub fn destroy(self: *Self, alloc: std.mem.Allocator) void {
             self.primary.destroy(alloc);
             self.alternate.destroy(alloc);
@@ -487,12 +427,9 @@ pub fn Terminal(comptime option: Option) type {
             };
         }
 
+        /// Feeds pty output. A chunk may end anywhere, even inside a
+        /// sequence or a UTF-8 character; call `end` when the stream ends.
         pub fn feed(self: *Self, bytes: []const u8) void {
-            // encoding governs input byte into character decode; conformance_level
-            // governs parser feature availability (an orthogonal axis).
-            // utf8 + level1 /.sc7c1t is valid, input is still UTF-8, output-side
-            // restrictions live in the sequence-emitting code, not here.
-            //
             // A sequence in `bytes` can change the path (ESC % G, ESC % @,
             // S7C1T, S8C1T, DECSCL). Each path returns as soon as that
             // happens, so the rest of the chunk takes the new path and the
@@ -670,26 +607,20 @@ pub fn Terminal(comptime option: Option) type {
             self.input.feedByte(self.active(), byte);
         }
 
-        /// Ends the input stream (e.g. the PTY read returned 0 bytes):
-        /// settles a partial UTF-8 sequence and flushes the pending cluster.
+        /// Ends the stream: a partial UTF-8 character becomes U+FFFD and
+        /// the pending cluster is drawn.
         pub fn end(self: *Self) void {
             self.input.finish(self.active());
             self.active().bump();
         }
+
+        // Parser callbacks, from here to `unhook`.
 
         pub inline fn printByte(self: *Self, byte: u8) void {
             self.active().putChar(byte);
         }
 
         pub inline fn print(self: *Self, bytes: []const u8) void {
-            // Requires self.active() (or whatever putChar's owner is) to expose a
-            // bulk write. If putChar does per-cell bookkeeping (cursor advance,
-            // dirty-row tracking, wrap handling), that logic needs to be hoisted
-            // out of the per-byte call and applied once per batch, e.g.:
-            //   self.active().putChars(bytes);
-            // rather than looping putChar per byte here — looping here defeats
-            // the whole point of batching (point 2 was specifically about
-            // eliminating per-byte handler dispatch, not just per-byte table lookups).
             self.active().putChars(bytes);
         }
 
@@ -805,28 +736,21 @@ pub fn Terminal(comptime option: Option) type {
             self.dcs_overflow = false;
         }
 
+        /// Sets the ENQ reply, cut to `max_answerback_len` bytes.
         pub fn setAnswerback(self: *Self, s: []const u8) void {
             const len = @min(s.len, max_answerback_len);
             @memcpy(self.answerback[0..len], s[0..len]);
             self.answerback_len = @intCast(len);
         }
 
+        /// The ENQ reply. Valid until the next `setAnswerback`.
         pub fn getAnswerback(self: *const Self) []const u8 {
             return self.answerback[0..self.answerback_len];
         }
 
-        /// Set Cursor Style (DECSCUSR / CSI Ps SP q).
-        ///
-        /// Controls cursor shape and blink state. This is a terminal-level setting:
-        /// it survives alternate-screen switches and is NOT saved/restored by DECSC.
-        ///
-        /// Ps = 0 or 1    blinking block (default)
-        /// Ps = 2         steady block
-        /// Ps = 3         blinking underline
-        /// Ps = 4         steady underline
-        /// Ps = 5         blinking bar (I-beam)
-        /// Ps = 6         steady bar (I-beam)
-        /// Any other      reset to default
+        /// DECSCUSR (CSI Ps SP q): sets the active screen's cursor shape.
+        /// 1 to 6 are block, underline and bar, each blinking then steady.
+        /// 0 is a blinking block; other values reset the shape.
         pub fn setCursorStyle(self: *Self, ps: u16) void {
             self.active().cursor.style = switch (ps) {
                 0, 1 => .blinking_block,
@@ -840,33 +764,19 @@ pub fn Terminal(comptime option: Option) type {
             self.active().markDirty(self.active().cursor.row);
         }
 
-        /// Soft Terminal Reset (DECSTR / CSI ! p).
-        ///
-        /// Follows the VT510 DECSTR table (DEC STD 070): of the terminal
-        /// modes it resets only DECCKM (normal) and DECNKM (numeric
-        /// keypad, `keypad_app`); KAM has no state here. The screen items
-        /// go to `Screen.softReset` on the active screen; the inactive
-        /// screen is not touched. LNM, DECARM, mouse, paste, focus,
-        /// synchronized output and modifyOtherKeys are not in the table
-        /// and survive.
+        /// DECSTR (CSI ! p), per the VT510 table. It resets DECCKM, the
+        /// keypad mode and the active screen's state. Other modes, mouse
+        /// tracking included, survive.
         pub fn softReset(self: *Self) void {
             self.mode.cursor_keys = false;
             self.mode.keypad_app = false;
             self.active().softReset();
         }
 
-        /// Hard Terminal Reset (RIS / ESC c).
-        ///
-        /// Resets the entire terminal to power-on state:
-        ///   - Both primary and alternate screens are fully reset via Screen.hardReset()
-        ///     (cells cleared, modes reset, tab stops rebuilt, scrollback cleared)
-        ///   - Primary becomes the active screen again
-        ///   - All Terminal.Modes reset to struct defaults
-        ///   - Title and icon name cleared
-        ///   - Pending events cleared
-        ///
-        /// Answerback string is intentionally preserved, it is user configuration,
-        /// not terminal state, and survives RIS in all major terminal emulators.
+        /// RIS (ESC c): back to the power-on state, on both screens.
+        /// Pending events are replaced by `hard_reset` and
+        /// `selection_reset`. The answerback is a user setting, so it is
+        /// kept.
         pub fn hardReset(self: *Self) void {
             self.active_buffer = .primary;
 
@@ -888,8 +798,6 @@ pub fn Terminal(comptime option: Option) type {
             self.events.clear();
             self.events.hard_reset = true;
             self.events.selection_reset = true;
-
-            // self.answerback / self.answerback_len intentionally preserved
         }
 
         fn switchScreen(self: *Self, to_alt: bool) void {
@@ -903,7 +811,7 @@ pub fn Terminal(comptime option: Option) type {
             self.events.selection_reset = true;
         }
 
-        /// ANSI mode set/reset (SM = CSI h, RM = CSI l).
+        /// SM (CSI h) and RM (CSI l). Unknown modes are ignored.
         pub fn setMode(self: *Self, mode: u16, set: bool) void {
             switch (mode) {
                 4 => self.active().mode.insert = set,
@@ -912,10 +820,8 @@ pub fn Terminal(comptime option: Option) type {
             }
         }
 
-        /// Returns the state of DEC private mode `mode` as DECRPM reports
-        /// it. Modes that `setDecMode` ignores, or whose state is not
-        /// stored as a plain flag yet (mouse tracking, 12), report
-        /// `.not_recognized`.
+        /// The state of DEC private mode `mode`, as DECRPM reports it.
+        /// Modes without stored state, 12 included, are `.not_recognized`.
         pub fn decModeReport(self: *Self, mode: u16) DecModeReport {
             const screen_mode = self.active().mode;
             return switch (mode) {
@@ -941,7 +847,8 @@ pub fn Terminal(comptime option: Option) type {
             };
         }
 
-        /// DEC private mode set/reset (DECSET = CSI ? h, DECRST = CSI ? l).
+        /// DECSET (CSI ? h) and DECRST (CSI ? l). Unknown modes are
+        /// ignored.
         pub fn setDecMode(self: *Self, mode: u16, set: bool) void {
             switch (mode) {
                 1 => self.mode.cursor_keys = set, // DECCKM
@@ -971,7 +878,7 @@ pub fn Terminal(comptime option: Option) type {
                     self.active().dirty_rows = .full;
                     self.active().bump();
                 },
-                6 => self.setDecom(set), // DECOM — origin mode
+                6 => self.setDecom(set), // DECOM, origin mode
                 7 => self.active().mode.auto_wrap = set, // DECAWM
                 45 => self.active().mode.reverse_wrap = set, // xterm reverse wraparound
                 8 => self.mode.auto_repeat = set, // DECARM
@@ -1080,11 +987,9 @@ pub fn Terminal(comptime option: Option) type {
             }
         }
 
-        /// Applies DECSCL `level` is the first parameter (61–64), and `format` is
-        /// the second (1 selects 7-bit controls; 0 or 2 selects 8-bit controls).
-        ///
-        /// Level 1 always uses 7-bit controls and ignores `format`. Invalid
-        /// levels are ignored. This also applies the DECSCL soft reset.
+        /// DECSCL (CSI Pl ; Pc " p): sets the level (61 to 64) and, above
+        /// level 1, the C1 format (1 is 7-bit, anything else 8-bit). It soft
+        /// resets. Other levels are ignored.
         pub fn decscl(self: *Self, level: u16, param: u16) void {
             self.conformance_level = switch (level) {
                 61 => .level1,
@@ -1094,10 +999,7 @@ pub fn Terminal(comptime option: Option) type {
                 else => return, // unknown level, DECSCL ignores OOR params
             };
 
-            // Level 1 is 7-bit-controls-only; the format parameter is ignored.
-            // For levels 2+, DECSCL x;0 and x;2 select 8-bit controls, x;1
-            // selects 7-bit. Normalizing here means feed() can dispatch on
-            // control_format alone and never see an inconsistent pair.
+            // Normalized here so feed() can route on control_format alone.
             self.control_format = if (self.conformance_level == .level1 or param == 1)
                 .s7c1t
             else
@@ -1106,7 +1008,7 @@ pub fn Terminal(comptime option: Option) type {
             self.softReset(); // DECSCL implies soft reset (DECSTR effects)
         }
 
-        /// DECOM change: update cursor.origin and move cursor to home.
+        /// DECOM: sets origin mode and homes the cursor.
         fn setDecom(self: *Self, set: bool) void {
             self.active().cursor.origin = set;
             self.active().cursorPos(0, 0);
@@ -1116,9 +1018,8 @@ pub fn Terminal(comptime option: Option) type {
             self.mode.mouse_tracking = if (set) tracking else .off;
         }
 
-        /// Queues `r` for the host, encoded in the current C1 format
-        /// (S7C1T/S8C1T). It is queued whole, or dropped whole and counted
-        /// in `events.response.dropped` when the queue is full.
+        /// Queues `r` in the current C1 format. When it does not fit, it
+        /// is dropped whole and counted in `events.response.dropped`.
         pub fn reply(self: *Self, r: Reply) void {
             switch (r) {
                 .answerback => |bytes| self.events.response.append(bytes),
@@ -1166,17 +1067,12 @@ pub fn Terminal(comptime option: Option) type {
             self.events.response.print("{s}" ++ fmt ++ "{s}", .{seqIntroducer(intro, c1)} ++ args ++ .{st});
         }
 
-        /// XTVERSION reply: `DCS > | name version ST`.
+        /// Queues the XTVERSION reply.
         pub fn xtversion(self: *Self) void {
             self.reply(.xtversion);
         }
 
-        /// Resize both screens to `rows` × `cols`.
-        ///
-        /// Called by the Tab when the window is resized (SIGWINCH).
-        /// Both screens are resized so the alternate screen has the correct
-        /// dimensions when it becomes active. A zero-sized grid has nowhere
-        /// for the cursor to be, so each side is at least 1.
+        /// Resizes both screens to `rows` by `cols`, each at least 1.
         pub fn resize(self: *Self, rows: u16, cols: u16) void {
             const r = @max(rows, 1);
             const c = @max(cols, 1);
@@ -1184,7 +1080,7 @@ pub fn Terminal(comptime option: Option) type {
             self.alternate.setActive(r, c);
         }
 
-        /// Set the window title (OSC 0 / OSC 2).
+        /// Sets the title (OSC 0 and 2), cut to `max_title_len` bytes.
         pub fn setTitle(self: *Self, title: []const u8) void {
             const len = @min(title.len, max_title_len);
             @memcpy(self.title[0..len], title[0..len]);
@@ -1192,7 +1088,7 @@ pub fn Terminal(comptime option: Option) type {
             self.title_len = len;
         }
 
-        /// Set the icon name (OSC 1).
+        /// Sets the icon name (OSC 1), cut to `max_title_len` bytes.
         pub fn setIconName(self: *Self, name: []const u8) void {
             const len = @min(name.len, max_title_len);
             @memcpy(self.icon_name[0..len], name[0..len]);
@@ -1200,29 +1096,26 @@ pub fn Terminal(comptime option: Option) type {
             self.icon_name_len = len;
         }
 
-        /// Returns the current title as a null-terminated slice.
+        /// The title. Valid until the next `setTitle`.
         pub fn getTitle(self: *const Self) [:0]const u8 {
             return self.title[0..self.title_len :0];
         }
 
-        /// Returns the current icon name as a null-terminated slice.
+        /// The icon name. Valid until the next `setIconName`.
         pub fn getIconName(self: *const Self) [:0]const u8 {
             return self.icon_name[0..self.icon_name_len :0];
         }
 
-        /// OSC 4 ; n ; spec [; n ; spec ...] ST
-        ///
-        /// If spec is "?" the terminal responds with the current color value.
+        /// OSC 4 (n ; spec pairs): sets each palette entry, or replies
+        /// with it when spec is "?". Parsing stops at the first bad index.
         pub fn setPaletteColor(self: *Self, data: []const u8) void {
             var rest = data;
 
             while (rest.len > 0) {
-                // Parse index
                 const semi1 = std.mem.indexOfScalar(u8, rest, ';') orelse break;
                 const idx = std.fmt.parseInt(u8, std.mem.trim(u8, rest[0..semi1], " "), 10) catch break;
                 rest = rest[semi1 + 1 ..];
 
-                // Parse spec (up to next ';' or end)
                 const semi2 = std.mem.indexOfScalar(u8, rest, ';') orelse rest.len;
                 const spec = std.mem.trim(u8, rest[0..semi2], " ");
                 rest = if (semi2 < rest.len) rest[semi2 + 1 ..] else "";
@@ -1236,9 +1129,9 @@ pub fn Terminal(comptime option: Option) type {
             }
         }
 
-        /// Queues a mouse report for the active tracking mode and encoding.
-        /// Queues nothing when tracking is off, and in X10 mode nothing but
-        /// presses of buttons 0 to 2. The caller filters motion by mode.
+        /// Queues a mouse report in the active tracking mode and encoding.
+        /// Off, it queues nothing. X10 sends only presses of buttons 0 to
+        /// 2. The caller filters motion by mode.
         pub fn sendMouse(self: *Self, col: u16, row: u16, button: u8, mods: u8, press: bool) void {
             const mode = self.mode;
             const code = switch (mode.mouse_tracking) {
@@ -1258,6 +1151,8 @@ pub fn Terminal(comptime option: Option) type {
             self.reply(.{ .mouse_x10 = .{ .code = if (press) code else 3, .at = at } });
         }
 
+        /// OSC 10 to 19: sets the `target` colour from `data`, or replies
+        /// with it when `data` is "?".
         pub fn setOrQueryColor(self: *Self, data: []const u8, comptime target: ColorTarget) void {
             const spec = std.mem.trim(u8, data, " ");
 
@@ -1282,15 +1177,14 @@ pub fn Terminal(comptime option: Option) type {
             }
         }
 
-        /// Applies `theme` to both screens, so the alternate screen
-        /// starts with the same colors as the primary.
+        /// Applies `theme` to both screens.
         pub fn setTheme(self: *Self, theme: Theme) void {
             self.primary.palette.setTheme(theme);
             self.alternate.palette.setTheme(theme);
         }
 
-        /// OSC 104 [; n [; n ...]] ST: resets each listed color, or all 256
-        /// with no argument. Entries that are not an index are skipped.
+        /// OSC 104: resets each listed palette entry, or all of them when
+        /// `data` is empty. Bad entries are skipped.
         pub fn resetPaletteColor(self: *Self, data: []const u8) void {
             if (std.mem.trim(u8, data, " ").len == 0) {
                 self.active().palette.resetAllIndexed();
