@@ -12,6 +12,8 @@ pub const Options = struct {
     sample_mib: usize,
     samples: usize,
     filter: ?[]const u8,
+    /// Run only this suite (a folder in bench/cases/); null runs all.
+    suite: ?[]const u8,
     /// Write JSONL results to this path (baseline capture).
     save: ?[]const u8,
     /// Compare against a previously saved JSONL baseline.
@@ -25,8 +27,41 @@ pub const Options = struct {
         .save = null,
         .compare = null,
         .filter = null,
+        .suite = null,
     };
+
+    /// Byte budget of one timed sample.
+    pub fn sampleBytes(self: *const Options) usize {
+        return self.sample_mib * mib;
+    }
+
+    /// Iterations per sample for work that touches `bytes_per_iteration`
+    /// bytes, so every case runs for a similar wall time.
+    pub fn iterationsFor(self: *const Options, bytes_per_iteration: usize) u64 {
+        return @max(1, self.sampleBytes() / @max(1, bytes_per_iteration));
+    }
 };
+
+pub const mib = 1024 * 1024;
+
+/// Whether `filter` (comma-separated substrings) selects the variant
+/// labelled `name/variant`. Shared by every suite so `--filter` means
+/// the same thing everywhere, e.g.
+///   plain_lines_64k/feed_once        one variant of one case
+///   /feed_once                       one variant of every case
+///   htop,reflow                      every variant of matching cases
+pub fn allowed(filter: ?[]const u8, name: []const u8, variant: []const u8) bool {
+    const terms = filter orelse return true;
+    var buf: [128]u8 = undefined;
+    const label = std.fmt.bufPrint(&buf, "{s}/{s}", .{ name, variant }) catch return true;
+
+    var it = std.mem.tokenizeScalar(u8, terms, ',');
+    while (it.next()) |term| {
+        if (std.mem.indexOf(u8, label, term) != null) return true;
+    }
+
+    return false;
+}
 
 pub const Sample = struct {
     iterations: u64,

@@ -215,18 +215,7 @@ const plan_divisor = 4;
 
 // Filtering
 
-fn allowed(filter: ?[]const u8, name: []const u8, variant: []const u8) bool {
-    const terms = filter orelse return true;
-    var buf: [128]u8 = undefined;
-    const label = std.fmt.bufPrint(&buf, "{s}/{s}", .{ name, variant }) catch return true;
-
-    var it = std.mem.tokenizeScalar(u8, terms, ',');
-    while (it.next()) |term| {
-        if (std.mem.indexOf(u8, label, term) != null) return true;
-    }
-
-    return false;
-}
+const allowed = support.allowed;
 
 fn anyAllowed(filter: ?[]const u8, name: []const u8, has_recorded: bool) bool {
     inline for (shape_variants) |v| {

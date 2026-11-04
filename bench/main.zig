@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const mem = std.mem;
 
 const cases = @import("cases/root.zig");
@@ -18,6 +19,8 @@ fn usage() void {
         \\      --samples=N
         \\  -f, --filter PATTERNS      Run only variants whose "case/variant" label
         \\      --filter=PATTERNS      contains one of the comma-separated PATTERNS
+        \\  -u, --suite NAME           Run only one suite (a folder in bench/cases/)
+        \\      --suite=NAME
         \\      --cost-model           Also run the cost-model cases (default to 
         \\                             feed_once only; use --only to override).
         \\
@@ -28,7 +31,10 @@ fn usage() void {
         \\  bench --filter plain_lines_64k/feed_once
         \\  bench --filter /feed_once
         \\  bench --filter htop,man_bash
+        \\  bench --suite term --filter reflow
         \\  bench --cost-model --filter csi_,run_
+        \\
+        \\  Through the build: zig build bench-term -Doptimize=ReleaseFast -- --filter reflow
         \\
         \\Defaults:
         \\  sample_mib: {d}
@@ -62,6 +68,7 @@ pub fn parse(args: []const [:0]const u8) !Options {
     const sample_mib_prefix = "--sample_mib=";
     const samples_prefix = "--samples=";
     const filter_prefix = "--filter=";
+    const suite_prefix = "--suite=";
     const save_prefix = "--save=";
     const compare_prefix = "--compare=";
 
@@ -82,6 +89,10 @@ pub fn parse(args: []const [:0]const u8) !Options {
             opts.filter = try parsePattern(try nextArg(args, &i));
         } else if (mem.startsWith(u8, arg, filter_prefix)) {
             opts.filter = try parsePattern(arg[filter_prefix.len..]);
+        } else if (mem.eql(u8, arg, "-u") or mem.eql(u8, arg, "--suite")) {
+            opts.suite = try parsePattern(try nextArg(args, &i));
+        } else if (mem.startsWith(u8, arg, suite_prefix)) {
+            opts.suite = try parsePattern(arg[suite_prefix.len..]);
         } else if (mem.eql(u8, arg, "-S") or mem.eql(u8, arg, "--save")) {
             opts.save = try parsePattern(try nextArg(args, &i));
         } else if (mem.startsWith(u8, arg, save_prefix)) {
@@ -112,6 +123,9 @@ pub fn main(init: std.process.Init) !void {
     };
 
     std.debug.print("options: {any}\n", .{options});
+    if (builtin.mode == .Debug) {
+        std.debug.print("warning: Debug build, timings are meaningless; use -Doptimize=ReleaseFast\n", .{});
+    }
 
     try cases.run(
         gpa,

@@ -166,7 +166,7 @@ pub fn build(b: *std.Build) !void {
     );
 
     b.installDirectory(.{
-        .source_dir = b.path("assets/icons/hicolor"),
+        .source_dir = b.path("assets/icons_v2/hicolor"),
         .install_dir = .{ .custom = "share/icons" },
         .install_subdir = "hicolor",
     });
@@ -182,6 +182,16 @@ pub fn build(b: *std.Build) !void {
         "Strip debug information from executables",
     ) orelse false;
 
+    // Benchmarks (see bench/main.zig and scripts/README.md):
+    //   - One suite per folder in bench/cases/, registered in
+    //     bench/cases/root.zig. Adding a suite is a folder, a row there
+    //     and a row in `bench_suites` below.
+    //   - `zig build bench` runs every suite; `zig build bench-<suite>`
+    //     runs one. Benchmark flags go after `--`, e.g.
+    //     `zig build bench-term -Doptimize=ReleaseFast -- --filter reflow`.
+    //   - Numbers are only meaningful with -Doptimize=ReleaseFast; the
+    //     binary warns on Debug. scripts/perf-bench.sh pins a CPU and
+    //     records baselines on top of the installed zig-out/bin/benchmark.
     const bench = b.addExecutable(.{
         .name = "benchmark",
         .root_module = b.createModule(.{
@@ -197,12 +207,13 @@ pub fn build(b: *std.Build) !void {
 
     b.installArtifact(bench);
 
-    const bench_step = b.step(
-        "bench",
-        "Build the benchmark",
-    );
-
-    bench_step.dependOn(b.getInstallStep());
+    const bench_suites = .{ "vt", "term" };
+    const bench_all = b.step("bench", "Run every benchmark suite (flags after --)");
+    bench_all.dependOn(benchRun(b, bench, null));
+    inline for (bench_suites) |name| {
+        const step = b.step("bench-" ++ name, "Run the " ++ name ++ " benchmark suite (flags after --)");
+        step.dependOn(benchRun(b, bench, name));
+    }
 
     const run_step = b.step("run", "Run the app");
     run_step.dependOn(&run_cmd.step);
@@ -355,6 +366,20 @@ pub fn build(b: *std.Build) !void {
         step.dependOn(&update.step);
         gen_all.dependOn(&update.step);
     }
+}
+
+/// The step that runs the benchmark binary: every suite when `suite` is
+/// null, else only that one. Runs from the build root so suites can read
+/// their testdata by relative path, and always reruns (timings are the
+/// output, not a cacheable artifact).
+fn benchRun(b: *std.Build, bench: *std.Build.Step.Compile, comptime suite: ?[]const u8) *std.Build.Step {
+    const run = b.addRunArtifact(bench);
+    run.setCwd(b.path("."));
+    run.stdio = .inherit;
+    run.has_side_effects = true;
+    if (suite) |name| run.addArg("--suite=" ++ name);
+    if (b.args) |args| run.addArgs(args);
+    return &run.step;
 }
 
 /// How every test binary is built and run, so the suites, the
