@@ -50,6 +50,7 @@ const MouseButton = rex.terminal.term.MouseButton;
 const HeldButtons = rex.terminal.term.HeldButtons;
 const TerminalOption = rex.terminal.Option;
 const Screen = rex.terminal.screen.Screen;
+const Response = rex.terminal.Response;
 
 const pomodoro = rex.builtin.pomodoro;
 
@@ -537,14 +538,10 @@ pub fn run(self: *App) !void {
             terminal.feed(buffer[0..n]);
             had_data = true;
 
+            self.drainAndWriteReplies();
+
             if (terminal.events.any()) {
-                const events = &terminal.events;
-                if (!events.response.isEmpty()) {
-                    const resp = events.response.slice();
-                    _ = self.pty.writeAll(resp) catch |err| {
-                        log.err("drain: pty write failed: {}", .{err});
-                    };
-                }
+                const events = terminal.takeEvents();
 
                 if (events.bell) self.ringBell();
 
@@ -572,8 +569,6 @@ pub fn run(self: *App) !void {
                     self.selection = .empty;
                     self.needs_redraw = true;
                 }
-
-                self.terminal.events.clear();
             }
         }
 
@@ -599,6 +594,16 @@ pub fn run(self: *App) !void {
         self.flushScroll();
 
         if (child_closed) break :start;
+    }
+}
+
+fn drainAndWriteReplies(self: *App) void {
+    var reply_buf: [Response.capacity]u8 = undefined;
+    const n = self.terminal.drainReplies(&reply_buf);
+    if (n > 0) {
+        _ = self.pty.writeAll(reply_buf[0..n]) catch |err| {
+            log.err("pty write replies failed: {}", .{err});
+        };
     }
 }
 
@@ -1283,10 +1288,7 @@ fn reportMouseButton(self: *App, col: u16, row: u16, button: c_int, mod_byte: u8
     self.mouse_report_col = col;
     self.mouse_report_row = row;
     self.terminal.sendMouse(col, row, @intFromEnum(held), mod_byte, press);
-    self.pty.writeAll(self.terminal.events.response.slice()) catch |err| {
-        log.err("mouseButtonCallback: pty write failed: {}", .{err});
-    };
-    self.terminal.events.response.clear();
+    self.drainAndWriteReplies();
 }
 
 const mouseButtonCb: c.GLFWmousebuttonfun = struct {
@@ -1427,10 +1429,7 @@ fn flushScroll(self: *App) void {
         var i: u32 = 0;
         while (i < @abs(steps)) : (i += 1) {
             terminal.sendMouse(col, row, button, 0, true);
-            _ = self.pty.writeAll(terminal.events.response.slice()) catch |err| {
-                log.err("flushScroll: pty write failed: {}", .{err});
-            };
-            terminal.events.response.clear();
+            self.drainAndWriteReplies();
         }
 
         return;
@@ -1467,11 +1466,7 @@ fn sendMouseMotion(self: *App, col: u16, row: u16) void {
     self.mouse_report_col = col;
     self.mouse_report_row = row;
     self.terminal.sendMouseMotion(col, row, self.mouse_held.dragged(), 0);
-    if (self.terminal.events.response.isEmpty()) return;
-    _ = self.pty.writeAll(self.terminal.events.response.slice()) catch |err| {
-        log.err("sendMouseMotion: pty write failed: {}", .{err});
-    };
-    self.terminal.events.response.clear();
+    self.drainAndWriteReplies();
 }
 
 const cursorPosCb: c.GLFWcursorposfun = struct {

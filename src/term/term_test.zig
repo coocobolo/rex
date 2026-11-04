@@ -13,7 +13,7 @@ const Cell = @import("cell.zig").Cell;
 const max_title_len = @import("term.zig").max_title_len;
 const max_answerback_len = @import("term.zig").max_answerback_len;
 
-const Response = Events.Response;
+const Response = @import("term.zig").Response;
 
 const test_option = @import("test_fixtures.zig").test_option;
 
@@ -234,7 +234,7 @@ test "Terminal: 60x CPR in one feed does not panic" {
     defer t.destroy(alloc);
 
     t.feed("\x1b[6n" ** 60);
-    const s = t.events.response.slice();
+    const s = t.response.slice();
     try testing.expect(s.len <= Response.capacity);
     // Whole replies only each one starts with ESC and ends with 'R'.
     try testing.expectEqual(std.mem.count(u8, s, "\x1b"), std.mem.count(u8, s, "R"));
@@ -246,15 +246,15 @@ test "reply: one that doesn't fit whole is dropped, not half-written" {
 
     // Fill the queue with whole CPRs until a DA1 no longer fits.
     const cpr = "\x1b[1;1R";
-    const n = t.events.response.buf.len / cpr.len;
+    const n = t.response.buf.len / cpr.len;
     for (0..n) |_| t.feed("\x1b[6n");
     t.feed("\x1b[c");
 
-    const s = t.events.response.slice();
+    const s = t.response.slice();
     try testing.expectEqual(n * cpr.len, s.len);
     var it = std.mem.window(u8, s, cpr.len, cpr.len);
     while (it.next()) |r| try testing.expectEqualStrings(cpr, r);
-    try testing.expectEqual(1, t.events.response.dropped);
+    try testing.expectEqual(1, t.response.dropped);
 }
 
 test "reply: an answerback longer than the queue is dropped whole" {
@@ -263,8 +263,8 @@ test "reply: an answerback longer than the queue is dropped whole" {
 
     const long = [_]u8{'x'} ** (Response.capacity + 1);
     t.reply(.{ .answerback = &long });
-    try testing.expect(t.events.response.isEmpty());
-    try testing.expectEqual(1, t.events.response.dropped);
+    try testing.expect(t.response.isEmpty());
+    try testing.expectEqual(1, t.response.dropped);
 }
 
 test "reply: osc color queries follow the c1 format" {
@@ -276,7 +276,7 @@ test "reply: osc color queries follow the c1 format" {
     t.reply(.{ .dynamic_color = .{ .slot = .cursor, .rgb = rgb } });
     try testing.expectEqualStrings(
         "\x1b]4;7;rgb:12/ab/ff\x1b\\\x1b]12;rgb:1212/abab/ffff\x1b\\",
-        t.events.response.slice(),
+        t.response.slice(),
     );
 }
 
@@ -285,7 +285,7 @@ test "reply: x10 mouse encodes each byte offset by 32" {
     defer t.destroy(alloc);
 
     t.reply(.{ .mouse_x10 = .{ .code = 1, .at = .{ .row = 4, .col = 9 } } });
-    try testing.expectEqualStrings("\x1b[M\x21\x2a\x25", t.events.response.slice());
+    try testing.expectEqualStrings("\x1b[M\x21\x2a\x25", t.response.slice());
 }
 
 test "reply: x10 mouse past the encodable range is dropped" {
@@ -296,10 +296,10 @@ test "reply: x10 mouse past the encodable range is dropped" {
     t.reply(.{ .mouse_x10 = .{ .code = 0, .at = .{ .row = 0, .col = max + 1 } } });
     t.reply(.{ .mouse_x10 = .{ .code = 0, .at = .{ .row = max + 1, .col = 0 } } });
     t.reply(.{ .mouse_x10 = .{ .code = 255 - 31, .at = .{ .row = 0, .col = 0 } } });
-    try testing.expect(t.events.response.isEmpty());
+    try testing.expect(t.response.isEmpty());
 
     t.reply(.{ .mouse_x10 = .{ .code = 0, .at = .{ .row = max, .col = max } } });
-    try testing.expectEqualStrings("\x1b[M\x20\xff\xff", t.events.response.slice());
+    try testing.expectEqualStrings("\x1b[M\x20\xff\xff", t.response.slice());
 }
 
 test "reply: a mouse report queues after pending replies" {
@@ -308,7 +308,7 @@ test "reply: a mouse report queues after pending replies" {
 
     t.feed("\x1b[?1000h\x1b[?1006h\x1b[6n");
     t.sendMouse(2, 3, 0, 0, true);
-    try testing.expectEqualStrings("\x1b[1;1R\x1b[<0;3;4M", t.events.response.slice());
+    try testing.expectEqualStrings("\x1b[1;1R\x1b[<0;3;4M", t.response.slice());
 }
 
 test "mouse 1000: normal tracking reports press and release with modifiers" {
@@ -319,7 +319,7 @@ test "mouse 1000: normal tracking reports press and release with modifiers" {
     try testing.expectEqual(.normal, t.mode.mouse_tracking);
     t.sendMouse(0, 0, 0, 4, true); // shift + left press
     t.sendMouse(0, 0, 0, 4, false);
-    try testing.expectEqualStrings("\x1b[M\x24!!\x1b[M\x23!!", t.events.response.slice());
+    try testing.expectEqualStrings("\x1b[M\x24!!\x1b[M\x23!!", t.response.slice());
 }
 
 test "mouse 1000: wheel is reported" {
@@ -329,7 +329,7 @@ test "mouse 1000: wheel is reported" {
     t.feed("\x1b[?1000h\x1b[?1006h");
     try testing.expect(t.mode.mouse_tracking.reportsWheel());
     t.sendMouse(1, 1, 64, 0, true);
-    try testing.expectEqualStrings("\x1b[<64;2;2M", t.events.response.slice());
+    try testing.expectEqualStrings("\x1b[<64;2;2M", t.response.slice());
 }
 
 test "mouse 9: x10 tracking reports presses of buttons 0 to 2 only, without modifiers" {
@@ -342,7 +342,7 @@ test "mouse 9: x10 tracking reports presses of buttons 0 to 2 only, without modi
     t.sendMouse(0, 0, 2, 16, true); // ctrl + right press
     t.sendMouse(0, 0, 2, 16, false);
     t.sendMouse(0, 0, 64, 0, true);
-    try testing.expectEqualStrings("\x1b[M\x22!!", t.events.response.slice());
+    try testing.expectEqualStrings("\x1b[M\x22!!", t.response.slice());
 }
 
 test "mouse tracking: setting a mode replaces the current one" {
@@ -364,7 +364,7 @@ test "mouse tracking: resetting any mode turns tracking off, as xterm does" {
     t.feed("\x1b[?1002h\x1b[?1000l");
     try testing.expectEqual(.off, t.mode.mouse_tracking);
     t.sendMouse(0, 0, 0, 0, true);
-    try testing.expect(t.events.response.isEmpty());
+    try testing.expect(t.response.isEmpty());
 }
 
 test "mouse tracking: modes 9, 1000, 1002 and 1003 report their state" {
@@ -385,13 +385,13 @@ test "mouse 1002: a drag reports the held button plus 32" {
 
     t.feed("\x1b[?1002h\x1b[?1006h");
     t.sendMouseMotion(1, 1, null, 0);
-    try testing.expect(t.events.response.isEmpty());
+    try testing.expect(t.response.isEmpty());
     t.sendMouseMotion(1, 1, .left, 0);
     t.sendMouseMotion(2, 1, .middle, 0);
     t.sendMouseMotion(3, 1, .right, 4);
     try testing.expectEqualStrings(
         "\x1b[<32;2;2M\x1b[<33;3;2M\x1b[<38;4;2M",
-        t.events.response.slice(),
+        t.response.slice(),
     );
 }
 
@@ -402,7 +402,7 @@ test "mouse 1003: motion with no button held reports 3 plus 32" {
     t.feed("\x1b[?1003h");
     t.sendMouseMotion(0, 0, null, 0);
     t.sendMouseMotion(0, 0, .right, 0);
-    try testing.expectEqualStrings("\x1b[M\x43!!\x1b[M\x42!!", t.events.response.slice());
+    try testing.expectEqualStrings("\x1b[M\x43!!\x1b[M\x42!!", t.response.slice());
 }
 
 test "mouse 1000: motion is not reported" {
@@ -411,7 +411,7 @@ test "mouse 1000: motion is not reported" {
 
     t.feed("\x1b[?1000h");
     t.sendMouseMotion(0, 0, .left, 0);
-    try testing.expect(t.events.response.isEmpty());
+    try testing.expect(t.response.isEmpty());
 }
 
 test "HeldButtons: a drag names the last button pressed, then the lowest held" {
@@ -780,11 +780,11 @@ test "hardReset: events cleared" {
     defer t.destroy(alloc);
 
     t.events.bell = true;
-    t.events.response.append("foo");
+    t.response.append("foo");
     t.hardReset();
 
     try testing.expect(!t.events.bell);
-    try testing.expect(t.events.response.isEmpty());
+    try testing.expect(t.response.isEmpty());
 }
 
 test "hardReset: answerback preserved" {
@@ -804,7 +804,28 @@ test "Terminal: xtversion replies with 8-bit controls under s8c1t" {
     t.control_format = .s8c1t;
     t.xtversion();
 
-    try testing.expectEqualStrings("\x90>|test 0.0.1\x9c", t.events.response.slice());
+    try testing.expectEqualStrings("\x90>|test 0.0.1\x9c", t.response.slice());
+}
+
+test "Terminal: takeEvents and drainReplies" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    t.events.bell = true;
+    t.events.title = true;
+    t.response.append("hello reply");
+
+    try testing.expect(t.hasReplies());
+    var out: [64]u8 = undefined;
+    const n = t.drainReplies(&out);
+    try testing.expectEqualStrings("hello reply", out[0..n]);
+    try testing.expect(!t.hasReplies());
+
+    try testing.expect(t.events.any());
+    const ev = t.takeEvents();
+    try testing.expect(ev.bell);
+    try testing.expect(ev.title);
+    try testing.expect(!t.events.any());
 }
 
 test "invalid utf-8: sequence cut by ESC is one u+fffd, then ESC runs" {

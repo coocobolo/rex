@@ -46,7 +46,7 @@ test "c0: ENQ sends answerback" {
     t.setAnswerback("xterm");
     t.feed("\x05");
 
-    try testing.expectEqualStrings("xterm", t.events.response.slice());
+    try testing.expectEqualStrings("xterm", t.response.slice());
 }
 
 test "c0: ENQ with empty answerback sends nothing" {
@@ -56,7 +56,7 @@ test "c0: ENQ with empty answerback sends nothing" {
     // answerback is empty by default
     t.feed("\x05");
 
-    try testing.expectEqual(@as(usize, 0), t.events.response.len);
+    try testing.expectEqual(@as(usize, 0), t.response.len);
 }
 
 test "c0: ENQ multiple times concatenates into response buffer" {
@@ -66,7 +66,7 @@ test "c0: ENQ multiple times concatenates into response buffer" {
     t.setAnswerback("ab");
     t.feed("\x05\x05");
 
-    try testing.expectEqualStrings("abab", t.events.response.slice());
+    try testing.expectEqualStrings("abab", t.response.slice());
 }
 
 test "c0: BEL sets events.bell" {
@@ -339,12 +339,13 @@ test "c0: events.clear resets bell and response" {
     t.feed("\x07\x05");
 
     try testing.expect(t.events.bell);
-    try testing.expectEqualStrings("hi", t.events.response.slice());
+    try testing.expectEqualStrings("hi", t.response.slice());
 
     t.events.clear();
+    t.response.clear();
 
     try testing.expect(!t.events.bell);
-    try testing.expectEqual(@as(usize, 0), t.events.response.len);
+    try testing.expectEqual(@as(usize, 0), t.response.len);
     try testing.expect(!t.events.any());
 }
 
@@ -2793,8 +2794,8 @@ test "csi: DSR 5 reporting" {
     t.control_format = .s7c1t;
     t.feed("\x1b[5n");
 
-    try testing.expect(t.events.any());
-    try testing.expectEqualStrings("\x1b[0n", t.events.response.slice());
+    try testing.expect(t.hasReplies());
+    try testing.expectEqualStrings("\x1b[0n", t.response.slice());
 }
 
 test "csi: DSR 6 reporting" {
@@ -2807,8 +2808,8 @@ test "csi: DSR 6 reporting" {
     t.control_format = .s7c1t;
     t.feed("\x1b[6n");
 
-    try testing.expect(t.events.any());
-    try testing.expectEqualStrings("\x1b[6;11R", t.events.response.slice());
+    try testing.expect(t.hasReplies());
+    try testing.expectEqualStrings("\x1b[6;11R", t.response.slice());
 }
 
 test "csi: DSR XTVERSION xterm name and version" {
@@ -2818,8 +2819,8 @@ test "csi: DSR XTVERSION xterm name and version" {
     t.control_format = .s7c1t;
     t.feed("\x1b[>0p");
 
-    try testing.expect(t.events.any());
-    try testing.expectEqualStrings("\x1bP>|test 0.0.1\x1b\\", t.events.response.slice());
+    try testing.expect(t.hasReplies());
+    try testing.expectEqualStrings("\x1bP>|test 0.0.1\x1b\\", t.response.slice());
 }
 
 test "csi: DECXCPR report cursor position" {
@@ -2832,8 +2833,8 @@ test "csi: DECXCPR report cursor position" {
     t.control_format = .s7c1t;
     t.feed("\x1b[?6n");
 
-    try testing.expect(t.events.any());
-    try testing.expectEqualStrings("\x1b[?6;11R", t.events.response.slice());
+    try testing.expect(t.hasReplies());
+    try testing.expectEqualStrings("\x1b[?6;11R", t.response.slice());
 }
 
 test "csi: DA1 reports a VT220 with colour and clipboard" {
@@ -2843,8 +2844,8 @@ test "csi: DA1 reports a VT220 with colour and clipboard" {
     t.control_format = .s7c1t;
     t.feed("\x1b[0c");
 
-    try testing.expect(t.events.any());
-    try testing.expectEqualStrings("\x1b[?62;22;52c", t.events.response.slice());
+    try testing.expect(t.hasReplies());
+    try testing.expectEqualStrings("\x1b[?62;22;52c", t.response.slice());
 }
 
 test "esc: DECID answers exactly like DA1" {
@@ -2852,12 +2853,12 @@ test "esc: DECID answers exactly like DA1" {
     defer t.destroy(alloc);
 
     t.feed("\x1b[c");
-    const da1 = try alloc.dupe(u8, t.events.response.slice());
+    const da1 = try alloc.dupe(u8, t.response.slice());
     defer alloc.free(da1);
-    t.events.response.clear();
+    t.response.clear();
 
     t.feed("\x1bZ");
-    try testing.expectEqualStrings(da1, t.events.response.slice());
+    try testing.expectEqualStrings(da1, t.response.slice());
 }
 
 test "esc: DECID answers with 8-bit controls under s8c1t" {
@@ -2866,7 +2867,7 @@ test "esc: DECID answers with 8-bit controls under s8c1t" {
 
     t.control_format = .s8c1t;
     t.feed("\x1bZ");
-    try testing.expectEqualStrings("\x9b?62;22;52c", t.events.response.slice());
+    try testing.expectEqualStrings("\x9b?62;22;52c", t.response.slice());
 }
 
 test "csi: DA2 reports the terminal type and version" {
@@ -2876,8 +2877,8 @@ test "csi: DA2 reports the terminal type and version" {
     t.control_format = .s7c1t;
     t.feed("\x1b[>0c");
 
-    try testing.expect(t.events.any());
-    try testing.expectEqualStrings("\x1b[>1;0;0c", t.events.response.slice());
+    try testing.expect(t.hasReplies());
+    try testing.expectEqualStrings("\x1b[>1;0;0c", t.response.slice());
 }
 
 test "csi: REP repeats last char" {
@@ -3801,10 +3802,11 @@ test "color: OSC 17 and 19 queries fall back to the theme" {
 
     t.setTheme(test_theme);
     t.feed("\x1b]17;?\x07");
-    try testing.expect(std.mem.indexOf(u8, t.events.response.slice(), "17;rgb:1111/2222/3333") != null);
+    try testing.expect(std.mem.indexOf(u8, t.response.slice(), "17;rgb:1111/2222/3333") != null);
     t.events.clear();
+    t.response.clear();
     t.feed("\x1b]19;?\x07");
-    try testing.expect(std.mem.indexOf(u8, t.events.response.slice(), "19;rgb:4444/5555/6666") != null);
+    try testing.expect(std.mem.indexOf(u8, t.response.slice(), "19;rgb:4444/5555/6666") != null);
 }
 
 test "color: OSC 117 and 119 reset the selection colors" {
