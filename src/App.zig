@@ -89,6 +89,8 @@ pub const Config = struct {
         /// Positions, thicknesses and looks of underline, strikethrough
         /// and overline. The defaults follow the font.
         decoration: renderer_mod.Decoration.Option = .{},
+        /// Opacity of SGR 2 (dim) text, 0.0 to 1.0.
+        dim_alpha: f32 = 0.5,
         selection: renderer_mod.Selection.Option,
         buffer_size: Dimension(u16),
     },
@@ -272,7 +274,10 @@ pub fn init(
     var atlas: Atlas = try .create(gpa);
     errdefer atlas.destroy();
 
-    var frame_builder: FrameBuilderType = try .init(gpa, config.window.decoration);
+    var frame_builder: FrameBuilderType = try .init(gpa, .{
+        .dim_alpha = config.window.dim_alpha,
+        .decoration = config.window.decoration,
+    });
     errdefer frame_builder.deinit(gpa);
 
     atlas.preRasterize(gpa, &rasterizer, .{ .start = 0x20, .end = 0x7F });
