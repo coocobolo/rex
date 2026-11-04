@@ -92,10 +92,16 @@ Inputs in `regressions` are raw fuzzer bytes, replayed as they are.
 Seeds are plain byte strings: `harness.fuzz` wraps each one as the
 target's first `chunk`, and `harness.seeded` mutates them.
 
+CI fuzzes every target too (`.github/workflows/fuzz.yml`): one
+million runs per target on each push and fifty million nightly, with
+the corpus cached between runs. A crash fails the job and its input
+is uploaded as the `crash-<target>` artifact; promote it as above.
+
 To add a target, create `src/fuzz/<name>.zig` with a `run(*Source)`
 function and the two tests (`fuzz <name>` and
 `fuzz <name>: seeded mutations`), import it in `src/fuzz/root.zig`,
-and add its name to `fuzz_targets` in `build.zig`.
+and add its name to `fuzz_targets` in `build.zig` and to the
+matrix in `.github/workflows/fuzz.yml`.
 
 ## Generated code
 

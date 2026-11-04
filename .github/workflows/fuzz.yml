@@ -1,0 +1,59 @@
+name: fuzz
+
+# Short runs on every push, a long run nightly. The corpus is cached
+# per target so each run continues from the last. A crash fails the
+# job and uploads the input as an artifact; to keep it, see the
+# fuzzing section of CONTRIBUTING.md.
+
+on:
+  push:
+    branches: [main, develop, feat/term]
+  schedule:
+    - cron: "0 2 * * *" # 02:00 UTC
+  workflow_dispatch:
+    inputs:
+      runs:
+        description: "Runs per target"
+        default: "50000000"
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [parser, terminal, strings, utf8, grapheme, wcwidth]
+    env:
+      # About 1 minute per target on push, about an hour nightly.
+      RUNS: ${{ github.event_name == 'push' && '1000000' || inputs.runs || '50000000' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libx11-dev libxrandr-dev libxi-dev libxcursor-dev \
+            libxinerama-dev libxext-dev libgl-dev libegl-dev \
+            libpng-dev zlib1g-dev
+
+      - uses: mlugg/setup-zig@v2.2.1
+
+      - name: Restore corpus
+        uses: actions/cache@v4
+        with:
+          path: .zig-cache/f
+          key: fuzz-${{ matrix.target }}-${{ github.run_id }}
+          restore-keys: fuzz-${{ matrix.target }}-
+
+      - name: Fuzz ${{ matrix.target }}
+        run: zig build fuzz-${{ matrix.target }} -Dllvm --fuzz=$RUNS
+
+      - name: Upload crash
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: crash-${{ matrix.target }}
+          path: .zig-cache/f/crash
+          if-no-files-found: ignore
