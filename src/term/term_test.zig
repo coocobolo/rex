@@ -63,6 +63,28 @@ test "resize: updates both screens" {
     try testing.expectEqual(16, t.alternate.active_cols);
 }
 
+test "resize: reflows primary screen on column change" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    t.resize(6, 10);
+
+    for ("0123456789", 0..) |ch, c| {
+        t.primary.setCell(0, c, .{ .codepoint = @intCast(ch), .kind = .narrow, .wrapped = (c == 9) });
+    }
+    for ("ABCDE", 0..) |ch, c| {
+        t.primary.setCell(1, c, .{ .codepoint = @intCast(ch), .kind = .narrow, .wrapped = false });
+    }
+
+    // Widening columns from 10 to 20 triggers reflowBuffer on primary screen
+    t.resize(6, 20);
+
+    const expected = "0123456789ABCDE";
+    for (expected, 0..) |ch, c| {
+        try testing.expectEqual(@as(u21, ch), t.primary.cellAt(0, c).codepoint);
+    }
+}
+
 test "resize: clamps to max dimensions" {
     var t = try Term.create(alloc);
     defer t.destroy(alloc);

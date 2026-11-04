@@ -2062,6 +2062,409 @@ test "setActive: growing cols only does not affect line_attrs" {
     try testing.expectEqual(LineAttr.double_width, s.displayLineAttr(3));
 }
 
+test "setActive: height shrink pushes top rows to scrollback and preserves cursor line" {
+    const alloc = testing.allocator;
+    var s = try primaryScreen(alloc);
+    defer s.destroy(alloc);
+
+    s.setActive(10, 20);
+
+    for (0..10) |r| {
+        for (0..20) |c| {
+            s.setCell(r, c, .{ .codepoint = '0' + @as(u21, @intCast(r)), .kind = .narrow });
+        }
+    }
+    s.cursor.row = 9;
+    s.cursor.col = 5;
+
+    // Shrink height from 10 to 6 rows.
+    // Cursor was at row 9. In new 6-row view (0..5), 4 lines (rows 0..3) must be
+    // pushed to scrollback so cursor row stays at bottom (row 5).
+    s.setActive(6, 20);
+
+    try testing.expectEqual(5, s.cursor.row);
+    try testing.expectEqual(5, s.cursor.col);
+    try testing.expectEqual(4, s.scrollback_used);
+
+    // Visible rows 0..5 should correspond to original rows 4..9
+    for (0..6) |r| {
+        const expected_char: u21 = '0' + @as(u21, @intCast(r + 4));
+        try testing.expectEqual(expected_char, s.cellAt(r, 0).codepoint);
+    }
+}
+
+test "setActive: height grow pulls lines from scrollback without blank gaps" {
+    const alloc = testing.allocator;
+    var s = try primaryScreen(alloc);
+    defer s.destroy(alloc);
+
+    s.setActive(10, 20);
+
+    for (0..10) |r| {
+        for (0..20) |c| {
+            s.setCell(r, c, .{ .codepoint = '0' + @as(u21, @intCast(r)), .kind = .narrow });
+        }
+    }
+    s.cursor.row = 9;
+    s.cursor.col = 5;
+
+    // Shrink to 6 rows first (should push 4 rows to scrollback)
+    s.setActive(6, 20);
+
+    // Now expand back to 10 rows (should pull 4 rows from scrollback)
+    s.setActive(10, 20);
+
+    try testing.expectEqual(9, s.cursor.row);
+    try testing.expectEqual(5, s.cursor.col);
+    try testing.expectEqual(0, s.scrollback_used);
+
+    // All 10 rows should be restored to their original characters, no blank rows!
+    for (0..10) |r| {
+        const expected_char: u21 = '0' + @as(u21, @intCast(r));
+        try testing.expectEqual(expected_char, s.cellAt(r, 0).codepoint);
+    }
+}
+
+test "setActive: repeated zoom in and out cycles preserve content and cursor" {
+    const alloc = testing.allocator;
+    var s = try primaryScreen(alloc);
+    defer s.destroy(alloc);
+
+    s.setActive(12, 20);
+
+    for (0..12) |r| {
+        for (0..20) |c| {
+            s.setCell(r, c, .{ .codepoint = 'A' + @as(u21, @intCast(r)), .kind = .narrow });
+        }
+    }
+    s.cursor.row = 11;
+    s.cursor.col = 3;
+
+    // Zoom in (12 -> 8)
+    s.setActive(8, 16);
+    try testing.expectEqual(7, s.cursor.row);
+    try testing.expectEqual(4, s.scrollback_used);
+
+    // Zoom in further (8 -> 6)
+    s.setActive(6, 12);
+    try testing.expectEqual(5, s.cursor.row);
+    try testing.expectEqual(6, s.scrollback_used);
+
+    // Zoom out (6 -> 8)
+    s.setActive(8, 16);
+    try testing.expectEqual(7, s.cursor.row);
+    try testing.expectEqual(4, s.scrollback_used);
+
+    // Zoom out fully (8 -> 12)
+    s.setActive(12, 20);
+    try testing.expectEqual(11, s.cursor.row);
+    try testing.expectEqual(3, s.cursor.col);
+    try testing.expectEqual(0, s.scrollback_used);
+
+    // All 12 rows must match original content
+    for (0..12) |r| {
+        const expected_char: u21 = 'A' + @as(u21, @intCast(r));
+        try testing.expectEqual(expected_char, s.cellAt(r, 0).codepoint);
+    }
+}
+
+test "reflowBuffer: widening columns unwraps soft-wrapped line and shifts cursor" {
+    const alloc = testing.allocator;
+    var s = try primaryScreen(alloc);
+    defer s.destroy(alloc);
+
+    s.setActive(8, 10);
+
+    for ("0123456789", 0..) |ch, c| {
+        s.setCell(0, c, .{ .codepoint = @intCast(ch), .kind = .narrow, .wrapped = (c == 9) });
+    }
+    for ("ABCDE", 0..) |ch, c| {
+        s.setCell(1, c, .{ .codepoint = @intCast(ch), .kind = .narrow, .wrapped = false });
+    }
+    s.cursor.row = 1;
+    s.cursor.col = 5;
+
+    s.reflowBuffer(8, 20);
+
+    const expected = "0123456789ABCDE";
+    for (expected, 0..) |ch, c| {
+        try testing.expectEqual(@as(u21, ch), s.cellAt(0, c).codepoint);
+    }
+    try testing.expect(!s.cellAt(0, 14).wrapped);
+
+    for (0..20) |c| {
+        try testing.expectEqual(@as(u21, 0), s.cellAt(1, c).codepoint);
+    }
+
+    try testing.expectEqual(0, s.cursor.row);
+    try testing.expectEqual(15, s.cursor.col);
+}
+
+test "reflowBuffer: narrowing columns wraps line and updates cursor position" {
+    const alloc = testing.allocator;
+    var s = try primaryScreen(alloc);
+    defer s.destroy(alloc);
+
+    s.setActive(8, 20);
+
+    const text = "0123456789ABCDE";
+    for (text, 0..) |ch, c| {
+        s.setCell(0, c, .{ .codepoint = @intCast(ch), .kind = .narrow });
+    }
+    s.cursor.row = 0;
+    s.cursor.col = 15;
+
+    s.reflowBuffer(8, 10);
+
+    for ("0123456789", 0..) |ch, c| {
+        try testing.expectEqual(@as(u21, ch), s.cellAt(0, c).codepoint);
+    }
+    try testing.expect(s.cellAt(0, 9).wrapped);
+
+    for ("ABCDE", 0..) |ch, c| {
+        try testing.expectEqual(@as(u21, ch), s.cellAt(1, c).codepoint);
+    }
+    try testing.expect(!s.cellAt(1, 4).wrapped);
+
+    try testing.expectEqual(1, s.cursor.row);
+    try testing.expectEqual(5, s.cursor.col);
+}
+
+test "reflowBuffer: wide character at margin wraps with spacer cell" {
+    const alloc = testing.allocator;
+    var s = try primaryScreen(alloc);
+    defer s.destroy(alloc);
+
+    s.setActive(8, 10);
+
+    for ("123456789", 0..) |ch, c| {
+        s.setCell(0, c, .{ .codepoint = @intCast(ch), .kind = .narrow });
+    }
+    s.setCell(0, 9, .{ .kind = .empty, .wrapped = true });
+
+    s.setCell(1, 0, .{ .codepoint = 0x4E2D, .kind = .wide_left });
+    s.setCell(1, 1, .{ .codepoint = 0, .kind = .wide_right });
+
+    s.cursor.row = 1;
+    s.cursor.col = 2;
+
+    s.reflowBuffer(8, 12);
+
+    for ("123456789", 0..) |ch, c| {
+        try testing.expectEqual(@as(u21, ch), s.cellAt(0, c).codepoint);
+    }
+    try testing.expectEqual(@as(u21, 0x4E2D), s.cellAt(0, 9).codepoint);
+    try testing.expectEqual(.wide_left, s.cellAt(0, 9).kind);
+    try testing.expectEqual(.wide_right, s.cellAt(0, 10).kind);
+
+    try testing.expectEqual(@as(u21, 0), s.cellAt(1, 0).codepoint);
+
+    try testing.expectEqual(0, s.cursor.row);
+    try testing.expectEqual(11, s.cursor.col);
+}
+
+test "reflowBuffer: hard break lines are never joined" {
+    const alloc = testing.allocator;
+    var s = try primaryScreen(alloc);
+    defer s.destroy(alloc);
+
+    s.setActive(8, 10);
+
+    for ("hello", 0..) |ch, c| {
+        s.setCell(0, c, .{ .codepoint = @intCast(ch), .kind = .narrow, .wrapped = false });
+    }
+    for ("world", 0..) |ch, c| {
+        s.setCell(1, c, .{ .codepoint = @intCast(ch), .kind = .narrow, .wrapped = false });
+    }
+
+    s.reflowBuffer(8, 20);
+
+    for ("hello", 0..) |ch, c| {
+        try testing.expectEqual(@as(u21, ch), s.cellAt(0, c).codepoint);
+    }
+    try testing.expectEqual(@as(u21, 0), s.cellAt(0, 5).codepoint);
+
+    for ("world", 0..) |ch, c| {
+        try testing.expectEqual(@as(u21, ch), s.cellAt(1, c).codepoint);
+    }
+}
+
+test "reflowBuffer: narrowing pushes overflow lines into scrollback" {
+    const alloc = testing.allocator;
+    var s = try primaryScreen(alloc);
+    defer s.destroy(alloc);
+
+    s.setActive(4, 10);
+
+    for (0..4) |r| {
+        for (0..10) |c| {
+            s.setCell(r, c, .{
+                .codepoint = 'A' + @as(u21, @intCast(r * 10 + c)),
+                .kind = .narrow,
+                .wrapped = (r < 3 and c == 9),
+            });
+        }
+    }
+    s.cursor.row = 3;
+    s.cursor.col = 10;
+
+    s.reflowBuffer(4, 5);
+
+    try testing.expectEqual(4, s.scrollback_used);
+    try testing.expectEqual(3, s.cursor.row);
+}
+
+test "reflowBuffer: pre-existing scrollback history is reflowed and preserved" {
+    const alloc = testing.allocator;
+    var s = try primaryScreen(alloc);
+    defer s.destroy(alloc);
+
+    s.setActive(4, 10);
+
+    // Row 0: "0123456789" with wrapped = true
+    for ("0123456789", 0..) |ch, c| {
+        s.setCell(0, c, .{ .codepoint = @intCast(ch), .kind = .narrow, .wrapped = (c == 9) });
+    }
+    // Row 1: "ABCDE" with wrapped = false
+    for ("ABCDE", 0..) |ch, c| {
+        s.setCell(1, c, .{ .codepoint = @intCast(ch), .kind = .narrow, .wrapped = false });
+    }
+
+    // Push rows 0 and 1 into scrollback history via full-screen scrollUp
+    s.scrollUp(2);
+    try testing.expectEqual(2, s.scrollback_used);
+
+    // Active row 0: "HELLO" (wrapped = false)
+    for ("HELLO", 0..) |ch, c| {
+        s.setCell(0, c, .{ .codepoint = @intCast(ch), .kind = .narrow, .wrapped = false });
+    }
+    s.cursor.row = 0;
+    s.cursor.col = 5;
+
+    // Reflow from 10 cols to 20 cols
+    s.reflowBuffer(4, 20);
+
+    // In 20 cols:
+    // "0123456789" and "ABCDE" were soft-wrapped in history, so they unwrap into 1 row of 15 chars.
+    // Active line "HELLO" is 5 chars.
+    // Total emitted rows = 2. Since 2 <= new_rows (4), both lines fit in active area.
+    // Row 0: "0123456789ABCDE"
+    // Row 1: "HELLO"
+    const expected_hist = "0123456789ABCDE";
+    for (expected_hist, 0..) |ch, c| {
+        try testing.expectEqual(@as(u21, ch), s.cellAt(0, c).codepoint);
+    }
+    for ("HELLO", 0..) |ch, c| {
+        try testing.expectEqual(@as(u21, ch), s.cellAt(1, c).codepoint);
+    }
+
+    try testing.expectEqual(1, s.cursor.row);
+    try testing.expectEqual(5, s.cursor.col);
+    try testing.expectEqual(0, s.scrollback_used);
+}
+
+test "reflowBuffer: multi-row soft wrap (3 rows) unwraps cleanly into wide screen" {
+    const alloc = testing.allocator;
+    var s = try primaryScreen(alloc);
+    defer s.destroy(alloc);
+
+    s.setActive(6, 6);
+
+    for ("012345", 0..) |ch, c| {
+        s.setCell(0, c, .{ .codepoint = @intCast(ch), .kind = .narrow, .wrapped = (c == 5) });
+    }
+    for ("6789ab", 0..) |ch, c| {
+        s.setCell(1, c, .{ .codepoint = @intCast(ch), .kind = .narrow, .wrapped = (c == 5) });
+    }
+    for ("cdefgh", 0..) |ch, c| {
+        s.setCell(2, c, .{ .codepoint = @intCast(ch), .kind = .narrow, .wrapped = false });
+    }
+
+    s.cursor.row = 2;
+    s.cursor.col = 6;
+
+    s.reflowBuffer(6, 20);
+
+    const expected = "0123456789abcdefgh";
+    for (expected, 0..) |ch, c| {
+        try testing.expectEqual(@as(u21, ch), s.cellAt(0, c).codepoint);
+    }
+    try testing.expect(!s.cellAt(0, 17).wrapped);
+
+    // Remaining rows in active area are empty
+    for (1..6) |r| {
+        try testing.expectEqual(@as(u21, 0), s.cellAt(r, 0).codepoint);
+    }
+
+    try testing.expectEqual(0, s.cursor.row);
+    try testing.expectEqual(18, s.cursor.col);
+}
+
+test "reflowBuffer: saved cursor is tracked across line wrap and unwrap" {
+    const alloc = testing.allocator;
+    var s = try primaryScreen(alloc);
+    defer s.destroy(alloc);
+
+    s.setActive(6, 10);
+
+    for ("0123456789", 0..) |ch, c| {
+        s.setCell(0, c, .{ .codepoint = @intCast(ch), .kind = .narrow, .wrapped = (c == 9) });
+    }
+    for ("ABCDEFGH", 0..) |ch, c| {
+        s.setCell(1, c, .{ .codepoint = @intCast(ch), .kind = .narrow, .wrapped = false });
+    }
+
+    // Saved cursor on row 0, col 4 ('4')
+    s.saved_cursor.row = 0;
+    s.saved_cursor.col = 4;
+
+    // Live cursor on row 1, col 5 ('F')
+    s.cursor.row = 1;
+    s.cursor.col = 5;
+
+    s.reflowBuffer(6, 20);
+
+    // Both rows unwrapped into row 0: "0123456789ABCDEFGH"
+    // Saved cursor was at '4', should still be at (0, 4)
+    try testing.expectEqual(0, s.saved_cursor.row);
+    try testing.expectEqual(4, s.saved_cursor.col);
+
+    // Live cursor was at 'F' (which is index 10 + 5 = 15)
+    try testing.expectEqual(0, s.cursor.row);
+    try testing.expectEqual(15, s.cursor.col);
+}
+
+test "reflowBuffer: consecutive hard break empty lines are preserved" {
+    const alloc = testing.allocator;
+    var s = try primaryScreen(alloc);
+    defer s.destroy(alloc);
+
+    s.setActive(6, 10);
+
+    for ("line1", 0..) |ch, c| {
+        s.setCell(0, c, .{ .codepoint = @intCast(ch), .kind = .narrow, .wrapped = false });
+    }
+    // Rows 1 and 2 are empty (hard breaks)
+    for ("line2", 0..) |ch, c| {
+        s.setCell(3, c, .{ .codepoint = @intCast(ch), .kind = .narrow, .wrapped = false });
+    }
+    s.cursor.row = 3;
+    s.cursor.col = 5;
+
+    s.reflowBuffer(6, 20);
+
+    for ("line1", 0..) |ch, c| {
+        try testing.expectEqual(@as(u21, ch), s.cellAt(0, c).codepoint);
+    }
+    try testing.expectEqual(@as(u21, 0), s.cellAt(1, 0).codepoint);
+    try testing.expectEqual(@as(u21, 0), s.cellAt(2, 0).codepoint);
+    for ("line2", 0..) |ch, c| {
+        try testing.expectEqual(@as(u21, ch), s.cellAt(3, c).codepoint);
+    }
+    try testing.expectEqual(3, s.cursor.row);
+    try testing.expectEqual(5, s.cursor.col);
+}
+
 test "scrollViewportBack: increase viewport_offset by lines" {
     const alloc = testing.allocator;
     var s = try primaryScreen(alloc);

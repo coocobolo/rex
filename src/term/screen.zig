@@ -254,6 +254,9 @@ pub fn Screen(comptime option: Option) type {
         ///  -----------------------------------------------------------------------
         cells: []align(64) Cell,
 
+        /// Pre-allocated secondary scratch buffer for zero-allocation reflow.
+        scratch_cells: if (is_scrollback_used) []align(64) Cell else void,
+
         // Ring buffer
         // The ring buffer is a single flat allocation. No pointer chasing, cache-friendly.
 
@@ -388,6 +391,14 @@ pub fn Screen(comptime option: Option) type {
         pub fn create(gpa: std.mem.Allocator) !Self {
             const cells = try gpa.alignedAlloc(Cell, .@"64", ring_rows * max_cols);
             @memset(cells, Cell{});
+            errdefer gpa.free(cells);
+
+            const scratch_cells = if (comptime is_scrollback_used) blk: {
+                const sc = try gpa.alignedAlloc(Cell, .@"64", ring_rows * max_cols);
+                @memset(sc, Cell{});
+                break :blk sc;
+            } else {};
+            errdefer if (comptime is_scrollback_used) gpa.free(scratch_cells);
 
             var row_map = try gpa.alloc(u16, ring_rows);
             for (0..ring_rows) |i| row_map[i] = @intCast(i);
@@ -395,6 +406,7 @@ pub fn Screen(comptime option: Option) type {
             return .{
                 .row_map = row_map,
                 .cells = cells,
+                .scratch_cells = scratch_cells,
                 .palette = .empty,
                 .tab_stops = comptime defaultTabStops(),
                 .scroll_bottom = default_scroll_bottom,
@@ -409,6 +421,7 @@ pub fn Screen(comptime option: Option) type {
 
         pub fn destroy(self: *Self, allocator: std.mem.Allocator) void {
             allocator.free(self.cells);
+            if (comptime is_scrollback_used) allocator.free(self.scratch_cells);
             allocator.free(self.row_map);
             self.grapheme_table.deinit();
             self.grapheme_reverse.deinit();
@@ -1264,10 +1277,10 @@ pub fn Screen(comptime option: Option) type {
         /// already-evicted row), this is not checked here; use `resolveAnchor`'s eviction
         /// guard before calling this.
         inline fn rowCellsAtAnchor(self: *const Self, anchor: i64) []const Cell {
-            const phys: usize = if (anchor >= 0) blk: {
+            if (anchor >= 0) {
                 std.debug.assert(anchor < @as(i64, @intCast(max_rows)));
-                break :blk self.physRow(@intCast(anchor));
-            } else blk: {
+                return self.cells[self.physRow(@intCast(anchor)) * max_cols ..][0..max_cols];
+            } else if (comptime is_scrollback_used) {
                 const back_i64 = -anchor;
 
                 std.debug.assert(
@@ -1278,10 +1291,11 @@ pub fn Screen(comptime option: Option) type {
 
                 // Negative anchors bypass row_map because scrollback is in
                 // fixed physical ring order.
-                break :blk (self.scroll_offset -% back) & ring_mask;
-            };
-
-            return self.cells[phys * max_cols ..][0..max_cols];
+                const phys = (self.scroll_offset -% back) & ring_mask;
+                return self.cells[phys * max_cols ..][0..max_cols];
+            } else {
+                unreachable;
+            }
         }
 
         /// Single-cell accessor built on `rowCellsAtAnchor`, mirroring `cellAt`'s
@@ -1905,26 +1919,61 @@ pub fn Screen(comptime option: Option) type {
             // canonicalizeRowMap() returns immediately when the map is already identity.
             self.canonicalizeRowMap();
 
-            self.active_rows = @intCast(new_rows);
-            self.active_cols = @intCast(new_cols);
-
-            if (self.active_rows == 0 or self.active_cols == 0) {
+            if (new_rows == 0 or new_cols == 0) {
+                self.active_rows = @intCast(new_rows);
+                self.active_cols = @intCast(new_cols);
                 self.bump();
                 return;
             }
 
-            // Clear newly exposed rows, or clear the complete active area when
-            // restoring a previously zero-sized area.
-            if (self.active_rows > old_rows or was_empty) {
-                const clear_from: usize = if (was_empty) 0 else old_rows;
+            if (!was_empty) {
+                if (new_rows < old_rows) { // Height decrease
+                    // If the cursor would fall outside the new viewport, scroll the screen up
+                    // so the cursor and current line stay visible, pushing top rows to scrollback.
+                    if (self.cursor.row >= new_rows) {
+                        const scroll_count = self.cursor.row - (new_rows - 1);
+                        // Advance scroll_offset to scroll the viewport down
+                        self.scroll_offset = @intCast(wrapAdd(self.scroll_offset, scroll_count));
+                        self.total_lines_scrolled += @intCast(scroll_count);
 
-                for (clear_from..self.active_rows) |r| {
-                    // The mapping was canonicalized before active_rows changed.
-                    // row_map is intentionally not touched while the identity flag is set.
+                        if (comptime is_scrollback_used) {
+                            self.scrollback_used = @min(self.scrollback_used + scroll_count, max_scrollback);
+                        }
+
+                        self.cursor.row = @intCast(new_rows - 1);
+                        self.saved_cursor.row = self.saved_cursor.row -| @as(u16, @intCast(scroll_count));
+                    }
+                } else if (new_rows > old_rows) { // Height increase
+                    // Pull lines back down from scrollback if available, keeping bottom content anchored.
+                    var pull: usize = 0;
+                    if (comptime is_scrollback_used) {
+                        pull = @min(new_rows - old_rows, self.scrollback_used);
+                        if (pull > 0) {
+                            self.scroll_offset = @intCast((self.scroll_offset + ring_rows - pull) & ring_mask);
+                            self.scrollback_used -= @intCast(pull);
+                            self.total_lines_scrolled -= @intCast(pull);
+                            self.cursor.row = @min(self.cursor.row + @as(u16, @intCast(pull)), @as(u16, @intCast(new_rows - 1)));
+                            self.saved_cursor.row = @min(self.saved_cursor.row + @as(u16, @intCast(pull)), @as(u16, @intCast(new_rows - 1)));
+                        }
+                    }
+
+                    // Only clear rows that are still newly exposed beyond what was pulled from scrollback
+                    const clear_from = old_rows + pull;
+                    for (clear_from..new_rows) |r| {
+                        self.clearRow(r, .{});
+                        self.line_attrs[self.physRow(r)] = .normal;
+                    }
+                }
+            } else {
+                // Initial setup or restoring from zero size: clear full active area
+                for (0..new_rows) |r| {
                     self.clearRow(r, .{});
                     self.line_attrs[self.physRow(r)] = .normal;
                 }
             }
+
+            self.active_rows = @intCast(new_rows);
+            self.active_cols = @intCast(new_cols);
 
             self.dirty_rows = .full;
             self.scroll_top = 0;
@@ -1938,6 +1987,236 @@ pub fn Screen(comptime option: Option) type {
             }
 
             self.cached_row_phys = max_u16;
+            self.bump();
+        }
+
+        /// Reflows the entire screen history and active area to `new_rows x new_cols`.
+        pub fn reflowBuffer(self: *Self, new_rows: usize, new_cols: usize) void {
+            // Precondition: alternate screen / zero-scrollback never reflow (TUI
+            // apps manage their own grid).
+            if (comptime !is_scrollback_used) return;
+
+            // No-op if columns haven't changed or dimensions are empty
+            if (new_cols == self.active_cols) return;
+            if (new_rows == 0 or new_cols == 0) return;
+            if (self.active_rows == 0 or self.active_cols == 0) return;
+            if (new_rows > max_rows or new_cols > max_cols) return;
+
+            const scratch = self.scratch_cells;
+
+            // Identify active content boundary and cursor source positions
+            // Trailing unwritten empty rows below the cursor must NOT be reflowed as content,
+            // otherwise they would be pushed into scrollback as empty lines!
+            var active_content_rows: usize = @min(self.active_rows, @max(@as(usize, self.cursor.row) + 1, @as(usize, self.saved_cursor.row) + 1));
+            var check_r: usize = self.active_rows;
+            while (check_r > active_content_rows) : (check_r -= 1) {
+                const r_idx = check_r - 1;
+                const phys = self.physRow(r_idx);
+                const row_cells = self.cells[phys * max_cols ..][0..self.active_cols];
+                var empty = true;
+                for (row_cells) |*c| {
+                    if (c.kind != .empty or c.background != 0 or c.wrapped) {
+                        empty = false;
+                        break;
+                    }
+                }
+                if (!empty) {
+                    active_content_rows = r_idx + 1;
+                    break;
+                }
+            }
+
+            const cursor_phys = self.physRow(self.cursor.row);
+            const saved_cursor_phys = self.physRow(self.saved_cursor.row);
+            const scrollback_count: usize = self.scrollback_used;
+            const total_valid_rows = scrollback_count + active_content_rows;
+
+            var new_cursor_row: usize = 0;
+            var new_cursor_col: usize = 0;
+            const new_cursor_wrap: bool = self.cursor.wrap_pending;
+            var new_saved_row: usize = 0;
+            var new_saved_col: usize = 0;
+            var dst_row: usize = 0;
+            var dst_col: usize = 0;
+
+            // Lazily clear the first row in scratch
+            @memset(scratch[0..max_cols], Cell{});
+
+            // Sequential streaming pass
+            for (0..total_valid_rows) |stream_idx| {
+                const is_history = stream_idx < self.scrollback_used;
+                const src_phys = if (is_history)
+                    (self.scroll_offset + ring_rows - self.scrollback_used + stream_idx) & ring_mask
+                else
+                    self.physRow(stream_idx - self.scrollback_used);
+                const src_row_cells = self.cells[src_phys * max_cols ..][0..self.active_cols];
+                const is_cursor_row = !is_history and (src_phys == cursor_phys);
+                const is_saved_row = !is_history and (src_phys == saved_cursor_phys);
+
+                // Check if this row soft-wrapped into the next
+                const is_soft_wrap = src_row_cells[self.active_cols - 1].wrapped;
+
+                // Content length for this row:
+                var valid_cols: usize = self.active_cols;
+                if (is_soft_wrap) {
+                    // Check if last cell was padding for a wide char that wrapped
+                    if (src_row_cells[self.active_cols - 1].kind == .empty) {
+                        valid_cols = self.active_cols - 1;
+                    }
+                } else {
+                    // Hard break: trim trailing default empty cells
+                    while (valid_cols > 0 and
+                        src_row_cells[valid_cols - 1].kind == .empty and
+                        src_row_cells[valid_cols - 1].background == 0) : (valid_cols -= 1)
+                    {}
+                }
+
+                var cursor_tracked = false;
+                var saved_cursor_tracked = false;
+
+                // Stream cells into scratch buffer
+                for (src_row_cells[0..valid_cols], 0..) |c, src_col| {
+                    // Skip wide_right placeholder since it's already written with wide_left
+                    if (c.kind == .wide_right) {
+                        if (is_cursor_row and src_col == self.cursor.col) {
+                            new_cursor_row = dst_row;
+                            new_cursor_col = dst_col - 1;
+                            cursor_tracked = true;
+                        }
+                        if (is_saved_row and src_col == self.saved_cursor.col) {
+                            new_saved_row = dst_row;
+                            new_saved_col = dst_col - 1;
+                            saved_cursor_tracked = true;
+                        }
+                        continue;
+                    }
+
+                    const is_wide = c.kind.isWideLeft();
+                    const span: usize = if (is_wide) 2 else 1;
+
+                    // Wide character margin check: cannot fit 2-cell character at line end
+                    if (is_wide and dst_col == new_cols - 1) {
+                        scratch[(dst_row & ring_mask) * max_cols + dst_col] = Cell{ .kind = .empty, .wrapped = true };
+                        dst_row += 1;
+                        dst_col = 0;
+                        const next_p = dst_row & ring_mask;
+                        @memset(scratch[next_p * max_cols .. (next_p + 1) * max_cols], Cell{});
+                    }
+
+                    // Track cursor position on-the-fly (after margin wrap so cursor stays with glyph)
+                    if (is_cursor_row and src_col == self.cursor.col) {
+                        new_cursor_row = dst_row;
+                        new_cursor_col = dst_col;
+                        cursor_tracked = true;
+                    }
+                    if (is_saved_row and src_col == self.saved_cursor.col) {
+                        new_saved_row = dst_row;
+                        new_saved_col = dst_col;
+                        saved_cursor_tracked = true;
+                    }
+
+                    var cell_to_write = c;
+                    cell_to_write.wrapped = false; // reset wrapped flag on interior cells
+                    scratch[(dst_row & ring_mask) * max_cols + dst_col] = cell_to_write;
+
+                    if (is_wide) {
+                        scratch[(dst_row & ring_mask) * max_cols + dst_col + 1] = Cell{
+                            .codepoint = 0,
+                            .kind = .wide_right,
+                            .flags = c.flags,
+                            .foreground = c.foreground,
+                            .background = c.background,
+                            .wrapped = false,
+                        };
+                    }
+
+                    dst_col += span;
+                    if (dst_col >= new_cols) {
+                        const has_more = (src_col + span < valid_cols) or is_soft_wrap;
+                        if (has_more) {
+                            scratch[(dst_row & ring_mask) * max_cols + (new_cols - 1)].wrapped = true;
+                            dst_row += 1;
+                            dst_col = 0;
+                            const next_p = dst_row & ring_mask;
+                            @memset(scratch[next_p * max_cols .. (next_p + 1) * max_cols], Cell{});
+                        }
+                    }
+                }
+
+                if (is_cursor_row and !cursor_tracked) {
+                    new_cursor_row = dst_row;
+                    const delta = self.cursor.col -| @as(u16, @intCast(valid_cols));
+                    new_cursor_col = dst_col + delta;
+                }
+                if (is_saved_row and !saved_cursor_tracked) {
+                    new_saved_row = dst_row;
+                    const delta = self.saved_cursor.col -| @as(u16, @intCast(valid_cols));
+                    new_saved_col = dst_col + delta;
+                }
+
+                // If hard break, finalize current row and advance to next row
+                if (!is_soft_wrap) {
+                    if (dst_col > 0 or valid_cols == 0) {
+                        dst_row += 1;
+                        dst_col = 0;
+                        const next_p = dst_row & ring_mask;
+                        @memset(scratch[next_p * max_cols .. (next_p + 1) * max_cols], Cell{});
+                    }
+                }
+            }
+
+            // Include the final row if it has content
+            const total_emitted_rows = if (dst_col > 0) dst_row + 1 else dst_row;
+
+            // Re-partition into Active Screen and Scrollback Ring
+            if (total_emitted_rows <= new_rows) {
+                // Fits entirely within active screen starting at physical row 0
+                self.scrollback_used = 0;
+                self.scroll_offset = 0;
+                self.total_lines_scrolled = 0;
+                for (total_emitted_rows..new_rows) |r| {
+                    @memset(scratch[r * max_cols .. (r + 1) * max_cols], Cell{});
+                }
+                self.cursor.row = @intCast(new_cursor_row);
+                self.saved_cursor.row = @intCast(new_saved_row);
+            } else {
+                // Bottom new_rows belong to active screen; excess goes into scrollback
+                const active_start_row = total_emitted_rows - new_rows;
+                const hist_count = active_start_row;
+                const kept_history = @min(hist_count, max_scrollback);
+                self.scrollback_used = @intCast(kept_history);
+                self.scroll_offset = @intCast(active_start_row & ring_mask);
+                self.total_lines_scrolled = @intCast(kept_history);
+                self.cursor.row = @intCast(new_cursor_row -| active_start_row);
+                self.saved_cursor.row = @intCast(new_saved_row -| active_start_row);
+            }
+
+            // O(1) buffer pointer swap: scratch buffer becomes the primary cells buffer!
+            std.mem.swap([]align(64) Cell, &self.cells, &self.scratch_cells);
+
+            self.cursor.row = @min(self.cursor.row, @as(u16, @intCast(new_rows - 1)));
+            self.saved_cursor.row = @min(self.saved_cursor.row, @as(u16, @intCast(new_rows - 1)));
+
+            if (new_cursor_col >= new_cols) {
+                self.cursor.wrap_pending = true;
+                self.cursor.col = @intCast(new_cols - 1);
+            } else {
+                self.cursor.wrap_pending = (new_cursor_col == new_cols - 1) and new_cursor_wrap;
+                self.cursor.col = @intCast(new_cursor_col);
+            }
+            self.saved_cursor.col = @min(@as(u16, @intCast(new_saved_col)), @as(u16, @intCast(new_cols - 1)));
+
+            self.active_rows = @intCast(new_rows);
+            self.active_cols = @intCast(new_cols);
+            self.scroll_top = 0;
+            self.scroll_bottom = self.active_rows - 1;
+            self.viewport_offset = 0;
+
+            self.row_map_is_identity = true;
+            for (0..ring_rows) |i| self.row_map[i] = @intCast(i);
+            @memset(&self.line_attrs, .normal);
+            self.cached_row_phys = max_u16;
+            self.dirty_rows = .full;
             self.bump();
         }
 
