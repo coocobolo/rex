@@ -52,12 +52,8 @@ const Screen = rex.terminal.screen.Screen;
 
 const pomodoro = rex.builtin.pomodoro;
 
-// Common Power-of-Two Targets to Aim for:
-// 4,096 total rows (e.g., 200 rows + 3,896 scrollback)
-//
-// 8,192 total rows (e.g., 500 rows + 7,692 scrollback)
-//
-// 16,384 total rows (e.g., 1,000 rows + 15,384 scrollback)
+// Rows plus scrollback should be a power of two (here 4096), so the
+// ring wastes nothing. See TerminalOption.optimized.
 
 const max_rows: usize = 200;
 const max_cols: usize = 220;
@@ -142,10 +138,6 @@ pty: Pty,
 pomodoro_state: pomodoro.State,
 pomodoro_stats: pomodoro.Stats,
 
-// Config state
-
-// Window state
-
 window: Window,
 
 // Mouse reporting state
@@ -181,9 +173,8 @@ blink_rapid_on: bool = true,
 blink: PeriodicTimer(blink_half_period_ms),
 blink_rapid: PeriodicTimer(blink_rapid_half_period_ms),
 
-// Window state
+// Frame timing, focus and size tracking
 last_frame: std.Io.Clock.Timestamp,
-// Frame buffer resize tracking
 window_focused: bool = true,
 frame_buffer_size: Dimension(u16),
 last_title: std.Io.Clock.Timestamp,
@@ -320,10 +311,6 @@ pub fn init(gpa: std.mem.Allocator, io: std.Io, environ: *const std.process.Envi
     };
     defer block.deinit(gpa);
 
-    // for (block.view().slice) |v| {
-    //     log.debug("block | ${s}", .{v});
-    // }
-
     var pty = try Pty.spawn(.{
         .argv = config.termio.argv,
         .capture_stdout = config.termio.capture_stdout,
@@ -337,7 +324,7 @@ pub fn init(gpa: std.mem.Allocator, io: std.Io, environ: *const std.process.Envi
 
     pty.waitForSpawn() catch |err| {
         log.err("pty failed to spawn: {}", .{err});
-        return err; // or handle differently
+        return err;
     };
 
     log.debug("termio.pty: {f}", .{pty});
@@ -370,20 +357,6 @@ pub fn init(gpa: std.mem.Allocator, io: std.Io, environ: *const std.process.Envi
         .selection = config.window.selection,
     });
     errdefer renderer.deinit();
-
-    // const data_home = std.posix.system.getenv("XDG_DATA_HOME") orelse "";
-    // const data_home_dir = if (std.mem.len(data_home) > 0)
-    //     try std.fmt.allocPrint(gpa, "{s}/rex/pomodoro_stats.bin", .{data_home})
-    // else
-    //     try std.fmt.allocPrint(
-    //         gpa,
-    //         "{s}/.local/state/rex/pomodoro_stats.bin",
-    //         .{
-    //             std.posix.system.getenv("HOME") orelse return error.NoHome,
-    //         },
-    //     );
-    //
-    // log.debug("data_home_dir: {s}\n", .{data_home_dir});
 
     var pomodoro_state: pomodoro.State = .{
         .option = config.pomodoro,
@@ -517,7 +490,7 @@ pub fn run(self: *App) !void {
     // PTY read thread
     //  a. blocks on PTY read()
     //  b. feeds the terminal vt-parser
-    //  c. sends parser respoonses, write queue
+    //  c. sends parser responses, write queue
     //  d. publishes terminal snapshots/events
     //
     // PTY write thread
@@ -552,8 +525,7 @@ pub fn run(self: *App) !void {
             if (was_task) self.pomodoro_stats.onTaskCompleted(self.io);
             if (was_long_break) self.pomodoro_stats.long_breaks_taken += 1;
 
-            // FIXME! DO NOT blocking persistence in the render loop
-            // update data persistence: fire and forget
+            // FIXME! Saving blocks the render loop; move it off this thread.
             pomodoro.save(
                 self.io,
                 &self.pomodoro_stats,
@@ -583,7 +555,6 @@ pub fn run(self: *App) !void {
 
         drain: while (true) {
             const n = self.pty.readRaw(&buffer) catch |err| switch (err) {
-                // Replace this with the would-block error used by your PTY wrapper.
                 error.WouldBlock => break :drain,
                 // On Linux, a PTY can report EIO when the child side closes.
                 error.InputOutput => {
@@ -721,8 +692,8 @@ fn waitForNextEvent(self: *App, had_data: bool, frame_dirty: bool) void {
 
 fn resolveAnchor(position: rex.Selection.Position, total_line_scrolled: i64, scrollback_used: i64) ?i64 {
     const delta: i64 = total_line_scrolled - position.captured_scroll_gen;
-    // Why anchor_now = pos.row - delta (not + delta) Think through it directionally: a full-screen
-    // scroll-up (delta > 0, content moves up, meaning what used to be at the bottom of the active area is now further down in scrollback relative to the live bottom) means a previously-captured anchor now needs to shift further into positive "further back" territory relative to the live view... actually the cleanest way to verify this is empirically once you wire it up — scroll up several times without moving the mouse mid-drag, and confirm the highlighted rows stay locked onto the same text rather than sliding by count rows per scroll event. If it slides in the wrong direction, flip the sign (anchor_now = pos.row + delta). I don't have a running instance of your code to test this against, so treat the sign here as a testable hypothesis, not a guarantee — verify with the reverse-scroll case too (CSI T / RI), since that's the specific case this fix is for and it's the one most likely to reveal a sign error if there is one.
+    // The screen scrolled `delta` lines since the anchor was captured,
+    // so the same text now sits `delta` rows higher.
     const anchor_now: i64 = @as(i64, position.row) - delta;
 
     if (anchor_now < -scrollback_used) return null; // evicted
@@ -842,7 +813,7 @@ pub fn handleResize(self: *App, dimension: Dimension(u16)) void {
         self.pty.resize(new_rows, new_cols, frame_buffer_width, frame_buffer_height) catch {};
     }
 
-    log.debug("fb={}x{} cell={}x{} → {}cols {}rows (unused: {}px right, {}px bottom)", .{
+    log.debug("fb={}x{} cell={}x{} grid={}cols {}rows (unused: {}px right, {}px bottom)", .{
         frame_buffer_width,                         frame_buffer_height,
         cell_width,                                 cell_height,
         new_cols,                                   new_rows,
@@ -870,12 +841,8 @@ fn pasteFromClipboard(self: *App) void {
     self.terminal.active().bump();
     self.needs_redraw = true;
 
-    // If the PTY is O_NONBLOCK and somehow the PTY buffer is full mid-paste,
-    // the second or third write (text or \x1b[201~) can fail with WouldBlock,
-    // leaving the terminal in a broken state (paste started but never closed).
-    // The closing bracket \x1b[201~ is especially critical, without it, the
-    // application receiving the paste (e.g., Neovim) will treat all subsequent
-    // keyboard input as pasted text.
+    // One vectored write, so a full pty cannot leave the paste open: an
+    // app that never sees ESC [ 201 ~ treats all later keys as pasted.
     if (self.terminal.mode.bracketed_paste) {
         const paste_start = "\x1b[200~";
         const paste_end = "\x1b[201~";
@@ -890,21 +857,6 @@ fn pasteFromClipboard(self: *App) void {
             self.snapToLiveView();
             return;
         };
-
-        // _ = self.pty.write("\x1b[200~") catch |err| {
-        //     log.err("pasteFromClipboard: pty write failed: {}", .{err});
-        //     self.snapToLiveView();
-        //     return;
-        // };
-        //
-        // _ = self.pty.write(text) catch |err| {
-        //     log.err("pasteFromClipboard: pty write failed: {}", .{err});
-        //     // still try to close the bracket
-        // };
-        //
-        // _ = self.pty.write("\x1b[201~") catch |err| {
-        //     log.err("pasteFromClipboard: pty write failed: {}", .{err});
-        // };
     } else {
         // Strip NUL bytes; convert \n to \r outside bracketed mode
         var tmp: [4096]u8 = undefined;
@@ -936,7 +888,6 @@ fn setFontSize(self: *App, new_size: u32) void {
     const clamped_size: u32 = @max(self.config.font.min_size, @min(new_size, self.config.font.max_size));
     if (clamped_size == self.font_size) return;
 
-    // self.config.font.height = clamped;
     var font_config = self.config.font;
     font_config.height = clamped_size;
     // Create new rasterizer BEFORE destroying old one (avoid dangling ptr on failure)
@@ -997,19 +948,15 @@ fn handleAction(self: *App, action: rex.input.Action) void {
         .increase_font_size => {
             const target = (self.font_size_pending orelse self.font_size) + 2;
             self.font_size_pending = @min(target, self.config.font.max_size);
-            // self.font_size_pending = @min(target, MAX_FONT_SIZE);
         },
         .decrease_font_size => {
             const current = self.font_size_pending orelse self.font_size;
             const target = if (current > 2) current - 2 else 6;
-            // self.font_size_pending = @max(target, MIN_FONT_SIZE);
             self.font_size_pending = @max(target, self.config.font.min_size);
         },
         .reset_font_size => {
-            // reset_font_size doesn't repeat on key hold (it's idempotent),
-            // but it still benefits from going through font_size_pending
-            // it keeps the flush path consistent and avoids calling setFontSize
-            // twice if somehow both reset and increase fire in the same frame.
+            // Through font_size_pending like the others, so one frame
+            // applies one size.
             self.font_size_pending = self.config.font.height;
         },
         .new_window => {
@@ -1021,41 +968,7 @@ fn handleAction(self: *App, action: rex.input.Action) void {
 
             log.debug("exe_path: {s}", .{exe_path});
 
-            // _ = std.process.spawn(self.io, .{
-            //     .argv = &.{exe_path},
-            //     .stderr = .ignore,
-            //     .stdout = .ignore,
-            //     .stdin = .ignore,
-            // }) catch return;
-
-            // const posix = std.posix;
-            //
-            // const pid = posix.system.fork();
-            //
-            // if (pid == 0) {
-            //     // First child
-            //     _ = posix.system.setsid(); // new session, detach from terminal
-            //
-            //     // const pid2 = posix.system.fork();
-            //
-            //     // if (pid2 == 0) {
-            //     //     // Grandchild: independent process
-            //     //
-            //
-            //     log.debug("exe: {s}\n", .{buf[0..exe_n]});
-            //     _ = std.process.spawn(self.io, .{
-            //         .argv = &.{buf[0..exe_n]},
-            //         .stdin = .ignore,
-            //         .stdout = .ignore,
-            //         .stderr = .ignore,
-            //         .pgid = 0,
-            //     }) catch return;
-            //
-            //     posix.system.exit(0);
-            // }
-
-            // TODO
-            // open new independent "term emulator"
+            // TODO: open a new, independent terminal window.
         },
         .pomodoro_toggle => {
             const was_idle = self.pomodoro_state.phase == .idle;
@@ -1105,8 +1018,6 @@ fn snapToLiveView(self: *App) void {
         self.selection = .empty;
     }
 
-    // A key was written to the PTY. The terminal may produce output,
-    // and the current view may need repainting.
     self.needs_redraw = true;
 }
 
@@ -1116,9 +1027,7 @@ const charCb: c.GLFWcharfun = struct {
         app.selection = .empty;
         app.needs_redraw = true;
 
-        // codepoint is c_uint (u32). utf8Encode takes u21.
-        // If GLFW ever passes a value > 0x10FFFF (invalid Unicode),
-        // @intCast panics in debug mode.
+        // GLFW passes a u32; anything that is not a code point is dropped.
         const cp = std.math.cast(u21, codepoint) orelse return;
         if (cp == 0) return;
 
@@ -1139,12 +1048,12 @@ const keyCb: c.GLFWkeyfun = struct {
         const app: *App = @ptrCast(@alignCast(c.glfwGetWindowUserPointer(window) orelse return));
         if (action == c.GLFW_RELEASE) return;
 
-        // app-level keybindings
-        // the handleAction does the bump and selection reset state
+        // App keybindings first; handleAction redraws and resets the
+        // selection itself.
         if (rex.input.matchBinding(app.config.keymap, key, mods)) |act| return app.handleAction(act);
 
-        // Don't clear selection when a bare modifier key is pressed —
-        // the user may be building a modifier+key combination (e.g. Ctrl+Shift+C to copy).
+        // A bare modifier keeps the selection, since it may start a
+        // combination such as Ctrl+Shift+C.
         const is_modifier = switch (key) {
             c.GLFW_KEY_LEFT_SHIFT, c.GLFW_KEY_RIGHT_SHIFT, c.GLFW_KEY_LEFT_CONTROL, c.GLFW_KEY_RIGHT_CONTROL, c.GLFW_KEY_LEFT_ALT, c.GLFW_KEY_RIGHT_ALT, c.GLFW_KEY_LEFT_SUPER, c.GLFW_KEY_RIGHT_SUPER => true,
             else => false,
@@ -1186,18 +1095,15 @@ fn copySelectionToClipboard(self: *App) void {
     const total_lines_scrolled = screen.total_lines_scrolled;
     const scrollback_used = screen.scrollbackUsedAs(i64);
 
-    // Resolve raw anchors -> drift-corrected anchors (relative to viewport_offset == 0),
-    // bailing out if either endpoint has been evicted from retained scrollback.
+    // Correct both anchors for scrolling since they were captured, and
+    // give up if either has left the scrollback.
     const start_anchor = resolveAnchor(self.selection.range.start, total_lines_scrolled, scrollback_used) orelse return;
     const end_anchor = resolveAnchor(self.selection.range.end, total_lines_scrolled, scrollback_used) orelse return;
 
     const start_col = self.selection.range.start.col;
     const end_col = self.selection.range.end.col;
 
-    // Ordering by raw stored anchor (pre-resolve) is equivalent to ordering by
-    // resolved anchor here, since drift is a uniform shift applied identically
-    // to both endpoints. Using the *resolved* values directly for the ordering
-    // check too, so there's no risk of divergence if that assumption ever breaks.
+    // Order the endpoints by row, then column.
     const lo_anchor, const lo_col, const hi_anchor, const hi_col = blk: {
         if (start_anchor < end_anchor or (start_anchor == end_anchor and start_col <= end_col)) {
             break :blk .{ start_anchor, start_col, end_anchor, end_col };
@@ -1237,9 +1143,9 @@ fn copySelectionToClipboard(self: *App) void {
             if (pos + 4 > buf.len) break;
 
             switch (cell.kind) {
-                .wide_right => continue, // placeholder — skip
+                .wide_right => continue, // right half of a wide character
                 .empty => {
-                    // blank cell — emit space so trailing-space trim works
+                    // A space, so the trailing-space trim below sees it.
                     buf[pos] = ' ';
                     pos += 1;
                 },
@@ -1408,7 +1314,6 @@ fn handleScrollbarRelease(self: *App) bool {
 
 fn handleScrollbarClick(self: *App) bool {
     const screen = &self.terminal.primary;
-    // if (!screen.scrollbackIsUsed()) return false;
 
     // Scrollbar hit test
     const frame_width: f32 = @floatFromInt(self.frame_buffer_size.width);
@@ -1436,18 +1341,8 @@ fn handleScrollbarClick(self: *App) bool {
     const thumb_top_y = (1.0 - scroll_frac) * track_h;
     const thumb_bottom_y = thumb_top_y + thumb_h;
 
-    // Click-in-track behavior
-    // If the user clicks in the track area (below or above the thumb),
-    // scrollbar_drag_offset_y will be larger than thumb_h. During the
-    // subsequent drag, adjusted_y = mouse_y - drag_offset_y will be
-    // negative or very large, causing the viewpot to just to the top or bottom..
-    // The UX needs to handle it properly, will not crash but, either jump
-    // the thumb to the click position or page-scroll.
-
-    // Two option:
-    // Jump thumb to click position or Page scrolling.
-    // i think the first option seems reasonable, since
-    // the thumb immediately centers on the click point, and drag continues naturally.
+    // A click on the thumb drags from that point. A click in the track
+    // jumps the thumb's centre to it.
     if (mouse_y >= thumb_top_y and mouse_y <= thumb_bottom_y) {
         // Click landed on the thumb, drag from where the user clicked
         self.scrollbar_drag_offset_y = mouse_y - thumb_top_y;
@@ -1459,10 +1354,7 @@ fn handleScrollbarClick(self: *App) bool {
         screen.viewport_offset = @intFromFloat(@min(target, scrollback_used));
         screen.dirty_rows = .full;
 
-        // Set drag offset so subsequent drag feels natural (dragging from thumb center)
-        // HACK: after a track click, set scrollbar_drag_offset_y = thumb_h / 2.0 (center of thumb).
-        // This means handleScrollbarDrag's formula adjusted_y = mouse_y - drag_offset_y will keep
-        // the thumb centered under the cursor as the user drags, which feels natural.
+        // Keep the thumb centred under the cursor while dragging.
         self.scrollbar_drag_offset_y = thumb_h / 2.0;
     }
 
@@ -1491,14 +1383,14 @@ fn handleScrollbarDrag(self: *App) bool {
     const scroll_frac = 1.0 - raw_frac;
     const target = @round(scroll_frac * scrollback_used);
 
-    // no-op, dont need to redraw if nothing changes
+    // Nothing moved, so no redraw.
     const prev_viewport_offset: f32 = @floatFromInt(screen.viewport_offset);
     if (target == prev_viewport_offset) return true;
 
     screen.viewport_offset = @intFromFloat(@min(target, scrollback_used));
     screen.dirty_rows = .full;
-    screen.bump(); // keep: marks primary viewport as dirty
-    self.terminal.active().bump(); // add: triggers redraw of displayed screen
+    screen.bump(); // the primary screen's viewport changed
+    self.terminal.active().bump(); // redraw whichever screen is shown
     self.needs_redraw = true;
     return true;
 }
@@ -1529,9 +1421,7 @@ fn flushScroll(self: *App) void {
     if (terminal.mode.mouse_tracking.reportsWheel()) {
         const col, const row = self.mouseCellPos(self.mouse_x, self.mouse_y);
 
-        // Type of scroll
-        // Scroll up   = button 64
-        // Scroll down = button 65
+        // Wheel up is button 64, down is 65.
         const button: u8 = if (steps > 0) 64 else 65;
 
         var i: u32 = 0;
@@ -1548,8 +1438,7 @@ fn flushScroll(self: *App) void {
 
     if (terminal.active_buffer == .alternate) return;
 
-    // NOTE both viewport back and forward call already
-    // set the dirty_rows to .full and bump, no need for that.
+    // scrollViewportBack and Forward mark the rows dirty themselves.
 
     const prev_offset = terminal.active().viewport_offset;
     const lines: u32 = @as(u32, @intCast(@abs(steps))) * self.scroll_lines_per_tick;
