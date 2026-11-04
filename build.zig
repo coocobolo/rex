@@ -227,6 +227,26 @@ pub fn build(b: *std.Build) !void {
         "slow",
         "Also run slow exhaustive tests",
     ) orelse false;
+    // --fuzz needs LLVM: the self-hosted x86_64 backend emits no
+    // coverage instrumentation, so the fuzzer has nothing to steer by.
+    const llvm = b.option(
+        bool,
+        "llvm",
+        "Build the tests with LLVM (needed for --fuzz)",
+    ) orelse false;
+    // kcov finds no source lines in the self-hosted backend's debug
+    // info, so -Dcoverage builds with LLVM too.
+    const coverage = b.option(
+        bool,
+        "coverage",
+        "Run the tests under kcov; reports in kcov-out/<binary>/",
+    ) orelse false;
+    const tests: Tests = .{
+        .b = b,
+        .filters = test_filters,
+        .llvm = llvm or coverage,
+        .coverage = coverage,
+    };
 
     const test_options = b.addOptions();
     test_options.addOption(bool, "slow", slow_tests);
@@ -244,6 +264,10 @@ pub fn build(b: *std.Build) !void {
             \\
         ),
     });
+    const test_imports: []const std.Build.Module.Import = &.{
+        .{ .name = "test_options", .module = test_options_mod },
+        .{ .name = "ucd_test_data", .module = ucd_test_data },
+    };
 
     // How tests are organised (see CONTRIBUTING.md, "Tests"):
     //   - Tests live in `<name>_test.zig` next to the code they test.
@@ -254,7 +278,8 @@ pub fn build(b: *std.Build) !void {
     //   - `zig build test-<suite>` runs one folder alone: a small binary
     //     with no app, renderer or C code, rebuilt in well under a second.
     //     Adding a suite is one row in `suites`.
-    //   - `-Dtest-filter=<substr>` (repeatable) and `-Dslow` apply to all.
+    //   - Every binary uses tools/test_runner.zig through `Tests`, and
+    //     `-Dtest-filter`, `-Dslow`, `-Dllvm` and `-Dcoverage` apply to all.
     const suites = .{
         // name, root
         .{ "term", "src/term_tests.zig" }, // term/root.zig; see file
@@ -262,36 +287,20 @@ pub fn build(b: *std.Build) !void {
         .{ "unicode", "src/unicode/root.zig" },
     };
     inline for (suites) |suite| {
-        const suite_tests = b.addTest(.{
-            .name = "test-" ++ suite[0],
-            .root_module = b.createModule(.{
-                .root_source_file = b.path(suite[1]),
-                .target = target,
-                .optimize = optimize,
-                .imports = &.{
-                    .{ .name = "test_options", .module = test_options_mod },
-                    .{ .name = "ucd_test_data", .module = ucd_test_data },
-                },
-            }),
-            .filters = test_filters,
-        });
+        const suite_tests = tests.add("test-" ++ suite[0], b.createModule(.{
+            .root_source_file = b.path(suite[1]),
+            .target = target,
+            .optimize = optimize,
+            .imports = test_imports,
+        }), test_filters);
         const step = b.step("test-" ++ suite[0], "Run the " ++ suite[0] ++ " tests");
-        step.dependOn(&b.addRunArtifact(suite_tests).step);
+        step.dependOn(tests.run(suite_tests));
     }
 
-    mod.addImport("test_options", test_options_mod);
-    mod.addImport("ucd_test_data", ucd_test_data);
-    const mod_tests = b.addTest(.{
-        .root_module = mod,
-        .filters = test_filters,
-    });
-    const exe_tests = b.addTest(.{
-        .root_module = exe.root_module,
-        .filters = test_filters,
-    });
+    for (test_imports) |import| mod.addImport(import.name, import.module);
     const test_step = b.step("test", "Run all tests");
-    test_step.dependOn(&b.addRunArtifact(mod_tests).step);
-    test_step.dependOn(&b.addRunArtifact(exe_tests).step);
+    test_step.dependOn(tests.run(tests.add("test-rex", mod, test_filters)));
+    test_step.dependOn(tests.run(tests.add("test-exe", exe.root_module, test_filters)));
 
     // Code generation (see CONTRIBUTING.md, "Generated code").
     //
@@ -334,6 +343,53 @@ pub fn build(b: *std.Build) !void {
         gen_all.dependOn(&update.step);
     }
 }
+
+/// How every test binary is built and run, so the suites, the
+/// aggregate `test` step and the fuzz steps cannot drift apart.
+const Tests = struct {
+    b: *std.Build,
+    /// -Dtest-filter.
+    filters: []const []const u8,
+    /// -Dllvm, implied by -Dcoverage.
+    llvm: bool,
+    /// -Dcoverage.
+    coverage: bool,
+
+    /// A test binary named `name` for `root_module` that keeps only the
+    /// tests whose name contains one of `filters`.
+    fn add(
+        t: Tests,
+        name: []const u8,
+        root_module: *std.Build.Module,
+        filters: []const []const u8,
+    ) *std.Build.Step.Compile {
+        return t.b.addTest(.{
+            .name = name,
+            .root_module = root_module,
+            .filters = filters,
+            .use_llvm = if (t.llvm) true else null,
+            // Zig 0.16.0's stock runner breaks --fuzz; see tools/test_runner.zig.
+            .test_runner = .{ .path = t.b.path("tools/test_runner.zig"), .mode = .server },
+        });
+    }
+
+    /// The step that runs `compile`: directly, or with -Dcoverage under
+    /// kcov (on PATH), writing kcov-out/<name>/index.html for src/.
+    fn run(t: Tests, compile: *std.Build.Step.Compile) *std.Build.Step {
+        const b = t.b;
+        if (!t.coverage) return &b.addRunArtifact(compile).step;
+        const kcov = b.addSystemCommand(&.{
+            "kcov",
+            b.fmt("--include-path={s}", .{b.pathFromRoot("src")}),
+            b.pathFromRoot(b.fmt("kcov-out/{s}", .{compile.name})),
+        });
+        kcov.addArtifactArg(compile);
+        kcov.has_side_effects = true; // always rerun so the report is current
+        // kcov creates only the last directory of its output path.
+        kcov.step.dependOn(&b.addSystemCommand(&.{ "mkdir", "-p", b.pathFromRoot("kcov-out") }).step);
+        return &kcov.step;
+    }
+};
 
 const freetype_base_srcs = [_][]const u8{
     "src/autofit/autofit.c",
