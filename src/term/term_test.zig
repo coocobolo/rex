@@ -254,6 +254,82 @@ test "reply: a mouse report queues after pending replies" {
     try testing.expectEqualStrings("\x1b[1;1R\x1b[<0;3;4M", t.events.response.slice());
 }
 
+test "mouse 1000: normal tracking reports press and release with modifiers" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    t.feed("\x1b[?1000h");
+    try testing.expectEqual(.normal, t.mode.mouse_tracking);
+    t.sendMouse(0, 0, 0, 4, true); // shift + left press
+    t.sendMouse(0, 0, 0, 4, false);
+    try testing.expectEqualStrings("\x1b[M\x24!!\x1b[M\x23!!", t.events.response.slice());
+}
+
+test "mouse 1000: wheel is reported" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    t.feed("\x1b[?1000h\x1b[?1006h");
+    try testing.expect(t.mode.mouse_tracking.reportsWheel());
+    t.sendMouse(1, 1, 64, 0, true);
+    try testing.expectEqualStrings("\x1b[<64;2;2M", t.events.response.slice());
+}
+
+test "mouse 9: x10 tracking reports presses of buttons 0 to 2 only, without modifiers" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    t.feed("\x1b[?9h");
+    try testing.expectEqual(.x10, t.mode.mouse_tracking);
+    try testing.expect(!t.mode.mouse_tracking.reportsWheel());
+    t.sendMouse(0, 0, 2, 16, true); // ctrl + right press
+    t.sendMouse(0, 0, 2, 16, false);
+    t.sendMouse(0, 0, 64, 0, true);
+    try testing.expectEqualStrings("\x1b[M\x22!!", t.events.response.slice());
+}
+
+test "mouse tracking: setting a mode replaces the current one" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    t.feed("\x1b[?1000h\x1b[?1002h");
+    try testing.expectEqual(.button_motion, t.mode.mouse_tracking);
+    t.feed("\x1b[?1003h");
+    try testing.expectEqual(.any_motion, t.mode.mouse_tracking);
+    t.feed("\x1b[?9h");
+    try testing.expectEqual(.x10, t.mode.mouse_tracking);
+}
+
+test "mouse tracking: resetting any mode turns tracking off, as xterm does" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    t.feed("\x1b[?1002h\x1b[?1000l");
+    try testing.expectEqual(.off, t.mode.mouse_tracking);
+    t.sendMouse(0, 0, 0, 0, true);
+    try testing.expect(t.events.response.isEmpty());
+}
+
+test "mouse tracking: modes 9, 1000, 1002 and 1003 report their state" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    try testing.expectEqual(.reset, t.decModeReport(1000));
+    t.feed("\x1b[?1002h");
+    try testing.expectEqual(.reset, t.decModeReport(9));
+    try testing.expectEqual(.reset, t.decModeReport(1000));
+    try testing.expectEqual(.set, t.decModeReport(1002));
+    try testing.expectEqual(.reset, t.decModeReport(1003));
+}
+
+test "mouse tracking: RIS turns it off" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    t.feed("\x1b[?1003h\x1bc");
+    try testing.expectEqual(.off, t.mode.mouse_tracking);
+}
+
 test "Terminal: feed printable ASCII" {
     var t = try Term.create(alloc);
     defer t.destroy(alloc);
@@ -483,14 +559,14 @@ test "softReset: mouse modes survive" {
     var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
-    t.mode.mouse_button = true;
+    t.mode.mouse_tracking = .button_motion;
     t.mode.mouse_sgr = true;
     t.mode.bracketed_paste = true;
     t.mode.focus_events = true;
     t.softReset();
 
     // DECSTR must NOT touch mouse/paste/focus modes
-    try testing.expect(t.mode.mouse_button);
+    try testing.expectEqual(.button_motion, t.mode.mouse_tracking);
     try testing.expect(t.mode.mouse_sgr);
     try testing.expect(t.mode.bracketed_paste);
     try testing.expect(t.mode.focus_events);
@@ -564,7 +640,7 @@ test "hardReset: terminal modes reset to defaults" {
     t.mode.cursor_keys = true;
     t.mode.keypad_app = true;
     t.mode.auto_repeat = false; // default ON
-    t.mode.mouse_any = true;
+    t.mode.mouse_tracking = .any_motion;
     t.mode.bracketed_paste = true;
     t.mode.focus_events = true;
     t.active().cursor.style = .blinking_underline;
