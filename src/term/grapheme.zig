@@ -9,7 +9,7 @@ const Property = table.Property;
 /// Stateful grapheme cluster break detector.
 ///
 /// Usage:
-///   var gb = GraphemeBreaker.init(first_cp);
+///   var gb = Breaker.init(first_cp);
 ///   for (rest_cps) |cp| {
 ///       if (gb.isBreak(cp)) {
 ///           // cluster boundary before cp
@@ -32,12 +32,11 @@ pub const Breaker = struct {
     pub fn init(first_cp: u21) Breaker {
         const prop = table.getProperty(first_cp);
         var gb: Breaker = .{ .prev_prop = prop };
-        if (prop == .extended_pictographic) gb.rule = .gb11_emoji;
-        if (prop == .regional_indicator) gb.rule = .gb12_gb13_ri;
+        gb.enterRule(prop);
         return gb;
     }
 
-    /// Returns true if there is a grapheme cluster break break BEFORE `codepoint (cp)`
+    /// Returns true if there is a grapheme cluster break before `cp`.
     /// Call this for every codepoint after the first.
     pub fn isBreak(self: *Breaker, cp: u21) bool {
         const next_prop = table.getProperty(cp);
@@ -50,9 +49,14 @@ pub const Breaker = struct {
         return breaks;
     }
 
+    /// The pairwise rules. Whatever they decide, a code point that opens
+    /// a GB11 or GB12 sequence starts tracking it, even after GB4 or GB9b.
     fn evalNone(self: *Breaker, next: ?Property) bool {
-        const prev = self.prev_prop;
+        self.enterRule(next);
+        return pairBreak(self.prev_prop, next);
+    }
 
+    fn pairBreak(prev: ?Property, next: ?Property) bool {
         // GB3: CR x LF
         if (prev == .cr and next == .lf) return false;
         // GB4: (Control|CR|LF) ÷
@@ -67,24 +71,23 @@ pub const Breaker = struct {
 
         // GB9: × (Extend | ZWJ)
         if (next == .extend or next == .zwj) return false;
-        // GB9a: × SpacingMakr
+        // GB9a: × SpacingMark
         if (next == .spacing_mark) return false;
         // GB9b: Prepend ×
         if (prev == .prepend) return false;
 
-        // GB11: enter emoji state
+        return true; // GB999
+    }
+
+    /// Starts tracking GB11 (emoji ZWJ) or GB12/GB13 (flag pairs) when
+    /// `next` opens such a sequence.
+    fn enterRule(self: *Breaker, next: ?Property) void {
         if (next == .extended_pictographic) {
             self.rule = .gb11_emoji;
             self.gb11_state = .extended_pictographic;
-            return true;
-        }
-
-        // GB12: enter RI state
-        if (next == .regional_indicator) {
+        } else if (next == .regional_indicator) {
             self.rule = .gb12_gb13_ri;
-            return true;
         }
-        return true; // GBB999
     }
 
     fn evalGb11(self: *Breaker, next: ?Property) bool {
@@ -106,7 +109,7 @@ pub const Breaker = struct {
             },
             .zwj => {
                 if (next == .extended_pictographic) {
-                    // GB11: WZJ x Extended_Pictographic, no break
+                    // GB11: ZWJ x Extended_Pictographic, no break
                     self.gb11_state = .extended_pictographic;
                     return false;
                 }

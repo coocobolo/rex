@@ -30,6 +30,29 @@ test "GB9: base + combining mark stays joined" {
     try testing.expect(!gb.isBreak(0x0301)); // combining acute accent
 }
 
+test "GB9b then GB11: prepend before a ZWJ emoji sequence keeps it joined" {
+    // Found by the grapheme fuzz target: GB9b returned before the
+    // emoji state was entered, so the ZWJ sequence broke.
+    var gb = Breaker.init(0x0600); // ARABIC NUMBER SIGN (Prepend)
+    try testing.expect(!gb.isBreak(0x1F469)); // WOMAN
+    try testing.expect(!gb.isBreak(0x200D)); // ZWJ
+    try testing.expect(!gb.isBreak(0x1F4BB)); // COMPUTER: GB11
+}
+
+test "GB4 then GB11: a ZWJ emoji sequence after CR stays joined" {
+    var gb = Breaker.init('\r');
+    try testing.expect(gb.isBreak(0x1F469)); // WOMAN: GB4
+    try testing.expect(!gb.isBreak(0x200D)); // ZWJ
+    try testing.expect(!gb.isBreak(0x1F4BB)); // COMPUTER: GB11
+}
+
+test "GB9b then GB12: prepend before a flag keeps the pair joined" {
+    var gb = Breaker.init(0x0600); // Prepend
+    try testing.expect(!gb.isBreak(0x1F1FA)); // RI: U
+    try testing.expect(!gb.isBreak(0x1F1F8)); // RI: S, pairs with U
+    try testing.expect(gb.isBreak(0x1F1EC)); // RI: G starts a new pair
+}
+
 test "no rule: independent ASCII letters always break" {
     var gb = Breaker.init('a');
     try testing.expect(gb.isBreak('b'));
