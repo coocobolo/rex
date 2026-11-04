@@ -20,5 +20,6 @@ pub const DirtyFlags = @import("dirty.zig").DirtyFlags;
 test {
     _ = @import("atlas_test.zig");
     _ = @import("frame_test.zig");
+    _ = @import("scrollbar_test.zig");
     std.testing.refAllDecls(@This());
 }

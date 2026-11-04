@@ -8,7 +8,10 @@ const Shader = @import("Shader.zig");
 const Dimension = @import("dimension.zig").Dimension;
 
 pub const State = struct {
-    thumb_top_frac: f32, // 0.0–1.0
+    /// Thumb position along its travel: 0 at the top (oldest line),
+    /// 1 at the bottom (live view).
+    thumb_top_frac: f32,
+    /// Visible rows over all rows, 0 to 1.
     thumb_height_frac: f32,
     at_live_view: bool,
     visibility: bool,
@@ -19,6 +22,39 @@ pub const State = struct {
         .thumb_top_frac = 0,
         .thumb_height_frac = 0,
     };
+};
+
+/// The thumb's rectangle on a track, in pixels from the track's top.
+pub const Thumb = struct {
+    top: f32,
+    height: f32,
+
+    /// Places the thumb on a track `track_height` tall. It is
+    /// `height_frac` of the track, but never shorter than `min_height`
+    /// nor taller than the track, and sits `top_frac` of the way down
+    /// what is left. Click and drag maths must use this too, so the
+    /// area that responds is the one drawn.
+    pub fn of(track_height: f32, top_frac: f32, height_frac: f32, min_height: f32) Thumb {
+        const height = @min(@max(track_height * height_frac, min_height), track_height);
+        return .{
+            .height = height,
+            .top = (track_height - height) * std.math.clamp(top_frac, 0.0, 1.0),
+        };
+    }
+
+    /// How far the thumb's top can move on a track `track_height` tall.
+    pub fn travel(self: Thumb, track_height: f32) f32 {
+        return track_height - self.height;
+    }
+
+    /// The `top_frac` that puts this thumb's top at `top`, clamped to
+    /// the track. A thumb that fills the track has no travel and stays
+    /// at the bottom.
+    pub fn topFracAt(self: Thumb, track_height: f32, top: f32) f32 {
+        const travel_px = self.travel(track_height);
+        if (travel_px <= 0) return 1.0;
+        return std.math.clamp(top / travel_px, 0.0, 1.0);
+    }
 };
 
 pub const Option = struct {
@@ -39,7 +75,7 @@ pub const Option = struct {
     lerp_speed: f32 = 0.009,
     /// hide when at live view
     auto_hide: bool = true,
-    /// target alpha when hidden, applied only when auto_hide enabeled
+    /// target alpha when hidden, applied only when auto_hide is enabled
     auto_hide_alpha: f32 = 0.25,
 };
 
@@ -142,21 +178,18 @@ pub fn upload(
 
 pub fn draw(self: *const Scrollbar) void {
     if (self.last_alpha < 0.01) return;
-    // NOTE scrollback_used == 0 guard removed — FrameBuilder sets
-    // scrollbar.visible = false when scrollback_used == 0, so Renderer
-    // never calls draw() in that case.
+    // No scrollback_used == 0 guard: FrameBuilder hides the scrollbar
+    // then, so draw is not called.
 
     const opt = self.option;
     const frame_dimension = self.last_frame;
     const thumb_top_frac = self.last_thumb_top_frac;
     const thumb_height_frac = self.last_thumb_height_frac;
 
-    // bar_x recomputed from current_width (animated — can't cache in upload)
+    // The width animates, so bar_x cannot be cached in upload.
     const bar_x = frame_dimension.width - self.last_width - opt.gap;
 
-    // Clamp still lives here, Scrollbar owns config.min_thumb_h, FrameBuilder doesn't
-    const thumb_height = @max(frame_dimension.height * thumb_height_frac, opt.min_thumb_height);
-    const thumb_y = (frame_dimension.height - thumb_height) * thumb_top_frac;
+    const thumb: Thumb = .of(frame_dimension.height, thumb_top_frac, thumb_height_frac, opt.min_thumb_height);
 
     self.shader.use();
     if (opt.track_color[3] > 0.0) {
@@ -173,9 +206,9 @@ pub fn draw(self: *const Scrollbar) void {
     const thumb_color = if (self.hover) opt.thumb_hover_color else opt.thumb_color;
     self.drawRect(
         bar_x,
-        thumb_y,
+        thumb.top,
         self.last_width,
-        thumb_height,
+        thumb.height,
         frame_dimension,
         thumb_color,
     );
@@ -186,47 +219,4 @@ pub inline fn setHover(self: *Scrollbar, v: bool) bool {
     const changed = self.hover != v;
     self.hover = v;
     return changed;
-}
-
-// Deprecated, used by old renderer
-pub fn drawV1(
-    self: *const Scrollbar,
-    fb_w: f32,
-    fb_h: f32,
-    active_rows: usize,
-    scrollback_used: usize,
-    viewport_offset: usize,
-) void {
-    if (self.last_alpha < 0.01) return; // fully hidden, skip draw
-    if (scrollback_used == 0) return;
-
-    const cfg = self.option;
-    const total_rows = active_rows + scrollback_used;
-    const bar_x = fb_w - self.last_width - cfg.gap;
-
-    // Thumb height proportional to visible fraction
-    const visible_frac = @as(f32, @floatFromInt(active_rows)) /
-        @as(f32, @floatFromInt(total_rows));
-    const thumb_h = @max(fb_h * visible_frac, cfg.min_thumb_height);
-
-    // Thumb Y: viewport_offset=0 → bottom, max offset = top
-    const scroll_frac = @as(f32, @floatFromInt(viewport_offset)) /
-        @as(f32, @floatFromInt(scrollback_used));
-    const thumb_y = (fb_h - thumb_h) * (1.0 - scroll_frac);
-
-    gl.enable(gl.BLEND);
-    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-    self.shader.use();
-
-    // Track (optional: set track_color alpha to 0 to hide)
-    if (cfg.track_color[3] > 0.0) {
-        self.drawRect(bar_x, 0, self.last_width, fb_h, fb_w, fb_h, cfg.track_color);
-    }
-
-    // Thumb
-    const thumb_color = if (self.hover) cfg.thumb_hover_color else cfg.thumb_color;
-    self.drawRect(bar_x, thumb_y, self.last_width, thumb_h, fb_w, fb_h, thumb_color);
-
-    self.shader.unbind();
-    gl.disable(gl.BLEND);
 }

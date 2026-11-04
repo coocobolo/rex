@@ -1228,7 +1228,6 @@ fn handleScrollbarRelease(self: *App) bool {
 
 fn handleScrollbarClick(self: *App) bool {
     const screen = &self.terminal.primary;
-
     const frame_width: f32 = @floatFromInt(self.frame_buffer_size.width);
     const frame_height: f32 = @floatFromInt(self.frame_buffer_size.height);
     const mouse_x = self.mouse_x;
@@ -1236,37 +1235,21 @@ fn handleScrollbarClick(self: *App) bool {
     const option = self.config.window.scrollbar;
 
     const bar_x: f32 = frame_width - option.width - option.gap;
-
     if (mouse_x < bar_x) return false;
-
-    const active_rows: f32 = @floatFromInt(screen.active_rows);
-    const scrollback_used: f32 = @floatFromInt(screen.scrollback_used);
-    const viewport_offset: f32 = @floatFromInt(screen.viewport_offset);
-
-    const total_rows = active_rows + scrollback_used;
-    const thumb_h = frame_height * active_rows / total_rows;
-    const track_h = frame_height - thumb_h;
-
-    // Clamped, since a resize can leave viewport_offset past
-    // scrollback_used for a moment.
-    const scroll_frac = std.math.clamp(viewport_offset / scrollback_used, 0.0, 1.0);
-    const thumb_top_y = (1.0 - scroll_frac) * track_h;
-    const thumb_bottom_y = thumb_top_y + thumb_h;
 
     // A click on the thumb drags from that point. A click in the track
     // jumps the thumb's centre to it.
-    if (mouse_y >= thumb_top_y and mouse_y <= thumb_bottom_y) {
-        self.scrollbar_drag_offset_y = mouse_y - thumb_top_y;
+    const thumb = self.scrollbarThumb();
+    if (mouse_y >= thumb.top and mouse_y <= thumb.top + thumb.height) {
+        self.scrollbar_drag_offset_y = mouse_y - thumb.top;
     } else {
-        const new_thumb_top = std.math.clamp(mouse_y - thumb_h / 2.0, 0.0, track_h);
-        const new_frac = 1.0 - (new_thumb_top / track_h);
-        const target: f32 = @round(new_frac * scrollback_used);
-        screen.viewport_offset = @intFromFloat(@min(target, scrollback_used));
+        const new_top = std.math.clamp(mouse_y - thumb.height / 2.0, 0.0, thumb.travel(frame_height));
+        screen.viewport_offset = self.viewportOffsetAt(thumb.topFracAt(frame_height, new_top));
         screen.dirty_rows = .full;
 
         // Drag from where the cursor sits on the moved thumb: its centre,
         // unless the thumb was clamped at either end of the track.
-        self.scrollbar_drag_offset_y = mouse_y - new_thumb_top;
+        self.scrollbar_drag_offset_y = mouse_y - new_top;
     }
 
     self.scrollbar_dragging = true;
@@ -1278,30 +1261,43 @@ fn handleScrollbarClick(self: *App) bool {
 fn handleScrollbarDrag(self: *App) bool {
     if (!self.scrollbar_dragging) return false;
 
-    const buffer_height: f32 = @floatFromInt(self.frame_buffer_size.height);
+    const frame_height: f32 = @floatFromInt(self.frame_buffer_size.height);
     const screen = &self.terminal.primary;
-    const active_rows: f32 = @floatFromInt(screen.active_rows);
-    const scrollback_used: f32 = @floatFromInt(screen.scrollback_used);
-    const total_rows = active_rows + scrollback_used;
-    const thumb_h = buffer_height * active_rows / total_rows;
-    const track_h = buffer_height - thumb_h;
-    if (track_h == 0) return true; // consumed but no-op
+    const thumb = self.scrollbarThumb();
+    if (thumb.travel(frame_height) <= 0) return true; // consumed, nothing to move
 
-    const adjusted_y = self.mouse_y - self.scrollbar_drag_offset_y;
-    const raw_frac = std.math.clamp(adjusted_y / track_h, 0.0, 1.0);
-    const scroll_frac = 1.0 - raw_frac;
-    const target = @round(scroll_frac * scrollback_used);
+    const top = self.mouse_y - self.scrollbar_drag_offset_y;
+    const target = self.viewportOffsetAt(thumb.topFracAt(frame_height, top));
+    if (target == screen.viewport_offset) return true; // nothing moved, so no redraw
 
-    // Nothing moved, so no redraw.
-    const prev_viewport_offset: f32 = @floatFromInt(screen.viewport_offset);
-    if (target == prev_viewport_offset) return true;
-
-    screen.viewport_offset = @intFromFloat(@min(target, scrollback_used));
+    screen.viewport_offset = target;
     screen.dirty_rows = .full;
     screen.bump(); // the primary screen's viewport changed
     self.terminal.active().bump(); // redraw whichever screen is shown
     self.needs_redraw = true;
     return true;
+}
+
+/// The primary screen's scrollbar thumb, placed exactly as the renderer
+/// draws it, minimum height included.
+fn scrollbarThumb(self: *const App) Scrollbar.Thumb {
+    const screen = &self.terminal.primary;
+    const frame_height: f32 = @floatFromInt(self.frame_buffer_size.height);
+    const active_rows: f32 = @floatFromInt(screen.active_rows);
+    const scrollback_used: f32 = @floatFromInt(screen.scrollback_used);
+    const viewport_offset: f32 = @floatFromInt(screen.viewport_offset);
+
+    const height_frac = active_rows / (active_rows + scrollback_used);
+    // A resize can leave viewport_offset past scrollback_used for a
+    // moment, hence the clamp.
+    const scroll_frac = if (scrollback_used == 0) 0 else std.math.clamp(viewport_offset / scrollback_used, 0.0, 1.0);
+    return .of(frame_height, 1.0 - scroll_frac, height_frac, self.config.window.scrollbar.min_thumb_height);
+}
+
+/// The primary screen's viewport offset for a thumb at `top_frac`.
+fn viewportOffsetAt(self: *const App, top_frac: f32) u32 {
+    const scrollback_used: f32 = @floatFromInt(self.terminal.primary.scrollback_used);
+    return @intFromFloat(@round((1.0 - top_frac) * scrollback_used));
 }
 
 fn updateScrollbarHover(self: *App) void {
