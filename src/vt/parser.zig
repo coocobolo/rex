@@ -21,8 +21,12 @@ pub const State = enum(u8) {
     dcs_ignore,
     osc_string,
     sos_pm_apc_string,
+    /// ESC seen inside an OSC string. The string is kept until the next
+    /// byte: '\\' (ST) or BEL dispatches it, anything else drops it and
+    /// runs as it would after a plain ESC, as xterm does.
+    osc_escape,
 
-    pub const count: usize = 14;
+    pub const count: usize = 15;
 
     /// Scans `bytes` from the beginning and returns the index of the
     /// first byte where the stops fires, or `bytes.len` if every continues it.
@@ -234,6 +238,7 @@ fn createEntries() [State.count][256]Entry {
     const entry_action: [State.count]Action = blk: {
         var a: [State.count]Action = @splat(Action.none);
         a[@intFromEnum(State.escape)] = .clear;
+        a[@intFromEnum(State.osc_escape)] = .clear;
         a[@intFromEnum(State.csi_entry)] = .clear;
         a[@intFromEnum(State.dcs_entry)] = .clear;
         a[@intFromEnum(State.osc_string)] = .osc_start;
@@ -512,6 +517,37 @@ fn createEntries() [State.count][256]Entry {
     // Except: CAN and SUB cancel an OSC string, as xterm does, so
     // osc_end must not dispatch it. BEL, ST and ESC still end it.
     for ([_]u8{ 0x18, 0x1A }) |b| t[@intFromEnum(State.osc_string)][b].exit = .none;
+
+    // Except: ESC inside an OSC string does not end it. xterm (charproc.c,
+    // sos_table) moves to esc_table and keeps the string; only ESC \\
+    // (CASE_ST) dispatches it, and any other escape abandons it. So
+    // osc_escape is the escape row with the string still pending.
+    {
+        const osc: u8 = @intFromEnum(State.osc_string);
+        const esc: u8 = @intFromEnum(State.osc_escape);
+        t[osc][0x1B] = .{
+            .action = .none,
+            .next = .osc_escape,
+            .exit = .none,
+            .entry = entry_action[esc],
+        };
+        for (0..256) |b| {
+            var e = t[@intFromEnum(State.escape)][b];
+            if (e.next == .escape) {
+                e.next = .osc_escape;
+                e.entry = entry_action[esc];
+            }
+            t[esc][b] = e;
+        }
+        // ESC \\ is ST. BEL still ends it too: xterm's CASE_BELL checks
+        // string_mode, which ESC leaves set.
+        for ([_]u8{ '\\', 0x07 }) |b| t[esc][b] = .{
+            .action = .none,
+            .next = .ground,
+            .exit = .osc_end,
+            .entry = entry_action[@intFromEnum(State.ground)],
+        };
+    }
 
     return t;
 }

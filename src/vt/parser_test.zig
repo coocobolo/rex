@@ -1272,18 +1272,88 @@ test "vt_parser: C0 controls inside OSC are ignored (not put)" {
     try testing.expectEqualSlices(u8, "0;Title", d.osc_events.items[0].data[0..]);
 }
 
-test "vt_parser: ESC inside OSC cancels it (anywhare transition)" {
-    var d: TestDispatcher = try .init(alloc);
-    defer d.deinit();
-    var p: Parser(TestDispatcher, .{}) = .{};
+/// Feeds `input` whole, or one byte per call when `split` is set.
+fn feedMaybeSplit(p: anytype, d: *TestDispatcher, input: []const u8, split: bool) void {
+    if (split) {
+        for (input) |b| p.feedBytes(d, &.{b});
+    } else p.feedBytes(d, input);
+}
 
-    // ESC inside OSC -> anywhere -> escape state, osc_end fires
-    p.feedBytes(&d, "\x1b]0;Title\x1b");
+test "vt_parser: ESC inside OSC waits for the next byte, ESC \\ ends it" {
+    for ([_]bool{ false, true }) |split| {
+        var d: TestDispatcher = try .init(alloc);
+        defer d.deinit();
+        var p: Parser(TestDispatcher, .{}) = .{};
 
-    try testing.expectEqual(.escape, p.state);
-    // osc_end fired (incomplete OSC)
-    try testing.expectEqual(1, d.osc_events.items.len);
-    try testing.expectEqualSlices(u8, "0;Title", d.osc_events.items[0].data[0..]);
+        feedMaybeSplit(&p, &d, "\x1b]0;Title\x1b", split);
+        try testing.expectEqual(0, d.osc_events.items.len);
+
+        feedMaybeSplit(&p, &d, "\\", split);
+        try testing.expectEqual(.ground, p.state);
+        try testing.expectEqual(1, d.osc_events.items.len);
+        try testing.expectEqualSlices(u8, "0;Title", d.osc_events.items[0].data);
+        try testing.expectEqual(0, d.escapes.items.len); // ST is not an escape
+    }
+}
+
+test "vt_parser: ESC then another byte inside OSC drops it and runs the escape" {
+    // xterm: in sos_table ESC goes to esc_table with the string kept;
+    // only '\\' (CASE_ST) dispatches it, any other escape abandons it.
+    for ([_]bool{ false, true }) |split| {
+        var d: TestDispatcher = try .init(alloc);
+        defer d.deinit();
+        var p: Parser(TestDispatcher, .{}) = .{};
+
+        feedMaybeSplit(&p, &d, "\x1b]0;lost\x1b7", split);
+        try testing.expectEqual(.ground, p.state);
+        try testing.expectEqual(0, d.osc_events.items.len);
+        try testing.expectEqual(1, d.escapes.items.len);
+        try testing.expectEqual('7', d.escapes.items[0].final);
+
+        feedMaybeSplit(&p, &d, "\x1b]0;lost\x1b[31m", split);
+        try testing.expectEqual(0, d.osc_events.items.len);
+        try testing.expectEqual(1, d.csi_events.items.len);
+        try testing.expectEqual('m', d.csi_events.items[0].final);
+
+        // ESC ] restarts: only the second string is dispatched.
+        feedMaybeSplit(&p, &d, "\x1b]0;lost\x1b]2;kept\x07", split);
+        try testing.expectEqual(1, d.osc_events.items.len);
+        try testing.expectEqualSlices(u8, "2;kept", d.osc_events.items[0].data);
+    }
+}
+
+test "vt_parser: ESC BEL inside OSC still ends it" {
+    // xterm: BEL in esc_table is CASE_BELL, which dispatches the OSC while
+    // string_mode is still ANSI_OSC (charproc.c, CASE_BELL).
+    for ([_]bool{ false, true }) |split| {
+        var d: TestDispatcher = try .init(alloc);
+        defer d.deinit();
+        var p: Parser(TestDispatcher, .{}) = .{};
+
+        feedMaybeSplit(&p, &d, "\x1b]0;a\x1b\x07", split);
+        try testing.expectEqual(.ground, p.state);
+        try testing.expectEqual(1, d.osc_events.items.len);
+        try testing.expectEqualSlices(u8, "0;a", d.osc_events.items[0].data);
+        try testing.expectEqual(0, d.executes.items.len); // no bell
+    }
+}
+
+test "vt_parser: ESC ESC \\ inside OSC still ends it, CAN after ESC drops it" {
+    for ([_]bool{ false, true }) |split| {
+        var d: TestDispatcher = try .init(alloc);
+        defer d.deinit();
+        var p: Parser(TestDispatcher, .{}) = .{};
+
+        feedMaybeSplit(&p, &d, "\x1b]0;a\x1b\x1b\\", split);
+        try testing.expectEqual(.ground, p.state);
+        try testing.expectEqual(1, d.osc_events.items.len);
+        try testing.expectEqualSlices(u8, "0;a", d.osc_events.items[0].data);
+
+        feedMaybeSplit(&p, &d, "\x1b]0;b\x1b\x18", split);
+        try testing.expectEqual(.ground, p.state);
+        try testing.expectEqual(1, d.osc_events.items.len);
+        try testing.expectEqualSlices(u8, &.{0x18}, d.executes.items);
+    }
 }
 
 test "vt_parser: OSC multiple sequences in one feed" {

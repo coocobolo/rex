@@ -3537,6 +3537,23 @@ test "m2: CAN or SUB inside OSC cancels it, the title is kept" {
     try testing.expectEqualStrings("kept", t.getTitle());
 }
 
+test "m2: ESC then a non-ST byte inside OSC drops it and runs the escape" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    t.feed("\x1b]2;kept\x07");
+    // ESC 7 inside the string is DECSC, as in xterm, not a terminator.
+    t.feed("\x1b[5;6H\x1b]2;lost\x1b7\x1b[H\x1b8");
+    try testing.expectEqualStrings("kept", t.getTitle());
+    try testing.expectEqual(@as(u16, 4), t.active().cursor.row);
+    try testing.expectEqual(@as(u16, 5), t.active().cursor.col);
+
+    // ESC \\ split across feeds still ends it.
+    t.feed("\x1b]2;split\x1b");
+    t.feed("\\");
+    try testing.expectEqualStrings("split", t.getTitle());
+}
+
 test "m2: DECSTR resets each item in the VT510 DECSTR table" {
     var t = try Term.create(alloc);
     defer t.destroy(alloc);

@@ -6,7 +6,9 @@
 //! Invariants:
 //!   - no panic, safety check or leak;
 //!   - `invariants.expectTerminal` after every sequence;
-//!   - a sequence ended by BEL (OSC) or ST leaves the parser in ground.
+//!   - a sequence ended by BEL (OSC) or ST leaves the parser in ground;
+//!   - an OSC 0, 1 or 2 not ended by BEL or ST (ESC 7, CAN, SUB or
+//!     none) leaves the title and icon name as they were, as in xterm.
 
 const std = @import("std");
 const testing = std.testing;
@@ -27,12 +29,40 @@ const dcs_headers = [_][]const u8{ "$q", "+q", "q", "1;2|", "0;1$t", "2000p", ""
 const Kind = enum { osc, dcs };
 const Terminator = enum { bel, st, st_c1, esc_other, can, sub, none };
 
-fn sequence(src: *Source, out: *std.ArrayList(u8), gpa: std.mem.Allocator) !Terminator {
+/// What `sequence` appended, for the checks after it is fed.
+const Built = struct {
+    kind: Kind,
+    /// OSC code, or "" for DCS.
+    code: []const u8,
+    end: Terminator,
+
+    /// Whether this is an OSC that sets the title or icon name.
+    fn setsTitle(self: Built) bool {
+        if (self.kind != .osc) return false;
+        for ([_][]const u8{ "0", "1", "2" }) |c| {
+            if (std.mem.eql(u8, self.code, c)) return true;
+        }
+        return false;
+    }
+
+    /// Whether the string was abandoned rather than terminated.
+    fn dropped(self: Built) bool {
+        return switch (self.end) {
+            .esc_other, .can, .sub, .none => true,
+            // In UTF-8 a lone 0x9C is not ST, so it is neither.
+            .bel, .st, .st_c1 => false,
+        };
+    }
+};
+
+fn sequence(src: *Source, out: *std.ArrayList(u8), gpa: std.mem.Allocator) !Built {
     const kind = src.pick("kind", Kind);
+    var code: []const u8 = "";
     switch (kind) {
         .osc => {
             try out.appendSlice(gpa, "\x1b]");
-            try out.appendSlice(gpa, osc_codes[src.index("osc code", osc_codes.len)]);
+            code = osc_codes[src.index("osc code", osc_codes.len)];
+            try out.appendSlice(gpa, code);
             if (src.chance("separator", 1, 7)) {} else try out.append(gpa, ';');
         },
         .dcs => {
@@ -62,7 +92,7 @@ fn sequence(src: *Source, out: *std.ArrayList(u8), gpa: std.mem.Allocator) !Term
         .sub => "\x1a",
         .none => "",
     });
-    return end;
+    return .{ .kind = kind, .code = code, .end = end };
 }
 
 fn run(src: *Source) !void {
@@ -80,11 +110,22 @@ fn run(src: *Source) !void {
     var count: usize = 0;
     while (count < 8 and !src.done("sequence", 3)) : (count += 1) {
         out.clearRetainingCapacity();
-        const end = try sequence(src, &out, gpa);
+        const built = try sequence(src, &out, gpa);
+        var title: [term.max_title_len]u8 = undefined;
+        const old_title = title[0..t.getTitle().len];
+        @memcpy(old_title, t.getTitle());
+        var icon: [term.max_title_len]u8 = undefined;
+        const old_icon = icon[0..t.icon_name_len];
+        @memcpy(old_icon, t.icon_name[0..t.icon_name_len]);
+
         t.feed(out.items);
         try invariants.expectTerminal(&t);
         // In UTF-8 a lone 0x9C is not ST, so only the 7-bit forms count.
-        if (end == .bel or end == .st) try testing.expectEqual(.ground, t.parser.state);
+        if (built.end == .bel or built.end == .st) try testing.expectEqual(.ground, t.parser.state);
+        if (built.setsTitle() and built.dropped()) {
+            try testing.expectEqualStrings(old_title, t.getTitle());
+            try testing.expectEqualStrings(old_icon, t.icon_name[0..t.icon_name_len]);
+        }
         t.events.clear();
     }
 }
