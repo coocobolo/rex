@@ -6,6 +6,7 @@ const gl = @import("gl.zig");
 
 const CellInstance = @import("Cell.zig").Instance;
 const BackgroundInstance = @import("Background.zig").Instance;
+const DecorationInstance = @import("Decoration.zig").Instance;
 const SelectionInstance = @import("Selection.zig").Instance;
 const SelectionPolygon = @import("Frame.zig").SelectionPolygon;
 const SelectionVertex = @import("Frame.zig").SelectionVertex;
@@ -20,19 +21,20 @@ const quad_verts_size = @sizeOf(@TypeOf(quad_verts));
 const f32_size = @sizeOf(f32);
 const cell_instance_size = @sizeOf(CellInstance);
 const background_instance_size = @sizeOf(BackgroundInstance);
+const decoration_instance_size = @sizeOf(DecorationInstance);
 const selection_instance_size = @sizeOf(SelectionInstance);
 
 pub inline fn cellOff(comptime field: []const u8) ?*const anyopaque {
     return @ptrFromInt(@offsetOf(CellInstance, field));
 }
 
-// offset  0: col: u16, row: u16             ->  loc 1: uvec2 a_cell
-// offset  4: atlas_x: u16, atlas_y: u16     ->  loc 2: uvec2 a_atlas_pos
-// offset  8: glyph_w: u16, glyph_h: u16     ->  loc 3: uvec2 a_glyph_size
-// offset 12: bearing_x: i16, bearing_y: i16 ->  loc 4: ivec2 a_bearing
-// offset 16: fg_r/g/b/a: u8 × 4             ->  loc 5: uvec4 a_fg
-// offset 20: flags: Flags (u8)              ->  loc 6: uint a_flags
-// offset 21: _pad[3]                        ->  not uploaded
+// offset  0: col: u16, row: u16 | loc 1: uvec2 a_cell
+// offset  4: atlas_x: u16, atlas_y: u16 | loc 2: uvec2 a_atlas_pos
+// offset  8: glyph_w: u16, glyph_h: u16 | loc 3: uvec2 a_glyph_size
+// offset 12: bearing_x: i16, bearing_y: i16 | loc 4: ivec2 a_bearing
+// offset 16: fg_r/g/b/a: u8 × 4 | loc 5: uvec4 a_fg
+// offset 20: flags: Flags (u8) | loc 6: uint a_flags
+// offset 21: _pad[3] | not uploaded
 pub const CellBuffer = struct {
     vao: gl.GLuint,
     quad_vbo: gl.GLuint,
@@ -131,10 +133,10 @@ pub const CellBuffer = struct {
     }
 };
 
-// offset  6: r/g/b/a: u8 × 4       ->  loc 3: vec4 a_bg (normalized)
-// offset 10: fg_r/g/b/a: u8 × 4    ->  loc 4: vec4 a_fg (normalized)
-// offset 14: flags: Flags (u8)     ->  loc 5: uint a_flags
-// offset 15: _pad[1]               ->  not uploaded
+// offset  0: col: u16, row: u16 | loc 1: uvec2 a_cell
+// offset  4: span: u16 | loc 2: uint a_span
+// offset  6: r/g/b/a: u8 × 4 | loc 3: vec4 a_bg (normalized)
+// offset 10: _pad[2] | not uploaded
 inline fn bgOff(comptime field: []const u8) ?*const anyopaque {
     return @ptrFromInt(@offsetOf(BackgroundInstance, field));
 }
@@ -167,30 +169,20 @@ pub const BgBuffer = struct {
 
         const stride: gl.GLsizei = background_instance_size;
 
-        // loc 1: uvec2 a_cell — col, row
+        // loc 1: uvec2 a_cell, col and row
         gl.enableVertexAttribArray(1);
         gl.vertexAttribIPointer(1, 2, gl.UNSIGNED_SHORT, stride, bgOff("col"));
         gl.vertexAttribDivisor(1, 1);
 
-        // loc 2: uint a_span — number of columns this bg covers
+        // loc 2: uint a_span, number of columns this bg covers
         gl.enableVertexAttribArray(2);
         gl.vertexAttribIPointer(2, 1, gl.UNSIGNED_SHORT, stride, bgOff("span"));
         gl.vertexAttribDivisor(2, 1);
 
-        // loc 3: vec4 a_bg — normalized float from UNSIGNED_BYTE
+        // loc 3: vec4 a_bg, normalized float from UNSIGNED_BYTE
         gl.enableVertexAttribArray(3);
         gl.vertexAttribPointer(3, 4, gl.UNSIGNED_BYTE, gl.TRUE, stride, bgOff("r"));
         gl.vertexAttribDivisor(3, 1);
-
-        // loc 4: vec4 a_fg - normalized UNSIGNED_BYTE
-        gl.enableVertexAttribArray(4);
-        gl.vertexAttribPointer(4, 4, gl.UNSIGNED_BYTE, gl.TRUE, stride, bgOff("fg_r"));
-        gl.vertexAttribDivisor(4, 1);
-
-        // loc 5: uint a_flags Flags packed byte
-        gl.enableVertexAttribArray(5);
-        gl.vertexAttribIPointer(5, 1, gl.UNSIGNED_BYTE, stride, bgOff("flags"));
-        gl.vertexAttribDivisor(5, 1);
 
         gl.bindVertexArray(0);
         gl.bindBuffer(gl.ARRAY_BUFFER, 0);
@@ -230,6 +222,99 @@ pub const BgBuffer = struct {
     }
 };
 
+// offset  0: col: u16, row: u16 | loc 1: uvec2 a_cell
+// offset  4: span: u16 | loc 2: uint a_span
+// offset  6: underline: u8 × 4 | loc 3: vec4 a_underline (normalized)
+// offset 10: strikethrough: u8 × 4 | loc 4: vec4 a_strikethrough (normalized)
+// offset 14: overline: u8 × 4 | loc 5: vec4 a_overline (normalized)
+// offset 18: flags: Flags (u8) | loc 6: uint a_flags
+// offset 19: _pad[1] | not uploaded
+inline fn decOff(comptime field: []const u8) ?*const anyopaque {
+    return @ptrFromInt(@offsetOf(DecorationInstance, field));
+}
+
+pub const DecorationBuffer = struct {
+    vao: gl.GLuint,
+    quad_vbo: gl.GLuint,
+    inst_vbo: gl.GLuint,
+    capacity: usize,
+
+    pub fn init(capacity: usize) DecorationBuffer {
+        var self: DecorationBuffer = undefined;
+        self.capacity = capacity;
+
+        gl.genVertexArrays(1, &self.vao);
+        gl.genBuffers(1, &self.quad_vbo);
+        gl.genBuffers(1, &self.inst_vbo);
+
+        gl.bindVertexArray(self.vao);
+
+        // quad VBO (static)
+        gl.bindBuffer(gl.ARRAY_BUFFER, self.quad_vbo);
+        gl.bufferData(gl.ARRAY_BUFFER, quad_verts_size, &quad_verts, gl.STATIC_DRAW);
+        gl.enableVertexAttribArray(0);
+        gl.vertexAttribPointer(0, 2, gl.FLOAT, gl.FALSE, 2 * f32_size, null);
+
+        // instance VBO (dynamic)
+        gl.bindBuffer(gl.ARRAY_BUFFER, self.inst_vbo);
+        gl.bufferData(gl.ARRAY_BUFFER, @intCast(capacity * decoration_instance_size), null, gl.DYNAMIC_DRAW);
+
+        const stride: gl.GLsizei = decoration_instance_size;
+
+        gl.enableVertexAttribArray(1);
+        gl.vertexAttribIPointer(1, 2, gl.UNSIGNED_SHORT, stride, decOff("col"));
+        gl.vertexAttribDivisor(1, 1);
+
+        gl.enableVertexAttribArray(2);
+        gl.vertexAttribIPointer(2, 1, gl.UNSIGNED_SHORT, stride, decOff("span"));
+        gl.vertexAttribDivisor(2, 1);
+
+        gl.enableVertexAttribArray(3);
+        gl.vertexAttribPointer(3, 4, gl.UNSIGNED_BYTE, gl.TRUE, stride, decOff("underline"));
+        gl.vertexAttribDivisor(3, 1);
+
+        gl.enableVertexAttribArray(4);
+        gl.vertexAttribPointer(4, 4, gl.UNSIGNED_BYTE, gl.TRUE, stride, decOff("strikethrough"));
+        gl.vertexAttribDivisor(4, 1);
+
+        gl.enableVertexAttribArray(5);
+        gl.vertexAttribPointer(5, 4, gl.UNSIGNED_BYTE, gl.TRUE, stride, decOff("overline"));
+        gl.vertexAttribDivisor(5, 1);
+
+        gl.enableVertexAttribArray(6);
+        gl.vertexAttribIPointer(6, 1, gl.UNSIGNED_BYTE, stride, decOff("flags"));
+        gl.vertexAttribDivisor(6, 1);
+
+        gl.bindVertexArray(0);
+        gl.bindBuffer(gl.ARRAY_BUFFER, 0);
+
+        return self;
+    }
+
+    pub fn deinit(self: *DecorationBuffer) void {
+        gl.deleteVertexArrays(1, &self.vao);
+        gl.deleteBuffers(1, &self.quad_vbo);
+        gl.deleteBuffers(1, &self.inst_vbo);
+        self.* = undefined;
+    }
+
+    pub fn upload(self: *DecorationBuffer, instances: []const DecorationInstance) void {
+        if (instances.len == 0) return;
+        std.debug.assert(instances.len <= self.capacity);
+        gl.bindBuffer(gl.ARRAY_BUFFER, self.inst_vbo);
+        gl.bufferData(gl.ARRAY_BUFFER, @as(gl.GLsizeiptr, @intCast(self.capacity * decoration_instance_size)), null, gl.DYNAMIC_DRAW);
+        gl.bufferSubData(gl.ARRAY_BUFFER, 0, @as(gl.GLsizeiptr, @intCast(instances.len * decoration_instance_size)), instances.ptr);
+        gl.bindBuffer(gl.ARRAY_BUFFER, 0);
+    }
+
+    pub fn draw(self: *const DecorationBuffer, count: usize) void {
+        if (count == 0) return;
+        gl.bindVertexArray(self.vao);
+        gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, @intCast(count));
+        gl.bindVertexArray(0);
+    }
+};
+
 fn selOff(comptime field: []const u8) ?*const anyopaque {
     return @ptrFromInt(@offsetOf(SelectionInstance, field));
 }
@@ -252,13 +337,13 @@ pub const SelectionBuffer = struct {
 
         const stride = selection_instance_size; // 16
 
-        // quad VBO (static) — loc 0
+        // quad VBO (static), loc 0
         gl.bindBuffer(gl.ARRAY_BUFFER, self.quad_vbo);
         gl.bufferData(gl.ARRAY_BUFFER, quad_verts_size, &quad_verts, gl.STATIC_DRAW);
         gl.enableVertexAttribArray(0);
         gl.vertexAttribPointer(0, 2, gl.FLOAT, gl.FALSE, 2 * f32_size, null);
 
-        // instance VBO (dynamic) — loc 1, 2
+        // instance VBO (dynamic), loc 1, 2
         gl.bindBuffer(gl.ARRAY_BUFFER, self.inst_vbo);
         gl.bufferData(gl.ARRAY_BUFFER, @intCast(capacity * stride), null, gl.DYNAMIC_DRAW);
 
@@ -275,12 +360,12 @@ pub const SelectionBuffer = struct {
         gl.vertexAttribIPointer(3, 1, gl.UNSIGNED_SHORT, stride, @ptrFromInt(6));
         gl.vertexAttribDivisor(3, 1);
 
-        // loc 4: a_prev (prev_col, prev_span) — uvec2 at offset 8
+        // loc 4: a_prev (prev_col, prev_span), uvec2 at offset 8
         gl.vertexAttribIPointer(4, 2, gl.UNSIGNED_SHORT, stride, @ptrFromInt(8));
         gl.vertexAttribDivisor(4, 1);
         gl.enableVertexAttribArray(4);
 
-        // loc 5: a_next (next_col, next_span) — uvec2 at offset 12
+        // loc 5: a_next (next_col, next_span), uvec2 at offset 12
         gl.vertexAttribIPointer(5, 2, gl.UNSIGNED_SHORT, stride, @ptrFromInt(12));
         gl.vertexAttribDivisor(5, 1);
         gl.enableVertexAttribArray(5);

@@ -40,8 +40,8 @@ pub fn Renderer(comptime option: TerminalOption) type {
         cell_ascender: i16,
         cell_dimension: Dimension(f32),
         cursor: Cursor,
+        decoration: Decoration,
         decoration_metrics: Decoration.Metrics,
-        decoration_option: Decoration.Option,
         selection: Selection,
         scrollbar: Scrollbar,
 
@@ -61,14 +61,17 @@ pub fn Renderer(comptime option: TerminalOption) type {
             var cell = try Cell.init(max_cells);
             errdefer cell.deinit();
 
+            var decoration = try Decoration.init(max_cells, opt.decoration);
+            errdefer decoration.deinit();
+
             var self: Self = .{
                 .background = background,
                 .cell = cell,
                 .cell_ascender = undefined,
                 .cell_dimension = undefined,
                 .cursor = cursor,
+                .decoration = decoration,
                 .decoration_metrics = undefined,
-                .decoration_option = opt.decoration,
                 .scrollbar = scrollbar,
                 .selection = selection,
             };
@@ -85,11 +88,12 @@ pub fn Renderer(comptime option: TerminalOption) type {
                 .width = @floatFromInt(font.cell_width),
                 .height = @floatFromInt(font.cell_height),
             };
-            self.decoration_metrics = .resolve(font, self.decoration_option);
+            self.decoration_metrics = .resolve(font, self.decoration.option);
         }
 
         pub fn deinit(self: *Self) void {
             self.cell.deinit();
+            self.decoration.deinit();
             self.background.deinit();
             self.scrollbar.deinit();
             self.selection.deinit();
@@ -126,7 +130,7 @@ pub fn Renderer(comptime option: TerminalOption) type {
             );
 
             // Pass 1: background quads
-            if (frame.dirty.cells or frame.dirty.blink or frame.dirty.selection) self.background.upload(frame.background_instances);
+            if (frame.dirty.cells or frame.dirty.selection) self.background.upload(frame.background_instances);
             self.background.draw(
                 frame.background_instances.len,
                 .{
@@ -134,9 +138,6 @@ pub fn Renderer(comptime option: TerminalOption) type {
                     .frame = frame_dimension,
                 },
                 background_color[3],
-                self.decoration_metrics,
-                cursor_state.blink_on,
-                cursor_state.blink_rapid_on,
             );
 
             // Pass: 1.5: selection rendering
@@ -149,6 +150,11 @@ pub fn Renderer(comptime option: TerminalOption) type {
                     .frame = frame_dimension,
                 },
             );
+
+            // Pass 2 and 3: decorations and glyphs, in the configured order
+            if (frame.dirty.cells) self.decoration.upload(frame.decoration_instances);
+            const decorations_over_text = self.decoration.option.order == .over_text;
+            if (!decorations_over_text) self.drawDecorations(frame, frame_dimension, cursor_state.blink_on, cursor_state.blink_rapid_on);
 
             self.cell.upload(frame.gray_instances, frame.color_instances);
             self.cell.draw(
@@ -167,6 +173,8 @@ pub fn Renderer(comptime option: TerminalOption) type {
                     .color = frame.color_instances.len,
                 },
             );
+
+            if (decorations_over_text) self.drawDecorations(frame, frame_dimension, cursor_state.blink_on, cursor_state.blink_rapid_on);
 
             // Pass 4: cursor
             if (frame.dirty.cursor) self.cursor.upload(frame.cursor_state);
@@ -194,6 +202,25 @@ pub fn Renderer(comptime option: TerminalOption) type {
                 }
                 self.scrollbar.draw();
             }
+        }
+
+        fn drawDecorations(
+            self: *Self,
+            frame: FrameData,
+            frame_dimension: Dimension(f32),
+            blink_on: bool,
+            blink_rapid_on: bool,
+        ) void {
+            self.decoration.draw(
+                frame.decoration_instances.len,
+                .{
+                    .cell = self.cell_dimension,
+                    .frame = frame_dimension,
+                },
+                self.decoration_metrics,
+                blink_on,
+                blink_rapid_on,
+            );
         }
 
         /// Called unconditionally every frame before renderFrame().
