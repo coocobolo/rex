@@ -412,68 +412,103 @@ pub fn Terminal(comptime option: Option) type {
             // governs parser feature availability (an orthogonal axis).
             // utf8 + level1 /.sc7c1t is valid, input is still UTF-8, output-side
             // restrictions live in the sequence-emitting code, not here.
-            switch (self.input.encoding) {
-                .utf8 => self.feedUtf8(bytes),
-                .latin1 => switch (self.control_format) {
-
-                    // levels_*_8bit mode, means whole byte buffer is passed directly
-                    // to the vt-parser, since every byte in 8-bit latin1 is already
-                    // valid single code points.
-                    .s8c1t => self.parser.feedBytes(self, bytes),
-                    .s7c1t => switch (self.conformance_level) {
-                        .level1 => self.feedLatin1(bytes, .strip),
-                        else => self.feedLatin1(bytes, .ignore),
-                    },
-                },
+            //
+            // A sequence in `bytes` can change the path (ESC % G, ESC % @,
+            // S7C1T, S8C1T, DECSCL). Each path returns as soon as that
+            // happens, so the rest of the chunk takes the new path and the
+            // result never depends on where a read split the stream.
+            var rest = bytes;
+            while (rest.len > 0) {
+                const n = switch (self.feedPath()) {
+                    .utf8 => self.feedUtf8(rest),
+                    // Every byte in 8-bit Latin-1 is already a code point or
+                    // a C1 control, so high bytes go straight to the parser.
+                    .latin1_c1 => self.feedLatin1(rest, .c1),
+                    .latin1_ignore => self.feedLatin1(rest, .ignore),
+                    .latin1_strip => self.feedLatin1(rest, .strip),
+                };
+                std.debug.assert(n > 0);
+                rest = rest[n..];
             }
 
             self.active().bump();
         }
 
-        fn feedLatin1(self: *Self, bytes: []const u8, comptime high_byte_policy: enum { ignore, strip }) void {
-            // .ignore: C1s are dropped, not masked, runs split at each C1 so
-            // "A\x9CB" prints "AB" with no invisible byte dispatched.
-            if (high_byte_policy == .ignore) {
-                // TODO! If latin1+7bit ever matters for throughput, the same scanUntil engine applies
-                // non-payload = [0x80,0x9F] is one masked compare ((chunk -% 0x80) < 0x20
-                // the same C1 idiom used in payloadEnd), giving chunk-sized skip over clean runs.
-                // Until that need exists, scalar is fine for a compat path.
-                var start: usize = 0;
+        const FeedPath = enum { utf8, latin1_c1, latin1_ignore, latin1_strip };
 
-                for (bytes, 0..) |b, i| {
-                    // In s7c1t latin1: C1 controls (0x80–0x9F) have no defined meaning
-                    // ignore them. 0xA0–0xFF are printable Latin-1; they go to the parser.
-                    if (b >= 0x80 and b <= 0x9F) {
-                        if (start < i) {
-                            self.parser.feedBytes(self, bytes[start..i]);
-                        }
-                        start = i + 1;
-                    }
+        /// How `feed` routes bytes in the current encoding and control mode.
+        fn feedPath(self: *const Self) FeedPath {
+            return switch (self.input.encoding) {
+                .utf8 => .utf8,
+                .latin1 => switch (self.control_format) {
+                    .s8c1t => .latin1_c1,
+                    .s7c1t => switch (self.conformance_level) {
+                        .level1 => .latin1_strip,
+                        else => .latin1_ignore,
+                    },
+                },
+            };
+        }
+
+        /// Feeds a prefix of `bytes` in a Latin-1 path and returns its
+        /// length: all of it, or up to where a sequence changed the path.
+        /// ASCII runs, which every path treats alike, go to the parser
+        /// whole; the path is checked again before the high bytes after
+        /// each one.
+        ///
+        /// High bytes per policy:
+        ///   - `.c1`: to the parser, 0x80-0x9F as C1 controls.
+        ///   - `.ignore`: C1s are dropped, not masked, so "A\x9CB" prints
+        ///     "AB" with no invisible byte dispatched; 0xA0-0xFF print.
+        ///   - `.strip`: masked to 7 bits (VT100). A masked byte can be ESC,
+        ///     so these go one at a time.
+        fn feedLatin1(self: *Self, bytes: []const u8, comptime policy: enum { c1, ignore, strip }) usize {
+            // TODO! If latin1 ever matters for throughput, the scanUntil engine
+            // applies to both runs. Until that need exists, scalar is fine for
+            // a compat path.
+            const path = self.feedPath();
+            var i: usize = 0;
+            while (i < bytes.len) {
+                var ascii_end = i;
+                while (ascii_end < bytes.len and bytes[ascii_end] < 0x80) ascii_end += 1;
+                if (ascii_end > i) {
+                    self.parser.feedBytes(self, bytes[i..ascii_end]);
+                    i = ascii_end;
+                    if (self.feedPath() != path) return i;
                 }
 
-                if (start < bytes.len) {
-                    self.parser.feedBytes(self, bytes[start..]);
+                var high_end = i;
+                while (high_end < bytes.len and bytes[high_end] >= 0x80) high_end += 1;
+                switch (policy) {
+                    .c1 => self.parser.feedBytes(self, bytes[i..high_end]),
+                    .ignore => {
+                        var start = i;
+                        for (bytes[i..high_end], i..) |b, j| if (b <= 0x9F) {
+                            if (start < j) self.parser.feedBytes(self, bytes[start..j]);
+                            start = j + 1;
+                        };
+                        if (start < high_end) self.parser.feedBytes(self, bytes[start..high_end]);
+                    },
+                    .strip => while (i < high_end) {
+                        self.parser.feedBytes(self, &.{bytes[i] & 0x7F});
+                        i += 1;
+                        if (self.feedPath() != path) return i;
+                    },
                 }
-                return;
+                i = high_end;
+                if (self.feedPath() != path) return i;
             }
-
-            // `.strip`: copy and mask, since the input slice must not be modified.
-            var scratch: [4096]u8 = undefined;
-            var rest = bytes;
-
-            while (rest.len > 0) {
-                const n = @min(rest.len, scratch.len);
-                stripInto(rest[0..n], scratch[0..n]);
-                self.parser.feedBytes(self, scratch[0..n]);
-                rest = rest[n..];
-            }
+            return i;
         }
 
         /// Feeds a chunk, not necessarily the end of the stream.
         /// Call end() only when the stream actually ends.
-        fn feedUtf8(self: *Self, bytes: []const u8) void {
+        /// Returns how many bytes it took: all of them, or up to where ESC % @
+        /// switched to Latin-1.
+        fn feedUtf8(self: *Self, bytes: []const u8) usize {
             var i: usize = 0;
             while (i < bytes.len) {
+                if (self.input.encoding != .utf8) return i;
                 const n = self.input.asciiPrefixLen(bytes[i..]);
 
                 // Fast path whole ascii run.
@@ -520,6 +555,7 @@ pub fn Terminal(comptime option: Option) type {
                 self.feedUtf8Byte(bytes[i]);
                 i += 1;
             }
+            return i;
         }
 
         fn feedUtf8Byte(self: *Self, byte: u8) void {
@@ -1150,18 +1186,4 @@ pub fn Terminal(comptime option: Option) type {
             }
         }
     };
-}
-
-/// Vectorized `b & 0x7F` into `out` — both slices same length.
-fn stripInto(slice: []const u8, out: []u8) void {
-    var i: usize = 0;
-    if (std.simd.suggestVectorLength(u8)) |chunk_len| {
-        const Chunk = @Vector(chunk_len, u8);
-        const mask: Chunk = @splat(0x7F);
-        while (i + chunk_len <= slice.len) : (i += chunk_len) {
-            const chunk: Chunk = slice[i..][0..chunk_len].*;
-            out[i..][0..chunk_len].* = chunk & mask;
-        }
-    }
-    while (i < slice.len) : (i += 1) out[i] = slice[i] & 0x7F;
 }

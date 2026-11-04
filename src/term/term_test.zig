@@ -750,3 +750,36 @@ test "resize: zero rows or columns keeps a one-cell grid" {
     try testing.expectEqual(4, t.alternate.active_rows);
     try testing.expectEqual(1, t.alternate.active_cols);
 }
+
+test "feed: ESC % @ applies to the rest of the same chunk" {
+    // Found by the terminal fuzz target: the encoding was picked once
+    // per feed, so the bytes after ESC % @ in that chunk were still
+    // decoded as UTF-8.
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    t.feed("\x1b%@\xe9");
+    t.end();
+    try testing.expectEqual(0xE9, t.active().row(0)[0].codepoint);
+}
+
+test "feed: ESC % G applies to the rest of the same chunk" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    t.feed("\x1b%@");
+    t.feed("\x1b%G\xc3\xa9x");
+    try testing.expectEqual(0xE9, t.active().row(0)[0].codepoint);
+    try testing.expectEqual('x', t.active().row(0)[1].codepoint);
+}
+
+test "feed: S8C1T applies to the rest of the same Latin-1 chunk" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    // Latin-1, VT220 with 7-bit controls: C1 bytes are ignored. After
+    // S8C1T in the same chunk, 0x9B is CSI.
+    t.feed("\x1b%@\x1b[62;1\"p");
+    t.feed("\x1b G\x9b5Cx");
+    try testing.expectEqual('x', t.active().row(0)[5].codepoint);
+}
