@@ -971,11 +971,7 @@ const keyCb: c.GLFWkeyfun = struct {
 
         // A bare modifier keeps the selection, since it may start a
         // combination such as Ctrl+Shift+C.
-        const is_modifier = switch (key) {
-            c.GLFW_KEY_LEFT_SHIFT, c.GLFW_KEY_RIGHT_SHIFT, c.GLFW_KEY_LEFT_CONTROL, c.GLFW_KEY_RIGHT_CONTROL, c.GLFW_KEY_LEFT_ALT, c.GLFW_KEY_RIGHT_ALT, c.GLFW_KEY_LEFT_SUPER, c.GLFW_KEY_RIGHT_SUPER => true,
-            else => false,
-        };
-        if (!is_modifier) {
+        if (!input.isModifierKey(key)) {
             app.selection = .empty;
             app.needs_redraw = true;
         }
