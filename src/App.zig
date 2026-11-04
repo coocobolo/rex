@@ -33,7 +33,7 @@ const SelectionState = renderer_mod.Selection.State;
 
 const Renderer = renderer_mod.Renderer;
 const Dimension = renderer_mod.Dimension;
-const FrameBuilder = renderer_mod.frame.Builder;
+const FrameBuilder = renderer_mod.Frame.Builder;
 
 const Freetype = rex.FreeType;
 const Rasterizer = rex.FreeType.Rasterizer;

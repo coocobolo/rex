@@ -5,7 +5,7 @@ const Atlas = @import("Atlas.zig");
 const Shader = @import("Shader.zig");
 
 const Buffer = @import("buffer.zig").CellBuffer;
-const Flags = @import("frame.zig").Flags;
+const Flags = @import("Frame.zig").Flags;
 const Dimension = @import("dimension.zig").Dimension;
 
 pub const Option = struct {};

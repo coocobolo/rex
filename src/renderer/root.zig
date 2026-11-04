@@ -5,7 +5,7 @@ pub const gl = @import("gl.zig");
 pub const Atlas = @import("Atlas.zig");
 pub const Window = @import("Window.zig");
 
-pub const frame = @import("frame.zig");
+pub const Frame = @import("Frame.zig");
 
 pub const Renderer = @import("renderer.zig").Renderer;
 pub const Cell = @import("Cell.zig");

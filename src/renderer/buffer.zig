@@ -7,8 +7,8 @@ const gl = @import("gl.zig");
 const CellInstance = @import("Cell.zig").Instance;
 const BackgroundInstance = @import("Background.zig").Instance;
 const SelectionInstance = @import("Selection.zig").Instance;
-const SelectionPolygon = @import("frame.zig").SelectionPolygon;
-const SelectionVertex = @import("frame.zig").SelectionVertex;
+const SelectionPolygon = @import("Frame.zig").SelectionPolygon;
+const SelectionVertex = @import("Frame.zig").SelectionVertex;
 
 /// Unit quad in [0,1] space, TRIANGLE_STRIP order: TL, TR, BL, BR
 const quad_verts = [8]f32{

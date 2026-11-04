@@ -1,7 +1,7 @@
 const std = @import("std");
 const log = std.log.scoped(.background);
 
-const Flags = @import("frame.zig").Flags;
+const Flags = @import("Frame.zig").Flags;
 const gl = @import("gl.zig");
 const Shader = @import("Shader.zig");
 const Buffer = @import("buffer.zig").BgBuffer;
