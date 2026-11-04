@@ -137,8 +137,8 @@ fn setup(self: *Cell, args: DrawArgs, mask: bool) void {
     self.shader.use();
     self.shader.set2f(
         "u_atlas_size",
-        @floatFromInt(Atlas.texture_width),
-        @floatFromInt(Atlas.texture_height),
+        @floatFromInt(args.atlas.width),
+        @floatFromInt(args.atlas.height),
     );
     args.atlas.bindTextures(gl.TEXTURE0, gl.TEXTURE1);
     self.shader.set2f("u_cell_size", args.cell.width, args.cell.height);
