@@ -61,7 +61,8 @@ const max_scrollback: usize = 3896;
 const tab_width: usize = 8;
 const emulator_version = "0.1.0";
 const emulator_name = "rex";
-const max_read_size: usize = std.math.maxInt(u16) - 1;
+/// Largest selection copied to the clipboard, in bytes.
+const max_copy_size: usize = std.math.maxInt(u16) - 1;
 
 const pomodoro_state_file = "pomodoro_stats.bin";
 
@@ -76,6 +77,9 @@ pub const Config = struct {
     keymap: []const Binding,
     pomodoro: pomodoro.Option,
     termio: rex.termio.pty.SpawnOption,
+    /// Bytes read from the pty per read call, default 65534. Bigger
+    /// reads parse long output in fewer frames; 0 is treated as 1.
+    read_buffer_size: usize = std.math.maxInt(u16) - 1,
     theme: Theme,
     window: struct {
         background: Background.Option,
@@ -403,7 +407,8 @@ pub fn run(self: *App) !void {
     self.window.setScrollCallback(scrollCb);
     self.window.setWindowFocusCallback(windowFocusCb);
 
-    var buffer: [max_read_size]u8 = undefined;
+    const buffer = try self.allocator.alloc(u8, @max(1, self.config.read_buffer_size));
+    defer self.allocator.free(buffer);
 
     // FIXME! The main loop is doing three different jobs:
     // 1. Reading the PTY.
@@ -484,7 +489,7 @@ pub fn run(self: *App) !void {
         var child_closed = false;
 
         drain: while (true) {
-            const n = self.pty.readRaw(&buffer) catch |err| switch (err) {
+            const n = self.pty.readRaw(buffer) catch |err| switch (err) {
                 error.WouldBlock => break :drain,
                 // On Linux, a PTY can report EIO when the child side closes.
                 error.InputOutput => {
@@ -1103,7 +1108,7 @@ fn copySelectionToClipboard(self: *App) void {
     const clamped_hi: i64 = std.math.clamp(hi_anchor, -scrollback_used, active_rows - 1);
     if (clamped_hi < clamped_lo) return; // nothing retained to copy
 
-    var buf: [max_read_size]u8 = undefined;
+    var buf: [max_copy_size]u8 = undefined;
     var pos: usize = 0;
 
     var anchor_row: i64 = clamped_lo;
