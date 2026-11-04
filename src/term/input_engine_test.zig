@@ -35,6 +35,13 @@ const FakeSink = struct {
     pub fn putGrapheme(self: *FakeSink, cps: []const u21, kind: CellKind) !void {
         self.record(.{ .cp = cps[0], .kind = kind, .len = cps.len });
     }
+
+    /// Grows the last recorded cell's cluster, or drops the mark if none.
+    pub fn attachCombining(self: *FakeSink, cp: u21) void {
+        _ = cp;
+        if (self.len == 0) return;
+        self.buf[self.len - 1].len += 1;
+    }
 };
 
 /// Mirrors `Terminal.feedUtf8` for printable text: ASCII flushes the
@@ -165,15 +172,14 @@ test "reset drops pending state" {
     try testing.expectEqual(.wide, engine.wcwidth_ambiguous_width);
 }
 
-test "combining mark composes with ascii base" {
-    // M2 #5: `e` is printed before U+0301 arrives, so the mark starts its
-    // own zero-width cluster and is dropped.
-    if (true) return error.SkipZigTest;
-    var engine: InputEngine = .init(.narrow);
-    var sink: FakeSink = .{};
-    feedText(&engine, &sink, "e\xCC\x81");
-    engine.finish(&sink);
+test "combining mark attaches to ascii base" {
+    const sink = feedChunks(&.{"e\xCC\x81"});
     try testing.expectEqual(@as(usize, 1), sink.len);
-    try testing.expectEqual(@as(u21, 'e'), sink.puts()[0].cp);
-    try testing.expectEqual(@as(usize, 2), sink.puts()[0].len);
+    try testing.expectEqual(FakeSink.Put{ .cp = 'e', .kind = .narrow, .len = 2 }, sink.puts()[0]);
+}
+
+test "combining mark attaches to latin fast-path base" {
+    const sink = feedChunks(&.{"\xC3\xA9\xCC\x81"}); // U+00E9 U+0301
+    try testing.expectEqual(@as(usize, 1), sink.len);
+    try testing.expectEqual(FakeSink.Put{ .cp = 0xE9, .kind = .narrow, .len = 2 }, sink.puts()[0]);
 }

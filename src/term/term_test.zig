@@ -561,3 +561,59 @@ test "invalid utf-8: truncated sequence at end() is u+fffd" {
     t.end();
     try testing.expectEqual(@as(u32, 0xFFFD), t.active.cellAt(0, 0).codepoint);
 }
+
+fn expectCluster(t: *Term, row: usize, col: usize, want: []const u21) !void {
+    const cell = t.active.cellAt(row, col);
+    try testing.expect(cell.kind.isGrapheme());
+    try testing.expectEqualSlices(u21, want, t.active.getGrapheme(cell.codepoint).?);
+}
+
+test "combining: e + U+0301 is one cell with the cluster" {
+    const t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    t.feed("e\xCC\x81x");
+    try expectCluster(t, 0, 0, &.{ 'e', 0x301 });
+    try testing.expectEqual(@as(u32, 'x'), t.active.cellAt(0, 1).codepoint);
+}
+
+test "combining: U+00E9 + U+0301 keeps both" {
+    const t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    t.feed("\xC3\xA9\xCC\x81");
+    try expectCluster(t, 0, 0, &.{ 0xE9, 0x301 });
+    try testing.expectEqual(@as(u16, 1), t.active.cursor.col);
+}
+
+test "combining: mark at the last column with wrap pending" {
+    const t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    t.feed("\x1b[1;24Ha");
+    try testing.expect(t.active.cursor.wrap_pending);
+    t.feed("\xCC\x81");
+    try expectCluster(t, 0, 23, &.{ 'a', 0x301 });
+    try testing.expect(t.active.cursor.wrap_pending);
+}
+
+test "combining: mark at column 0 is dropped" {
+    const t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    t.feed("\xCC\x81");
+    t.end();
+    try testing.expectEqual(.empty, t.active.cellAt(0, 0).kind);
+    try testing.expectEqual(@as(u16, 0), t.active.cursor.col);
+}
+
+test "combining: mark on wide CJK attaches to the left half" {
+    const t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    t.feed("\xE4\xB8\xAD\xCC\x81"); // U+4E2D U+0301
+    try expectCluster(t, 0, 0, &.{ 0x4E2D, 0x301 });
+    try testing.expectEqual(.grapheme_wide, t.active.cellAt(0, 0).kind);
+    try testing.expectEqual(.wide_right, t.active.cellAt(0, 1).kind);
+    try testing.expectEqual(@as(u16, 2), t.active.cursor.col);
+}

@@ -17,6 +17,8 @@
 //!   - `putCharKind(cp: u21, kind: CellKind) void`
 //!   - `putChar(cp: u21) void`
 //!   - `putGrapheme(cps: []const u21, kind: CellKind) !void`
+//!   - `attachCombining(cp: u21) void`, which appends a zero-width code
+//!     point to the cell written last
 
 const std = @import("std");
 
@@ -190,13 +192,20 @@ fn feedCodepoint(self: *InputEngine, sink: anytype, cp: u21) void {
         return;
     }
 
-    // Latin-1 Supplement letters and Latin Extended-A/B: narrow.
-    // FIXME(M2 #5): this skips the breaker, so a following combining mark
-    // starts its own cluster instead of attaching to this base.
+    // Latin-1 Supplement letters and Latin Extended-A/B: narrow. A mark
+    // that follows still attaches, through the zero-width path below.
     if (cp >= 0x00C0 and cp <= 0x024F) {
         self.flushGrapheme(sink);
         sink.putCharKind(cp, .narrow);
         self.grapheme_breaker = null;
+        return;
+    }
+
+    // No cluster in progress: the base was written already (ASCII via the
+    // parser, or a fast-path code point above), so a zero-width code point
+    // extends that cell instead of starting a cluster of its own.
+    if (self.grapheme_breaker == null and self.wcwidthCached(cp) == .zero) {
+        sink.attachCombining(cp);
         return;
     }
 

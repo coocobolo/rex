@@ -667,6 +667,57 @@ pub fn Screen(comptime option: Option) type {
             return self.grapheme_table.get(id);
         }
 
+        /// Longest cluster `attachCombining` builds; matches InputEngine.
+        pub const max_cluster_len = 16;
+
+        /// Appends a zero-width code point (combining mark, ZWJ, variation
+        /// selector) to the cluster of the cell written last, interning the
+        /// result as a grapheme. The cell is the one left of the cursor, or
+        /// the cursor cell itself while a wrap is pending; a `wide_right`
+        /// half resolves to its `wide_left`. The cell keeps its width, colors
+        /// and attributes; the cursor does not move.
+        ///
+        /// Dropped when there is no previous cell (column 0 with no pending
+        /// wrap), the cell is empty, the cluster already holds
+        /// `max_cluster_len` code points, or interning fails.
+        pub fn attachCombining(self: *Self, cp: u21) void {
+            const prev_col: usize = if (self.cursor.wrap_pending)
+                self.cursor.col
+            else if (self.cursor.col > 0)
+                self.cursor.col - 1
+            else
+                return;
+
+            const row_mut = self.rowMutRaw(self.cursor.row);
+            var col = prev_col;
+            if (row_mut[col].kind == .wide_right and col > 0) col -= 1;
+            const prev = &row_mut[col];
+
+            var buf: [max_cluster_len]u21 = undefined;
+            var len: usize = 0;
+            switch (prev.kind) {
+                .narrow, .wide_left => {
+                    buf[0] = std.math.cast(u21, prev.codepoint) orelse return;
+                    len = 1;
+                },
+                .grapheme, .grapheme_wide => {
+                    const cps = self.getGrapheme(prev.codepoint) orelse return;
+                    if (cps.len >= buf.len) return;
+                    @memcpy(buf[0..cps.len], cps);
+                    len = cps.len;
+                },
+                .empty, .wide_right, .shaped => return,
+            }
+            if (len >= buf.len) return;
+            buf[len] = cp;
+            len += 1;
+
+            const id = self.internGrapheme(buf[0..len]) catch return;
+            prev.kind = if (prev.kind.isWideLeft()) .grapheme_wide else .grapheme;
+            prev.codepoint = id;
+            self.markDirty(self.cursor.row);
+        }
+
         /// Resolves a Cell to the single codepoint that should represent it for
         /// word-classification and text-extraction purposes. This is the one place
         /// that knows how to interpret from cell.codepoint differently depending on
