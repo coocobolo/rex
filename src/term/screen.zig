@@ -918,6 +918,15 @@ pub fn Screen(comptime option: Option) type {
                     self.cursor.col = @intCast(self.active_cols - 1);
                     self.cursor.wrap_pending = self.mode.auto_wrap;
                     if (bytes.len == 0) return;
+
+                    if (!self.mode.auto_wrap) {
+                        // DECAWM off: every remaining byte overwrites the
+                        // last column in turn, so only the final one stays.
+                        const last = bytes[bytes.len - 1];
+                        row_mut[self.active_cols - 1].codepoint = last;
+                        self.last_char = last;
+                        return;
+                    }
                     // More bytes remain: force the wrap now so the loop can continue
                     // writing into the next row on the next iteration.
                     self.resolveDeferredWrap();

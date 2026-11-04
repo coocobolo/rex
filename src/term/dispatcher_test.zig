@@ -3504,3 +3504,16 @@ test "m2: CUU after DECRC above the region in origin mode stays in range" {
     t.feed("\x1b[B");
     try testing.expectEqual(6, t.active().cursor.row);
 }
+
+test "m2: ASCII run past the margin with DECAWM off stays on the row" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    t.feed("\x1b[?7l" ++ "A" ** 29 ++ "B");
+    const s = t.active();
+    try testing.expectEqual(0, s.cursor.row);
+    try testing.expectEqual(test_option.max_cols - 1, s.cursor.col);
+    try testing.expectEqual('A', s.row(0)[test_option.max_cols - 2].codepoint);
+    try testing.expectEqual('B', s.row(0)[test_option.max_cols - 1].codepoint);
+    try testing.expectEqual(0, s.row(1)[0].codepoint);
+}
