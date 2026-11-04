@@ -23,6 +23,7 @@ pub const Option = struct {
     font_metrics: Rasterizer.Metrics,
     background: Background.Option,
     cursor: Cursor.Option,
+    decoration: Decoration.Option,
     scrollbar: Scrollbar.Option,
     selection: Selection.Option,
 };
@@ -40,6 +41,7 @@ pub fn Renderer(comptime option: TerminalOption) type {
         cell_dimension: Dimension(f32),
         cursor: Cursor,
         decoration_metrics: Decoration.Metrics,
+        decoration_option: Decoration.Option,
         selection: Selection,
         scrollbar: Scrollbar,
 
@@ -66,6 +68,7 @@ pub fn Renderer(comptime option: TerminalOption) type {
                 .cell_dimension = undefined,
                 .cursor = cursor,
                 .decoration_metrics = undefined,
+                .decoration_option = opt.decoration,
                 .scrollbar = scrollbar,
                 .selection = selection,
             };
@@ -73,15 +76,16 @@ pub fn Renderer(comptime option: TerminalOption) type {
             return self;
         }
 
-        /// Takes the cell size, baseline and decoration lines from the
-        /// font. Called at init and whenever the font size changes.
+        /// Takes the cell size and baseline from the font, and resolves
+        /// the decoration lines from the font and the decoration option.
+        /// Called at init and whenever the font size changes.
         pub fn setFontMetrics(self: *Self, font: Rasterizer.Metrics) void {
             self.cell_ascender = font.ascender;
             self.cell_dimension = .{
                 .width = @floatFromInt(font.cell_width),
                 .height = @floatFromInt(font.cell_height),
             };
-            self.decoration_metrics = .fromFont(font);
+            self.decoration_metrics = .resolve(font, self.decoration_option);
         }
 
         pub fn deinit(self: *Self) void {

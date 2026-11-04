@@ -84,6 +84,9 @@ const selection_option = rex.renderer.Selection.Option{
     .radius = 4.0,
 };
 
+// Every field defaults to the font's own lines, see Decoration.Option.
+const decoration_option = rex.renderer.Decoration.Option{};
+
 const background_option = rex.renderer.Background.Option{
     .alpha = 0.98,
 };
@@ -120,6 +123,7 @@ const config: rex.App.Config = .{
     .window = .{
         .background = background_option,
         .cursor = cursor_option,
+        .decoration = decoration_option,
         .scrollbar = scrollbar_option,
         .selection = selection_option,
         .buffer_size = .{ .height = 1920, .width = 1080 },
