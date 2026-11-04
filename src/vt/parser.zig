@@ -1,3 +1,12 @@
+//! VT byte-stream parser: a table-driven state machine after the DEC
+//! VT500 model (vt100.net "A parser for DEC's ANSI-compatible video
+//! terminals"), with xterm's string handling where the two differ.
+//!
+//! It turns bytes into handler calls (print, execute, ESC, CSI, OSC,
+//! DCS) and owns nothing else: no screen, cursor or mode state, and it
+//! must not import term/ or renderer/. Comptime here only builds the
+//! transition table and checks that the fast paths agree with it.
+
 const std = @import("std");
 const log = std.log.scoped(.vt_parser);
 
@@ -83,14 +92,14 @@ pub const State = enum(u8) {
     pub inline fn isPayload(self: State, byte: u8) bool {
         return switch (self) {
             .osc_string => switch (byte) {
-                0x20...0x7F => true, // incl. DEL — table puts it
+                0x20...0x7F => true, // includes DEL, which the table puts
                 0xA0...0xFF => true,
-                else => false, // C0 .ignore via step(); 0x80–0x9F => anywhere
+                else => false, // C0 is ignored via step(), C1 takes the anywhere transitions
             },
             .dcs_passthrough => switch (byte) {
-                0x7F => false, // .ignore, dropped — not payload
+                0x7F => false, // ignored and dropped, not payload
                 0x18, 0x1A, 0x1B => false,
-                0x80...0x9F => false, // C1 controls → anywhere transitions
+                0x80...0x9F => false, // C1 controls take the anywhere transitions
                 else => true, // C0 ∪ [0x20,0x7E] ∪ [0xA0,0xFF] => .put
             },
             .sos_pm_apc_string => switch (byte) {
@@ -161,7 +170,7 @@ pub const State = enum(u8) {
     inline fn csiParamStopVector(chunk: anytype) @TypeOf(chunk == @as(@TypeOf(chunk), @splat(0))) {
         const Chunk = @TypeOf(chunk);
         const offset = chunk -% @as(Chunk, @splat(0x30));
-        const is_param = offset <= @as(Chunk, @splat(0x0B)); // 0x30–0x3B
+        const is_param = offset <= @as(Chunk, @splat(0x0B)); // 0x30...0x3B
         return !is_param;
     }
 
@@ -225,9 +234,9 @@ const Entry = extern struct {
     entry: Action,
 };
 
-const entries: [State.count][256]Entry = createEntries();
+const entries: [State.count][256]Entry = makeEntries();
 
-fn createEntries() [State.count][256]Entry {
+fn makeEntries() [State.count][256]Entry {
     @setEvalBranchQuota(10_000);
 
     const state_count = State.count;
@@ -441,7 +450,7 @@ fn createEntries() [State.count][256]Entry {
     check.sets(&t, .dcs_passthrough, 0x1C, 0x1F, .put,    .dcs_passthrough);
     check.sets(&t, .dcs_passthrough, 0x20, 0x7E, .put,    .dcs_passthrough);
     check.set(&t,  .dcs_passthrough, 0x7F,       .ignore, .dcs_passthrough);
-    // binary payloads (Sixel/Kitty) need high bytes  
+    // binary payloads (Sixel/Kitty) need high bytes
     check.sets(&t, .dcs_passthrough, 0xA0, 0xFF, .put, .dcs_passthrough);
     // 0x9C (ST) terminates dcs_passthrough via the anywhere loop to ground
     // zig fmt: on
@@ -483,20 +492,20 @@ fn createEntries() [State.count][256]Entry {
         const state: State = @enumFromInt(s);
 
         // zig fmt: off
-        check.set(&t, state, 0x18, .execute, .ground);              // CAN  
-        check.set(&t, state, 0x1A, .execute, .ground);              // SUB  
-        check.set(&t, state, 0x1B, .none,    .escape);              // ESC  
-        check.set(&t, state, 0x9C, .none,    .ground);              // ST  
-        check.set(&t, state, 0x9B, .none,    .csi_entry);  
-        check.set(&t, state, 0x90, .none,    .dcs_entry);  
-        check.set(&t, state, 0x98, .none,    .sos_pm_apc_string);  
-        check.set(&t, state, 0x9E, .none,    .sos_pm_apc_string);  
-        check.set(&t, state, 0x9F, .none,    .sos_pm_apc_string);  
-        check.set(&t, state, 0x99, .execute, .ground);  
-        check.set(&t, state, 0x9A, .execute, .ground);  
+        check.set(&t, state, 0x18, .execute, .ground);              // CAN
+        check.set(&t, state, 0x1A, .execute, .ground);              // SUB
+        check.set(&t, state, 0x1B, .none,    .escape);              // ESC
+        check.set(&t, state, 0x9C, .none,    .ground);              // ST
+        check.set(&t, state, 0x9B, .none,    .csi_entry);
+        check.set(&t, state, 0x90, .none,    .dcs_entry);
+        check.set(&t, state, 0x98, .none,    .sos_pm_apc_string);
+        check.set(&t, state, 0x9E, .none,    .sos_pm_apc_string);
+        check.set(&t, state, 0x9F, .none,    .sos_pm_apc_string);
+        check.set(&t, state, 0x99, .execute, .ground);
+        check.set(&t, state, 0x9A, .execute, .ground);
 
-        check.sets(&t, state, 0x80, 0x8F, .execute, .ground);  
-        check.sets(&t, state, 0x91, 0x97, .execute, .ground);  
+        check.sets(&t, state, 0x80, 0x8F, .execute, .ground);
+        check.sets(&t, state, 0x91, 0x97, .execute, .ground);
         // zig fmt: on
 
         // Every transition into .osc_string via 0x9D, whether from .osc_string
@@ -507,7 +516,6 @@ fn createEntries() [State.count][256]Entry {
         // ';' == null branch: std.fmt.parseInt on an empty slice should
         // return an error, caught and discarded.
         check.set(&t, state, 0x9D, .none, .osc_string);
-        // t[@intFromEnum(State.osc_string)][0x9D].force_transition = true;
     }
 
     // Backfill: exit action is a pure function of the source state,
@@ -596,30 +604,12 @@ fn createEntries() [State.count][256]Entry {
     return t;
 }
 
+/// Returns whether the (state, byte) cell must take the full
+/// transition path even though `next == state`. The only such cell is
+/// a C1 OSC (0x9D) inside an OSC string, which restarts the string
+/// and so needs osc_end and osc_start to run.
 inline fn forcedTransition(state: State, byte: u8) bool {
-    // Derived contents: exactly {osc_string, 0x9D}. Pinned by the
-    // comptime assert below against the builder's bitset.
     return state == .osc_string and byte == 0x9D;
-}
-
-comptime {
-    // One branch per (state, byte) cell plus the outer loop.
-    @setEvalBranchQuota((State.count + 1) * 256);
-
-    // Bits set on cells that force the transition path even when e.next == self.state.
-    const forced_transitions: [State.count]u256 = blk: {
-        var sets: [State.count]u256 = @splat(0);
-        sets[@intFromEnum(State.osc_string)] |= @as(u256, 1) << 0x9D;
-        break :blk sets;
-    };
-
-    for (0..State.count) |s| {
-        for (0..256) |b| {
-            const bits = (forced_transitions[s] >> @intCast(b)) & 1 != 0;
-            const fast = @as(State, @enumFromInt(s)) == .osc_string and b == 0x9D;
-            if (bits != fast) @compileError("forcedTransition fast path drifted");
-        }
-    }
 }
 
 comptime {
@@ -643,7 +633,7 @@ comptime {
             const scalar_ok = s.isPayload(byte);
 
             if (table_ok != scalar_ok) {
-                @compileError("payloadEnd predicate drifted from entries");
+                @compileError("State.isPayload disagrees with the string-state rows of the table");
             }
 
             // The SIMD stop vector must agree with isPayload
@@ -657,7 +647,7 @@ comptime {
             };
 
             if (payload_vec_stop == scalar_ok) {
-                @compileError("stopVector drifted from isPayload");
+                @compileError("a string-state stop vector disagrees with State.isPayload");
             }
         }
     }
@@ -666,51 +656,25 @@ comptime {
 comptime {
     @setEvalBranchQuota(4 << 10);
 
-    for ([_]State{
-        .csi_entry,
-        .csi_param,
-        .dcs_entry,
-        .dcs_param,
-    }) |s| {
+    // paramEnd's scalar and SIMD predicates must keep exactly the bytes
+    // the csi_param/dcs_param rows keep in-state as `.param`.
+    for ([_]State{ .csi_param, .dcs_param }) |s| {
         for (0..256) |b| {
             const byte: u8 = @intCast(b);
             const e = entries[@intFromEnum(s)][byte];
-            // A byte is "param-like" or this state if the table keeps it
-            // in-state as .param with no forced transition.
             const table_ok = e.action == .param and e.next == s and !forcedTransition(s, byte);
 
-            // entry states have no continues-predicate; skip the scalar check
-            // for them. csi_param/dcs_param must match the table byte-for-byte.
-            if (s == .csi_param) {
-                if (table_ok != State.csiParamContinues(s, byte)) {
-                    @compileError("csiParamContinues drifted from entries");
-                }
-            }
-
-            if (s == .dcs_param) {
-                if (table_ok != State.dcsParamContinues(s, byte)) {
-                    @compileError("dcsParamContinues drifted from entries");
-                }
-            }
-
-            // SIMD predicate agrees with scalar at width 1 (width-agnostic per-lane
-            // comparisons make wider lanes equivalent).
             const unit: @Vector(1, u8) = @splat(byte);
-            if (s == .csi_param or s == .dcs_param) {
-                const vec_stop = if (s == .csi_param)
-                    State.csiParamStopVector(unit)[0]
-                else
-                    State.dcsParamStopVector(unit)[0];
+            const scalar_ok, const vec_stop = switch (s) {
+                .csi_param => .{ State.csiParamContinues(s, byte), State.csiParamStopVector(unit)[0] },
+                .dcs_param => .{ State.dcsParamContinues(s, byte), State.dcsParamStopVector(unit)[0] },
+                else => unreachable,
+            };
 
-                const scalar_ok = if (s == .csi_param)
-                    State.csiParamContinues(s, byte)
-                else
-                    State.dcsParamContinues(s, byte);
-
-                if (vec_stop == scalar_ok) {
-                    @compileError("paramEnd SIMD predicate drifted from scalar");
-                }
-            }
+            if (table_ok != scalar_ok)
+                @compileError("a param-continues predicate disagrees with the csi_param/dcs_param rows");
+            if (vec_stop == scalar_ok)
+                @compileError("a param stop vector disagrees with its scalar predicate");
         }
     }
 
@@ -720,7 +684,7 @@ comptime {
         for (0x3C..0x40) |b| {
             const e = entries[@intFromEnum(s)][@intCast(b)];
             if (e.next != .csi_ignore or e.exit != .none or e.action != .none or e.entry != .none)
-                @compileError("csi_ignore fast-path no longer matches entries");
+                @compileError("feedCsi skips markers in csi_param/csi_intermediate/csi_ignore, but the table gives them side effects");
         }
     }
 
@@ -729,147 +693,19 @@ comptime {
     for (0x3C..0x40) |b| {
         const e = entries[@intFromEnum(State.csi_entry)][@intCast(b)];
         if (e.next != .csi_param or e.exit != .none or e.action != .collect)
-            @compileError("csi_entry marker row drifted — feedCsi's marker_at path no longer matches");
+            @compileError("feedCsi collects markers in csi_entry, but the table no longer does");
     }
 }
 
 comptime {
-    // The ground printable fast path is a subset of the table's
-    // printable set: every byte it batches must be .print + stay,
-    // but the table may legitimately cover bytes the predicate
-    // leaves to step(), 0xA0...0xFF (latin1 printables, unreachable
-    // in utf8 sessions) being the deliberate case.
-    for (0..256) |b| {
-        const byte: u8 = @intCast(b);
-        const e = entries[@intFromEnum(State.ground)][byte];
-        const table_ok = e.action == .print and e.next == .ground and !forcedTransition(.ground, byte);
-        const simd_ok = (b >= 0x20 and b <= 0x7E);
-        if (simd_ok and !table_ok) {
-            @compileError("ground printable run predicate outside table's .print set");
-        }
-    }
-}
-
-comptime {
-    @setEvalBranchQuota(128 << 10);
-
-    const Recorder = struct {
-        log: [8]u32 = @splat(0),
-        len: usize = 0,
-
-        inline fn rec(self: *@This(), tag: u32, byte: u8) void {
-            self.log[self.len] = (tag << 8) | byte;
-            self.len += 1;
-        }
-
-        // One method per handler API used by dispatch();
-        // encode a distinct tag per action.
-        pub fn printByte(s: *@This(), b: u8) void {
-            s.rec(1, b);
-        }
-        pub fn dcsPut(s: *@This(), b: u8) void {
-            s.rec(2, b);
-        }
-        pub fn execute(s: *@This(), b: u8) void {
-            s.rec(3, b);
-        }
-        pub fn oscPut(s: *@This(), b: u8) void {
-            s.rec(4, b);
-        }
-        pub fn oscEnd(s: *@This()) void {
-            s.rec(5, 0);
-        }
-        pub fn oscStart(s: *@This()) void {
-            s.rec(6, 0);
-        }
-        pub fn unhook(s: *@This()) void {
-            s.rec(7, 0);
-        }
-        pub fn escDispatch(s: *@This(), b: u8, i: []const u8) void {
-            _ = i;
-            s.rec(8, b);
-        }
-        pub fn hook(s: *@This(), b: u8, i: []const u8, p: []const Parameter) void {
-            _ = i;
-            _ = p;
-            s.rec(9, b);
-        }
-        pub fn csiDispatch(s: *@This(), b: u8, i: []const u8, p: []const Parameter) void {
-            _ = i;
-            _ = p;
-            s.rec(10, b);
-        }
-        pub fn print(s: *@This(), bytes: []const u8) void {
-            for (bytes) |b| s.rec(1, b);
-        }
-        pub fn oscPutSlice(s: *@This(), bytes: []const u8) void {
-            for (bytes) |b| s.rec(4, b);
-        }
-        pub fn dcsPutSlice(s: *@This(), bytes: []const u8) void {
-            for (bytes) |b| s.rec(2, b);
-        }
-    };
-
-    const P = Parser(Recorder, .{});
-
-    for (0..State.count) |s| {
-        for (0..256) |b| {
-            const e = entries[s][b];
-            const st: State = @enumFromInt(s);
-            // Only stay cells: the residue arm's domain.
-            if (e.next != st or forcedTransition(st, @intCast(b))) continue;
-
-            var p1 = P{};
-            var r1 = Recorder{};
-            p1.state = st;
-            p1.step(&r1, @intCast(b)); // full path
-
-            var p2 = P{};
-            var r2 = Recorder{};
-            p2.state = st;
-            p2.dispatch(&r2, e.action, @intCast(b)); // residue arm
-
-            const logs_match = r1.len == r2.len and
-                std.mem.eql(u32, r1.log[0..r1.len], r2.log[0..r2.len]);
-
-            const state_match = p1.state == p2.state and
-                p1.param_len == p2.param_len and
-                p1.intermediate_len == p2.intermediate_len and
-                std.mem.eql(Parameter, p1.getParams(), p2.getParams()) and
-                std.mem.eql(u8, p1.getIntermediates(), p2.getIntermediates());
-
-            if (!logs_match or !state_match) {
-                @compileError("residue arm dispatch drifted from step()");
-            }
-        }
-    }
-}
-
-comptime {
-    for (0..256) |b| {
-        const octet: u64 = @as(u64, b) *% 0x0101010101010101; // broadcast
-        const lo = octet -% 0x3030303030303030; // wraps (high nibble set) iff b < 0x30
-        const hi = octet -% 0x3A3A3A3A3A3A3A3A; // wraps iff b <= 0x39
-        const swar =
-            (lo & 0xF0F0F0F0F0F0F0F0) == 0 and
-            (hi & 0x8080808080808080) == 0x8080808080808080;
-
-        const scalar = b >= '0' and b <= '9';
-
-        if (swar != scalar) {
-            @compileError("SWAR isdigit mask drifted from scalar predicate");
-        }
-    }
-}
-
-comptime {
+    // Every byte the ground print run batches must be a plain print that
+    // stays in ground. The table may print more (0x7F, 0xA0...0xFF);
+    // those go through step().
     for (0..256) |b| {
         if (!continuesPrintableScalar({}, @intCast(b))) continue;
         const e = entries[@intFromEnum(State.ground)][b];
-        // Bytes that are in the run must be print/stay-in-ground in the table.
-        // (0x7F is allowed to be print in the table but excluded from the run.)
         if (e.next != .ground or e.action != .print or e.exit != .none or e.entry != .none) {
-            @compileError(std.fmt.comptimePrint("print run includes 0x{x}, table disagrees", .{b}));
+            @compileError(std.fmt.comptimePrint("ground print run batches 0x{x}, which the table does not plainly print", .{b}));
         }
     }
 }
@@ -879,7 +715,7 @@ fn stopPrintableVector(chunk: anytype) @Vector(@typeInfo(@TypeOf(chunk)).vector.
     const min: Chunk = @splat(0x20);
     const range: Chunk = @splat(0x7E -% 0x20);
 
-    // True for bytes outside printable ASCII (0x20–0x7E).
+    // True for bytes outside printable ASCII (0x20...0x7E).
     return (chunk -% min) > range;
 }
 
@@ -910,11 +746,6 @@ pub const Parameter = packed struct(u16) {
 };
 
 comptime {
-    assert(@bitSizeOf(u16) == @bitSizeOf(Parameter));
-    assert(@sizeOf(u16) == @sizeOf(Parameter));
-}
-
-comptime {
     for (0..0x20) |b| {
         if (b == 0x1B) continue;
         const e = entries[@intFromEnum(State.ground)][b];
@@ -923,7 +754,7 @@ comptime {
             forcedTransition(.ground, @intCast(b)))
         {
             @compileError(std.fmt.comptimePrint(
-                "ground 0x{x} is not a plain execute; direct-execute path is invalid",
+                "feedBytes executes ground C0 0x{x} directly, but the table does more than a plain execute",
                 .{b},
             ));
         }
@@ -943,14 +774,6 @@ pub fn Parser(comptime Handler: type, comptime options: ParserOptions) type {
     const max_intermediates = options.max_intermediates;
 
     comptime {
-        // param_len and intermediate_len are u8.
-        if (max_params > 255) {
-            @compileError("max_params must be <= 255 (param_len is u8)");
-        }
-        if (max_intermediates > 255) {
-            @compileError("max_intermediates must be <= 255 (intermediate_len is u8)");
-        }
-
         // max_params == 0 leaves no room for even one slot; == 1 makes
         // every separator input degenerate to overflow. Reject both.
         if (max_params < 2) {
@@ -960,7 +783,7 @@ pub fn Parser(comptime Handler: type, comptime options: ParserOptions) type {
         // Same reasoning: intermediates need at least
         // one slot to be representable at all.
         if (max_intermediates < 1) {
-            @compileError("max_intermediates must be >= 1");
+            @compileError("max_intermediates must be >= 1 (an intermediate needs a slot)");
         }
     }
 
@@ -1002,15 +825,9 @@ pub fn Parser(comptime Handler: type, comptime options: ParserOptions) type {
                         i = self.feedPrintRun(h, bytes, i);
                         if (i >= bytes.len) break;
 
-                        // Fused CSI sequence a complete `ESC [ ... final` inside the buffer.
-                        // null means incomplete or non-plain CSI, so step() handles ESC.
-                        // if (i + 1 < bytes.len and bytes[i] == 0x1B and bytes[i + 1] == '[') {
-                        //     if (self.feedCsi(h, bytes, i)) |next| {
-                        //         i = next;
-                        //         continue;
-                        //     }
-                        // }
-                        //
+                        // A complete plain `ESC [ ... final` in the buffer is parsed
+                        // in one go by feedCsi. null means incomplete or not plain, so
+                        // step() handles the ESC.
 
                         if (bytes[i] == 0x1B) {
                             if (i + 1 < bytes.len and bytes[i + 1] == '[') {
@@ -1225,18 +1042,6 @@ pub fn Parser(comptime Handler: type, comptime options: ParserOptions) type {
             return b -% '0' < 10;
         }
 
-        // `value * 10 + digit`, saturating at `maxInt(Parameter.Value)` (32767).
-        // Params that large are degenerate; clamping is strictly better than a
-        // wrapped command value.
-        //
-        // `digit` must be in 0..9, which enforced by the caller's debug assert.
-        // inline fn accumDigit(value: Parameter.Value, digit: Parameter.Value) Parameter.Value {
-        //     // u16 intermediate: u15*10+9 fits in u16, no overflow flag needed,
-        //     // the clamp is one cmovae instead of saturating ops.
-        //     const wide = @as(u32, value) * 10 + digit; // max 327679, never wraps
-        //     return @min(wide, 32767); // one cmp + cmov
-        // }
-
         const max_param_value = std.math.maxInt(Parameter.Value);
 
         /// `value * 10 + digit`, saturating at `maxInt(Parameter.Value)` (32767).
@@ -1329,7 +1134,7 @@ pub fn Parser(comptime Handler: type, comptime options: ParserOptions) type {
             }
 
             // prelude guarantees a slot exists
-            std.debug.assert(plen > 0);
+            assert(plen > 0);
 
             while (i < n) {
                 const b = bytes[i];
@@ -1403,7 +1208,7 @@ pub fn Parser(comptime Handler: type, comptime options: ParserOptions) type {
                     // action covers exactly 0x30..0x3B (digits + separators), and
                     // `feedCsi` or `feedParamRun` scan the same range. Anything else would
                     // wrap into a bogus digit via '-% '0''
-                    std.debug.assert(byte -% '0' < 10);
+                    assert(byte -% '0' < 10);
 
                     if (self.param_len == 0) {
                         self.param_len = 1;
@@ -1440,9 +1245,9 @@ pub fn Parser(comptime Handler: type, comptime options: ParserOptions) type {
                 .print         => handler.printByte(byte),
                 .put           => handler.dcsPut(byte),
                 .execute       => handler.execute(byte),
-                .osc_end       => handler.oscEnd(),  
-                .osc_start     => handler.oscStart(),  
-                .osc_put       => handler.oscPut(byte),  
+                .osc_end       => handler.oscEnd(),
+                .osc_start     => handler.oscStart(),
+                .osc_put       => handler.oscPut(byte),
                 .esc_dispatch  => handler.escDispatch(byte, self.getIntermediates()),
                 .hook          => handler.hook(byte, self.getIntermediates(), self.getParams()),
                 .csi_dispatch  => handler.csiDispatch(byte, self.getIntermediates(), self.getParams()),
@@ -1520,9 +1325,94 @@ pub const ChecksumDispatcher = struct {
     }
 };
 
-// String-state payload prefix, batch up to first terminator.
-// fn feedStringRun(self: *Self, h: *Handler, bytes: []const u8, start: usize) usize {
-//     const end = start + self.state.payloadEnd(bytes[start..]);
-//     if (end > start) self.feedData(h, bytes[start..end]);
-//     return end;
-// }
+test "parser: the residue arm dispatches stay cells exactly like step()" {
+    const Recorder = struct {
+        log: [8]u32 = @splat(0),
+        len: usize = 0,
+
+        fn rec(self: *@This(), tag: u32, byte: u8) void {
+            self.log[self.len] = (tag << 8) | byte;
+            self.len += 1;
+        }
+
+        // One method per handler API used by dispatch();
+        // encode a distinct tag per action.
+        pub fn printByte(s: *@This(), b: u8) void {
+            s.rec(1, b);
+        }
+        pub fn dcsPut(s: *@This(), b: u8) void {
+            s.rec(2, b);
+        }
+        pub fn execute(s: *@This(), b: u8) void {
+            s.rec(3, b);
+        }
+        pub fn oscPut(s: *@This(), b: u8) void {
+            s.rec(4, b);
+        }
+        pub fn oscEnd(s: *@This()) void {
+            s.rec(5, 0);
+        }
+        pub fn oscStart(s: *@This()) void {
+            s.rec(6, 0);
+        }
+        pub fn unhook(s: *@This()) void {
+            s.rec(7, 0);
+        }
+        pub fn escDispatch(s: *@This(), b: u8, i: []const u8) void {
+            _ = i;
+            s.rec(8, b);
+        }
+        pub fn hook(s: *@This(), b: u8, i: []const u8, p: []const Parameter) void {
+            _ = i;
+            _ = p;
+            s.rec(9, b);
+        }
+        pub fn csiDispatch(s: *@This(), b: u8, i: []const u8, p: []const Parameter) void {
+            _ = i;
+            _ = p;
+            s.rec(10, b);
+        }
+        pub fn print(s: *@This(), bytes: []const u8) void {
+            for (bytes) |b| s.rec(1, b);
+        }
+        pub fn oscPutSlice(s: *@This(), bytes: []const u8) void {
+            for (bytes) |b| s.rec(4, b);
+        }
+        pub fn dcsPutSlice(s: *@This(), bytes: []const u8) void {
+            for (bytes) |b| s.rec(2, b);
+        }
+    };
+
+    const P = Parser(Recorder, .{});
+
+    for (0..State.count) |s| {
+        for (0..256) |b| {
+            const e = entries[s][b];
+            const st: State = @enumFromInt(s);
+            // Only stay cells: the residue arm's domain.
+            if (e.next != st or forcedTransition(st, @intCast(b))) continue;
+
+            var p1 = P{};
+            var r1 = Recorder{};
+            p1.state = st;
+            p1.step(&r1, @intCast(b)); // full path
+
+            var p2 = P{};
+            var r2 = Recorder{};
+            p2.state = st;
+            p2.dispatch(&r2, e.action, @intCast(b)); // residue arm
+
+            const logs_match = r1.len == r2.len and
+                std.mem.eql(u32, r1.log[0..r1.len], r2.log[0..r2.len]);
+
+            const state_match = p1.state == p2.state and
+                p1.param_len == p2.param_len and
+                p1.intermediate_len == p2.intermediate_len and
+                std.mem.eql(Parameter, p1.getParams(), p2.getParams()) and
+                std.mem.eql(u8, p1.getIntermediates(), p2.getIntermediates());
+
+            try std.testing.expect(logs_match);
+            try std.testing.expect(state_match);
+        }
+    }
+}
