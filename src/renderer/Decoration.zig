@@ -4,8 +4,11 @@
 const std = @import("std");
 
 const Buffer = @import("buffer.zig").DecorationBuffer;
+const gl = @import("gl.zig");
 const Dimension = @import("dimension.zig").Dimension;
 const Flags = @import("Frame.zig").Flags;
+const InkMask = @import("InkMask.zig");
+const UnderlineStyle = @import("../term/root.zig").cell.UnderlineStyle;
 const Rasterizer = @import("../freetype/root.zig").Rasterizer;
 const Shader = @import("Shader.zig");
 
@@ -98,6 +101,47 @@ pub const Phase = enum {
     run,
 };
 
+/// Breaks the underline where glyph ink crosses it, like the CSS
+/// `text-decoration-skip-ink: auto` browsers apply by default.
+pub const SkipInk = struct {
+    enabled: bool = true,
+
+    /// Clearance kept between the ink and the line, in pixels, both
+    /// beside and above or below it. null uses the underline thickness.
+    gap: ?f32 = null,
+
+    /// Pieces of line shorter than this, in pixels, between two gaps are
+    /// dropped too, so no specks are left between descenders. null uses
+    /// twice the underline thickness. 0 keeps every piece.
+    min_segment: ?f32 = null,
+
+    /// Glyph coverage, 0.0 to 1.0, from which a pixel counts as ink.
+    /// Lower values also skip the faint antialiased edges.
+    threshold: f32 = 0.25,
+
+    /// Underline styles that skip ink.
+    styles: struct {
+        single: bool = true,
+        double: bool = true,
+        curly: bool = true,
+        dotted: bool = true,
+        dashed: bool = true,
+    } = .{},
+
+    /// Bit `n` set when UnderlineStyle value `n` skips ink, as the
+    /// shader reads it. 0 when skipping is off.
+    pub fn styleBits(self: SkipInk) u32 {
+        if (!self.enabled) return 0;
+        var bits: u32 = 0;
+        if (self.styles.single) bits |= 1 << @intFromEnum(UnderlineStyle.single);
+        if (self.styles.double) bits |= 1 << @intFromEnum(UnderlineStyle.double);
+        if (self.styles.curly) bits |= 1 << @intFromEnum(UnderlineStyle.curly);
+        if (self.styles.dotted) bits |= 1 << @intFromEnum(UnderlineStyle.dotted);
+        if (self.styles.dashed) bits |= 1 << @intFromEnum(UnderlineStyle.dashed);
+        return bits;
+    }
+};
+
 /// Whether decorations are drawn over or under the glyphs.
 pub const Order = enum {
     /// Lines cross the glyphs, descenders do not hide the underline.
@@ -134,6 +178,8 @@ pub const Option = struct {
     dashed: Pattern = .{},
 
     phase: Phase = .grid,
+
+    skip_ink: SkipInk = .{},
 
     strikethrough: Line = .{},
 
@@ -177,6 +223,10 @@ pub const Metrics = struct {
     dot_gap: f32,
     dash_length: f32,
     dash_gap: f32,
+    /// Whole pixels of clearance around ink, see SkipInk.gap.
+    ink_gap: u32,
+    /// Shortest piece of underline kept between ink, in whole pixels.
+    ink_min_segment: u32,
     strikethrough_y: f32,
     strikethrough_thickness: f32,
     overline_y: f32,
@@ -227,11 +277,20 @@ pub const Metrics = struct {
             .dot_gap = dot.gap,
             .dash_length = dash.length,
             .dash_gap = dash.gap,
+            .ink_gap = wholePixels(option.skip_ink.gap orelse t),
+            .ink_min_segment = wholePixels(option.skip_ink.min_segment orelse t * 2.0),
             .strikethrough_y = strikethrough.y,
             .strikethrough_thickness = strikethrough.thickness,
             .overline_y = overline.y,
             .overline_thickness = overline.thickness,
         };
+    }
+
+    /// The shader scans at most this many pixels each way for ink.
+    pub const max_ink_scan = 64;
+
+    fn wholePixels(px: f32) u32 {
+        return @intFromFloat(std.math.clamp(@round(px), 0, max_ink_scan / 2));
     }
 
     const Resolved = struct { length: f32, gap: f32 };
@@ -256,6 +315,8 @@ pub const Metrics = struct {
         shader.set1f("u_dot_gap", self.dot_gap);
         shader.set1f("u_dash_length", self.dash_length);
         shader.set1f("u_dash_gap", self.dash_gap);
+        shader.set1i("u_ink_gap", @intCast(self.ink_gap));
+        shader.set1i("u_ink_min_segment", @intCast(self.ink_min_segment));
         shader.set1f("u_strikethrough_y", self.strikethrough_y);
         shader.set1f("u_strikethrough_thickness", self.strikethrough_thickness);
         shader.set1f("u_overline_y", self.overline_y);
@@ -266,6 +327,12 @@ pub const Metrics = struct {
 shader: Shader,
 buffer: Buffer,
 option: Option,
+
+/// True when any run has an underline, the only line that skips ink.
+pub fn anyUnderline(instances: []const Instance) bool {
+    for (instances) |run| if (run.flags.underline != .none) return true;
+    return false;
+}
 
 pub fn init(capacity: usize, option: Option) !Decoration {
     var shader: Shader = try .init(
@@ -299,6 +366,8 @@ pub fn draw(
         frame: Dimension(f32),
     },
     metrics: Metrics,
+    /// Glyph coverage of this frame, or null to draw through ink.
+    ink_mask: ?*const InkMask,
     blink_on: bool,
     blink_rapid_on: bool,
 ) void {
@@ -310,6 +379,14 @@ pub fn draw(
     self.shader.set1i("u_blink_on", @intFromBool(blink_on));
     self.shader.set1i("u_blink_rapid_on", @intFromBool(blink_rapid_on));
     self.shader.set1i("u_phase_grid", @intFromBool(self.option.phase == .grid));
+    if (ink_mask) |mask| {
+        mask.bind(gl.TEXTURE2);
+        self.shader.set1i("u_ink_mask", 2);
+        self.shader.set1ui("u_skip_ink_styles", self.option.skip_ink.styleBits());
+        self.shader.set1f("u_ink_threshold", self.option.skip_ink.threshold);
+    } else {
+        self.shader.set1ui("u_skip_ink_styles", 0);
+    }
     metrics.apply(self.shader);
     self.buffer.draw(instance_length);
 }

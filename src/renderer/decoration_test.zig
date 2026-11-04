@@ -89,3 +89,50 @@ test "Metrics.resolve: the curly wave never leaves the cell" {
     try testing.expectEqual(9.5, m.curly_amplitude);
     try testing.expectEqual(10, m.curly_y);
 }
+
+test "SkipInk.styleBits: one bit per UnderlineStyle value, none when off" {
+    try testing.expectEqual(0b111110, (Decoration.SkipInk{}).styleBits());
+    try testing.expectEqual(0, (Decoration.SkipInk{ .enabled = false }).styleBits());
+    const only_curly: Decoration.SkipInk = .{ .styles = .{
+        .single = false,
+        .double = false,
+        .dotted = false,
+        .dashed = false,
+    } };
+    try testing.expectEqual(0b1000, only_curly.styleBits());
+}
+
+test "Metrics.resolve: ink gap and minimum segment follow the underline" {
+    const thick_font = blk: {
+        var f = font;
+        f.underline_thickness = 2;
+        break :blk f;
+    };
+    const m: Decoration.Metrics = .resolve(thick_font, .{});
+    try testing.expectEqual(2, m.ink_gap);
+    try testing.expectEqual(4, m.ink_min_segment);
+
+    const custom: Decoration.Metrics = .resolve(font, .{ .skip_ink = .{ .gap = 2.6, .min_segment = 0, .threshold = 0.5 } });
+    try testing.expectEqual(3, custom.ink_gap);
+    try testing.expectEqual(0, custom.ink_min_segment);
+
+    const huge: Decoration.Metrics = .resolve(font, .{ .skip_ink = .{ .gap = 1000, .min_segment = 1000 } });
+    try testing.expectEqual(Decoration.Metrics.max_ink_scan / 2, huge.ink_gap);
+    try testing.expectEqual(Decoration.Metrics.max_ink_scan / 2, huge.ink_min_segment);
+}
+
+test "anyUnderline: only underlined runs need the ink mask" {
+    const plain: Decoration.Instance = .{
+        .col = 0,
+        .row = 0,
+        .span = 1,
+        .underline = .{ 0, 0, 0, 255 },
+        .strikethrough = .{ 0, 0, 0, 255 },
+        .overline = .{ 0, 0, 0, 255 },
+        .flags = .{ .strikethrough = true },
+    };
+    var underlined = plain;
+    underlined.flags.underline = .dotted;
+    try testing.expect(!Decoration.anyUnderline(&.{plain}));
+    try testing.expect(Decoration.anyUnderline(&.{ plain, underlined }));
+}

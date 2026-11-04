@@ -62,6 +62,12 @@ pub const CONTEXT_PROFILE_MASK = c.GL_CONTEXT_PROFILE_MASK;
 pub const CONTEXT_CORE_PROFILE_BIT = c.GL_CONTEXT_CORE_PROFILE_BIT;
 pub const MAJOR_VERSION = c.GL_MAJOR_VERSION;
 pub const MINOR_VERSION = c.GL_MINOR_VERSION;
+pub const TEXTURE2 = c.GL_TEXTURE2;
+pub const FRAMEBUFFER = c.GL_FRAMEBUFFER;
+pub const COLOR_ATTACHMENT0 = c.GL_COLOR_ATTACHMENT0;
+pub const FRAMEBUFFER_COMPLETE = c.GL_FRAMEBUFFER_COMPLETE;
+pub const FUNC_ADD = c.GL_FUNC_ADD;
+pub const MAX = c.GL_MAX;
 
 // Functions, re-exported so callers need no @cImport of their own.
 pub const genVertexArrays = c.glGenVertexArrays;
@@ -106,6 +112,12 @@ pub const clear = c.glClear;
 pub const viewport = c.glViewport;
 pub const enable = c.glEnable;
 pub const blendFuncSeparate = c.glBlendFuncSeparate;
+pub const blendEquation = c.glBlendEquation;
+pub const genFramebuffers = c.glGenFramebuffers;
+pub const bindFramebuffer = c.glBindFramebuffer;
+pub const framebufferTexture2D = c.glFramebufferTexture2D;
+pub const checkFramebufferStatus = c.glCheckFramebufferStatus;
+pub const deleteFramebuffers = c.glDeleteFramebuffers;
 pub const genTextures = c.glGenTextures;
 pub const bindTexture = c.glBindTexture;
 pub const texImage2D = c.glTexImage2D;
