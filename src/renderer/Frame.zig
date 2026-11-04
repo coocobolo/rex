@@ -27,7 +27,7 @@ const UnderlineStyle = term.cell.UnderlineStyle;
 const Mode = term.screen.Mode;
 const Option = term.term.Option;
 const Palette = term.Palette;
-const Screen = term.Screen;
+const TermFrame = term.Frame;
 
 /// Returns the foreground and background `cell` is drawn with. SGR 7
 /// and DECSCNM each swap them, so the two together cancel out.
@@ -166,9 +166,9 @@ pub const CursorCache = struct {
         gpa: Allocator,
         rasterizer: *Rasterizer,
         atlas: *Atlas,
-        cursor: *const term.cell.Cursor,
+        cursor: anytype,
         palette: *const Palette,
-        screen: anytype,
+        frame: anytype,
         cursor_cell: *const term.Cell,
     ) bool {
         const row = cursor.row;
@@ -190,7 +190,7 @@ pub const CursorCache = struct {
             return true;
         }
 
-        self.glyph = cellGlyph(gpa, rasterizer, atlas, screen, cursor_cell);
+        self.glyph = cellGlyph(gpa, rasterizer, atlas, frame, cursor_cell);
 
         var fg: u32 = palette.resolve(cursor_cell.foreground, .foreground);
         var bg: u32 = palette.resolve(cursor_cell.background, .background);
@@ -235,7 +235,7 @@ cursor_state: Cursor.State,
 dirty: DirtyFlags,
 
 pub fn Builder(comptime option: Option) type {
-    const ScreenType = Screen(option);
+    const FrameType = TermFrame(option);
     const max_cols = option.max_cols;
     const max_rows = option.max_rows;
     const max_cells = max_rows * max_cols;
@@ -301,10 +301,10 @@ pub fn Builder(comptime option: Option) type {
             self.selection_buffer.deinit(gpa);
         }
 
-        fn buildSelectionInstances(self: *Self, screen: *const ScreenType, sel: Selection.State) void {
+        fn buildSelectionInstances(self: *Self, active_cols: u16, sel: Selection.State) void {
             const top_row = @min(sel.start_row, sel.end_row);
             const bot_row = @max(sel.start_row, sel.end_row);
-            const cols_limit: u16 = @min(screen.active_cols, max_cols);
+            const cols_limit: u16 = @min(active_cols, max_cols);
 
             // Normalize: anchor vs active end
             const top_col: u16 = if (sel.start_row < sel.end_row) sel.start_col else if (sel.start_row > sel.end_row) sel.end_col else @min(sel.start_col, sel.end_col); // same row: normalize
@@ -371,19 +371,19 @@ pub fn Builder(comptime option: Option) type {
         pub fn build(
             self: *Self,
             gpa: Allocator,
-            screen: *const ScreenType,
+            frame: *const FrameType,
             atlas: *Atlas,
             rasterizer: *Rasterizer,
             blink_on: bool,
             selection_state: ?Selection.State,
-            cursor_color: ?[3]u8,
+            cursor_color_override: ?[3]u8,
         ) !FrameData {
-            const mode = screen.mode;
-            const palette = &screen.palette;
-            const cursor = &screen.cursor;
-            const cursor_visiblity = mode.cursor_visibility and screen.isAt(.bottom);
+            const palette = &frame.palette;
+            const cursor = &frame.cursor;
+            const cursor_visiblity = cursor.visible;
             const cursor_row, const cursor_col = cursor.position();
-            const cursor_cell = screen.cellAt(cursor_row, cursor_col);
+            const cursor_cell = frame.cellAt(cursor_row, cursor_col);
+            const cursor_color = cursor_color_override orelse frame.cursor_color;
 
             const selection_changed = !std.meta.eql(selection_state, self.last_selection);
             // zig fmt: off
@@ -393,7 +393,7 @@ pub fn Builder(comptime option: Option) type {
             // zig fmt: on
 
             const cells_dirty = if (self.last_generation) |gen|
-                gen != screen.generation or fg_override_changed or selection_changed
+                gen != frame.generation or fg_override_changed or selection_changed
             else
                 true;
 
@@ -408,11 +408,11 @@ pub fn Builder(comptime option: Option) type {
                     atlas,
                     cursor,
                     palette,
-                    screen,
+                    frame,
                     &cursor_cell,
                 );
 
-                const new_scrollbar = buildScrollbar(screen);
+                const new_scrollbar = buildScrollbar(frame);
                 const scrollbar_changed = !std.meta.eql(new_scrollbar, self.last_scrollbar);
                 self.last_scrollbar = new_scrollbar;
 
@@ -446,7 +446,7 @@ pub fn Builder(comptime option: Option) type {
             if (!cells_dirty and selection_changed) {
                 // only selection changed, rebuild selection_buf, reuse cell buffers
                 self.selection_buffer.clearRetainingCapacity();
-                if (selection_state) |sel| self.buildSelectionInstances(screen, sel);
+                if (selection_state) |sel| self.buildSelectionInstances(frame.active_cols, sel);
                 self.last_selection = selection_state;
 
                 const cursor_changed = self.last_cursor.refresh(
@@ -455,11 +455,11 @@ pub fn Builder(comptime option: Option) type {
                     atlas,
                     cursor,
                     palette,
-                    screen,
+                    frame,
                     &cursor_cell,
                 );
 
-                const new_scrollbar = buildScrollbar(screen);
+                const new_scrollbar = buildScrollbar(frame);
                 const scrollbar_changed = !std.meta.eql(new_scrollbar, self.last_scrollbar);
                 self.last_scrollbar = new_scrollbar;
 
@@ -498,18 +498,18 @@ pub fn Builder(comptime option: Option) type {
             self.selection_buffer.clearRetainingCapacity();
 
             // const cols_limit: u16 = @min(screen.active_cols, max_cols);
-            const reverse_video = mode.reverse_video;
+            const reverse_video = frame.reverse_video;
             const has_selection = selection_state != null;
 
-            if (selection_state) |sel| self.buildSelectionInstances(screen, sel);
+            if (selection_state) |sel| self.buildSelectionInstances(frame.active_cols, sel);
 
             const is_cursor_block = cursor.style.shape() == .block;
             var cursor_glyph: ?Atlas.Metric = null;
             var cursor_glyph_fg: [3]u8 = .{ 0, 0, 0 };
 
             // std.debug.print("+", .{});
-            const cols_limit: u16 = @min(screen.active_cols, max_cols);
-            const rows_limit: u16 = @min(screen.active_rows, max_rows);
+            const cols_limit: u16 = @min(frame.active_cols, max_cols);
+            const rows_limit: u16 = @min(frame.active_rows, max_rows);
 
             var row: u16 = 0;
             while (row < rows_limit) : (row += 1) {
@@ -519,7 +519,7 @@ pub fn Builder(comptime option: Option) type {
                 // }
 
                 const is_cursor_row = row == cursor_row;
-                const cells = screen.displayRow(row);
+                const cells = frame.displayRow(row);
 
                 var col: u16 = 0;
                 while (col < cols_limit) : (col += 1) {
@@ -565,7 +565,7 @@ pub fn Builder(comptime option: Option) type {
                     }
 
                     if (c.kind == .empty) continue;
-                    const metric = cellGlyph(gpa, rasterizer, atlas, screen, &c) orelse continue;
+                    const metric = cellGlyph(gpa, rasterizer, atlas, frame, &c) orelse continue;
 
                     // Skip zero-size glyphs (space, combining marks with no bitmap)
                     if (metric.width == 0 or metric.height == 0) continue;
@@ -603,11 +603,11 @@ pub fn Builder(comptime option: Option) type {
                 }
             }
 
-            self.last_generation = screen.generation;
+            self.last_generation = frame.generation;
             self.last_selection = selection_state;
             self.last_cursor.set(cursor_row, cursor_col, cursor_glyph, cursor_glyph_fg);
 
-            const new_scrollbar = buildScrollbar(screen);
+            const new_scrollbar = buildScrollbar(frame);
             const scrollbar_changed = !std.meta.eql(new_scrollbar, self.last_scrollbar);
             self.last_scrollbar = new_scrollbar;
 
@@ -638,19 +638,19 @@ pub fn Builder(comptime option: Option) type {
             };
         }
 
-        fn buildScrollbar(screen: *const ScreenType) Scrollbar.State {
+        fn buildScrollbar(frame: *const FrameType) Scrollbar.State {
             if (comptime option.max_scrollback == 0) return .{ .visibility = false, .thumb_top_frac = 0, .thumb_height_frac = 1 };
-            if (screen.scrollback_used == 0) return .{
+            if (frame.scrollback_used == 0) return .{
                 .visibility = false,
                 .at_live_view = true,
                 .thumb_top_frac = 0,
                 .thumb_height_frac = 1.0,
             };
 
-            const fracs: Scrollbar.Fractions = .of(screen.active_rows, screen.scrollback_used, screen.viewport_offset);
+            const fracs: Scrollbar.Fractions = .of(frame.active_rows, frame.scrollback_used, frame.viewport_offset);
             return .{
                 .visibility = true,
-                .at_live_view = screen.viewport_offset == 0,
+                .at_live_view = frame.viewport_offset == 0,
                 .thumb_height_frac = fracs.height,
                 .thumb_top_frac = fracs.top,
             };
@@ -658,7 +658,7 @@ pub fn Builder(comptime option: Option) type {
 
         fn buildCursor(
             palette: *const Palette,
-            cursor: *const term.cell.Cursor,
+            cursor: anytype,
             selection_state: ?Selection.State,
             blink_on: bool,
             visibility: bool,
@@ -696,7 +696,7 @@ fn cellGlyph(
     gpa: Allocator,
     rasterizer: *Rasterizer,
     atlas: *Atlas,
-    screen: anytype,
+    frame: anytype,
     cell: *const term.Cell,
 ) ?Atlas.Metric {
     const face = faceKindFromCell(cell.flags);
@@ -706,7 +706,7 @@ fn cellGlyph(
         .wide_left, .grapheme_wide => .double,
     };
     if (cell.kind.isGrapheme()) {
-        const cps = screen.getGrapheme(cell.codepoint) orelse return null;
+        const cps = frame.getGrapheme(cell.codepoint) orelse return null;
         return atlas.getSequence(gpa, rasterizer, cps, face, span) catch null;
     }
     // narrow and wide_left cells always hold a valid scalar value.

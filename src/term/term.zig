@@ -10,9 +10,11 @@ const Parameter = @import("../vt/parser.zig").Parameter;
 
 const Palette = @import("Palette.zig").Palette;
 const Theme = @import("../color/Theme.zig");
+const Cell = @import("cell.zig").Cell;
 const Color = @import("cell.zig").Color;
 const CellKind = @import("cell.zig").Kind;
 const Rgb = Color.Rgb;
+const Frame = @import("Frame.zig").Frame;
 
 const Charset = @import("cell.zig").Charset;
 const CursorStyle = @import("cell.zig").CursorStyle;
@@ -395,11 +397,11 @@ pub fn seqIntroducer(comptime target: SequenceType, c1_mode: ControlFormat) []co
 ///   defer t.destroy(alloc);
 ///   t.feed(chunk);
 pub fn Terminal(comptime option: Option) type {
-    // FIXME: the alternate screen should not carry scrollback.
-    const ScreenType = Screen(option);
-
     return struct {
         const Self = @This();
+
+        pub const ScreenType = Screen(option);
+        pub const FrameType = Frame(option);
 
         primary: ScreenType,
         alternate: ScreenType,
@@ -1085,6 +1087,114 @@ pub fn Terminal(comptime option: Option) type {
         /// True when replies are queued for the PTY.
         pub fn hasReplies(self: *const Self) bool {
             return !self.response.isEmpty();
+        }
+
+        /// Takes a pure, self-contained viewport snapshot into `target`.
+        ///
+        /// Returns `true` if changes were copied, or `false` if `target` is
+        /// already up to date with the terminal's visible viewport.
+        ///
+        /// Viewport rows are normalized to row 0 (so scrollback offsets are
+        /// resolved at snapshot time). Screen dirty rows are drained and
+        /// reset to `.empty`.
+        pub fn snapshot(self: *Self, target: *FrameType) bool {
+            const scr = self.active();
+            const max_cols = option.max_cols;
+            const current_cursor_color: ?[3]u8 = if (self.cursor_color) |c| .{ c.r, c.g, c.b } else null;
+            const scr_viewport_offset: u32 = if (comptime option.max_scrollback > 0) scr.viewport_offset else 0;
+            const scr_scrollback_used: u32 = if (comptime option.max_scrollback > 0) scr.scrollback_used else 0;
+            const is_at_bottom = if (comptime option.max_scrollback > 0) scr.isAt(.bottom) else true;
+            const expected_cursor_visible = scr.mode.cursor_visibility and is_at_bottom;
+
+            const is_alt = self.active_buffer == .alternate;
+            const unchanged = target.generation != 0 and
+                target.generation == scr.generation and
+                target.is_alternate == is_alt and
+                target.viewport_offset == scr_viewport_offset and
+                target.active_rows == scr.active_rows and
+                target.active_cols == scr.active_cols and
+                target.reverse_video == scr.mode.reverse_video and
+                target.cursor.visible == expected_cursor_visible and
+                target.cursor.row == scr.cursor.row and
+                target.cursor.col == scr.cursor.col and
+                target.cursor.style == scr.cursor.style and
+                std.meta.eql(target.cursor_color, current_cursor_color);
+
+            if (unchanged and scr.dirty_rows.count() == 0) {
+                return false;
+            }
+
+            const needs_full = target.generation == 0 or
+                target.is_alternate != is_alt or
+                target.viewport_offset != scr_viewport_offset or
+                target.active_rows != scr.active_rows or
+                target.active_cols != scr.active_cols or
+                target.reverse_video != scr.mode.reverse_video or
+                scr.dirty_rows.count() >= scr.active_rows;
+
+            if (needs_full) {
+                target.grapheme_count = 0;
+                target.dirty_rows.setRangeValue(.{ .start = 0, .end = scr.active_rows }, true);
+                if (scr.active_rows < option.max_rows) {
+                    target.dirty_rows.setRangeValue(.{ .start = scr.active_rows, .end = option.max_rows }, false);
+                }
+
+                var r: usize = 0;
+                while (r < scr.active_rows) : (r += 1) {
+                    const src_row = scr.displayRow(r);
+                    const dst_row = target.cells[r * max_cols ..];
+                    @memcpy(dst_row[0..scr.active_cols], src_row[0..scr.active_cols]);
+                    if (scr.active_cols < max_cols) {
+                        @memset(dst_row[scr.active_cols..max_cols], Cell{});
+                    }
+                    for (src_row[0..scr.active_cols]) |c| {
+                        if (c.kind.isGrapheme()) {
+                            if (scr.getGrapheme(c.codepoint)) |cps| {
+                                target.addGrapheme(c.codepoint, cps);
+                            }
+                        }
+                    }
+                }
+            } else {
+                target.dirty_rows = scr.dirty_rows;
+                var it = scr.dirty_rows.iterator(.{});
+                while (it.next()) |r| {
+                    if (r >= scr.active_rows) continue;
+                    const src_row = scr.displayRow(r);
+                    const dst_row = target.cells[r * max_cols ..];
+                    @memcpy(dst_row[0..scr.active_cols], src_row[0..scr.active_cols]);
+                    if (scr.active_cols < max_cols) {
+                        @memset(dst_row[scr.active_cols..max_cols], Cell{});
+                    }
+                    for (src_row[0..scr.active_cols]) |c| {
+                        if (c.kind.isGrapheme()) {
+                            if (scr.getGrapheme(c.codepoint)) |cps| {
+                                target.addGrapheme(c.codepoint, cps);
+                            }
+                        }
+                    }
+                }
+            }
+
+            scr.dirty_rows = .empty;
+
+            target.active_rows = scr.active_rows;
+            target.active_cols = scr.active_cols;
+            target.generation = scr.generation;
+            target.palette = scr.palette;
+            target.reverse_video = scr.mode.reverse_video;
+            target.is_alternate = is_alt;
+            target.scrollback_used = scr_scrollback_used;
+            target.viewport_offset = scr_viewport_offset;
+            target.cursor = .{
+                .row = scr.cursor.row,
+                .col = scr.cursor.col,
+                .style = scr.cursor.style,
+                .visible = expected_cursor_visible,
+            };
+            target.cursor_color = current_cursor_color;
+
+            return true;
         }
 
         /// Queues `r` in the current C1 format. When it does not fit, it

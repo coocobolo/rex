@@ -828,6 +828,47 @@ test "Terminal: takeEvents and drainReplies" {
     try testing.expect(!t.events.any());
 }
 
+test "Terminal: snapshot live view, dirty rows and buffer switch" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    var frame = try Term.FrameType.init(alloc);
+    defer frame.deinit(alloc);
+
+    // Initial snapshot should copy full active viewport.
+    t.feed("Hello Rex!");
+    try testing.expect(t.snapshot(&frame));
+    try testing.expectEqual(@as(u32, 1), frame.generation);
+    try testing.expectEqual('H', frame.displayRow(0)[0].codepoint);
+    try testing.expectEqual('!', frame.displayRow(0)[9].codepoint);
+    try testing.expectEqual(@as(u16, 10), frame.cursor.col);
+    try testing.expect(!frame.is_alternate);
+
+    // Second snapshot without changes returns false.
+    try testing.expect(!t.snapshot(&frame));
+
+    // Mutation on next row updates via dirty rows.
+    t.feed("\r\nRow 2");
+    try testing.expect(t.snapshot(&frame));
+    try testing.expectEqual('R', frame.displayRow(1)[0].codepoint);
+    try testing.expectEqual('2', frame.displayRow(1)[4].codepoint);
+    try testing.expectEqual(@as(u16, 1), frame.cursor.row);
+    try testing.expectEqual(@as(u16, 5), frame.cursor.col);
+
+    // Switch to alternate screen buffer.
+    t.feed("\x1b[?1049h");
+    try testing.expect(t.snapshot(&frame));
+    try testing.expect(frame.is_alternate);
+    try testing.expectEqual(@as(u16, 0), frame.cursor.row);
+    try testing.expectEqual(@as(u16, 0), frame.cursor.col);
+
+    // Switch back to primary.
+    t.feed("\x1b[?1049l");
+    try testing.expect(t.snapshot(&frame));
+    try testing.expect(!frame.is_alternate);
+    try testing.expectEqual('H', frame.displayRow(0)[0].codepoint);
+}
+
 test "invalid utf-8: sequence cut by ESC is one u+fffd, then ESC runs" {
     var t = try Term.create(alloc);
     defer t.destroy(alloc);
