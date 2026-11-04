@@ -10,15 +10,7 @@ const ft = @import("../freetype/root.zig");
 const FontConfig = ft.FontConfig;
 const Rasterizer = ft.Rasterizer;
 
-const c = @import("glfw");
 const testGlContext = window.testGlContext;
-
-var gl_win: ?*c.GLFWwindow = null;
-fn sharedGlContext() !*c.GLFWwindow {
-    if (gl_win) |win| return win;
-    gl_win = try testGlContext();
-    return gl_win.?;
-}
 
 const test_font: FontConfig = .{
     .max_size = 64,
@@ -77,9 +69,7 @@ fn fakeColorGlyph(buf: []u8, w: u16, h: u16) Rasterizer.Glyph {
 }
 
 test "GL context: core profile at the required version" {
-    const win = try testGlContext();
-    defer c.glfwDestroyWindow(win);
-    defer c.glfwTerminate();
+    try testGlContext();
     var major: c_int = 0;
     var minor: c_int = 0;
     var profile: c_int = 0;
@@ -92,9 +82,7 @@ test "GL context: core profile at the required version" {
 }
 
 test "upload: gray glyph returns valid metric" {
-    const win = try window.testGlContext();
-    defer c.glfwDestroyWindow(win);
-    defer c.glfwTerminate();
+    try testGlContext();
 
     var atlas = try Atlas.create(alloc);
     defer atlas.destroy();
@@ -115,9 +103,7 @@ test "upload: gray glyph returns valid metric" {
 }
 
 test "upload: color glyph goes into color atlas" {
-    const win = try window.testGlContext();
-    defer c.glfwDestroyWindow(win);
-    defer c.glfwTerminate();
+    try testGlContext();
 
     var atlas = try Atlas.create(alloc);
     defer atlas.destroy();
@@ -138,9 +124,7 @@ test "upload: color glyph goes into color atlas" {
 }
 
 test "upload: zero-size glyph (space) returns zero metrics without GL Upload" {
-    const win = try window.testGlContext();
-    defer c.glfwDestroyWindow(win);
-    defer c.glfwTerminate();
+    try testGlContext();
 
     var atlas = try Atlas.create(alloc);
     defer atlas.destroy();
@@ -168,9 +152,7 @@ test "upload: zero-size glyph (space) returns zero metrics without GL Upload" {
 }
 
 test "upload: gray and color packing states are independent" {
-    const win = try window.testGlContext();
-    defer c.glfwDestroyWindow(win);
-    defer c.glfwTerminate();
+    try testGlContext();
 
     var atlas = try Atlas.create(alloc);
     defer atlas.destroy();
@@ -190,9 +172,7 @@ test "upload: gray and color packing states are independent" {
 }
 
 test "upload: glyph wider than atlas returns GlyphTooWide" {
-    const win = try window.testGlContext();
-    defer c.glfwDestroyWindow(win);
-    defer c.glfwTerminate();
+    try testGlContext();
 
     var atlas = try Atlas.create(alloc);
     defer atlas.destroy();
@@ -215,8 +195,7 @@ test "upload: glyph wider than atlas returns GlyphTooWide" {
     try testing.expectEqual(@as(u16, 0), atlas.state.gray.next_y);
 }
 
-fn testCreateAndPreRasterize(win: *c.GLFWwindow) !void {
-    _ = win;
+fn testCreateAndPreRasterize() !void {
     var rasterizer = try Rasterizer.create(alloc, test_font);
     defer rasterizer.destroy(alloc);
 
@@ -232,8 +211,7 @@ fn testCreateAndPreRasterize(win: *c.GLFWwindow) !void {
     }
 }
 
-fn testCacheHit(win: *c.GLFWwindow) !void {
-    _ = win;
+fn testCacheHit() !void {
     var rasterizer = try Rasterizer.create(alloc, test_font);
     defer rasterizer.destroy(alloc);
 
@@ -245,8 +223,7 @@ fn testCacheHit(win: *c.GLFWwindow) !void {
     try testing.expectEqual(m1, m2);
 }
 
-fn testBoldVsRegular(win: *c.GLFWwindow) !void {
-    _ = win;
+fn testBoldVsRegular() !void {
     var rasterizer = try Rasterizer.create(alloc, test_font);
     defer rasterizer.destroy(alloc);
 
@@ -258,8 +235,7 @@ fn testBoldVsRegular(win: *c.GLFWwindow) !void {
     try testing.expect(m_reg.atlas_x != m_bold.atlas_x or m_reg.atlas_y != m_bold.atlas_y);
 }
 
-fn testZeroSizeMetric(win: *c.GLFWwindow) !void {
-    _ = win;
+fn testZeroSizeMetric() !void {
     var rasterizer = try Rasterizer.create(alloc, test_font);
     defer rasterizer.destroy(alloc);
 
@@ -275,15 +251,14 @@ fn testZeroSizeMetric(win: *c.GLFWwindow) !void {
     try testing.expectEqual(m1, m2);
 }
 
-fn testGetSequenceCacheMiss(win: *c.GLFWwindow) !void {
-    _ = win;
+fn testGetSequenceCacheMiss() !void {
     var rasterizer = try Rasterizer.create(alloc, test_font);
     defer rasterizer.destroy(alloc);
     var atlas = try Atlas.create(alloc);
     defer atlas.destroy();
 
-    // Phase 1 stub: rasterizeSequence falls back to cps[0].
-    // Use a real emoji sequence — the result is the base codepoint glyph.
+    // rasterizeSequence still falls back to cps[0], so a real ZWJ
+    // sequence gives the base code point glyph.
     const cps = [_]u21{ 0x1F468, 0x200D, 0x1F469 }; // 👨‍👩 ZWJ sequence
     const m = try atlas.getSequence(alloc, &rasterizer, &cps, .emoji, .double);
 
@@ -293,8 +268,7 @@ fn testGetSequenceCacheMiss(win: *c.GLFWwindow) !void {
     try testing.expectEqual(.color, m.kind);
 }
 
-fn testGetSequenceCacheHit(win: *c.GLFWwindow) !void {
-    _ = win;
+fn testGetSequenceCacheHit() !void {
     var rasterizer = try Rasterizer.create(alloc, test_font);
     defer rasterizer.destroy(alloc);
     var atlas = try Atlas.create(alloc);
@@ -306,8 +280,7 @@ fn testGetSequenceCacheHit(win: *c.GLFWwindow) !void {
     try testing.expectEqual(m1, m2);
 }
 
-fn testGetSequenceEmptyReturnsError(win: *c.GLFWwindow) !void {
-    _ = win;
+fn testGetSequenceEmptyReturnsError() !void {
     var rasterizer = try Rasterizer.create(alloc, test_font);
     defer rasterizer.destroy(alloc);
     var atlas = try Atlas.create(alloc);
@@ -318,17 +291,15 @@ fn testGetSequenceEmptyReturnsError(win: *c.GLFWwindow) !void {
 }
 
 test "atlas integration" {
-    const win = try sharedGlContext();
-    defer c.glfwDestroyWindow(win);
-    defer c.glfwTerminate();
+    try testGlContext();
 
-    try testCreateAndPreRasterize(win);
-    try testCacheHit(win);
-    try testBoldVsRegular(win);
-    try testZeroSizeMetric(win);
-    try testGetSequenceCacheMiss(win);
-    try testGetSequenceCacheHit(win);
-    try testGetSequenceEmptyReturnsError(win);
+    try testCreateAndPreRasterize();
+    try testCacheHit();
+    try testBoldVsRegular();
+    try testZeroSizeMetric();
+    try testGetSequenceCacheMiss();
+    try testGetSequenceCacheHit();
+    try testGetSequenceEmptyReturnsError();
 }
 
 test "PackingState: first glyph placed at origin" {

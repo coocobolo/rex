@@ -239,19 +239,23 @@ pub fn glfwGetTime() f64 {
     return c.glfwGetTime();
 }
 
-pub fn testGlContext() !*c.GLFWwindow {
+/// The hidden window whose GL context every GL test shares.
+var test_window: ?*c.GLFWwindow = null;
+
+/// Makes the shared test GL context current, creating it on the first
+/// call. GLFW is initialised once and never terminated during the run,
+/// so GL tests may run in any order and must not destroy the window or
+/// terminate GLFW themselves. Skips the test when there is no display.
+pub fn testGlContext() !void {
+    if (!builtin.is_test) @compileError("testGlContext is for tests only");
+    if (test_window) |win| return c.glfwMakeContextCurrent(win);
+
     // No display (headless CI without Xvfb): skip GL tests, not fail.
     if (c.glfwInit() == 0) return error.SkipZigTest;
     c.glfwWindowHint(c.GLFW_VISIBLE, c.GLFW_FALSE);
     hintContext();
 
-    const win = c.glfwCreateWindow(
-        1,
-        1,
-        "test",
-        null,
-        null,
-    ) orelse return error.WindowFailed;
+    const win = c.glfwCreateWindow(1, 1, "test", null, null) orelse return error.WindowFailed;
     c.glfwMakeContextCurrent(win);
 
     // Load OpenGL functions via GLAD
@@ -264,5 +268,5 @@ pub fn testGlContext() !*c.GLFWwindow {
         log.warn("got compatibility profile, not core", .{});
     }
 
-    return win;
+    test_window = win;
 }
