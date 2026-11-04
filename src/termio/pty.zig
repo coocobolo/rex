@@ -632,6 +632,9 @@ test "Posix: inactive" {
 test "Posix: spawn, default no stdout capture" {
     var pty: Posix = try Posix.spawn(.{});
     defer pty.close(testing.io);
+    // Wait for the exec so close()'s SIGHUP reaches the child's session
+    // instead of racing setsid() and waiting out the full grace period.
+    try pty.waitForSpawn();
 
     try testing.expect(pty.master > 0);
     try testing.expect(pty.stdout_read_fd == -1);
@@ -641,6 +644,9 @@ test "Posix: spawn, default no stdout capture" {
 test "Posix: spawn, with stdout capture" {
     var pty: Posix = try Posix.spawn(.{ .capture_stdout = true });
     defer pty.close(testing.io);
+    // Wait for the exec so close()'s SIGHUP reaches the child's session
+    // instead of racing setsid() and waiting out the full grace period.
+    try pty.waitForSpawn();
 
     try testing.expect(pty.master > 0);
     try testing.expect(pty.stdout_read_fd >= 0);
