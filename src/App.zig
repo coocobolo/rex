@@ -66,19 +66,14 @@ const scroll_lines = 3;
 
 /// XBell volume, as a percent of the X server bell volume.
 const bell_volume: u8 = 100;
-const blink_half_period_ms: u64 = 500;
-const blink_rapid_half_period_ms: u64 = 250;
 
 const pomodoro_state_file = "pomodoro_stats.bin";
 
 pub const Config = struct {
     blink: struct {
-        /// Normal blink half period in ms.
-        /// Default: 1Hz.
+        /// Half period of SGR 5 blink, in ms. 0 turns blinking off.
         half_period: u64 = 500,
-
-        /// Rapid blink half period (ms).
-        /// Default: 2Hz.
+        /// Half period of SGR 6 rapid blink, in ms. 0 turns it off.
         rapid_half_period: u64 = 250,
     },
     font: Freetype.FontConfig,
@@ -170,8 +165,8 @@ needs_redraw: bool = true,
 // Blink state
 blink_on: bool = true,
 blink_rapid_on: bool = true,
-blink: PeriodicTimer(blink_half_period_ms),
-blink_rapid: PeriodicTimer(blink_rapid_half_period_ms),
+blink: PeriodicTimer,
+blink_rapid: PeriodicTimer,
 
 // Frame timing, focus and size tracking
 last_frame: std.Io.Clock.Timestamp,
@@ -186,28 +181,25 @@ argv0: []const u8,
 
 /// Counts whole `period_ms` periods as time passes. A period of 0
 /// disables the timer: it never fires and sets no deadline.
-fn PeriodicTimer(comptime period_ms: u64) type {
-    return struct {
-        elapsed_ms: u64 = 0,
-        const Self = @This();
+const PeriodicTimer = struct {
+    period_ms: u64,
+    elapsed_ms: u64 = 0,
 
-        /// Adds `dt_ms` and returns how many periods ended.
-        pub fn tick(self: *Self, dt_ms: u64) u64 {
-            if (period_ms == 0) return 0;
-            const total = self.elapsed_ms + dt_ms;
-            const periods = total / period_ms;
-            self.elapsed_ms = total % period_ms;
-            return periods;
-        }
+    /// Adds `dt_ms` and returns how many periods ended.
+    pub fn tick(self: *PeriodicTimer, dt_ms: u64) u64 {
+        if (self.period_ms == 0) return 0;
+        const total = self.elapsed_ms + dt_ms;
+        self.elapsed_ms = total % self.period_ms;
+        return total / self.period_ms;
+    }
 
-        /// Milliseconds until the current period ends, or the largest
-        /// u64 when the timer is disabled.
-        pub fn remaining(self: *const Self) u64 {
-            if (period_ms == 0) return std.math.maxInt(u64);
-            return period_ms - self.elapsed_ms;
-        }
-    };
-}
+    /// Milliseconds until the current period ends, or the largest u64
+    /// when the timer is disabled.
+    pub fn remaining(self: *const PeriodicTimer) u64 {
+        if (self.period_ms == 0) return std.math.maxInt(u64);
+        return self.period_ms - self.elapsed_ms;
+    }
+};
 
 pub fn init(
     gpa: std.mem.Allocator,
@@ -327,20 +319,8 @@ pub fn init(
         .pty = pty,
         .window = win,
         .background_color = .{ background_color.r, background_color.g, background_color.b, background_alpha },
-        .blink_rapid = blk: {
-            if (config.blink.rapid_half_period != blink_rapid_half_period_ms) {
-                break :blk PeriodicTimer(config.blink.rapid_half_period){};
-            } else {
-                break :blk .{};
-            }
-        },
-        .blink = blk: {
-            if (config.blink.half_period != blink_half_period_ms) {
-                break :blk PeriodicTimer(config.blink.half_period){};
-            } else {
-                break :blk .{};
-            }
-        },
+        .blink = .{ .period_ms = config.blink.half_period },
+        .blink_rapid = .{ .period_ms = config.blink.rapid_half_period },
         .dirs = dirs,
         .argv0 = argv0,
         .allocator = gpa,
@@ -1554,7 +1534,7 @@ const framebufferSizeCb: c.GLFWframebuffersizefun = struct {
 }.cb;
 
 test "PeriodicTimer: counts whole periods and keeps the remainder" {
-    var timer: PeriodicTimer(500) = .{};
+    var timer: PeriodicTimer = .{ .period_ms = 500 };
     try std.testing.expectEqual(0, timer.tick(499));
     try std.testing.expectEqual(1, timer.remaining());
     try std.testing.expectEqual(3, timer.tick(1001));
@@ -1562,7 +1542,13 @@ test "PeriodicTimer: counts whole periods and keeps the remainder" {
 }
 
 test "PeriodicTimer: a zero period never fires and sets no deadline" {
-    var timer: PeriodicTimer(0) = .{};
+    var timer: PeriodicTimer = .{ .period_ms = 0 };
     try std.testing.expectEqual(0, timer.tick(1000));
     try std.testing.expectEqual(std.math.maxInt(u64), timer.remaining());
+}
+
+test "PeriodicTimer: any period works, not only the defaults" {
+    var timer: PeriodicTimer = .{ .period_ms = 333 };
+    try std.testing.expectEqual(3, timer.tick(1000));
+    try std.testing.expectEqual(332, timer.remaining());
 }
