@@ -246,7 +246,8 @@ pub fn glfwGetTime() f64 {
 }
 
 pub fn testGlContext() !*c.GLFWwindow {
-    if (c.glfwInit() == 0) return error.GlfwInitFailed;
+    // No display (headless CI without Xvfb): skip GL tests, not fail.
+    if (c.glfwInit() == 0) return error.SkipZigTest;
     c.glfwWindowHint(c.GLFW_VISIBLE, c.GLFW_FALSE);
     c.glfwWindowHint(c.GLFW_CONTEXT_VERSION_MAJOR, 3);
     c.glfwWindowHint(c.GLFW_CONTEXT_VERSION_MINOR, 3);
