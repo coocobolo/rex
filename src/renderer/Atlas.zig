@@ -1,7 +1,5 @@
 const std = @import("std");
-const builtin = @import("builtin");
 
-const testing = std.testing;
 const Allocator = std.mem.Allocator;
 
 const log = std.log.scoped(.atlas);
@@ -13,10 +11,6 @@ const GlyphKind = Rasterizer.GlyphKind;
 const Span = Rasterizer.Span;
 
 const gl = @import("gl.zig");
-
-test {
-    _ = @import("atlas_test.zig");
-}
 
 /// On the modern text rendering, a TrueType font is a collection
 /// of character glyphs that not defined by pixels or any other
@@ -452,7 +446,7 @@ pub fn getSequence(self: *Atlas, gpa: Allocator, rasterizer: *Rasterizer, cps: [
     return gop.value_ptr.*;
 }
 
-fn hashSequence(cps: []const u21, face: FaceKind, span: Span) u64 {
+pub fn hashSequence(cps: []const u21, face: FaceKind, span: Span) u64 {
     var h = std.hash.Wyhash.init(0);
     for (cps) |cp| {
         const v: u32 = cp;
@@ -477,87 +471,4 @@ pub fn invalidate(self: *Atlas) void {
     // Optionally clear texture contents to avoid stale pixels:
     gl.clearTexImage(self.gray_texture, 0, gl.RED, gl.UNSIGNED_BYTE, null);
     gl.clearTexImage(self.color_texture, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
-}
-
-test "PackingState: first glyph placed at origin" {
-    var s: PackingState = .init;
-    const x, const y = try s.pack(8, 16, 1024, 1024);
-    try testing.expectEqual(0, x);
-    try testing.expectEqual(0, y);
-    try testing.expectEqual(8, s.next_x);
-    try testing.expectEqual(16, s.row_h);
-}
-
-test "PackingState: glyphs pack left-to-right on same shelf" {
-    var s: PackingState = .init;
-    _ = try s.pack(8, 16, 1024, 1024);
-    const x, const y = try s.pack(8, 16, 1024, 1024);
-    try testing.expectEqual(8, x);
-    try testing.expectEqual(0, y);
-}
-
-test "PackingState: shelf advance when row overflows" {
-    var s: PackingState = .init;
-    _ = try s.pack(512, 16, 1024, 1024);
-    _ = try s.pack(512, 16, 1024, 1024); // fills shelf exactly
-    const x, const y = try s.pack(8, 16, 1024, 1024); // must go to next shelf
-    try testing.expectEqual(0, x);
-    try testing.expectEqual(16, y); // next_y = row_h of previous shelf
-}
-
-test "PackingState: row_height tracks tallest glyph on shelf" {
-    var s: PackingState = .init;
-    _ = try s.pack(8, 10, 1024, 1024);
-    _ = try s.pack(8, 20, 1024, 1024); // taller
-    _ = try s.pack(8, 5, 1024, 1024);
-
-    try testing.expectEqual(20, s.row_h);
-}
-
-test "PackingState: glyph wider than atlas returns GlyphTooWide" {
-    var s: PackingState = .init;
-    try testing.expectError(error.GlyphTooWide, s.pack(1025, 16, 1024, 1024));
-    // state must be unchanged after the error
-    try testing.expectEqual(@as(u16, 0), s.next_x);
-    try testing.expectEqual(@as(u16, 0), s.next_y);
-}
-
-test "PackingState: atlas full returns AtlasFull" {
-    var s: PackingState = .init;
-    _ = try s.pack(1024, 512, 1024, 1024); // first shelf, 512px tall
-    _ = try s.pack(1024, 512, 1024, 1024); // second shelf, fills atlas
-    try testing.expectError(error.AtlasFull, s.pack(8, 16, 1024, 1024));
-}
-
-test "hashSequence: same sequence produces same hash" {
-    const cps = [_]u21{ 0x1F468, 0x200D, 0x1F469 };
-    try testing.expectEqual(hashSequence(&cps, .emoji, .single), hashSequence(&cps, .emoji, .single));
-}
-
-test "hashSequence: order matters" {
-    const a = [_]u21{ 0x41, 0x42 }; // A, B
-    const b = [_]u21{ 0x42, 0x41 }; // B, A
-    try testing.expect(hashSequence(&a, .emoji, .single) != hashSequence(&b, .emoji, .single));
-}
-
-test "hashSequence: different sequences differ" {
-    const a = [_]u21{ 0x1F468, 0x200D, 0x1F469 };
-    const b = [_]u21{ 0x1F469, 0x200D, 0x1F468 }; // reversed
-    try testing.expect(hashSequence(&a, .emoji, .single) != hashSequence(&b, .emoji, .single));
-}
-
-test "hashSequence: single codepoint is stable" {
-    const cps = [_]u21{0x1F600}; // 😀
-    try testing.expectEqual(hashSequence(&cps, .emoji, .single), hashSequence(&cps, .emoji, .single));
-}
-
-test "hashSequence: length-1 vs length-2 differ" {
-    const a = [_]u21{0x41};
-    const b = [_]u21{ 0x41, 0x41 };
-    try testing.expect(hashSequence(&a, .emoji, .single) != hashSequence(&b, .emoji, .single));
-}
-
-test "hashSequence: span is part of the key" {
-    const cps = [_]u21{ 0x2764, 0xFE0F }; // ❤️
-    try testing.expect(hashSequence(&cps, .emoji, .single) != hashSequence(&cps, .emoji, .double));
 }

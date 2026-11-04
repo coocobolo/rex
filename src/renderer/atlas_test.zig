@@ -314,3 +314,86 @@ test "atlas integration" {
     try testGetSequenceCacheHit(win);
     try testGetSequenceEmptyReturnsError(win);
 }
+
+test "PackingState: first glyph placed at origin" {
+    var s: Atlas.PackingState = .init;
+    const x, const y = try s.pack(8, 16, 1024, 1024);
+    try testing.expectEqual(0, x);
+    try testing.expectEqual(0, y);
+    try testing.expectEqual(8, s.next_x);
+    try testing.expectEqual(16, s.row_h);
+}
+
+test "PackingState: glyphs pack left-to-right on same shelf" {
+    var s: Atlas.PackingState = .init;
+    _ = try s.pack(8, 16, 1024, 1024);
+    const x, const y = try s.pack(8, 16, 1024, 1024);
+    try testing.expectEqual(8, x);
+    try testing.expectEqual(0, y);
+}
+
+test "PackingState: shelf advance when row overflows" {
+    var s: Atlas.PackingState = .init;
+    _ = try s.pack(512, 16, 1024, 1024);
+    _ = try s.pack(512, 16, 1024, 1024); // fills shelf exactly
+    const x, const y = try s.pack(8, 16, 1024, 1024); // must go to next shelf
+    try testing.expectEqual(0, x);
+    try testing.expectEqual(16, y); // next_y = row_h of previous shelf
+}
+
+test "PackingState: row_height tracks tallest glyph on shelf" {
+    var s: Atlas.PackingState = .init;
+    _ = try s.pack(8, 10, 1024, 1024);
+    _ = try s.pack(8, 20, 1024, 1024); // taller
+    _ = try s.pack(8, 5, 1024, 1024);
+
+    try testing.expectEqual(20, s.row_h);
+}
+
+test "PackingState: glyph wider than atlas returns GlyphTooWide" {
+    var s: Atlas.PackingState = .init;
+    try testing.expectError(error.GlyphTooWide, s.pack(1025, 16, 1024, 1024));
+    // state must be unchanged after the error
+    try testing.expectEqual(@as(u16, 0), s.next_x);
+    try testing.expectEqual(@as(u16, 0), s.next_y);
+}
+
+test "PackingState: atlas full returns AtlasFull" {
+    var s: Atlas.PackingState = .init;
+    _ = try s.pack(1024, 512, 1024, 1024); // first shelf, 512px tall
+    _ = try s.pack(1024, 512, 1024, 1024); // second shelf, fills atlas
+    try testing.expectError(error.AtlasFull, s.pack(8, 16, 1024, 1024));
+}
+
+test "hashSequence: same sequence produces same hash" {
+    const cps = [_]u21{ 0x1F468, 0x200D, 0x1F469 };
+    try testing.expectEqual(Atlas.hashSequence(&cps, .emoji, .single), Atlas.hashSequence(&cps, .emoji, .single));
+}
+
+test "hashSequence: order matters" {
+    const a = [_]u21{ 0x41, 0x42 }; // A, B
+    const b = [_]u21{ 0x42, 0x41 }; // B, A
+    try testing.expect(Atlas.hashSequence(&a, .emoji, .single) != Atlas.hashSequence(&b, .emoji, .single));
+}
+
+test "hashSequence: different sequences differ" {
+    const a = [_]u21{ 0x1F468, 0x200D, 0x1F469 };
+    const b = [_]u21{ 0x1F469, 0x200D, 0x1F468 }; // reversed
+    try testing.expect(Atlas.hashSequence(&a, .emoji, .single) != Atlas.hashSequence(&b, .emoji, .single));
+}
+
+test "hashSequence: single codepoint is stable" {
+    const cps = [_]u21{0x1F600}; // 😀
+    try testing.expectEqual(Atlas.hashSequence(&cps, .emoji, .single), Atlas.hashSequence(&cps, .emoji, .single));
+}
+
+test "hashSequence: length-1 vs length-2 differ" {
+    const a = [_]u21{0x41};
+    const b = [_]u21{ 0x41, 0x41 };
+    try testing.expect(Atlas.hashSequence(&a, .emoji, .single) != Atlas.hashSequence(&b, .emoji, .single));
+}
+
+test "hashSequence: span is part of the key" {
+    const cps = [_]u21{ 0x2764, 0xFE0F }; // ❤️
+    try testing.expect(Atlas.hashSequence(&cps, .emoji, .single) != Atlas.hashSequence(&cps, .emoji, .double));
+}
