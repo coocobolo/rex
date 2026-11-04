@@ -21,5 +21,6 @@ pub const builtin = @import("builtin/root.zig");
 
 test {
     _ = @import("fuzz/root.zig");
+    _ = @import("input_test.zig");
     std.testing.refAllDecls(@This());
 }
