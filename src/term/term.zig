@@ -110,11 +110,9 @@ pub const Mode = struct {
     keypad_app: bool = false,
     /// DECARM  CSI ? 8 h/l
     auto_repeat: bool = true,
-    /// Mouse reporting modes (xterm extensions).
-    mouse_x10: bool = false,
-    mouse_normal: bool = false,
-    mouse_button: bool = false,
-    mouse_any: bool = false,
+    /// Which mouse events are reported. Only one tracking mode is active.
+    mouse_tracking: MouseTracking = .off,
+    /// SGR mouse encoding (CSI ? 1006 h / l).
     mouse_sgr: bool = false,
     /// Bracketed paste mode (CSI ? 2004 h / l).
     bracketed_paste: bool = false,
@@ -135,14 +133,34 @@ pub const Mode = struct {
 
     const Self = @This();
 
+    /// True when any mouse tracking mode is on.
     pub fn isMouseReporting(mode: *const Self) bool {
-        return mode.mouse_x10 or mode.mouse_button or mode.mouse_any;
+        return mode.mouse_tracking != .off;
     }
 };
 
-/// Mouse tracking modes are mutually exclusive.
-/// Setting any one clears the others.
-const MouseMode = enum { x10, normal, button, any };
+/// Mouse tracking modes (xterm ctlseqs, "Mouse Tracking"). Setting one
+/// replaces the current one; resetting any of them turns tracking off,
+/// as xterm does.
+pub const MouseTracking = enum {
+    off,
+    /// Mode 9: button presses only, without modifiers.
+    x10,
+    /// Mode 1000: presses, releases and wheel, with modifiers.
+    normal,
+    /// Mode 1002: as normal, plus motion while a button is held.
+    button_motion,
+    /// Mode 1003: as normal, plus all motion.
+    any_motion,
+
+    /// True when wheel events go to the host instead of scrolling.
+    pub fn reportsWheel(tracking: MouseTracking) bool {
+        return switch (tracking) {
+            .normal, .button_motion, .any_motion => true,
+            .off, .x10 => false,
+        };
+    }
+};
 
 pub const Option = struct {
     max_rows: usize,
@@ -912,6 +930,10 @@ pub fn Terminal(comptime option: Option) type {
                 45 => .of(screen_mode.reverse_wrap),
                 47, 1047, 1049 => .of(self.active_buffer == .alternate),
                 1004 => .of(self.mode.focus_events),
+                9 => .of(self.mode.mouse_tracking == .x10),
+                1000 => .of(self.mode.mouse_tracking == .normal),
+                1002 => .of(self.mode.mouse_tracking == .button_motion),
+                1003 => .of(self.mode.mouse_tracking == .any_motion),
                 1006 => .of(self.mode.mouse_sgr),
                 2004 => .of(self.mode.bracketed_paste),
                 2026 => .of(self.mode.synchronized_output),
@@ -953,7 +975,7 @@ pub fn Terminal(comptime option: Option) type {
                 7 => self.active().mode.auto_wrap = set, // DECAWM
                 45 => self.active().mode.reverse_wrap = set, // xterm reverse wraparound
                 8 => self.mode.auto_repeat = set, // DECARM
-                9 => self.setMouseMode(.x10, set),
+                9 => self.setMouseTracking(.x10, set),
                 12 => {
                     self.active().cursor.style = switch (self.active().cursor.style) {
                         .blinking_block, .steady_block => if (set) .blinking_block else .steady_block,
@@ -974,10 +996,9 @@ pub fn Terminal(comptime option: Option) type {
                     self.active().bump();
                 },
 
-                // Mouse reporting; mutually exclusive tracking modes.
-                1000 => self.setMouseMode(.x10, set),
-                1002 => self.setMouseMode(.button, set),
-                1003 => self.setMouseMode(.any, set),
+                1000 => self.setMouseTracking(.normal, set),
+                1002 => self.setMouseTracking(.button_motion, set),
+                1003 => self.setMouseTracking(.any_motion, set),
 
                 1004 => self.mode.focus_events = set, // focus in/out
                 1006 => self.mode.mouse_sgr = set, // SGR mouse encoding
@@ -1091,26 +1112,8 @@ pub fn Terminal(comptime option: Option) type {
             self.active().cursorPos(0, 0);
         }
 
-        fn setMouseMode(self: *Self, mode: MouseMode, set: bool) void {
-            if (set) {
-                self.mode.mouse_x10 = false;
-                self.mode.mouse_normal = false;
-                self.mode.mouse_button = false;
-                self.mode.mouse_any = false;
-                switch (mode) {
-                    .x10 => self.mode.mouse_x10 = true,
-                    .normal => self.mode.mouse_normal = true,
-                    .button => self.mode.mouse_button = true,
-                    .any => self.mode.mouse_any = true,
-                }
-            } else {
-                switch (mode) {
-                    .x10 => self.mode.mouse_x10 = false,
-                    .normal => self.mode.mouse_normal = false,
-                    .button => self.mode.mouse_button = false,
-                    .any => self.mode.mouse_any = false,
-                }
-            }
+        fn setMouseTracking(self: *Self, tracking: MouseTracking, set: bool) void {
+            self.mode.mouse_tracking = if (set) tracking else .off;
         }
 
         /// Queues `r` for the host, encoded in the current C1 format
@@ -1234,17 +1237,15 @@ pub fn Terminal(comptime option: Option) type {
         }
 
         /// Queues a mouse report for the active tracking mode and encoding.
-        /// Queues nothing when mouse reporting is off.
+        /// Queues nothing when tracking is off, and in X10 mode nothing but
+        /// presses of buttons 0 to 2. The caller filters motion by mode.
         pub fn sendMouse(self: *Self, col: u16, row: u16, button: u8, mods: u8, press: bool) void {
             const mode = self.mode;
-
-            // check if any mouse mode is active
-            if (!mode.mouse_x10 and !mode.mouse_button and !mode.mouse_any) return;
-
-            // X10 mode: only button press (button 0-2) no release, no motion, no scroll.
-            if (mode.mouse_x10 and (!press or button > 2)) return;
-
-            const code = button | mods;
+            const code = switch (mode.mouse_tracking) {
+                .off => return,
+                .x10 => if (press and button <= 2) button else return,
+                .normal, .button_motion, .any_motion => button | mods,
+            };
 
             const at: CellPosition = .{ .row = row, .col = col };
             if (mode.mouse_sgr) {

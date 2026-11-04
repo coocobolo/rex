@@ -1519,12 +1519,7 @@ fn flushScroll(self: *App) void {
     self.scroll_accumulator_y -= @floatFromInt(steps);
 
     const terminal = &self.terminal;
-    // In X10 mode, sendMouse filters out scroll buttons (64/65 > 2)  and
-    // returns early with empty events.response. The PTY write is then a no-op.
-    const mode = terminal.mode;
-    const mouse_reporting = mode.mouse_button or mode.mouse_any;
-
-    if (mouse_reporting) {
+    if (terminal.mode.mouse_tracking.reportsWheel()) {
         const col, const row = self.mouseCellPos(self.mouse_x, self.mouse_y);
 
         // Type of scroll
@@ -1567,36 +1562,18 @@ const scrollCb: c.GLFWscrollfun = struct {
     fn cb(handle: ?*c.GLFWwindow, _: f64, y_offset: f64) callconv(.c) void {
         const app: *App = @ptrCast(@alignCast(c.glfwGetWindowUserPointer(handle) orelse return));
 
-        // const terminal = &app.terminal;
-        // const mode = terminal.mode;
-        //
-        // if (mode.mouse_button or mode.mouse_any) {
-        //     // Mouse reporting: send immediately, no accumulation
-        //     const col, const row = app.mouseCellPos(app.last_mouse_x, app.last_mouse_y);
-        //     const button: u8 = if (y_offset > 0) 64 else 65;
-        //     const steps: u32 = @max(1, @as(u32, @intFromFloat(@abs(@trunc(y_offset)))));
-        //     for (0..steps) |_| {
-        //         terminal.sendMouse(col, row, button, 0, true);
-        //         _ = app.pty.write(terminal.events.response.slice()) catch {};
-        //     }
-        //     return;
-        // }
-
         app.scroll_accumulator_y += y_offset;
     }
 }.cb;
 
 fn sendMouseMotion(self: *App, col: u16, row: u16) void {
-    const mode = self.terminal.mode;
-    if (mode.mouse_any) {
-        const left_held = (self.mouse_buttons_held & 1) != 0;
-        const btn_code: u8 = if (left_held) 32 else 35;
-        self.terminal.sendMouse(col, row, btn_code, 0, true);
-    } else if (mode.mouse_button) {
-        const left_held = (self.mouse_buttons_held & 1) != 0;
-        if (left_held and (col != self.mouse_press_col or row != self.mouse_press_row)) {
+    const left_held = (self.mouse_buttons_held & 1) != 0;
+    switch (self.terminal.mode.mouse_tracking) {
+        .any_motion => self.terminal.sendMouse(col, row, if (left_held) 32 else 35, 0, true),
+        .button_motion => if (left_held and (col != self.mouse_press_col or row != self.mouse_press_row)) {
             self.terminal.sendMouse(col, row, 32, 0, true);
-        }
+        },
+        .off, .x10, .normal => {},
     }
     _ = self.pty.writeAll(self.terminal.events.response.slice()) catch |err| {
         log.err("sendMouseMotion: pty write failed: {}", .{err});
