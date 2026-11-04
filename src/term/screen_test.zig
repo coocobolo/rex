@@ -2920,8 +2920,8 @@ test "writeChar: written row is marked dirty" {
     try testing.expect(s.dirty_rows.isSet(3));
 }
 
-test "writeChar: combining character composes with previous cell" {
-    // e (U+0065) + combining acute (U+0301) → é (U+00E9)
+test "writeChar: combining character joins previous cell's cluster" {
+    // e (U+0065) + combining acute (U+0301) → cluster { e, U+0301 }, not NFC é
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
     defer s.destroy(alloc);
@@ -2929,7 +2929,7 @@ test "writeChar: combining character composes with previous cell" {
     s.writeChar(.{ .codepoint = 'e', .kind = .narrow });
     s.putChar(0x0301); // combining acute
 
-    try testing.expectEqual(@as(u21, 0x00E9), s.cellAt(0, 0).codepoint); // é
+    try expectClusterAt(&s, 0, 0, &.{ 'e', 0x0301 });
     try testing.expectEqual(@as(u16, 1), s.cursor.col); // cursor did not advance
 }
 
@@ -2945,7 +2945,7 @@ test "writeChar: combining at col 0 silently dropped" {
     try testing.expectEqual(@as(u16, 0), s.cursor.col);
 }
 
-test "writeChar: combining with wrap_pending composes with last column cell" {
+test "writeChar: combining with wrap_pending joins last column cell" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
     defer s.destroy(alloc);
@@ -2959,13 +2959,13 @@ test "writeChar: combining with wrap_pending composes with last column cell" {
 
     s.putChar(0x0301); // combining acute
 
-    // Last cell should be composed: a + ◌́ → á (U+00E1)
-    try testing.expectEqual(@as(u21, 0x00E1), s.cellAt(0, s.active_cols - 1).codepoint);
+    // Last cell becomes the cluster { a, U+0301 }
+    try expectClusterAt(&s, 0, s.active_cols - 1, &.{ 'a', 0x0301 });
     // wrap_pending still set — combining char doesn't advance cursor
     try testing.expect(s.cursor.wrap_pending);
 }
 
-test "writeChar: combining over continuation cell silently dropped" {
+test "writeChar: combining over continuation cell joins the wide char" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
     defer s.destroy(alloc);
@@ -2977,8 +2977,16 @@ test "writeChar: combining over continuation cell silently dropped" {
 
     s.putChar(0x0301);
 
-    // Wide char at col 0 should be unchanged
-    try testing.expectEqual(@as(u21, '中'), s.cellAt(0, 0).codepoint);
+    // The mark resolves past the right half and joins the wide char at col 0
+    try expectClusterAt(&s, 0, 0, &.{ '中', 0x0301 });
+    try testing.expectEqual(.grapheme_wide, s.cellAt(0, 0).kind);
+    try testing.expectEqual(.wide_right, s.cellAt(0, 1).kind);
+}
+
+fn expectClusterAt(s: anytype, r: usize, c: usize, want: []const u21) !void {
+    const cell = s.cellAt(r, c);
+    try testing.expect(cell.kind.isGrapheme());
+    try testing.expectEqualSlices(u21, want, s.getGrapheme(cell.codepoint).?);
 }
 
 test "dirty_rows: init state is empty" {

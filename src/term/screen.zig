@@ -21,7 +21,6 @@ const CharsetState = @import("cell.zig").CharsetState;
 const Palette = @import("Palette.zig").Palette;
 const Option = @import("term.zig").Option;
 
-const nfc_table = @import("nfc_table.zig");
 const wcwidth = @import("../unicode/wcwidth.zig").wcwidth;
 const ucd = @import("../unicode/root.zig");
 const Classifier = ucd.classifier.Classifier;
@@ -769,30 +768,9 @@ pub fn Screen(comptime option: Option) type {
             const wc: i32 = if (translated < 0x80) 1 else wcwidth(translated);
 
             if (wc == 0) {
-                // combining character: compose with the previous cell (NFC).
-                // Determine the base cell column.
-                // If wrap_pending, the cursor is visually at the last column.
-                const prev_col: usize = blk: {
-                    if (self.cursor.wrap_pending) break :blk @intCast(self.cursor.col);
-                    if (self.cursor.col > 0) break :blk @intCast(self.cursor.col - 1);
-                    return; // at column 0, nothing to composed with.
-                };
-
-                const row_mut = self.rowMutRaw(self.cursor.row);
-
-                // skip .wide_right placeholder to find the actual base cell.
-                var base_col = prev_col;
-                if (row_mut[base_col].kind == .wide_right and base_col > 0) base_col -= 1;
-
-                const prev = &row_mut[base_col];
-                if (prev.codepoint == 0) return; // empty cell, nothing to compose with.
-
-                if (nfc_table.compose(prev.codepoint, translated)) |composed| {
-                    prev.codepoint = composed;
-                }
-
-                // No composition found: silently discard (standard behavior).
+                // Zero-width: extend the previous cell's cluster.
                 // NOTE: last_char is NOT updated, REP repeats graphic chars only.
+                self.attachCombining(translated);
                 return;
             }
 
@@ -938,8 +916,8 @@ pub fn Screen(comptime option: Option) type {
         /// `putChar` instead it handles charset translation and `wcwidth` lookup.
         ///
         /// Handles:
-        ///   1. Combining characters (width == 0): NFC-composed with the previous
-        ///      cell. If no composition exists, the combining char is silently dropped.
+        ///   1. Combining characters (width == 0): handled by `putChar`, which
+        ///      appends them to the previous cell's cluster (`attachCombining`).
         ///   2. Deferred wrap: if `wrap_pending` is set, wraps to the next line
         ///      (scrolling if at `scroll_bottom`) before writing.
         ///   3. Insert mode: shifts existing cells right before writing.
