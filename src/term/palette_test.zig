@@ -5,7 +5,7 @@ const Palette = @import("Palette.zig").Palette;
 const Color = @import("cell.zig").Color;
 const Rgb = Color.Rgb;
 const ansi = @import("../color/ansi.zig");
-const Theme = @import("Theme.zig");
+const Theme = @import("../color/Theme.zig");
 
 test "init: index 0 is default" {
     const p: Palette = .empty;
