@@ -14,7 +14,7 @@ const SavedCursor = @import("cell.zig").SavedCursor;
 const Palette = @import("Palette.zig").Palette;
 const Rgb = Color.Rgb;
 const ansi = @import("../color/ansi.zig");
-const Theme = @import("Theme.zig");
+const Theme = @import("../color/Theme.zig");
 
 const max_title_len = @import("term.zig").max_title_len;
 

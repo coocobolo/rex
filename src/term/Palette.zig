@@ -3,7 +3,7 @@ const std = @import("std");
 const Color = @import("cell.zig").Color;
 const Rgb = Color.Rgb;
 const ansi = @import("../color/ansi.zig");
-const Theme = @import("Theme.zig");
+const Theme = @import("../color/Theme.zig");
 
 /// Per-screen color palette.
 ///
@@ -65,12 +65,7 @@ const default_entries: [256]u32 = blk: {
     break :blk e;
 };
 
-const xterm_indexed: [256]Rgb = blk: {
-    @setEvalBranchQuota(4096);
-    var t: [256]Rgb = undefined;
-    for (&t, 0..) |*c, n| c.* = Rgb.fromU32(ansi.indexed(n));
-    break :blk t;
-};
+const xterm_indexed: [256]Rgb = ansi.xterm256;
 
 /// Returns a Palette with reserved slots pre-populated.
 pub const empty: Palette = .{

@@ -1,3 +1,8 @@
+//! Standard ANSI 16 colors and xterm 256-color palette tables.
+
+const std = @import("std");
+const Rgb = @import("Rgb.zig");
+
 /// xterm default ANSI 16 colors. Used only to seed indexed_colors[].
 /// At runtime, palette entries 1–16 are overridden by applyTheme().
 pub const ansi_table = [16]u32{
@@ -41,6 +46,46 @@ pub const indexed_colors: [256]u32 = blk: {
     break :blk t;
 };
 
+/// Comptime xterm 256-color table as `Rgb` values.
+pub const xterm256: [256]Rgb = blk: {
+    var t: [256]Rgb = undefined;
+    for (0..256) |i| {
+        const u = indexed_colors[i];
+        t[i] = .{
+            .r = @intCast((u >> 24) & 0xFF),
+            .g = @intCast((u >> 16) & 0xFF),
+            .b = @intCast((u >> 8) & 0xFF),
+        };
+    }
+    break :blk t;
+};
+
 pub fn indexed(index: u8) u32 {
     return indexed_colors[index];
+}
+
+pub fn indexedRgb(index: u8) Rgb {
+    return xterm256[index];
+}
+
+test "ansi: table indexing and RGB conversion" {
+    try std.testing.expectEqual(256, indexed_colors.len);
+    try std.testing.expectEqual(256, xterm256.len);
+
+    // Verify ANSI color 0 (black) and 15 (white)
+    try std.testing.expectEqual(Rgb{ .r = 0x00, .g = 0x00, .b = 0x00 }, indexedRgb(0));
+    try std.testing.expectEqual(Rgb{ .r = 0xFF, .g = 0xFF, .b = 0xFF }, indexedRgb(15));
+
+    // Verify grayscale ramp entries 232 and 255
+    try std.testing.expectEqual(Rgb{ .r = 8, .g = 8, .b = 8 }, indexedRgb(232));
+    try std.testing.expectEqual(Rgb{ .r = 238, .g = 238, .b = 238 }, indexedRgb(255));
+
+    // Consistency between indexed(i) and indexedRgb(i)
+    for (0..256) |i| {
+        const u = indexed(@intCast(i));
+        const rgb = indexedRgb(@intCast(i));
+        try std.testing.expectEqual(rgb.r, @as(u8, @intCast((u >> 24) & 0xFF)));
+        try std.testing.expectEqual(rgb.g, @as(u8, @intCast((u >> 16) & 0xFF)));
+        try std.testing.expectEqual(rgb.b, @as(u8, @intCast((u >> 8) & 0xFF)));
+    }
 }

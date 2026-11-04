@@ -9,7 +9,7 @@ const Parser = @import("../vt/parser.zig").Parser;
 const Parameter = @import("../vt/parser.zig").Parameter;
 
 const Palette = @import("Palette.zig").Palette;
-const Theme = @import("Theme.zig");
+const Theme = @import("../color/Theme.zig");
 const Color = @import("cell.zig").Color;
 const CellKind = @import("cell.zig").Kind;
 const Rgb = Color.Rgb;

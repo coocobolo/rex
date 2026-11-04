@@ -1,5 +1,7 @@
-const Color = @import("cell.zig").Color;
-const Rgb = Color.Rgb;
+//! Terminal color themes and palette presets (ANSI 16 colors, fg, bg, selection).
+
+const std = @import("std");
+const Rgb = @import("Rgb.zig");
 
 pub const Theme = @This();
 
@@ -36,3 +38,9 @@ pub const graphite_ansi: [16]Rgb = .{
     .{ .r = 0x58, .g = 0x58, .b = 0x58 }, // 14 bright cyan
     .{ .r = 0x7A, .g = 0x7A, .b = 0x7A }, // 15 bright white
 };
+
+test "Theme: graphite preset sanity" {
+    try std.testing.expectEqual(16, graphite.ansi.len);
+    try std.testing.expectEqual(Rgb.white, graphite.foreground);
+    try std.testing.expectEqual(Rgb.black, graphite.background);
+}
