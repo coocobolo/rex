@@ -1,4 +1,4 @@
-//! Tests for the pure color helpers in Frame.zig.
+//! Tests for the pure color and decoration helpers in Frame.zig.
 
 const std = @import("std");
 const testing = std.testing;
@@ -33,4 +33,104 @@ test "cursorColor: without OSC 12 the cursor is the default foreground" {
     const screen = t.active();
     try testing.expectEqual([3]u8{ 0x11, 0x11, 0x11 }, Frame.cursorColor(&screen.palette, null));
     try testing.expectEqual([3]u8{ 1, 2, 3 }, Frame.cursorColor(&screen.palette, .{ 1, 2, 3 }));
+}
+
+const Decoration = @import("Decoration.zig");
+const Cell = term.Cell;
+
+const text: [3]u8 = .{ 10, 20, 30 };
+
+fn decorated(flags: term.cell.AttrFlags) Cell {
+    return .{ .codepoint = 'A', .kind = .narrow, .flags = flags };
+}
+
+test "decorationInstance: only decorated, visible cells produce a run" {
+    const option: Decoration.Option = .{};
+    try testing.expectEqual(null, Frame.decorationInstance(&option, decorated(.{ .bold = true }), text, 255, 0, 0, 1));
+    try testing.expectEqual(null, Frame.decorationInstance(&option, decorated(.{ .underline = .single, .invisible = true }), text, 255, 0, 0, 1));
+
+    const run = Frame.decorationInstance(&option, decorated(.{ .underline = .curly, .strikethrough = true }), text, 255, 3, 2, 2).?;
+    try testing.expectEqual(3, run.col);
+    try testing.expectEqual(2, run.row);
+    try testing.expectEqual(2, run.span);
+    try testing.expectEqual(.curly, run.flags.underline);
+    try testing.expect(run.flags.strikethrough);
+    try testing.expect(!run.flags.overline);
+    try testing.expectEqual([4]u8{ 10, 20, 30, 255 }, run.underline);
+    try testing.expectEqual([4]u8{ 10, 20, 30, 255 }, run.strikethrough);
+    try testing.expectEqual([4]u8{ 10, 20, 30, 255 }, run.overline);
+}
+
+test "decorationInstance: dim and blink follow the option" {
+    const cell = decorated(.{ .overline = true, .blink = true, .blink_rapid = true });
+
+    const follow: Decoration.Option = .{};
+    const a = Frame.decorationInstance(&follow, cell, text, 128, 0, 0, 1).?;
+    try testing.expectEqual(128, a.overline[3]);
+    try testing.expect(a.flags.blink and a.flags.blink_rapid);
+
+    const steady: Decoration.Option = .{ .dim = false, .blink = false };
+    const b = Frame.decorationInstance(&steady, cell, text, 128, 0, 0, 1).?;
+    try testing.expectEqual(255, b.overline[3]);
+    try testing.expect(!b.flags.blink and !b.flags.blink_rapid);
+}
+
+test "decorationInstance: per kind colors override the text color" {
+    const option: Decoration.Option = .{ .color = .{ .underline = .{ 255, 0, 0 }, .overline = .{ 0, 0, 255 } } };
+    const run = Frame.decorationInstance(&option, decorated(.{ .underline = .single, .overline = true, .strikethrough = true }), text, 128, 0, 0, 1).?;
+    try testing.expectEqual([4]u8{ 255, 0, 0, 128 }, run.underline);
+    try testing.expectEqual([4]u8{ 10, 20, 30, 128 }, run.strikethrough);
+    try testing.expectEqual([4]u8{ 0, 0, 255, 128 }, run.overline);
+}
+
+test "appendRun: merges adjacent matching cells, splits on any difference" {
+    var storage: [8]Decoration.Instance = undefined;
+    var runs: std.ArrayListUnmanaged(Decoration.Instance) = .initBuffer(&storage);
+    const option: Decoration.Option = .{};
+    const single = decorated(.{ .underline = .single });
+
+    // Columns 0, 1 and a wide cell at 2..3 merge into one run of 4.
+    Decoration.appendRun(&runs, Frame.decorationInstance(&option, single, text, 255, 0, 0, 1).?);
+    Decoration.appendRun(&runs, Frame.decorationInstance(&option, single, text, 255, 1, 0, 1).?);
+    Decoration.appendRun(&runs, Frame.decorationInstance(&option, single, text, 255, 2, 0, 2).?);
+    // A gap at column 4.
+    Decoration.appendRun(&runs, Frame.decorationInstance(&option, single, text, 255, 5, 0, 1).?);
+    // Another style.
+    Decoration.appendRun(&runs, Frame.decorationInstance(&option, decorated(.{ .underline = .double }), text, 255, 6, 0, 1).?);
+    // Another color.
+    Decoration.appendRun(&runs, Frame.decorationInstance(&option, single, .{ 1, 1, 1 }, 255, 7, 0, 1).?);
+    // The next row, even though its column follows on.
+    Decoration.appendRun(&runs, Frame.decorationInstance(&option, single, .{ 1, 1, 1 }, 255, 8, 1, 1).?);
+
+    try testing.expectEqual(5, runs.items.len);
+    const expected = [_][3]u16{ .{ 0, 0, 4 }, .{ 5, 0, 1 }, .{ 6, 0, 1 }, .{ 7, 0, 1 }, .{ 8, 1, 1 } };
+    for (expected, runs.items) |want, run| {
+        try testing.expectEqual(want, [3]u16{ run.col, run.row, run.span });
+    }
+}
+
+test "build: SGR text produces merged decoration runs" {
+    var t = try Term.create(testing.allocator);
+    defer t.destroy(testing.allocator);
+
+    // "ab" underlined, a plain space, then "cd" struck through.
+    t.feed("\x1b[4mab\x1b[0m \x1b[9mcd\x1b[0m");
+    const screen = t.active();
+    const row = screen.row(0);
+    const option: Decoration.Option = .{};
+
+    var storage: [8]Decoration.Instance = undefined;
+    var runs: std.ArrayListUnmanaged(Decoration.Instance) = .initBuffer(&storage);
+    for (row[0..6], 0..) |cell, col| {
+        const colors = Frame.cellColors(&screen.palette, cell, false);
+        if (Frame.decorationInstance(&option, cell, colors[0], 255, @intCast(col), 0, 1)) |run| {
+            Decoration.appendRun(&runs, run);
+        }
+    }
+    try testing.expectEqual(2, runs.items.len);
+    try testing.expectEqual(.single, runs.items[0].flags.underline);
+    try testing.expectEqual(2, runs.items[0].span);
+    try testing.expect(runs.items[1].flags.strikethrough);
+    try testing.expectEqual(3, runs.items[1].col);
+    try testing.expectEqual(2, runs.items[1].span);
 }
