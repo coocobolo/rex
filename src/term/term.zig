@@ -154,6 +154,49 @@ pub const MouseTracking = enum {
     }
 };
 
+/// A mouse button, numbered as xterm reports it.
+pub const MouseButton = enum(u2) {
+    left = 0,
+    middle = 1,
+    right = 2,
+};
+
+/// The mouse buttons held down, so motion reports can name the one
+/// being dragged.
+pub const HeldButtons = struct {
+    mask: u3 = 0,
+    last: ?MouseButton = null,
+
+    /// Records a press of `button`.
+    pub fn press(self: *HeldButtons, button: MouseButton) void {
+        self.mask |= bit(button);
+        self.last = button;
+    }
+
+    /// Records a release of `button`.
+    pub fn release(self: *HeldButtons, button: MouseButton) void {
+        self.mask &= ~bit(button);
+        if (self.last == button) self.last = null;
+    }
+
+    /// True while `button` is held.
+    pub fn isHeld(self: HeldButtons, button: MouseButton) bool {
+        return self.mask & bit(button) != 0;
+    }
+
+    /// The button a motion report names: the last one pressed while it
+    /// is held, else the lowest held, else null.
+    pub fn dragged(self: HeldButtons) ?MouseButton {
+        if (self.last) |button| return button;
+        if (self.mask == 0) return null;
+        return @enumFromInt(@ctz(self.mask));
+    }
+
+    fn bit(button: MouseButton) u3 {
+        return @as(u3, 1) << @intFromEnum(button);
+    }
+};
+
 pub const Option = struct {
     max_rows: usize,
     max_cols: usize,
@@ -1154,6 +1197,24 @@ pub fn Terminal(comptime option: Option) type {
             if (col >= option.max_cols or row >= option.max_rows) return;
             self.reply(.{ .mouse_x10 = .{ .code = if (press) code else 3, .at = at } });
         }
+
+        /// Queues a motion report at `col`, `row`. Mode 1002 reports only
+        /// while `held` is set, mode 1003 always; other modes queue
+        /// nothing. The caller reports each cell once.
+        pub fn sendMouseMotion(self: *Self, col: u16, row: u16, held: ?MouseButton, mods: u8) void {
+            switch (self.mode.mouse_tracking) {
+                .button_motion => if (held == null) return,
+                .any_motion => {},
+                .off, .x10, .normal => return,
+            }
+            // xterm ctlseqs: motion adds 32 to the button code, and 3
+            // stands for no button.
+            const button: u8 = if (held) |b| @intFromEnum(b) else 3;
+            self.sendMouse(col, row, button + mouse_motion_flag, mods, true);
+        }
+
+        /// Added to a button code in a motion report.
+        pub const mouse_motion_flag: u8 = 32;
 
         /// OSC 10 to 19: sets the `target` colour from `data`, or replies
         /// with it when `data` is "?".
