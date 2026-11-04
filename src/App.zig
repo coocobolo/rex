@@ -62,10 +62,6 @@ const tab_width: usize = 8;
 const emulator_version = "0.1.0";
 const emulator_name = "rex";
 const max_read_size: usize = std.math.maxInt(u16) - 1;
-const scroll_lines = 3;
-
-/// XBell volume, as a percent of the X server bell volume.
-const bell_volume: u8 = 100;
 
 const pomodoro_state_file = "pomodoro_stats.bin";
 
@@ -83,7 +79,10 @@ pub const Config = struct {
     theme: Theme,
     window: struct {
         background: Background.Option,
+        /// Rings the X bell on BEL and on pomodoro phase changes.
         bell: enum { on, off } = .on,
+        /// XBell volume, as a percent of the X server bell volume.
+        bell_volume: u8 = 100,
         scrollbar: Scrollbar.Option,
         cursor: Cursor.Option,
         /// Positions, thicknesses and looks of underline, strikethrough
@@ -92,8 +91,17 @@ pub const Config = struct {
         /// Opacity of SGR 2 (dim) text, 0.0 to 1.0.
         dim_alpha: f32 = 0.5,
         selection: renderer_mod.Selection.Option,
-        buffer_size: Dimension(u16),
+        /// Initial window size, in screen coordinates.
+        size: Dimension(u16) = .{ .width = 1920, .height = 1080 },
+        /// Window title. A running pomodoro is appended after it.
+        title: [:0]const u8 = "rex",
     },
+    scroll: struct {
+        /// Lines moved by the scroll_up and scroll_down actions.
+        lines: u32 = 3,
+        /// Lines moved per mouse wheel step.
+        wheel_lines: u32 = 3,
+    } = .{},
     selection: struct {
         mouse_double_click_interval_ms: f64 = 500,
         classifier: unicode.Classifier.Option,
@@ -158,7 +166,6 @@ selection: rex.Selection = .empty,
 // Scrollbar and Scrolling state
 scroll_accumulator_y: f64 = 0,
 scrollbar_drag_offset_y: f32 = 0,
-scroll_lines_per_tick: u32 = 3,
 scrollbar_dragging: bool = false,
 
 // Font state
@@ -265,7 +272,7 @@ pub fn init(
 
     log.debug("termio.pty: {f}", .{pty});
 
-    var win: Window = try .init(1920, 1080, "rex");
+    var win: Window = try .init(config.window.size.width, config.window.size.height, config.window.title);
     errdefer win.deinit();
 
     var rasterizer: Rasterizer = try .create(gpa, config.font);
@@ -457,7 +464,7 @@ pub fn run(self: *App) !void {
                 pomodoro_state_file,
             ) catch {};
 
-            self.window.ringBell(bell_volume);
+            self.ringBell();
             self.last_title = now;
             self.updateWindowTitle();
             self.needs_redraw = true;
@@ -504,7 +511,7 @@ pub fn run(self: *App) !void {
                     };
                 }
 
-                if (events.bell) self.window.ringBell(bell_volume);
+                if (events.bell) self.ringBell();
 
                 if (events.resize) |resize| {
                     self.pty.resize(
@@ -697,14 +704,18 @@ fn buildSelectionState(self: *App) ?SelectionState {
 fn updateWindowTitle(self: *App) void {
     var buf: [64]u8 = undefined;
     const pomodoro_title = self.pomodoro_state.fmt(&buf);
-    var title_buf: [128]u8 = undefined;
-    const title =
-        if (pomodoro_title.len > 0)
-            std.fmt.bufPrintZ(&title_buf, "rex  |  {s}", .{pomodoro_title}) catch return
-        else
-            std.fmt.bufPrintZ(&title_buf, "rex", .{}) catch return;
+    const base = self.config.window.title;
+    if (pomodoro_title.len == 0) return self.window.setWindowTitle(base);
 
+    var title_buf: [256]u8 = undefined;
+    const title = std.fmt.bufPrintZ(&title_buf, "{s}  |  {s}", .{ base, pomodoro_title }) catch base;
     self.window.setWindowTitle(title);
+}
+
+/// Rings the X bell at the configured volume, unless the bell is off.
+fn ringBell(self: *App) void {
+    if (self.config.window.bell == .off) return;
+    self.window.ringBell(self.config.window.bell_volume);
 }
 
 pub fn handleResize(self: *App, dimension: Dimension(u16)) void {
@@ -853,11 +864,11 @@ fn handleAction(self: *App, action: rex.input.Action) void {
             }
         },
         .scroll_up => {
-            self.terminal.active().scrollViewportBack(scroll_lines);
+            self.terminal.active().scrollViewportBack(self.config.scroll.lines);
             self.needs_redraw = true;
         },
         .scroll_down => {
-            self.terminal.active().scrollViewportForward(scroll_lines);
+            self.terminal.active().scrollViewportForward(self.config.scroll.lines);
             self.needs_redraw = true;
         },
         .increase_font_size => {
@@ -881,7 +892,7 @@ fn handleAction(self: *App, action: rex.input.Action) void {
             if (was_idle and self.pomodoro_state.phase == .task) {
                 self.pomodoro_stats.sessions += 1;
             }
-            self.window.ringBell(bell_volume);
+            self.ringBell();
             self.updateWindowTitle();
         },
         .pomodoro_reset => {
@@ -890,7 +901,7 @@ fn handleAction(self: *App, action: rex.input.Action) void {
         },
         .pomodoro_skip => {
             self.pomodoro_state.skip();
-            self.window.ringBell(bell_volume);
+            self.ringBell();
             self.updateWindowTitle();
         },
         .pomodoro_auto_transition => {
@@ -1395,7 +1406,7 @@ fn flushScroll(self: *App) void {
     // scrollViewportBack and Forward mark the rows dirty themselves.
 
     const prev_offset = terminal.active().viewport_offset;
-    const lines: u32 = @as(u32, @intCast(@abs(steps))) * self.scroll_lines_per_tick;
+    const lines: u32 = @as(u32, @intCast(@abs(steps))) * self.config.scroll.wheel_lines;
 
     if (steps > 0) {
         terminal.active().scrollViewportBack(lines);

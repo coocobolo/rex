@@ -126,7 +126,6 @@ const config: rex.App.Config = .{
         .decoration = decoration_option,
         .scrollbar = scrollbar_option,
         .selection = selection_option,
-        .buffer_size = .{ .height = 1920, .width = 1080 },
     },
     .environments = &.{
         .{ .key = "SHELL", .value = "/bin/bash" },
