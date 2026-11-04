@@ -182,86 +182,13 @@ last_title: std.Io.Clock.Timestamp,
 // Environment data
 dirs: rex.dirs.Application,
 
-const Callback = struct {
-    fn getApp(window: ?*Window.GlfwWindow) ?*App {
-        const ptr = Window.glfwGetWindowUserPointer(window) orelse return null;
-        return @ptrCast(@alignCast(ptr));
-    }
-
-    pub fn onChar(window: ?*Window.GlfwWindow, codepoint: c_uint) callconv(.c) void {
-        const app: *App = getApp(window) orelse return;
-        const cp = std.math.cast(u21, codepoint) orelse return;
-        if (cp == 0) return;
-
-        var buf: [4]u8 = undefined;
-        const len = std.unicode.utf8Encode(cp, &buf) catch return;
-        if (len > 0) {
-            app.pty.writeAll(buf[0..len]) catch |err| {
-                log.err("charCallback: pty write failed: {}", .{err});
-                return;
-            };
-            app.snapToLiveView();
-        }
-    }
-
-    pub fn onKey(window: ?*Window.GlfwWindow, key: c_int, _: c_int, action: c_int, mods: c_int) callconv(.c) void {
-        const app: *App = getApp(window) orelse return;
-        const is_key_down = action == c.GLFW_PRESS or action == c.GLFW_REPEAT;
-        if (!is_key_down) return;
-
-        // Application-level keybindings take priority over terminal input.
-        if (input.matchBinding(app.config.keymap, key, mods)) |act| {
-            app.handleAction(act);
-            return;
-        }
-
-        // A normal key starts new input and replaces the current selection.
-        if (action == c.GLFW_PRESS and !input.isModifierKey(key)) {
-            app.selection = .empty;
-            app.needs_redraw = true;
-        }
-
-        // Terminal key encoding
-        const terminal = &app.terminal;
-        const context: KeyContext = .{
-            .modify_other_keys = app.terminal.mode.modify_other_keys,
-            .cursor_keys = terminal.mode.cursor_keys,
-            .keypad_app = terminal.mode.keypad_app,
-        };
-
-        var buf: [32]u8 = undefined;
-        const bytes = rex.input.encodeKey(key, mods, context, &buf);
-        if (bytes.len == 0) return;
-
-        app.pty.writeAll(bytes) catch |err| {
-            log.err("keyCallback: pty write failed: {}", .{err});
-            return;
-        };
-        app.snapToLiveView();
-    }
-
-    pub fn onFrameBufferSize(window: ?*Window.GlfwWindow, w: c_int, h: c_int) callconv(.c) void {
-        const app: *App = getApp(window) orelse return;
-        app.handleResize(.{ .height = @intCast(h), .width = @intCast(w) });
-    }
-
-    pub fn onWindowFocus(window: ?*Window.GlfwWindow, focused: c_int) callconv(.c) void {
-        const app: *App = getApp(window) orelse return;
-        app.window_focused = (focused != 0);
-        if (!app.terminal.mode.focus_events) return;
-        const seq = if (focused != 0) "\x1b[I" else "\x1b[O";
-        _ = app.pty.writeAll(seq) catch |err| {
-            log.err("windowFocusCallback: pty write failed: {}", .{err});
-        };
-    }
-};
-
-/// A periodic timer that toggles a boolean value at each elapsed period.
+/// Counts whole `period_ms` periods as time passes.
 fn PeriodicTimer(comptime period_ms: u64) type {
     return struct {
         elapsed_ms: u64 = 0,
         const Self = @This();
 
+        /// Adds `dt_ms` and returns how many periods ended.
         pub fn tick(self: *Self, dt_ms: u64) u64 {
             const total = self.elapsed_ms + dt_ms;
             const periods = total / period_ms;
@@ -269,6 +196,7 @@ fn PeriodicTimer(comptime period_ms: u64) type {
             return periods;
         }
 
+        /// Milliseconds until the current period ends.
         pub fn remaining(self: *const Self) u64 {
             if (period_ms == 0) return 0;
             return period_ms - self.elapsed_ms;
@@ -625,17 +553,12 @@ pub fn run(self: *App) !void {
         }
 
         if (self.renderer.tick(dt_clamped)) self.needs_redraw = true;
-        var is_frame_dirty = false;
 
         if (had_data or blink_changed or self.needs_redraw) {
-            const rendered = try self.renderFrame();
-            if (rendered) {
-                self.needs_redraw = false;
-                is_frame_dirty = true;
-            }
+            if (try self.renderFrame()) self.needs_redraw = false;
         }
 
-        self.waitForNextEvent(had_data, is_frame_dirty);
+        self.waitForNextEvent(had_data);
         self.flushScroll();
 
         if (child_closed) break :start;
@@ -677,7 +600,9 @@ fn renderFrame(self: *App) !bool {
     return true;
 }
 
-fn waitForNextEvent(self: *App, had_data: bool, frame_dirty: bool) void {
+/// Polls when pty data arrived, else sleeps until the next blink or
+/// pomodoro tick or an input event.
+fn waitForNextEvent(self: *App, had_data: bool) void {
     if (!had_data) {
         const ms = @min(
             self.blink.remaining(),
@@ -685,7 +610,6 @@ fn waitForNextEvent(self: *App, had_data: bool, frame_dirty: bool) void {
         );
         Window.glfwWaitEventsTimeout(@max(0.001, @as(f64, @floatFromInt(ms)) / 1000.0));
     } else {
-        _ = frame_dirty; // both branches poll
         Window.glfwPollEvents();
     }
 }
@@ -959,17 +883,7 @@ fn handleAction(self: *App, action: rex.input.Action) void {
             // applies one size.
             self.font_size_pending = self.config.font.height;
         },
-        .new_window => {
-            var buf: [std.fs.max_path_bytes]u8 = undefined;
-
-            const exe_n = std.process.executablePath(self.io, &buf) catch return;
-            if (exe_n == 0) return;
-            const exe_path = buf[0..exe_n];
-
-            log.debug("exe_path: {s}", .{exe_path});
-
-            // TODO: open a new, independent terminal window.
-        },
+        .new_window => {}, // TODO: open a new, independent terminal window.
         .pomodoro_toggle => {
             const was_idle = self.pomodoro_state.phase == .idle;
             self.pomodoro_state.toggle();
