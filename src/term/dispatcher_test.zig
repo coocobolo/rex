@@ -3529,3 +3529,13 @@ test "m2: RI at the top of a full screen keeps scrollback" {
     s.scrollViewportBack(1);
     try testing.expectEqual('2', s.displayRow(0)[0].codepoint); // newest history line intact
 }
+
+test "m2: CAN or SUB inside OSC cancels it, the title is kept" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    t.feed("\x1b]2;kept\x07");
+    t.feed("\x1b]2;lost\x18");
+    t.feed("\x1b]0;lost too\x1a");
+    try testing.expectEqualStrings("kept", t.getTitle());
+}

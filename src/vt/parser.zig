@@ -509,6 +509,10 @@ fn createEntries() [State.count][256]Entry {
         }
     }
 
+    // Except: CAN and SUB cancel an OSC string, as xterm does, so
+    // osc_end must not dispatch it. BEL, ST and ESC still end it.
+    for ([_]u8{ 0x18, 0x1A }) |b| t[@intFromEnum(State.osc_string)][b].exit = .none;
+
     return t;
 }
 

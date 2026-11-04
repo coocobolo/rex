@@ -1376,3 +1376,23 @@ test "scanUntil: bitcast mask LSB == lane 0 (firstTrue equivalence)" {
         try testing.expectEqual(expected, actual);
     }
 }
+
+test "vt_parser: CAN and SUB inside OSC abort it without osc_end" {
+    for ([_]u8{ 0x18, 0x1A }) |cancel| {
+        // Whole, then one byte per feed: the abort must not depend on batching.
+        for ([_]bool{ false, true }) |split| {
+            var d: TestDispatcher = try .init(alloc);
+            defer d.deinit();
+            var p: Parser(TestDispatcher, .{}) = .{};
+
+            const input = "\x1b]0;Title" ++ [_]u8{cancel} ++ "\x1b]2;Next\x07";
+            if (split) {
+                for (input) |b| p.feedBytes(&d, &.{b});
+            } else p.feedBytes(&d, input);
+
+            try testing.expectEqual(.ground, p.state);
+            try testing.expectEqual(1, d.osc_events.items.len);
+            try testing.expectEqualSlices(u8, "2;Next", d.osc_events.items[0].data);
+        }
+    }
+}
