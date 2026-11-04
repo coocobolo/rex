@@ -45,6 +45,8 @@ const Pty = rex.termio.Pty;
 const Theme = rex.terminal.Theme;
 const Color = rex.terminal.cell.Color;
 const Terminal = rex.terminal.Terminal;
+const MouseButton = rex.terminal.term.MouseButton;
+const HeldButtons = rex.terminal.term.HeldButtons;
 const TerminalOption = rex.terminal.Option;
 const Screen = rex.terminal.screen.Screen;
 
@@ -149,9 +151,11 @@ window: Window,
 // Mouse reporting state
 mouse_x: f32 = 0,
 mouse_y: f32 = 0,
-mouse_press_col: u16 = 0,
-mouse_press_row: u16 = 0,
-mouse_buttons_held: u8 = 0, // bitmask: bit0=left, bit1=middle, bit2=right
+/// Cell of the last button or motion report, so motion is reported once
+/// per cell.
+mouse_report_col: u16 = 0,
+mouse_report_row: u16 = 0,
+mouse_held: HeldButtons = .{},
 mouse_last_click_ms: f64 = 0,
 mouse_last_click_pos: rex.Selection.Position = .empty,
 mouse_click_count: u2 = 0,
@@ -1269,10 +1273,20 @@ fn copySelectionToClipboard(self: *App) void {
     c.glfwSetClipboardString(self.window.handle, buf[0..pos :0].ptr);
 }
 
+/// The report number of a GLFW button, or null for buttons past the
+/// first three. GLFW numbers right before middle; xterm the reverse.
+fn mouseButtonOf(glfw_button: c_int) ?MouseButton {
+    return switch (glfw_button) {
+        c.GLFW_MOUSE_BUTTON_LEFT => .left,
+        c.GLFW_MOUSE_BUTTON_MIDDLE => .middle,
+        c.GLFW_MOUSE_BUTTON_RIGHT => .right,
+        else => null,
+    };
+}
+
 fn trackMouseButton(self: *App, button: c_int, press: bool) void {
-    const btn: u3 = @intCast(@min(button, 7));
-    const mask = @as(u8, 1) << btn;
-    if (press) self.mouse_buttons_held |= mask else self.mouse_buttons_held &= ~mask;
+    const held = mouseButtonOf(button) orelse return;
+    if (press) self.mouse_held.press(held) else self.mouse_held.release(held);
 }
 
 fn vtModByte(mods: c_int) u8 {
@@ -1342,17 +1356,10 @@ fn handleSelectionRelease(self: *App) void {
 }
 
 fn reportMouseButton(self: *App, col: u16, row: u16, button: c_int, mod_byte: u8, press: bool) void {
-    if (press) {
-        self.mouse_press_col = col;
-        self.mouse_press_row = row;
-    }
-    const vt_btn: u8 = switch (button) {
-        c.GLFW_MOUSE_BUTTON_LEFT => 0,
-        c.GLFW_MOUSE_BUTTON_MIDDLE => 1,
-        c.GLFW_MOUSE_BUTTON_RIGHT => 2,
-        else => return,
-    };
-    self.terminal.sendMouse(col, row, vt_btn, mod_byte, press);
+    const held = mouseButtonOf(button) orelse return;
+    self.mouse_report_col = col;
+    self.mouse_report_row = row;
+    self.terminal.sendMouse(col, row, @intFromEnum(held), mod_byte, press);
     self.pty.writeAll(self.terminal.events.response.slice()) catch |err| {
         log.err("mouseButtonCallback: pty write failed: {}", .{err});
     };
@@ -1567,14 +1574,11 @@ const scrollCb: c.GLFWscrollfun = struct {
 }.cb;
 
 fn sendMouseMotion(self: *App, col: u16, row: u16) void {
-    const left_held = (self.mouse_buttons_held & 1) != 0;
-    switch (self.terminal.mode.mouse_tracking) {
-        .any_motion => self.terminal.sendMouse(col, row, if (left_held) 32 else 35, 0, true),
-        .button_motion => if (left_held and (col != self.mouse_press_col or row != self.mouse_press_row)) {
-            self.terminal.sendMouse(col, row, 32, 0, true);
-        },
-        .off, .x10, .normal => {},
-    }
+    if (col == self.mouse_report_col and row == self.mouse_report_row) return;
+    self.mouse_report_col = col;
+    self.mouse_report_row = row;
+    self.terminal.sendMouseMotion(col, row, self.mouse_held.dragged(), 0);
+    if (self.terminal.events.response.isEmpty()) return;
     _ = self.pty.writeAll(self.terminal.events.response.slice()) catch |err| {
         log.err("sendMouseMotion: pty write failed: {}", .{err});
     };
@@ -1600,32 +1604,13 @@ const cursorPosCb: c.GLFWcursorposfun = struct {
         const screen = terminal.active();
         const mouse_reporting = terminal.mode.isMouseReporting();
 
-        if (mouse_reporting and app.selection.phase == .dragging) {
+        // A shift-drag selects text even while the host tracks the mouse.
+        if (mouse_reporting and app.selection.phase != .dragging) {
             app.sendMouseMotion(col, row);
             return;
         }
 
-        const left_held = (app.mouse_buttons_held & 1) != 0;
-
-        // Text selection drag
-        // if (left_held and app.selection.phase == .dragging) {
-        //     if (terminal.active_buffer == .primary) {
-        //         const viewport_offset = terminal.active().viewportOffsetAs(i32);
-        //         const anchor: i32 = @as(i32, row) - viewport_offset;
-        //         const scroll_gen = terminal.active().total_lines_scrolled;
-        //
-        //         const end_pos: Selection.Position = .{
-        //             .row = anchor,
-        //             .col = col,
-        //             .captured_scroll_gen = scroll_gen,
-        //         };
-        //         if (app.selection.range.set(.end, end_pos)) {
-        //             terminal.active().dirty_rows = .full;
-        //             terminal.active().bump();
-        //             app.needs_redraw = true;
-        //         }
-        //     }
-        // }
+        const left_held = app.mouse_held.isHeld(.left);
 
         if (left_held and app.selection.phase == .dragging) {
             if (terminal.active_buffer != .primary) return;
@@ -1667,7 +1652,7 @@ const cursorPosCb: c.GLFWcursorposfun = struct {
                         app.mouse_last_click_pos,
                         scroll_gen,
                         screen.scrollbackUsedAs(i64),
-                    ) orelse return; // click row evicted from scrollback — bail, don't extend a dead selection
+                    ) orelse return; // click row evicted from scrollback, bail, don't extend a dead selection
                     if (@as(i64, anchor) < click_anchor) {
                         app.selection.range.start.set(@intCast(click_anchor), last_col, scroll_gen);
                         app.selection.range.end.set(anchor, 0, scroll_gen);

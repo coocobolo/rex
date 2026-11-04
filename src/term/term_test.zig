@@ -5,6 +5,7 @@ const Mode = @import("term.zig").Mode;
 const Terminal = @import("term.zig").Terminal;
 const Events = @import("term.zig").Events;
 const Reply = @import("term.zig").Reply;
+const HeldButtons = @import("term.zig").HeldButtons;
 const Rgb = @import("cell.zig").Color.Rgb;
 const Attr = @import("cell.zig").Attr;
 const Cell = @import("cell.zig").Cell;
@@ -354,6 +355,62 @@ test "mouse tracking: modes 9, 1000, 1002 and 1003 report their state" {
     try testing.expectEqual(.reset, t.decModeReport(1000));
     try testing.expectEqual(.set, t.decModeReport(1002));
     try testing.expectEqual(.reset, t.decModeReport(1003));
+}
+
+test "mouse 1002: a drag reports the held button plus 32" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    t.feed("\x1b[?1002h\x1b[?1006h");
+    t.sendMouseMotion(1, 1, null, 0);
+    try testing.expect(t.events.response.isEmpty());
+    t.sendMouseMotion(1, 1, .left, 0);
+    t.sendMouseMotion(2, 1, .middle, 0);
+    t.sendMouseMotion(3, 1, .right, 4);
+    try testing.expectEqualStrings(
+        "\x1b[<32;2;2M\x1b[<33;3;2M\x1b[<38;4;2M",
+        t.events.response.slice(),
+    );
+}
+
+test "mouse 1003: motion with no button held reports 3 plus 32" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    t.feed("\x1b[?1003h");
+    t.sendMouseMotion(0, 0, null, 0);
+    t.sendMouseMotion(0, 0, .right, 0);
+    try testing.expectEqualStrings("\x1b[M\x43!!\x1b[M\x42!!", t.events.response.slice());
+}
+
+test "mouse 1000: motion is not reported" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    t.feed("\x1b[?1000h");
+    t.sendMouseMotion(0, 0, .left, 0);
+    try testing.expect(t.events.response.isEmpty());
+}
+
+test "HeldButtons: a drag names the last button pressed, then the lowest held" {
+    var held: HeldButtons = .{};
+    try testing.expectEqual(null, held.dragged());
+
+    held.press(.right);
+    held.press(.left);
+    try testing.expectEqual(.left, held.dragged());
+
+    held.release(.left);
+    try testing.expectEqual(.right, held.dragged());
+    try testing.expect(held.isHeld(.right));
+
+    held.press(.middle);
+    held.release(.middle);
+    try testing.expectEqual(.right, held.dragged());
+
+    held.release(.right);
+    try testing.expectEqual(null, held.dragged());
+    try testing.expect(!held.isHeld(.right));
 }
 
 test "mouse tracking: RIS turns it off" {
