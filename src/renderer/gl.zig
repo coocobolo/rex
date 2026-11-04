@@ -16,6 +16,7 @@ pub const GLuint = c.GLuint;
 pub const GLint = c.GLint;
 pub const GLsizei = c.GLsizei;
 pub const GLsizeiptr = c.GLsizeiptr;
+pub const GLintptr = c.GLintptr;
 pub const GLenum = c.GLenum;
 pub const GLfloat = c.GLfloat;
 pub const GLADloadproc = c.GLADloadproc;

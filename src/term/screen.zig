@@ -905,14 +905,31 @@ pub fn Screen(comptime option: Option) type {
                 const bg = self.cursor.attr.bg;
                 const flags = self.cursor.attr.flags;
 
-                for (bytes[0..n], 0..) |b, k| {
-                    row_mut[cursor_col + k] = .{
-                        .kind = .narrow,
-                        .codepoint = b,
-                        .foreground = fg,
-                        .background = bg,
-                        .flags = flags,
-                    };
+                const base_cell = Cell{
+                    .kind = .narrow,
+                    .codepoint = 0,
+                    .foreground = fg,
+                    .background = bg,
+                    .flags = flags,
+                    .wrapped = false,
+                };
+                const base_u64: u64 = @bitCast(base_cell);
+                const vector_len = 8;
+                const CellVector = @Vector(vector_len, u64);
+                const base_vec: CellVector = @splat(base_u64);
+
+                var k: usize = 0;
+                while (k + vector_len <= n) : (k += vector_len) {
+                    const chunk_bytes: @Vector(vector_len, u8) = bytes[k..][0..vector_len].*;
+                    const codepoints: CellVector = chunk_bytes;
+                    const cells_u64: CellVector = codepoints | base_vec;
+                    const dest_ptr: *[vector_len]Cell = row_mut[cursor_col + k ..][0..vector_len];
+                    @as(*align(@alignOf(Cell)) [vector_len]u64, @ptrCast(dest_ptr)).* = cells_u64;
+                }
+
+                while (k < n) : (k += 1) {
+                    const b = bytes[k];
+                    row_mut[cursor_col + k] = @bitCast(base_u64 | @as(u64, b));
                 }
 
                 // If the cell just past the written range was a wide-left's
@@ -2349,14 +2366,19 @@ pub fn Screen(comptime option: Option) type {
             else
                 self.active_rows - 1;
 
-            self.dirty_rows.set(self.cursor.row);
+            const target_row: u16 = @intCast(@min(top + row_pos, bottom));
+            const target_col: u16 = @intCast(@min(col_pos, self.active_cols - 1));
 
-            self.cursor.row = @intCast(@min(top + row_pos, bottom));
-            self.cursor.col = @intCast(@min(col_pos, self.active_cols - 1));
+            if (self.cursor.row != target_row) {
+                self.dirty_rows.set(self.cursor.row);
+                self.dirty_rows.set(target_row);
+            } else {
+                self.dirty_rows.set(target_row);
+            }
+
+            self.cursor.row = target_row;
+            self.cursor.col = target_col;
             self.cursor.wrap_pending = false;
-
-            // Mark new cursor row dirty so the cursor is drawn here
-            self.dirty_rows.set(self.cursor.row);
             self.bump();
         }
 
@@ -2376,10 +2398,15 @@ pub fn Screen(comptime option: Option) type {
         // cursorRow: move to absolute row (0-based), clamp to active_rows-1
         // Does NOT respect DECOM — VPA is always absolute.
         pub fn cursorRow(self: *Self, n: u16) void {
-            self.dirty_rows.set(self.cursor.row);
-            self.cursor.row = @min(n, self.active_rows - 1);
+            const target_row: u16 = @min(n, self.active_rows - 1);
+            if (self.cursor.row != target_row) {
+                self.dirty_rows.set(self.cursor.row);
+                self.dirty_rows.set(target_row);
+            } else {
+                self.dirty_rows.set(target_row);
+            }
+            self.cursor.row = target_row;
             self.cursor.wrap_pending = false;
-            self.dirty_rows.set(self.cursor.row);
             self.bump();
         }
 
@@ -2390,11 +2417,16 @@ pub fn Screen(comptime option: Option) type {
         pub fn cursorUp(self: *Self, n: usize) void {
             const cursor_row: usize = self.cursor.row;
             const top: usize = if (cursor_row >= self.scroll_top) self.scroll_top else 0;
+            const target_row: u16 = @intCast(@max(cursor_row -| n, top));
 
-            self.dirty_rows.set(cursor_row);
-            self.cursor.row = @intCast(@max(cursor_row -| n, top));
+            if (self.cursor.row != target_row) {
+                self.dirty_rows.set(cursor_row);
+                self.dirty_rows.set(target_row);
+            } else {
+                self.dirty_rows.set(target_row);
+            }
+            self.cursor.row = target_row;
             self.cursor.wrap_pending = false;
-            self.dirty_rows.set(self.cursor.row);
             self.bump();
         }
 
@@ -2408,11 +2440,16 @@ pub fn Screen(comptime option: Option) type {
                 self.scroll_bottom
             else
                 self.active_rows - 1;
+            const target_row: u16 = @intCast(@min(cursor_row + n, bottom));
 
-            self.dirty_rows.set(cursor_row);
-            self.cursor.row = @intCast(@min(cursor_row + n, bottom));
+            if (self.cursor.row != target_row) {
+                self.dirty_rows.set(cursor_row);
+                self.dirty_rows.set(target_row);
+            } else {
+                self.dirty_rows.set(target_row);
+            }
+            self.cursor.row = target_row;
             self.cursor.wrap_pending = false;
-            self.dirty_rows.set(self.cursor.row);
             self.bump();
         }
 

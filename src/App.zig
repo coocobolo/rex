@@ -119,6 +119,19 @@ pub const Config = struct {
     /// `pub const rex_terminal_option = config.terminal;`. App.init
     /// fails to compile when the two differ.
     terminal: TerminalOption = default_terminal_option,
+    /// Threading configuration: .single for in-loop synchronous execution,
+    /// or .multi for dedicated background worker thread with wait-free triple buffer.
+    threading: ThreadingConfig = .{},
+};
+
+pub const ThreadingMode = enum {
+    single,
+    multi,
+};
+
+pub const ThreadingConfig = struct {
+    mode: ThreadingMode = .multi,
+    sync_output_timeout_ms: u32 = 150,
 };
 
 /// Terminal limits used when the root file sets none, as in tests.
@@ -157,6 +170,87 @@ pub const RendererType = Renderer(terminal_option);
 pub const ScreenType = Screen(terminal_option);
 pub const TerminalType = Terminal(terminal_option);
 
+pub const SingleDriverType = rex.driver.SingleDriver(terminal_option);
+pub const ThreadedDriverType = rex.driver.ThreadedDriver(terminal_option);
+pub const DriverEvents = rex.driver.DriverEvents;
+pub const SharedModes = rex.driver.SharedModes;
+pub const InputEvent = rex.driver.InputEvent;
+
+pub const Driver = union(enum) {
+    single: SingleDriverType,
+    threaded: *ThreadedDriverType,
+
+    pub fn deinit(self: *Driver, io: std.Io) void {
+        switch (self.*) {
+            .single => |*d| d.deinit(io),
+            .threaded => |d| d.destroy(io),
+        }
+    }
+
+    pub fn pollAndDrain(self: *Driver) !DriverEvents {
+        return switch (self.*) {
+            .single => |*d| d.pollAndDrain(),
+            .threaded => |d| d.pollAndDrain(),
+        };
+    }
+
+    pub fn getFrame(self: *const Driver) *const FrameType {
+        return switch (self.*) {
+            .single => |*d| d.getFrame(),
+            .threaded => |d| d.getFrame(),
+        };
+    }
+
+    pub fn sendInput(self: *Driver, event: InputEvent) !void {
+        switch (self.*) {
+            .single => |*d| try d.sendInput(event),
+            .threaded => |d| _ = d.sendInput(event),
+        }
+    }
+
+    pub fn sendBytes(self: *Driver, bytes: []const u8) !void {
+        switch (self.*) {
+            .single => |*d| try d.sendBytes(bytes),
+            .threaded => |d| d.sendBytes(bytes),
+        }
+    }
+
+    pub fn writePaste(self: *Driver, text: []const u8) !void {
+        switch (self.*) {
+            .single => |*d| try d.writePaste(text),
+            .threaded => |d| try d.writePaste(text),
+        }
+    }
+
+    pub fn getModes(self: *const Driver) SharedModes {
+        return switch (self.*) {
+            .single => |*d| d.getModes(),
+            .threaded => |d| d.getModes(),
+        };
+    }
+
+    pub fn getTitle(self: *const Driver) []const u8 {
+        return switch (self.*) {
+            .single => |*d| d.getTitle(),
+            .threaded => |d| d.getTitle(),
+        };
+    }
+
+    pub fn getPid(self: *const Driver) posix.pid_t {
+        return switch (self.*) {
+            .single => |*d| d.getPid(),
+            .threaded => |d| d.getPid(),
+        };
+    }
+
+    pub fn copySelectionText(self: *Driver, selection: anytype, buf: []u8) usize {
+        return switch (self.*) {
+            .single => |*d| d.copySelectionText(selection, buf),
+            .threaded => |d| d.copySelectionText(selection, buf),
+        };
+    }
+};
+
 allocator: std.mem.Allocator,
 atlas: Atlas,
 
@@ -165,15 +259,12 @@ background_color: [4]f32,
 
 rasterizer: Rasterizer,
 frame_builder: FrameBuilderType,
-frame_snapshot: FrameType,
 
 io: std.Io,
 renderer: RendererType,
-terminal: TerminalType,
+driver: Driver,
 
 word_classifier: unicode.Classifier,
-
-pty: Pty,
 
 // Pomodoro state
 pomodoro_state: pomodoro.State,
@@ -324,9 +415,6 @@ pub fn init(
     });
     errdefer frame_builder.deinit(gpa);
 
-    var frame_snapshot: FrameType = try .init(gpa);
-    errdefer frame_snapshot.deinit(gpa);
-
     atlas.preRasterize(gpa, &rasterizer, .{ .start = 0x20, .end = 0x7F });
 
     var renderer = try RendererType.init(.{
@@ -353,10 +441,11 @@ pub fn init(
         pomodoro_state.tasks_in_cycle = state.tasks_in_cycle;
     }
 
-    var terminal = try TerminalType.create(gpa);
-    errdefer terminal.destroy(gpa);
-
-    terminal.setTheme(config.theme);
+    var driver: Driver = switch (config.threading.mode) {
+        .single => .{ .single = try SingleDriverType.initWithTimeout(gpa, pty, config.theme, config.threading.sync_output_timeout_ms) },
+        .multi => .{ .threaded = try ThreadedDriverType.create(gpa, pty, config.theme, config.threading.sync_output_timeout_ms) },
+    };
+    errdefer driver.deinit(io);
 
     const background_color = config.theme.background;
     const background_alpha = config.window.background.alpha;
@@ -366,7 +455,7 @@ pub fn init(
 
     return App{
         .io = io,
-        .pty = pty,
+        .driver = driver,
         .window = win,
         .background_color = .{ background_color.r, background_color.g, background_color.b, background_alpha },
         .blink = .{ .period_ms = config.blink.half_period },
@@ -374,12 +463,10 @@ pub fn init(
         .dirs = dirs,
         .argv0 = argv0,
         .allocator = gpa,
-        .terminal = terminal,
         .renderer = renderer,
         .rasterizer = rasterizer,
         .atlas = atlas,
         .frame_builder = frame_builder,
-        .frame_snapshot = frame_snapshot,
         .config = config,
         .font_size = config.font.height,
         .pomodoro_state = pomodoro_state,
@@ -393,13 +480,11 @@ pub fn init(
 
 pub fn deinit(self: *App, gpa: std.mem.Allocator) void {
     self.renderer.deinit();
-    self.frame_snapshot.deinit(gpa);
     self.frame_builder.deinit(gpa);
     self.atlas.destroy();
     self.rasterizer.destroy(gpa);
     self.window.deinit();
-    self.pty.close(self.io);
-    self.terminal.destroy(gpa);
+    self.driver.deinit(self.io);
 
     pomodoro.save(
         self.io,
@@ -445,32 +530,7 @@ pub fn run(self: *App) !void {
     self.window.setScrollCallback(scrollCb);
     self.window.setWindowFocusCallback(windowFocusCb);
 
-    const buffer = try self.allocator.alloc(u8, @max(1, self.config.read_buffer_size));
-    defer self.allocator.free(buffer);
-
-    // FIXME! The main loop is doing three different jobs:
-    // 1. Reading the PTY.
-    // 2. Parsing terminal output and generating responses.
-    // 3. Rendering and handling GLFW input.
-    //
-    // To separate them, make the PTY side producer/consumer based:
-    // GLFW thread
-    //  a. receives events keyboard/mouse input
-    //  b. sends input, write queue
-    //  c. receives immutable terminal snapshots/events
-    //  d. renders
-    //
-    // PTY read thread
-    //  a. blocks on PTY read()
-    //  b. feeds the terminal vt-parser
-    //  c. sends parser responses, write queue
-    //  d. publishes terminal snapshots/events
-    //
-    // PTY write thread
-    //  a. owns all writes to the PTY master
     start: while (!self.window.windowShouldClose()) {
-        const terminal = &self.terminal;
-
         const now = std.Io.Clock.Timestamp.now(self.io, .awake);
         const dt = self.last_frame.durationTo(now);
         self.last_frame = now;
@@ -498,7 +558,6 @@ pub fn run(self: *App) !void {
             if (was_task) self.pomodoro_stats.onTaskCompleted(self.io);
             if (was_long_break) self.pomodoro_stats.long_breaks_taken += 1;
 
-            // FIXME! Saving blocks the render loop; move it off this thread.
             pomodoro.save(
                 self.io,
                 &self.pomodoro_stats,
@@ -524,66 +583,46 @@ pub fn run(self: *App) !void {
         }
 
         var had_data = false;
-        var child_closed = false;
+        const driver_events = try self.driver.pollAndDrain();
 
-        drain: while (true) {
-            const n = self.pty.readRaw(buffer) catch |err| switch (err) {
-                error.WouldBlock => break :drain,
-                // On Linux, a PTY can report EIO when the child side closes.
-                error.InputOutput => {
-                    child_closed = true;
-                    break :drain;
-                },
-                else => return err,
-            };
-
-            if (n == 0) { // EOF.
-                child_closed = true;
-                break :drain;
-            }
-
-            terminal.feed(buffer[0..n]);
+        if (driver_events.had_data) {
             had_data = true;
-
-            self.drainAndWriteReplies();
-
-            if (terminal.events.any()) {
-                const events = terminal.takeEvents();
-
-                if (events.bell) self.ringBell();
-
-                if (events.resize) |resize| {
-                    self.pty.resize(
-                        resize.rows,
-                        resize.cols,
-                        self.frame_buffer_size.width,
-                        self.frame_buffer_size.height,
-                    ) catch |err| {
-                        log.err("drain: pty resize failed: {}", .{err});
-                    };
-
-                    self.needs_redraw = true;
-                }
-
-                if (events.hard_reset) {
-                    // Force full recalculation from framebuffer, bypasses the early-return guard
-                    self.selection = .empty;
-                    self.frame_buffer_size = .empty;
-                    self.handleResize(self.window.frameBufferSize(u16));
-                }
-
-                if (events.selection_reset) {
-                    self.selection = .empty;
-                    self.needs_redraw = true;
-                }
-            }
+            self.needs_redraw = true;
         }
 
-        // Only finalize UTF-8 when the PTY is actually closed.
-        if (child_closed) {
-            terminal.end();
-            // FIXME! terminal.end() may flush a pending grapheme or create events,
-            // so process those events here too.
+        if (driver_events.bell) self.ringBell();
+
+        if (driver_events.resize) |resize| {
+            self.driver.sendInput(.{
+                .resize = .{
+                    .rows = resize.rows,
+                    .cols = resize.cols,
+                    .pixel_width = self.frame_buffer_size.width,
+                    .pixel_height = self.frame_buffer_size.height,
+                },
+            }) catch |err| {
+                log.err("driver resize failed: {}", .{err});
+            };
+            self.needs_redraw = true;
+        }
+
+        if (driver_events.hard_reset) {
+            self.selection = .empty;
+            self.frame_buffer_size = .empty;
+            self.handleResize(self.window.frameBufferSize(u16));
+        }
+
+        if (driver_events.selection_reset) {
+            self.selection = .empty;
+            self.needs_redraw = true;
+        }
+
+        if (driver_events.title) {
+            self.updateWindowTitle();
+        }
+
+        if (driver_events.child_closed) {
+            break :start;
         }
 
         if (self.font_size_pending) |size| {
@@ -599,32 +638,18 @@ pub fn run(self: *App) !void {
 
         self.waitForNextEvent(had_data);
         self.flushScroll();
-
-        if (child_closed) break :start;
-    }
-}
-
-fn drainAndWriteReplies(self: *App) void {
-    var reply_buf: [Response.capacity]u8 = undefined;
-    const n = self.terminal.drainReplies(&reply_buf);
-    if (n > 0) {
-        _ = self.pty.writeAll(reply_buf[0..n]) catch |err| {
-            log.err("pty write replies failed: {}", .{err});
-        };
     }
 }
 
 fn renderFrame(self: *App) !bool {
-    const terminal = &self.terminal;
     const atlas = &self.atlas;
+    const current_frame = self.driver.getFrame();
 
-    _ = terminal.snapshot(&self.frame_snapshot);
-
-    const selection_state = self.buildSelectionState();
+    const selection_state = self.buildSelectionState(current_frame);
 
     const frame = try self.frame_builder.build(
         self.allocator,
-        &self.frame_snapshot,
+        current_frame,
         atlas,
         &self.rasterizer,
         self.blink_on,
@@ -673,20 +698,19 @@ fn resolveAnchor(position: rex.Selection.Position, total_line_scrolled: i64, scr
     return anchor_now;
 }
 
-fn buildSelectionState(self: *App) ?SelectionState {
+fn buildSelectionState(self: *App, frame: *const FrameType) ?SelectionState {
     if (self.selection.phase == .none) return null;
 
-    const is_primary = self.terminal.active_buffer == .primary;
-    const screen = self.terminal.active();
+    const is_primary = !frame.is_alternate;
 
-    const active_rows: i64 = @intCast(screen.active_rows);
-    const active_cols: u16 = screen.active_cols;
-    const total_lines_scrolled = screen.total_lines_scrolled;
-    const scrollback_used = screen.scrollbackUsedAs(i64);
+    const active_rows: i64 = @intCast(frame.active_rows);
+    const active_cols: u16 = frame.active_cols;
+    const total_lines_scrolled = frame.total_lines_scrolled;
+    const scrollback_used: i64 = @intCast(frame.scrollback_used);
 
     const start_anchor = resolveAnchor(self.selection.range.start, total_lines_scrolled, scrollback_used) orelse return null;
     const end_anchor = resolveAnchor(self.selection.range.end, total_lines_scrolled, scrollback_used) orelse return null;
-    const viewport_offset = screen.viewportOffsetAs(i64);
+    const viewport_offset: i64 = @intCast(frame.viewport_offset);
 
     const start_row_i = start_anchor + viewport_offset;
     const end_row_i = end_anchor + viewport_offset;
@@ -725,13 +749,13 @@ fn buildSelectionState(self: *App) ?SelectionState {
     // Only apply the theme selection color on the primary buffer.
 
     const foreground = blk: {
-        if (self.terminal.selection_foreground) |fg| break :blk fg.toArray();
+        if (frame.selection_foreground) |fg| break :blk fg;
         if (is_primary) break :blk self.config.theme.selection_foreground.toArray();
         break :blk null;
     };
 
     const background = blk: {
-        if (self.terminal.selection_background) |bg| break :blk bg.toArray();
+        if (frame.selection_background) |bg| break :blk bg;
         if (is_primary) break :blk self.config.theme.selection_background.toArray();
         break :blk null;
     };
@@ -781,14 +805,16 @@ pub fn handleResize(self: *App, dimension: Dimension(u16)) void {
     const new_cols: u16 = frame_buffer_width / cell_width;
     if (new_rows == 0 or new_cols == 0) return;
 
-    if (self.terminal.mode.column_132) {
-        const deccolm_cols = self.terminal.active().active_cols;
-        self.terminal.resize(new_rows, deccolm_cols);
-        self.pty.resize(new_rows, deccolm_cols, frame_buffer_width, frame_buffer_height) catch {};
-    } else {
-        self.terminal.resize(new_rows, new_cols);
-        self.pty.resize(new_rows, new_cols, frame_buffer_width, frame_buffer_height) catch {};
-    }
+    self.driver.sendInput(.{
+        .resize = .{
+            .rows = new_rows,
+            .cols = new_cols,
+            .pixel_width = frame_buffer_width,
+            .pixel_height = frame_buffer_height,
+        },
+    }) catch |err| {
+        log.err("handleResize: driver sendInput failed: {}", .{err});
+    };
 
     log.debug("fb={}x{} cell={}x{} grid={}cols {}rows (unused: {}px right, {}px bottom)", .{
         frame_buffer_width,                         frame_buffer_height,
@@ -799,8 +825,6 @@ pub fn handleResize(self: *App, dimension: Dimension(u16)) void {
 
     gl.viewport(0, 0, @intCast(frame_buffer_width), @intCast(frame_buffer_height));
 
-    self.terminal.active().dirty_rows = .full;
-    self.terminal.active().bump();
     self.selection = .empty; // clear selection on resize
     self.needs_redraw = true;
 }
@@ -809,55 +833,10 @@ fn pasteFromClipboard(self: *App) void {
     const raw = c.glfwGetClipboardString(self.window.handle) orelse return;
     const text: []const u8 = std.mem.span(raw);
 
-    // log.debug("paste text: 0x{x} | '{s}'", .{ text, text });
-    // log.debug("terminal modes: {any}", .{self.terminal.mode});
-    // log.debug("active screen buffer modes: {any}", .{self.terminal.active().mode});
-
     self.selection = .empty;
-    self.terminal.active().dirty_rows = .full;
-    self.terminal.active().bump();
-    self.needs_redraw = true;
-
-    // One vectored write, so a full pty cannot leave the paste open: an
-    // app that never sees ESC [ 201 ~ treats all later keys as pasted.
-    if (self.terminal.mode.bracketed_paste) {
-        const paste_start = "\x1b[200~";
-        const paste_end = "\x1b[201~";
-        var iovecs = [_]posix.iovec_const{
-            .{ .base = paste_start, .len = 6 },
-            .{ .base = text.ptr, .len = text.len },
-            .{ .base = paste_end, .len = 6 },
-        };
-
-        self.pty.writevAll(&iovecs) catch |err| {
-            log.err("pasteFromClipboard: pty write failed: {}", .{err});
-            self.snapToLiveView();
-            return;
-        };
-    } else {
-        // Strip NUL bytes; convert \n to \r outside bracketed mode
-        var tmp: [4096]u8 = undefined;
-        var out_len: usize = 0;
-        for (text) |ch| {
-            if (ch == 0) continue;
-            tmp[out_len] = if (ch == '\n') '\r' else ch;
-            out_len += 1;
-            if (out_len == tmp.len) {
-                _ = self.pty.writeAll(tmp[0..out_len]) catch |err| {
-                    log.err("pasteFromClipboard: pty write failed: {}", .{err});
-                    break; // don't continue dropping chunks
-                };
-                out_len = 0;
-            }
-        }
-
-        if (out_len > 0) {
-            _ = self.pty.writeAll(tmp[0..out_len]) catch |err| {
-                log.err("pasteFromClipboard: pty write failed: {}", .{err});
-            };
-        }
-    }
-
+    self.driver.writePaste(text) catch |err| {
+        log.err("pasteFromClipboard: writePaste failed: {}", .{err});
+    };
     self.snapToLiveView();
 }
 
@@ -879,11 +858,8 @@ fn setFontSize(self: *App, new_size: u32) void {
     // Invalidate atlas, all cached glyphs are wrong size now
     self.atlas.invalidate();
 
-    // Force full rebuild next frame via generation bump
-    self.terminal.primary.dirty_rows = .full;
-    self.terminal.alternate.dirty_rows = .full;
-    self.terminal.primary.bump();
-    self.terminal.alternate.bump();
+    // Invalidate frame builder cached generation
+    self.frame_builder.last_generation = null;
 
     self.font_size = clamped_size;
     self.needs_redraw = true;
@@ -907,15 +883,19 @@ fn handleAction(self: *App, action: rex.input.Action) void {
             if (self.selection.phase != .none) {
                 self.copySelectionToClipboard();
                 self.selection = .empty;
-                self.terminal.active().bump();
+                self.needs_redraw = true;
             }
         },
         .scroll_up => {
-            self.terminal.active().scrollViewportBack(self.config.scroll.lines);
+            self.driver.sendInput(.{
+                .viewport_scroll = .{ .lines = -@as(i32, @intCast(self.config.scroll.lines)) },
+            }) catch {};
             self.needs_redraw = true;
         },
         .scroll_down => {
-            self.terminal.active().scrollViewportForward(self.config.scroll.lines);
+            self.driver.sendInput(.{
+                .viewport_scroll = .{ .lines = @as(i32, @intCast(self.config.scroll.lines)) },
+            }) catch {};
             self.needs_redraw = true;
         },
         .increase_font_size => {
@@ -928,8 +908,6 @@ fn handleAction(self: *App, action: rex.input.Action) void {
             self.font_size_pending = @max(target, self.config.font.min_size);
         },
         .reset_font_size => {
-            // Through font_size_pending like the others, so one frame
-            // applies one size.
             self.font_size_pending = self.config.font.height;
         },
         .new_window => self.openNewWindow(),
@@ -958,11 +936,10 @@ fn handleAction(self: *App, action: rex.input.Action) void {
             self.updateWindowTitle();
         },
         .debug => {
-            // FIXME display pomodoro stats
             log.debug("pomodoro_stats={any}", .{self.pomodoro_stats});
         },
         .send_to_pty => |seq| {
-            _ = self.pty.writeAll(seq) catch |err| {
+            self.driver.sendBytes(seq) catch |err| {
                 log.err("handleAction: send to pty write failed: {}", .{err});
             };
         },
@@ -986,8 +963,9 @@ fn openNewWindow(self: *App) void {
 
     // chdir follows the /proc/<pid>/cwd link to wherever the shell is.
     var cwd_buf: [32]u8 = undefined;
-    const shell_cwd: ?[]const u8 = if (self.pty.pid > 0)
-        std.fmt.bufPrint(&cwd_buf, "/proc/{d}/cwd", .{self.pty.pid}) catch null
+    const pid = self.driver.getPid();
+    const shell_cwd: ?[]const u8 = if (pid > 0)
+        std.fmt.bufPrint(&cwd_buf, "/proc/{d}/cwd", .{pid}) catch null
     else
         null;
 
@@ -1000,9 +978,9 @@ fn openNewWindow(self: *App) void {
         return;
     };
 
-    const pid = child.id orelse return;
-    reapInBackground(pid) catch |err| {
-        log.warn("new window: no reaper thread ({}); pid {d} stays a zombie until rex exits", .{ err, pid });
+    const child_pid = child.id orelse return;
+    reapInBackground(child_pid) catch |err| {
+        log.warn("new window: no reaper thread ({}); pid {d} stays a zombie until rex exits", .{ err, child_pid });
     };
 }
 
@@ -1047,8 +1025,10 @@ fn reapChild(pid: posix.pid_t) void {
 /// selection is cleared. A redraw is always requested because PTY input may
 /// produce terminal output that changes the displayed state.
 fn snapToLiveView(self: *App) void {
-    if (self.terminal.active_buffer == .primary and self.terminal.active().viewportReset()) {
+    const frame = self.driver.getFrame();
+    if (!frame.is_alternate and frame.viewport_offset > 0) {
         self.selection = .empty;
+        self.driver.sendInput(.{ .set_viewport_offset = 0 }) catch {};
     }
 
     self.needs_redraw = true;
@@ -1067,8 +1047,8 @@ const charCb: c.GLFWcharfun = struct {
         var buf: [4]u8 = undefined;
         const len = std.unicode.utf8Encode(cp, &buf) catch return;
         if (len > 0) {
-            app.pty.writeAll(buf[0..len]) catch |err| {
-                log.err("charCallback: pty write failed: {}", .{err});
+            app.driver.sendBytes(buf[0..len]) catch |err| {
+                log.err("charCallback: driver sendBytes failed: {}", .{err});
                 return;
             };
             app.snapToLiveView();
@@ -1093,18 +1073,18 @@ const keyCb: c.GLFWkeyfun = struct {
         }
 
         // Terminal key encoding
-        const terminal = &app.terminal;
+        const driver_modes = app.driver.getModes();
         const context: KeyContext = .{
-            .modify_other_keys = app.terminal.mode.modify_other_keys,
-            .cursor_keys = terminal.mode.cursor_keys,
-            .keypad_app = terminal.mode.keypad_app,
+            .modify_other_keys = driver_modes.modify_other_keys,
+            .cursor_keys = driver_modes.cursor_keys,
+            .keypad_app = driver_modes.keypad_app,
         };
 
         var buf: [32]u8 = undefined;
         const bytes = rex.input.encodeKey(key, mods, context, &buf);
         if (bytes.len > 0) {
-            app.pty.writeAll(bytes) catch |err| {
-                log.err("keyCallback: pty write failed: {}", .{err});
+            app.driver.sendBytes(bytes) catch |err| {
+                log.err("keyCallback: driver sendBytes failed: {}", .{err});
                 return;
             };
             app.snapToLiveView();
@@ -1120,92 +1100,11 @@ fn mouseCellPos(self: *App, xpos: f32, ypos: f32) struct { u16, u16 } {
 }
 
 fn copySelectionToClipboard(self: *App) void {
-    const screen = self.terminal.active();
-    const total_lines_scrolled = screen.total_lines_scrolled;
-    const scrollback_used = screen.scrollbackUsedAs(i64);
-
-    // Correct both anchors for scrolling since they were captured, and
-    // give up if either has left the scrollback.
-    const start_anchor = resolveAnchor(self.selection.range.start, total_lines_scrolled, scrollback_used) orelse return;
-    const end_anchor = resolveAnchor(self.selection.range.end, total_lines_scrolled, scrollback_used) orelse return;
-
-    const start_col = self.selection.range.start.col;
-    const end_col = self.selection.range.end.col;
-
-    // Order the endpoints by row, then column.
-    const lo_anchor, const lo_col, const hi_anchor, const hi_col = blk: {
-        if (start_anchor < end_anchor or (start_anchor == end_anchor and start_col <= end_col)) {
-            break :blk .{ start_anchor, start_col, end_anchor, end_col };
-        } else {
-            break :blk .{ end_anchor, end_col, start_anchor, start_col };
-        }
-    };
-
-    const active_rows: i64 = @intCast(screen.active_rows);
-
-    // Clamp to what's actually retrievable right now, purely in anchor space.
-    // Live bottom is anchor == active_rows - 1; deepest retained scrollback
-    // line is anchor == -scrollback_used. No viewport_offset involved at all.
-    const clamped_lo: i64 = std.math.clamp(lo_anchor, -scrollback_used, active_rows - 1);
-    const clamped_hi: i64 = std.math.clamp(hi_anchor, -scrollback_used, active_rows - 1);
-    if (clamped_hi < clamped_lo) return; // nothing retained to copy
-
     var buf: [max_copy_size]u8 = undefined;
-    var pos: usize = 0;
-
-    var anchor_row: i64 = clamped_lo;
-    while (anchor_row <= clamped_hi) : (anchor_row += 1) {
-        var col_start: usize = if (anchor_row == clamped_lo) lo_col else 0;
-        const col_end: usize = if (anchor_row == clamped_hi) hi_col else @max(screen.active_cols, 1) - 1;
-
-        // If col_start lands on a placeholder, back up to the real cell
-        if (col_start > 0) {
-            const maybe_placeholder = screen.cellAtAnchor(anchor_row, col_start);
-            if (maybe_placeholder.kind == .wide_right) col_start -= 1;
-        }
-
-        // save buffer offset at the start of this row
-        const row_start = pos;
-
-        for (col_start..col_end + 1) |col| {
-            const cell = screen.cellAtAnchor(anchor_row, col);
-            if (pos + 4 > buf.len) break;
-
-            switch (cell.kind) {
-                .wide_right => continue, // right half of a wide character
-                .empty => {
-                    // A space, so the trailing-space trim below sees it.
-                    buf[pos] = ' ';
-                    pos += 1;
-                },
-                .narrow, .wide_left => {
-                    const cp: u21 = std.math.cast(u21, cell.codepoint) orelse ' ';
-                    const len = std.unicode.utf8Encode(cp, buf[pos..][0..4]) catch continue;
-                    pos += len;
-                },
-                .grapheme, .grapheme_wide => {
-                    const cps = screen.getGrapheme(cell.codepoint) orelse continue;
-                    for (cps) |cp| {
-                        const len = std.unicode.utf8Encode(cp, buf[pos..][0..4]) catch continue;
-                        pos += len;
-                    }
-                },
-                .shaped => {}, // not yet implemented, skip
-            }
-        }
-
-        while (pos > row_start and buf[pos - 1] == ' ') pos -= 1;
-
-        if (anchor_row < clamped_hi and pos < buf.len - 1) {
-            buf[pos] = '\n';
-            pos += 1;
-        }
-    }
-
-    if (pos == 0) return;
-    if (pos >= buf.len) pos = buf.len - 1;
-    buf[pos] = 0; // null-terminate for GLFW
-    c.glfwSetClipboardString(self.window.handle, buf[0..pos :0].ptr);
+    const len = self.driver.copySelectionText(self.selection, &buf);
+    if (len == 0) return;
+    buf[len] = 0; // null-terminate for GLFW
+    c.glfwSetClipboardString(self.window.handle, buf[0..len :0].ptr);
 }
 
 /// The report number of a GLFW button, or null for buttons past the
@@ -1261,25 +1160,34 @@ fn detectMouseClickKind(self: *App, anchor: i32, col: u16, mods: c_int, scroll_g
     return if (mods & c.GLFW_MOD_ALT != 0) .block else kind;
 }
 
-fn fullRedraw(self: *App) void {
-    self.terminal.active().dirty_rows = .full;
-    self.terminal.active().bump();
-    self.needs_redraw = true;
-}
-
 fn handleSelectionPress(self: *App, row: u16, col: u16, mods: c_int) void {
-    const terminal = &self.terminal;
-    const screen = terminal.active();
-    const viewport_offset = screen.viewportOffsetAs(i32);
+    const frame = self.driver.getFrame();
+    const viewport_offset = @as(i32, @intCast(frame.viewport_offset));
     const anchor = @as(i32, row) - viewport_offset;
-    const scroll_gen = screen.total_lines_scrolled;
-    const scrollback_used = screen.scrollbackUsedAs(i64);
+    const scroll_gen = frame.total_lines_scrolled;
+    const scrollback_used = @as(i64, @intCast(frame.scrollback_used));
 
     self.selection.kind = self.detectMouseClickKind(anchor, col, mods, scroll_gen, scrollback_used);
     self.selection.phase = .dragging;
-    self.selection.beginPress(screen, &self.word_classifier, anchor, col, scroll_gen);
 
-    self.fullRedraw();
+    switch (self.selection.kind) {
+        .character, .block => {
+            self.selection.range.start.set(anchor, col, scroll_gen);
+            self.selection.range.end.set(anchor, col, scroll_gen);
+        },
+        .word => {
+            const left, const right = frame.wordsBoundsAt(&self.word_classifier, row, col, self.word_classifier.option.join);
+            self.selection.range.start.set(anchor, left, scroll_gen);
+            self.selection.range.end.set(anchor, right, scroll_gen);
+        },
+        .line => {
+            const last_col = frame.active_cols - 1;
+            self.selection.range.start.set(anchor, 0, scroll_gen);
+            self.selection.range.end.set(anchor, last_col, scroll_gen);
+        },
+    }
+
+    self.needs_redraw = true;
 }
 
 fn handleSelectionRelease(self: *App) void {
@@ -1294,8 +1202,17 @@ fn reportMouseButton(self: *App, col: u16, row: u16, button: c_int, mod_byte: u8
     const held = mouseButtonOf(button) orelse return;
     self.mouse_report_col = col;
     self.mouse_report_row = row;
-    self.terminal.sendMouse(col, row, @intFromEnum(held), mod_byte, press);
-    self.drainAndWriteReplies();
+    self.driver.sendInput(.{
+        .mouse_button = .{
+            .col = col,
+            .row = row,
+            .button = @intFromEnum(held),
+            .mods = mod_byte,
+            .press = press,
+        },
+    }) catch |err| {
+        log.err("reportMouseButton: sendInput failed: {}", .{err});
+    };
 }
 
 const mouseButtonCb: c.GLFWmousebuttonfun = struct {
@@ -1308,13 +1225,14 @@ const mouseButtonCb: c.GLFWmousebuttonfun = struct {
         const shift_held = (mods & c.GLFW_MOD_SHIFT) != 0;
 
         const col, const row = app.mouseCellPos(app.mouse_x, app.mouse_y);
-        const terminal = &app.terminal;
-        const mouse_reporting = terminal.mode.isMouseReporting();
-        const scrollback_used = terminal.active().scrollbackUsedAs(i64);
+        const driver_modes = app.driver.getModes();
+        const mouse_reporting = driver_modes.mouse_reporting;
+        const frame = app.driver.getFrame();
+        const scrollback_used = frame.scrollback_used;
 
         if (scrollback_used > 0 and app.handleScrollbarClick()) return;
 
-        const is_primary = terminal.active_buffer == .primary;
+        const is_primary = !frame.is_alternate;
         // log.debug("mouse_reporting={} shift_held={} is_primary={}", .{ mouse_reporting, shift_held, is_primary });
         if (is_primary and (!mouse_reporting or shift_held)) {
             if (press and button == c.GLFW_MOUSE_BUTTON_LEFT) {
@@ -1333,13 +1251,13 @@ const mouseButtonCb: c.GLFWmousebuttonfun = struct {
 fn handleScrollbarRelease(self: *App) bool {
     if (!self.scrollbar_dragging) return false;
     self.scrollbar_dragging = false;
-    self.terminal.active().bump();
     self.needs_redraw = true;
     return true;
 }
 
 fn handleScrollbarClick(self: *App) bool {
-    const screen = &self.terminal.primary;
+    const frame = self.driver.getFrame();
+    if (frame.is_alternate or frame.scrollback_used == 0) return false;
     const frame_width: f32 = @floatFromInt(self.frame_buffer_size.width);
     const frame_height: f32 = @floatFromInt(self.frame_buffer_size.height);
     const mouse_x = self.mouse_x;
@@ -1356,8 +1274,8 @@ fn handleScrollbarClick(self: *App) bool {
         self.scrollbar_drag_offset_y = mouse_y - thumb.top;
     } else {
         const new_top = std.math.clamp(mouse_y - thumb.height / 2.0, 0.0, thumb.travel(frame_height));
-        screen.viewport_offset = self.viewportOffsetAt(thumb.topFracAt(frame_height, new_top));
-        screen.dirty_rows = .full;
+        const target = self.viewportOffsetAt(thumb.topFracAt(frame_height, new_top));
+        self.driver.sendInput(.{ .set_viewport_offset = target }) catch {};
 
         // Drag from where the cursor sits on the moved thumb: its centre,
         // unless the thumb was clamped at either end of the track.
@@ -1365,7 +1283,6 @@ fn handleScrollbarClick(self: *App) bool {
     }
 
     self.scrollbar_dragging = true;
-    self.terminal.active().bump();
     self.needs_redraw = true;
     return true;
 }
@@ -1373,19 +1290,16 @@ fn handleScrollbarClick(self: *App) bool {
 fn handleScrollbarDrag(self: *App) bool {
     if (!self.scrollbar_dragging) return false;
 
+    const frame = self.driver.getFrame();
     const frame_height: f32 = @floatFromInt(self.frame_buffer_size.height);
-    const screen = &self.terminal.primary;
     const thumb = self.scrollbarThumb();
     if (thumb.travel(frame_height) <= 0) return true; // consumed, nothing to move
 
     const top = self.mouse_y - self.scrollbar_drag_offset_y;
     const target = self.viewportOffsetAt(thumb.topFracAt(frame_height, top));
-    if (target == screen.viewport_offset) return true; // nothing moved, so no redraw
+    if (target == frame.viewport_offset) return true; // nothing moved, so no redraw
 
-    screen.viewport_offset = target;
-    screen.dirty_rows = .full;
-    screen.bump(); // the primary screen's viewport changed
-    self.terminal.active().bump(); // redraw whichever screen is shown
+    self.driver.sendInput(.{ .set_viewport_offset = target }) catch {};
     self.needs_redraw = true;
     return true;
 }
@@ -1393,21 +1307,23 @@ fn handleScrollbarDrag(self: *App) bool {
 /// The primary screen's scrollbar thumb, placed exactly as the renderer
 /// draws it, minimum height included.
 fn scrollbarThumb(self: *const App) Scrollbar.Thumb {
-    const screen = &self.terminal.primary;
+    const frame = self.driver.getFrame();
     const frame_height: f32 = @floatFromInt(self.frame_buffer_size.height);
-    const fracs: Scrollbar.Fractions = .of(screen.active_rows, screen.scrollback_used, screen.viewport_offset);
+    const fracs: Scrollbar.Fractions = .of(frame.active_rows, frame.scrollback_used, frame.viewport_offset);
     return .of(frame_height, fracs.top, fracs.height, self.config.window.scrollbar.min_thumb_height);
 }
 
 /// The primary screen's viewport offset for a thumb at `top_frac`.
 fn viewportOffsetAt(self: *const App, top_frac: f32) u32 {
-    return Scrollbar.Fractions.viewportOffsetAt(top_frac, self.terminal.primary.scrollback_used);
+    const frame = self.driver.getFrame();
+    return Scrollbar.Fractions.viewportOffsetAt(top_frac, frame.scrollback_used);
 }
 
 fn updateScrollbarHover(self: *App) void {
     const sb = &self.renderer.scrollbar;
+    const frame = self.driver.getFrame();
     const new_hover = blk: {
-        if (self.terminal.primary.scrollback_used == 0) break :blk false;
+        if (frame.scrollback_used == 0 or frame.is_alternate) break :blk false;
         const fb_w: f32 = @floatFromInt(self.frame_buffer_size.width);
         const bar_x = fb_w - sb.option.hover_width - sb.option.gap;
         break :blk self.mouse_x >= bar_x;
@@ -1415,7 +1331,6 @@ fn updateScrollbarHover(self: *App) void {
 
     if (new_hover == sb.hover) return;
     sb.hover = new_hover;
-    self.terminal.active().bump();
     self.needs_redraw = true;
 }
 
@@ -1426,38 +1341,20 @@ fn flushScroll(self: *App) void {
     if (steps == 0) return; // fractional remainder only, not a full step yet
     self.scroll_accumulator_y -= @floatFromInt(steps);
 
-    const terminal = &self.terminal;
-    if (terminal.mode.mouse_tracking.reportsWheel()) {
-        const col, const row = self.mouseCellPos(self.mouse_x, self.mouse_y);
+    const col, const row = self.mouseCellPos(self.mouse_x, self.mouse_y);
+    const button: u8 = if (steps > 0) 64 else 65;
+    const abs_steps: u16 = @intCast(@abs(steps));
+    const lines: u16 = abs_steps * @as(u16, @intCast(self.config.scroll.wheel_lines));
 
-        // Wheel up is button 64, down is 65.
-        const button: u8 = if (steps > 0) 64 else 65;
-
-        var i: u32 = 0;
-        while (i < @abs(steps)) : (i += 1) {
-            terminal.sendMouse(col, row, button, 0, true);
-            self.drainAndWriteReplies();
-        }
-
-        return;
-    }
-
-    if (terminal.active_buffer == .alternate) return;
-
-    // scrollViewportBack and Forward mark the rows dirty themselves.
-
-    const prev_offset = terminal.active().viewport_offset;
-    const lines: u32 = @as(u32, @intCast(@abs(steps))) * self.config.scroll.wheel_lines;
-
-    if (steps > 0) {
-        terminal.active().scrollViewportBack(lines);
-    } else {
-        terminal.active().scrollViewportForward(lines);
-    }
-
-    if (terminal.active().viewport_offset != prev_offset) {
-        self.needs_redraw = true;
-    }
+    self.driver.sendInput(.{
+        .mouse_scroll = .{
+            .col = col,
+            .row = row,
+            .button = button,
+            .steps = lines,
+        },
+    }) catch {};
+    self.needs_redraw = true;
 }
 
 const scrollCb: c.GLFWscrollfun = struct {
@@ -1472,8 +1369,17 @@ fn sendMouseMotion(self: *App, col: u16, row: u16) void {
     if (col == self.mouse_report_col and row == self.mouse_report_row) return;
     self.mouse_report_col = col;
     self.mouse_report_row = row;
-    self.terminal.sendMouseMotion(col, row, self.mouse_held.dragged(), 0);
-    self.drainAndWriteReplies();
+    const button: ?u8 = if (self.mouse_held.dragged()) |held| @intFromEnum(held) else null;
+    self.driver.sendInput(.{
+        .mouse_motion = .{
+            .col = col,
+            .row = row,
+            .button = button,
+            .mods = 0,
+        },
+    }) catch |err| {
+        log.err("sendMouseMotion: sendInput failed: {}", .{err});
+    };
 }
 
 const cursorPosCb: c.GLFWcursorposfun = struct {
@@ -1491,9 +1397,8 @@ const cursorPosCb: c.GLFWcursorposfun = struct {
 
         const col, const row = app.mouseCellPos(app.mouse_x, app.mouse_y);
 
-        const terminal = &app.terminal;
-        const screen = terminal.active();
-        const mouse_reporting = terminal.mode.isMouseReporting();
+        const driver_modes = app.driver.getModes();
+        const mouse_reporting = driver_modes.mouse_reporting;
 
         // A shift-drag selects text even while the host tracks the mouse.
         if (mouse_reporting and app.selection.phase != .dragging) {
@@ -1504,10 +1409,13 @@ const cursorPosCb: c.GLFWcursorposfun = struct {
         const left_held = app.mouse_held.isHeld(.left);
 
         if (left_held and app.selection.phase == .dragging) {
-            if (terminal.active_buffer != .primary) return;
+            const frame = app.driver.getFrame();
+            if (frame.is_alternate) return;
 
-            const anchor: i32 = @as(i32, row) - screen.viewportOffsetAs(i32);
-            const scroll_gen = screen.total_lines_scrolled;
+            const viewport_offset = @as(i32, @intCast(frame.viewport_offset));
+            const anchor: i32 = @as(i32, row) - viewport_offset;
+            const scroll_gen = frame.total_lines_scrolled;
+            const scrollback_used = @as(i64, @intCast(frame.scrollback_used));
 
             switch (app.selection.kind) {
                 .character, .block => {
@@ -1517,15 +1425,20 @@ const cursorPosCb: c.GLFWcursorposfun = struct {
                     const join_option = app.word_classifier.option.join;
                     // Union the drag-point's word bounds with the ORIGINAL click's word
                     // bounds, extending outward from the click, not re-snapping independently.
-                    const left, const right = screen.wordsBoundsAt(&app.word_classifier, anchor, col, join_option);
+                    const left, const right = frame.wordsBoundsAt(&app.word_classifier, row, col, join_option);
 
                     const click_anchor = resolveAnchor(
                         app.mouse_last_click_pos,
                         scroll_gen,
-                        screen.scrollbackUsedAs(i64),
+                        scrollback_used,
                     ) orelse return; // click row evicted from scrollback, bail, don't extend a dead selection
                     const click_col = app.mouse_last_click_pos.col;
-                    const click_left, const click_right = screen.wordsBoundsAt(&app.word_classifier, click_anchor, click_col, join_option);
+                    const click_row_i = click_anchor + @as(i64, @intCast(frame.viewport_offset));
+                    const click_row: usize = if (click_row_i >= 0 and click_row_i < frame.active_rows)
+                        @intCast(click_row_i)
+                    else
+                        @intCast(row);
+                    const click_left, const click_right = frame.wordsBoundsAt(&app.word_classifier, click_row, click_col, join_option);
 
                     if (@as(i64, anchor) < click_anchor or (anchor == click_anchor and col < click_col)) {
                         // dragging backward: end snaps to the far-left word boundary,
@@ -1538,11 +1451,11 @@ const cursorPosCb: c.GLFWcursorposfun = struct {
                     }
                 },
                 .line => {
-                    const last_col = screen.active_cols - 1;
+                    const last_col = frame.active_cols - 1;
                     const click_anchor = resolveAnchor(
                         app.mouse_last_click_pos,
                         scroll_gen,
-                        screen.scrollbackUsedAs(i64),
+                        scrollback_used,
                     ) orelse return; // click row evicted from scrollback, bail, don't extend a dead selection
                     if (@as(i64, anchor) < click_anchor) {
                         app.selection.range.start.set(@intCast(click_anchor), last_col, scroll_gen);
@@ -1554,8 +1467,6 @@ const cursorPosCb: c.GLFWcursorposfun = struct {
                 },
             }
 
-            terminal.active().dirty_rows = .full;
-            terminal.active().bump();
             app.needs_redraw = true;
         }
     }
@@ -1564,11 +1475,12 @@ const cursorPosCb: c.GLFWcursorposfun = struct {
 const windowFocusCb: c.GLFWwindowfocusfun = struct {
     fn cb(handle: ?*c.GLFWwindow, focused: c_int) callconv(.c) void {
         const app: *App = @ptrCast(@alignCast(c.glfwGetWindowUserPointer(handle) orelse return));
-        app.window_focused = (focused != 0);
-        if (!app.terminal.mode.focus_events) return;
-        const seq = if (focused != 0) "\x1b[I" else "\x1b[O";
-        _ = app.pty.writeAll(seq) catch |err| {
-            log.err("windowFocusCallback: pty write failed: {}", .{err});
+        const is_focused = (focused != 0);
+        app.window_focused = is_focused;
+        const modes = app.driver.getModes();
+        if (!modes.focus_events) return;
+        app.driver.sendInput(.{ .focus = is_focused }) catch |err| {
+            log.err("windowFocusCallback: sendInput failed: {}", .{err});
         };
     }
 }.cb;
@@ -1620,4 +1532,45 @@ test "reapInBackground: reaps a finished child without a zombie" {
         if (tries == 200) return error.ChildNotReaped;
         std.Io.sleep(std.testing.io, .fromMilliseconds(10), .awake) catch {};
     }
+}
+
+test "Driver: single and threaded polymorphic dispatch" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    var sv_single: [2]posix.fd_t = undefined;
+    try testing.expectEqual(@as(c_int, 0), system.socketpair(posix.AF.UNIX, posix.SOCK.STREAM | posix.SOCK.NONBLOCK, 0, &sv_single));
+    defer _ = system.close(sv_single[1]);
+    const pty_single = rex.termio.pty.Posix{
+        .master = sv_single[0],
+        .pid = -1,
+        .stdout_read_fd = -1,
+        .error_read_fd = -1,
+    };
+
+    const single_driver = try SingleDriverType.init(allocator, pty_single, .graphite);
+    var driver_s: Driver = .{ .single = single_driver };
+    defer driver_s.deinit(testing.io);
+
+    try testing.expectEqual(@as(posix.pid_t, -1), driver_s.getPid());
+    try testing.expect(!driver_s.getModes().cursor_keys);
+    _ = driver_s.getFrame();
+
+    var sv_multi: [2]posix.fd_t = undefined;
+    try testing.expectEqual(@as(c_int, 0), system.socketpair(posix.AF.UNIX, posix.SOCK.STREAM | posix.SOCK.NONBLOCK, 0, &sv_multi));
+    defer _ = system.close(sv_multi[1]);
+    const pty_multi = rex.termio.pty.Posix{
+        .master = sv_multi[0],
+        .pid = -1,
+        .stdout_read_fd = -1,
+        .error_read_fd = -1,
+    };
+
+    const threaded_driver = try ThreadedDriverType.create(allocator, pty_multi, .graphite, 150);
+    var driver_m: Driver = .{ .threaded = threaded_driver };
+    defer driver_m.deinit(testing.io);
+
+    try testing.expectEqual(@as(posix.pid_t, -1), driver_m.getPid());
+    try testing.expect(!driver_m.getModes().cursor_keys);
+    _ = driver_m.getFrame();
 }

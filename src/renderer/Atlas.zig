@@ -105,6 +105,14 @@ pub const Option = struct {
     height: u16 = 2048,
 };
 
+pub const face_count = @typeInfo(FaceKind).@"enum".fields.len;
+pub const span_count = @typeInfo(Span).@"enum".fields.len;
+pub const AsciiLut = [face_count][span_count][128]?Metric;
+
+pub fn initAsciiLut() AsciiLut {
+    return [1][span_count][128]?Metric{[1][128]?Metric{[1]?Metric{null} ** 128} ** span_count} ** face_count;
+}
+
 const Atlas = @This();
 
 /// Texture width in pixels, from Option.width after clamping.
@@ -127,6 +135,10 @@ glyph_cache: std.AutoHashMap(Key, Metric),
 /// Grapheme cluster cache, keyed by `hashSequence`.
 sequence_cache: std.AutoHashMap(u64, Metric),
 
+/// Flat L1-resident cache table for ASCII codepoints (0..127).
+/// Eliminates hash calculation and hash map probing during frame building.
+ascii_lut: AsciiLut = initAsciiLut(),
+
 pub const empty: Atlas = .{
     .width = 0,
     .height = 0,
@@ -134,6 +146,7 @@ pub const empty: Atlas = .{
     .gray_texture = undefined,
     .glyph_cache = undefined,
     .sequence_cache = undefined,
+    .ascii_lut = initAsciiLut(),
 };
 
 /// Creates both textures at the option's size, clamped to what the
@@ -225,17 +238,31 @@ pub fn destroy(self: *Atlas) void {
 /// Returns the cached metric for `codepoint` drawn across `span` cells,
 /// rasterizing and uploading it on a miss.
 pub fn get(self: *Atlas, gpa: Allocator, rasterizer: *Rasterizer, codepoint: u21, face: FaceKind, span: Span) !Metric {
+    if (codepoint < 128) {
+        const f = @intFromEnum(face);
+        const s = @intFromEnum(span);
+        if (self.ascii_lut[f][s][codepoint]) |m| return m;
+    }
+
     const key: Key = .{ .codepoint = codepoint, .face = face, .span = span };
 
     // Reserve the slot before uploading, so a glyph that reached the
     // atlas is always cached; a failed rasterize or upload drops it.
     const gop = try self.glyph_cache.getOrPut(key);
-    if (gop.found_existing) return gop.value_ptr.*;
+    if (gop.found_existing) {
+        if (codepoint < 128) {
+            self.ascii_lut[@intFromEnum(face)][@intFromEnum(span)][codepoint] = gop.value_ptr.*;
+        }
+        return gop.value_ptr.*;
+    }
     errdefer _ = self.glyph_cache.remove(key);
 
     const glyph = try rasterizer.rasterize(gpa, codepoint, face, span);
     const metric = try self.upload(glyph);
     gop.value_ptr.* = metric;
+    if (codepoint < 128) {
+        self.ascii_lut[@intFromEnum(face)][@intFromEnum(span)][codepoint] = metric;
+    }
     return gop.value_ptr.*;
 }
 
@@ -342,6 +369,7 @@ fn pack(self: *Atlas, kind: GlyphKind, w: u16, h: u16) !struct { u16, u16 } {
 pub fn invalidate(self: *Atlas) void {
     self.glyph_cache.clearRetainingCapacity();
     self.sequence_cache.clearRetainingCapacity();
+    self.ascii_lut = initAsciiLut();
     self.state.gray = PackingState.init;
     self.state.color = PackingState.init;
     gl.clearTexImage(self.gray_texture, 0, gl.RED, gl.UNSIGNED_BYTE, null);

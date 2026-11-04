@@ -40,10 +40,12 @@ pub const CellBuffer = struct {
     quad_vbo: gl.GLuint,
     inst_vbo: gl.GLuint,
     capacity: usize,
+    uploaded_len: usize = 0,
 
     pub fn init(capacity: usize) CellBuffer {
         var self: CellBuffer = undefined;
         self.capacity = capacity;
+        self.uploaded_len = 0;
 
         gl.genVertexArrays(1, &self.vao);
         gl.genBuffers(1, &self.quad_vbo);
@@ -123,6 +125,22 @@ pub const CellBuffer = struct {
         gl.bufferData(gl.ARRAY_BUFFER, @as(gl.GLsizeiptr, @intCast(self.capacity * cell_instance_size)), null, gl.DYNAMIC_DRAW);
         gl.bufferSubData(gl.ARRAY_BUFFER, 0, @as(gl.GLsizeiptr, @intCast(instances.len * cell_instance_size)), instances.ptr);
         gl.bindBuffer(gl.ARRAY_BUFFER, 0);
+        self.uploaded_len = instances.len;
+    }
+
+    /// Spliced sub-buffer upload: updates only modified instances within [offset, offset + count)
+    /// without re-allocating or orphaning the underlying OpenGL VBO.
+    pub fn uploadRange(self: *CellBuffer, instances: []const CellInstance, offset: usize, count: usize) void {
+        if (count == 0) return;
+        if (self.uploaded_len != instances.len or offset + count > instances.len) {
+            self.upload(instances);
+            return;
+        }
+        gl.bindBuffer(gl.ARRAY_BUFFER, self.inst_vbo);
+        const byte_offset = @as(gl.GLintptr, @intCast(offset * cell_instance_size));
+        const byte_size = @as(gl.GLsizeiptr, @intCast(count * cell_instance_size));
+        gl.bufferSubData(gl.ARRAY_BUFFER, byte_offset, byte_size, instances[offset..].ptr);
+        gl.bindBuffer(gl.ARRAY_BUFFER, 0);
     }
 
     pub fn draw(self: *const CellBuffer, count: usize) void {
@@ -146,10 +164,12 @@ pub const BgBuffer = struct {
     quad_vbo: gl.GLuint,
     inst_vbo: gl.GLuint,
     capacity: usize,
+    uploaded_len: usize = 0,
 
     pub fn init(capacity: usize) BgBuffer {
         var self: BgBuffer = undefined;
         self.capacity = capacity;
+        self.uploaded_len = 0;
 
         gl.genVertexArrays(1, &self.vao);
         gl.genBuffers(1, &self.quad_vbo);
@@ -211,6 +231,22 @@ pub const BgBuffer = struct {
         gl.bindBuffer(gl.ARRAY_BUFFER, self.inst_vbo);
         gl.bufferData(gl.ARRAY_BUFFER, @as(gl.GLsizeiptr, @intCast(self.capacity * background_instance_size)), null, gl.DYNAMIC_DRAW);
         gl.bufferSubData(gl.ARRAY_BUFFER, 0, @as(gl.GLsizeiptr, @intCast(instances.len * background_instance_size)), instances.ptr);
+        gl.bindBuffer(gl.ARRAY_BUFFER, 0);
+        self.uploaded_len = instances.len;
+    }
+
+    /// Spliced sub-buffer upload: updates only modified instances within [offset, offset + count)
+    /// without re-allocating or orphaning the underlying OpenGL VBO.
+    pub fn uploadRange(self: *BgBuffer, instances: []const BackgroundInstance, offset: usize, count: usize) void {
+        if (count == 0) return;
+        if (self.uploaded_len != instances.len or offset + count > instances.len) {
+            self.upload(instances);
+            return;
+        }
+        gl.bindBuffer(gl.ARRAY_BUFFER, self.inst_vbo);
+        const byte_offset = @as(gl.GLintptr, @intCast(offset * background_instance_size));
+        const byte_size = @as(gl.GLsizeiptr, @intCast(count * background_instance_size));
+        gl.bufferSubData(gl.ARRAY_BUFFER, byte_offset, byte_size, instances[offset..].ptr);
         gl.bindBuffer(gl.ARRAY_BUFFER, 0);
     }
 

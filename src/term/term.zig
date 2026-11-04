@@ -1186,6 +1186,7 @@ pub fn Terminal(comptime option: Option) type {
             target.is_alternate = is_alt;
             target.scrollback_used = scr_scrollback_used;
             target.viewport_offset = scr_viewport_offset;
+            target.total_lines_scrolled = scr.total_lines_scrolled;
             target.cursor = .{
                 .row = scr.cursor.row,
                 .col = scr.cursor.col,
@@ -1193,6 +1194,8 @@ pub fn Terminal(comptime option: Option) type {
                 .visible = expected_cursor_visible,
             };
             target.cursor_color = current_cursor_color;
+            target.selection_foreground = if (self.selection_foreground) |c| .{ c.r, c.g, c.b } else null;
+            target.selection_background = if (self.selection_background) |c| .{ c.r, c.g, c.b } else null;
 
             return true;
         }

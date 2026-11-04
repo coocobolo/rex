@@ -241,6 +241,9 @@ fn testCacheHit() !void {
     const m1 = try atlas.get(alloc, &rasterizer, 'A', .regular, .single);
     const m2 = try atlas.get(alloc, &rasterizer, 'A', .regular, .single);
     try testing.expectEqual(m1, m2);
+    const cached = atlas.ascii_lut[@intFromEnum(Rasterizer.FaceKind.regular)][@intFromEnum(Rasterizer.Span.single)]['A'];
+    try testing.expect(cached != null);
+    try testing.expectEqual(m1, cached.?);
 }
 
 fn testBoldVsRegular() !void {

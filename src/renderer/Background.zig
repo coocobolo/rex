@@ -63,6 +63,10 @@ pub fn upload(self: *Background, instances: []const Instance) void {
     if (instances.len > 0) self.buffer.upload(instances);
 }
 
+pub fn uploadRange(self: *Background, instances: []const Instance, offset: usize, count: usize) void {
+    if (count > 0) self.buffer.uploadRange(instances, offset, count);
+}
+
 pub fn draw(
     self: *Background,
     instance_length: usize,
