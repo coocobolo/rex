@@ -1,3 +1,6 @@
+//! Terminal cell width of a code point, from the generated
+//! wcwidth_table.zig.
+
 const std = @import("std");
 const tables = @import("wcwidth_table.zig");
 
@@ -63,7 +66,6 @@ pub inline fn lookup(codepoint: u21) tables.Property {
         return @enumFromInt(@as(u3, @intCast(entry & 0x7)));
     }
 
-    // std.debug.print("lookup cp=0x{x} fallback to .narrow\n", .{codepoint});
     return .narrow;
 }
 

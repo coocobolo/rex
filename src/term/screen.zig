@@ -1,3 +1,7 @@
+//! One terminal buffer (primary or alternate): `Screen(option)` is a
+//! ring of cell rows with scrollback, cursor, margins, line attributes
+//! and per-row dirty tracking.
+
 const std = @import("std");
 const builtin = @import("builtin");
 const optimize_mode = builtin.mode;
@@ -28,7 +32,6 @@ const Classifier = char_class.Classifier;
 // extern fn memset(dest: ?*anyopaque, c: c_int, n: usize) ?*anyopaque;
 // extern fn memmove(dest: ?*anyopaque, src: ?*const anyopaque, n: usize) ?*anyopaque;
 
-
 // With enum(u8), the backing type matches the storage size exactly.
 // @memset(self.line_attrs[start..end], .normal) now clearly maps to
 // memset(ptr, 0, count), so the compiler can `emit rep stosb` or a
@@ -57,11 +60,6 @@ pub const Mode = packed struct {
     _pad: u7 = 0, // 11 bits used; pad to 16 bits
 };
 
-// var g_phys_row_calls: u64 = 0;
-// var g_scroll_calls: u64 = 0;
-// var g_row_write_calls: u64 = 0;
-// var g_clear_row_calls: u64 = 0;
-
 pub noinline fn zeroRowStosb(dest: [*]Cell, n: usize) void {
     const bytes = n * @sizeOf(Cell);
     const p: [*]u8 = @ptrCast(dest);
@@ -88,15 +86,6 @@ pub noinline fn zeroRowStos(dest: [*]Cell, n: usize) void {
                 : .{ .memory = true, .rdi = true, .rcx = true }
             );
             // zig fmt: on
-
-    // const bytes = n * @sizeOf(Cell);
-    // const p: [*]u8 = @ptrCast(dest);
-    // const V = @Vector(32, u8);
-    // const zero: V = @splat(0);
-    // var i: usize = 0;
-    // while (i + 32 <= bytes) : (i += 32)
-    //     @as(*align(1) V, @ptrCast(p + i)).* = zero;
-    // while (i < bytes) : (i += 1) p[i] = 0;
 }
 
 pub noinline fn zeroRowBytes(dest: [*]Cell, n: usize) void {
@@ -483,26 +472,6 @@ pub fn Screen(comptime option: Option) type {
 
             // The active-area portion must use the normal logical-row mapping.
             return self.physRow(logical);
-
-            // if (self.viewport_offset > 0 and r < self.viewport_offset) {
-            //     // Scrollback row, bypass row_map entirely, raw ring arithmetic
-            //     return (self.scroll_offset + ring_rows - self.viewport_offset + r) % ring_rows;
-            // }
-            //
-            // // Convert the display row into an active-area logical row.
-            // const logical = r - self.viewport_offset;
-            // const origin = self.scroll_offset + ring_rows - self.viewport_offset;
-            //
-            // // Rows outside the currently affected range retain the identity mapping.
-            // if (self.row_map_is_identity or
-            //     logical < self.row_map_lo or
-            //     logical > self.row_map_hi)
-            // {
-            //     return (origin + logical) % ring_rows;
-            // }
-            //
-            // // Only the affected range pays for the row_map indirection
-            // return (origin + self.row_map[logical]) % ring_rows;
         }
 
         /// Const slice of `active_cols` cells for logical row `r`.
@@ -620,7 +589,6 @@ pub fn Screen(comptime option: Option) type {
         pub fn decaln(self: *Self) void {
             const fill = Cell{ .codepoint = 'E', .kind = .narrow };
             for (0..self.active_rows) |row_idx| {
-                // self.clearRow(row_idx, fill);
                 const r = self.rowMutRaw(@intCast(row_idx));
                 @memset(r[0..self.active_cols], fill);
                 self.dirty_rows.set(row_idx);
@@ -1270,20 +1238,6 @@ pub fn Screen(comptime option: Option) type {
         /// already-evicted row), this is not checked here; use `resolveAnchor`'s eviction
         /// guard before calling this.
         inline fn rowCellsAtAnchor(self: *const Self, anchor: i64) []const Cell {
-            // const phys: usize = if (anchor >= 0)
-            //     // Non-negative anchor: same as physRow(r), routed through row_map
-            //     // for any active-area row remapping (e.g. partial-region scrolls).
-            //     self.physRow(@intCast(anchor))
-            // else blk: {
-            //     // Negative anchor: walk backward from scroll_offset by -anchor rows.
-            //     // Scrollback rows are stored in fixed physical ring order and are
-            //     // never subject to row_map remapping (row_map only rotates rows
-            //     // within the active scroll region), so this bypasses physRow/row_map
-            //     // entirely and indexes the ring directly.
-            //     const back: usize = @intCast(-anchor);
-            //     break :blk (self.scroll_offset + ring_rows - back) % ring_rows;
-            // };
-
             const phys: usize = if (anchor >= 0) blk: {
                 std.debug.assert(anchor < @as(i64, @intCast(max_rows)));
                 break :blk self.physRow(@intCast(anchor));
@@ -1340,8 +1294,6 @@ pub fn Screen(comptime option: Option) type {
             const row_mut = self.rowMutRaw(r)[0..self.active_cols];
             if (blank.background == 0) {
                 // packed Cell = u64, so memset(0 bytes) is a full zero Cell
-                // @memset(std.mem.sliceAsBytes(row_mut), 0);
-                // _ = memset(row_mut.ptr, 0, row_mut.len * @sizeOf(Cell));
                 zeroRow(row_mut.ptr, row_mut.len);
             } else {
                 @memset(row_mut, blank);
@@ -1381,30 +1333,9 @@ pub fn Screen(comptime option: Option) type {
                   [_ax] "{rax}" (@as(u64, 0)),
                   [_n] "{rcx}" (bytes),
                 : .{ .memory = true, .rdi = true, .rcx = true });
-
-            // const bytes = n * @sizeOf(Cell);
-            // const p: [*]u8 = @ptrCast(dest);
-            // const V = @Vector(32, u8);
-            // const zero: V = @splat(0);
-            // var i: usize = 0;
-            // while (i + 32 <= bytes) : (i += 32)
-            //     @as(*align(1) V, @ptrCast(p + i)).* = zero;
-            // while (i < bytes) : (i += 1) p[i] = 0;
         }
 
         fn setDirtyAll(self: *Self) void {
-            // inline for (0..self.dirty_rows.masks.len) |i| {
-            //     self.dirty_rows.masks[i] = if (i < self.dirty_rows.masks.len - 1)
-            //         ~@as(u64, 0)
-            //     else
-            //         @TypeOf(self.dirty_rows).last_item_mask;
-            // }
-
-            // self.dirty_rows.mask = ~@as(
-            //     @TypeOf(self.dirty_rows.mask),
-            //     0,
-            // );
-
             if (comptime max_rows <= @bitSizeOf(usize)) {
                 self.dirty_rows.mask = ~@as(std.meta.Int(.unsigned, max_rows), 0);
             } else {
@@ -1697,8 +1628,6 @@ pub fn Screen(comptime option: Option) type {
                 }
 
                 if (phys_end_total <= ring_rows) {
-                    // _ = memset(&self.line_attrs[phys_start], 0, count);
-                    // @memset(self.line_attrs[phys_start .. phys_start + count], .normal);
                     for (self.line_attrs[phys_start .. phys_start + count]) |*a| a.* = .normal;
                 } else {
                     for (self.line_attrs[phys_start..ring_rows]) |*a| a.* = .normal;
@@ -1794,7 +1723,6 @@ pub fn Screen(comptime option: Option) type {
                 self.canonicalizeRowMap();
 
                 // Ring buffer: advance scroll_offset backwards by count
-                // self.scroll_offset = @intCast((self.scroll_offset + ring_rows - count) % ring_rows);
                 const next_scroll_offset = wrapAdd(@intCast(self.scroll_offset), ring_rows - count);
                 self.scroll_offset = @intCast(next_scroll_offset);
                 self.total_lines_scrolled -= @intCast(count);
@@ -1847,23 +1775,6 @@ pub fn Screen(comptime option: Option) type {
             self.bump();
         }
 
-        pub fn debugInstruments(_: *const Self) void {
-            // log.debug(
-            //     "  [instrument] physRow={d} rowWrite={d} clearRow={d} scrollCalls={d} (writes/scroll={d}, clears/scroll={d})\n",
-            //     .{
-            //         g_phys_row_calls,
-            //         g_row_write_calls,
-            //         g_clear_row_calls,
-            //         g_scroll_calls,
-            //         if (g_scroll_calls > 0) g_row_write_calls / g_scroll_calls else 0,
-            //         if (g_scroll_calls > 0) g_clear_row_calls / g_scroll_calls else 0,
-            //     },
-            // );
-            // g_phys_row_calls = 0;
-            // g_row_write_calls = 0;
-            // g_clear_row_calls = 0;
-            // g_scroll_calls = 0;
-        }
         /// Set Scroll Region (DECSTBM / CSI Ps; Ps r).
         ///
         /// Sets the top and bottom margins of the scroll region used by

@@ -1,8 +1,6 @@
-const std = @import("std");
+//! UTF-8 decoder (Hoehrmann DFA with an ASCII fast path) and encoder.
 
-test {
-    // _ = @import("utf8_test.zig");
-}
+const std = @import("std");
 
 /// Bjoern Hoehrmann DFA table.
 /// see [Bjoern Hoehrmann DFA](https://bjoern.hoehrmann.de/utf-8/decoder/dfa/) for details.

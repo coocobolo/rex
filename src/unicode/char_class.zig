@@ -1,3 +1,5 @@
+//! Character classes for word selection (`Classifier`).
+
 const std = @import("std");
 
 /// The broad category used for terminal word selection.

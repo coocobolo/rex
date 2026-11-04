@@ -1,3 +1,5 @@
+//! Tests for the packed entries of the generated wcwidth_table.zig.
+
 const std = @import("std");
 
 const testing = std.testing;

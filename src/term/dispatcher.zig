@@ -1,3 +1,6 @@
+//! Maps parsed C0, ESC, CSI, OSC and DCS sequences to Terminal
+//! operations and replies.
+
 const std = @import("std");
 
 const Parameter = @import("../vt/parser.zig").Parameter;
@@ -9,7 +12,6 @@ const Screen = @import("screen.zig").Screen;
 const sgr = @import("sgr.zig");
 
 const seqIntroducer = @import("term.zig").seqIntroducer;
-
 
 /// helper: get param value or default fallback, skipping sub-params
 fn paramOr(params: []const Parameter, index: usize, default: u16) u16 {
@@ -26,7 +28,6 @@ pub const Escape = struct {
     pub fn dispatch(comptime option: Option, term: *Terminal(option), final: u8, intermediates: []const u8) void {
         const inter: u8 = if (intermediates.len > 0) intermediates[0] else 0;
         const key: u16 = (@as(u16, inter) << 8) | @as(u16, final);
-        // std.debug.print("dispatch={f}key=0x{x}\n\n", .{ esc, key });
 
         switch (key) {
             '=' => term.mode.keypad_app = true, // DECKPAM
@@ -48,7 +49,6 @@ pub const Escape = struct {
             'Z' => {
                 // FIXME obsolete CSI 0 C
                 // (see details)[https://invisible-island.net/xterm/manpage/xterm.html#VT100-Widget-Resources:decTerminalID]
-                // const prefix = term.parser.csiPrefix();
                 term.events.response.append("\x1b[?1;2c"); // DECID: DA1 response
             },
 
@@ -96,7 +96,6 @@ pub const Escape = struct {
                 // multi-byte-intermediate charset (VT500 Greek/Turkish/Hebrew)
 
                 // otherwise, unrecognized; silently ignore per ECMA-48 S6.6
-                // std.debug.print("unhandled dispatch={f}key=0x{x}\n\n", .{ esc, key });
             },
         }
     }
@@ -108,7 +107,6 @@ pub const Escape = struct {
 /// Most C0 bytes are either ignored or map directly to a single Screen method.
 pub const C0 = struct {
     pub fn dispatch(comptime option: Option, term: *Terminal(option), byte: u8) void {
-        // std.debug.print("c0: {x}\n", .{byte});
         switch (byte) {
             0x00 => {}, // NUL
             0x05 => term.events.response.append(term.getAnswerback()), // ENQ
@@ -159,7 +157,6 @@ pub const Csi = struct {
         const p2_0 = paramOr(parameters, 1, 0);
         const p2 = if (p2_0 > 0) p2_0 else 1;
 
-        // std.debug.print("CSI final={x}'{c}' key={x}\n", .{ final, final, key });
         var buf: [32]u8 = undefined;
         var w: std.Io.Writer = .fixed(&buf);
 
@@ -212,7 +209,6 @@ pub const Csi = struct {
                 switch (p1_0) {
                     // claim vt220 with color ansi, xterm compatibile (52)
                     0 => {
-                        // terminal.events.response.print("{s}?{d};{d};{d}c", .{ prefix, 62, 22, 52 });
                         terminal.events.response.append(prefix);
                         terminal.events.response.append("?"); // if your escape starts with ?
                         terminal.events.response.appendInt(62); // write integer as ASCII
@@ -240,7 +236,6 @@ pub const Csi = struct {
 
             'r' => {
                 // DECSTBM
-                // std.debug.print("DECSTBM: p1_0={} p1_1={} p2_0={}\n", .{ p1_0, p1, p2_0 });
                 terminal.active.setScrollRegion(p1_0, p2_0);
             },
 
@@ -252,12 +247,6 @@ pub const Csi = struct {
                         // CPR: report 1-based absolute position.
                         // When DECOM is active, xterm still reports absolute (not relative
                         // to scroll region). Match xterm behavior.
-
-                        // terminal.events.response.print("{s}{d};{d}R", .{
-                        //     prefix,
-                        //     terminal.active.cursor.row + 1,
-                        //     terminal.active.cursor.col + 1,
-                        // });
 
                         w.print("{s}{d};{d}R", .{
                             prefix,
@@ -320,11 +309,6 @@ pub const Csi = struct {
                 // Device Status Report (DSR, DEC-specific) / CSI ? Ps n
                 switch (p1_0) {
                     6 => {
-                        // terminal.events.response.print("{s}?{d};{d}R", .{
-                        //     prefix,
-                        //     terminal.active.cursor.row + 1,
-                        //     terminal.active.cursor.col + 1,
-                        // });
                         // terminal.events.response.append(prefix);
                         // terminal.events.response.append("?");
                         // terminal.events.response.appendInt(@intCast(terminal.active.cursor.row + 1));
@@ -355,8 +339,6 @@ pub const Csi = struct {
 
 pub const Osc = struct {
     pub fn dispatch(comptime option: Option, term: *Terminal(option), code: u16, data: []const u8) void {
-        // std.debug.print("OSC code={} data={s}\n", .{ code, data });
-
         switch (code) {
             0 => {
                 // OSC 0

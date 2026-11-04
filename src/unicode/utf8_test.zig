@@ -1,3 +1,5 @@
+//! Tests for utf8.zig.
+
 const std = @import("std");
 
 const testing = std.testing;
@@ -27,9 +29,12 @@ test "Hoehrmann DFA matches std.unicode.utf8View" {
     var dfa_len: usize = 0;
 
     for (input) |byte| {
-        if (dfa.feed(byte)) |cp| {
-            dfa_result[dfa_len] = cp;
-            dfa_len += 1;
+        switch (dfa.feed(byte)) {
+            .codepoint => |cp| {
+                dfa_result[dfa_len] = cp;
+                dfa_len += 1;
+            },
+            .ok, .reject => {},
         }
 
         if (dfa.state == Decoder.reject) {

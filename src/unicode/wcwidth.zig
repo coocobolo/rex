@@ -1,3 +1,6 @@
+//! Older width lookup, still used by term/screen.zig and
+//! freetype/Rasterizer.zig until they move to wcwidth_v2.zig.
+
 const std = @import("std");
 
 pub const Range = struct {
@@ -5,7 +8,7 @@ pub const Range = struct {
     end: u32,
 };
 
-pub const zero_width = [_]Range{
+const zero_width = [_]Range{
     .{ .start = 0x00300, .end = 0x0036f }, // Combining Grave Accent   .. Combining Latin Small Le
     .{ .start = 0x00483, .end = 0x00489 }, // Combining Cyrillic Titlo .. Combining Cyrillic Milli
     .{ .start = 0x00591, .end = 0x005bd }, // Hebrew Accent Etnahta    .. Hebrew Point Meteg
@@ -351,7 +354,7 @@ pub const zero_width = [_]Range{
     .{ .start = 0xe0100, .end = 0xe01ef }, // Variation Selector-17    .. Variation Selector-256
 };
 
-pub const wide_eastasian = [_]Range{
+const wide_eastasian = [_]Range{
     .{ .start = 0x01100, .end = 0x0115f }, // Hangul Choseong Kiyeok   .. Hangul Choseong Filler
     .{ .start = 0x0231a, .end = 0x0231b }, // Watch                    .. Hourglass
     .{ .start = 0x02329, .end = 0x0232a }, // Left-pointing Angle Brac .. Right-pointing Angle Bra

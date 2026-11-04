@@ -1,3 +1,6 @@
+//! Checks wcwidth_table.zig against the generated UCD oracle
+//! (wcwidth_expected.zig); see `exceptions` for known deviations.
+
 const std = @import("std");
 const testing = std.testing;
 const tables = @import("wcwidth_table.zig");

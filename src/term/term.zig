@@ -1,3 +1,7 @@
+//! The terminal: `Terminal(option)` owns the primary and alternate
+//! screens, modes, palette and parser state, applies the actions the
+//! dispatcher decodes, and queues replies for the pty.
+
 const std = @import("std");
 const builtin = @import("builtin");
 const native_endian = builtin.target.cpu.arch.endian();
@@ -707,7 +711,6 @@ pub fn Terminal(comptime option: Option) type {
 
         pub fn unhook(self: *Self) void {
             if (!self.dcs_overflow) {
-                // const data = self.dcs_buf[0..self.dcs_len];
                 switch (self.dcs_kind) {
                     .decrqss => {}, // FIXME dispatcher.Dcs.decrqss(option, self, data),
                     .sixel => {}, // FIXME dispatcher.Dcs.sixel(option, self, data),
@@ -868,8 +871,6 @@ pub fn Terminal(comptime option: Option) type {
                     // Reset scroll region to full active area (setActive already does this,
                     // but be explicit since the spec requires it)
                     // done by setActive
-                    // self.active.scroll_top = 0;
-                    // self.active.scroll_bottom = self.active.active_rows - 1;
 
                     // Notify app to update PTY winsize
                     self.events.resize = .{ .rows = self.active.active_rows, .cols = new_cols };
@@ -1042,12 +1043,6 @@ pub fn Terminal(comptime option: Option) type {
         }
 
         pub fn xtversion(self: *Self) void {
-            // self.events.response.print("{s}>|{s} {s}{s}", .{
-            //     seqIntroducer(.dcs, c1_mode),
-            //     option.name,
-            //     option.version,
-            //     seqIntroducer(.st, c1_mode),
-            // });
             const control_format = self.control_format;
             self.events.response.append(seqIntroducer(.dcs, control_format));
             self.events.response.append(">|");
@@ -1115,15 +1110,6 @@ pub fn Terminal(comptime option: Option) type {
 
                     const color = self.active.palette.getIndexed(idx);
                     const control_format = self.control_format;
-
-                    // self.events.response.print("{s}4;{d};rgb:{x:0>2}/{x:0>2}/{x:0>2}{s}", .{
-                    //     seqIntroducer(.osc, c1_mode),
-                    //     idx,
-                    //     color.r,
-                    //     color.g,
-                    //     color.b,
-                    //     seqIntroducer(.st, c1_mode),
-                    // });
 
                     self.events.response.append(seqIntroducer(.osc, control_format));
                     self.events.response.append("4;");
@@ -1193,15 +1179,6 @@ pub fn Terminal(comptime option: Option) type {
                     .selection_fg => self.selection_foreground orelse .white,
                     .cursor => self.cursor_color orelse self.active.palette.get(.foreground),
                 };
-
-                // self.events.response.print("{s}{d};rgb:{x:0>4}/{x:0>4}/{x:0>4}{s}", .{
-                //     seqIntroducer(.osc, c1_mode),
-                //     osc_code,
-                //     @as(u16, color.r) * 257,
-                //     @as(u16, color.g) * 257,
-                //     @as(u16, color.b) * 257,
-                //     seqIntroducer(.st, c1_mode),
-                // });
 
                 self.events.response.append(seqIntroducer(.osc, control_format));
                 self.events.response.appendInt(@intCast(osc_code));
