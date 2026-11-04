@@ -696,3 +696,29 @@ test "grapheme intern: ED 2 keeps clusters referenced by scrollback" {
     try testing.expect(t.active().grapheme_table.count() > 0);
     try expectAllClustersResolve(&t);
 }
+
+test "m2: ASCII after a cut UTF-8 sequence lands after the held cluster" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    // U+00E9 is held as a pending cluster, then 0xCC starts a sequence
+    // that 'A' cuts: é, U+FFFD, A in that order.
+    t.feed("\xc3\xa9\xccA");
+    t.end();
+    const r = t.active().row(0);
+    try testing.expectEqual(0xE9, r[0].codepoint);
+    try testing.expectEqual(0xFFFD, r[1].codepoint);
+    try testing.expectEqual('A', r[2].codepoint);
+}
+
+test "m2: ASCII after a cut UTF-8 sequence, fed byte by byte" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    for ("\xc3\xa9\xccA") |b| t.feed(&.{b});
+    t.end();
+    const r = t.active().row(0);
+    try testing.expectEqual(0xE9, r[0].codepoint);
+    try testing.expectEqual(0xFFFD, r[1].codepoint);
+    try testing.expectEqual('A', r[2].codepoint);
+}
