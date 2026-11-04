@@ -1174,14 +1174,16 @@ pub fn Terminal(comptime option: Option) type {
             }
         }
 
-        /// OSC 104 [; n] ST — Reset palette color n, or all colors if no arg.
+        /// OSC 104 [; n [; n ...]] ST: resets each listed color, or all 256
+        /// with no argument. Entries that are not an index are skipped.
         pub fn resetPaletteColor(self: *Self, data: []const u8) void {
-            const s = std.mem.trim(u8, data, " ");
-            if (s.len == 0) {
-                // No argument: reset all 256 colors to defaults
+            if (std.mem.trim(u8, data, " ").len == 0) {
                 self.active().palette.resetAllIndexed();
-            } else {
-                const idx = std.fmt.parseInt(u8, s, 10) catch return;
+                return;
+            }
+            var it = std.mem.splitScalar(u8, data, ';');
+            while (it.next()) |field| {
+                const idx = std.fmt.parseInt(u8, std.mem.trim(u8, field, " "), 10) catch continue;
                 self.active().palette.resetIndexed(idx);
             }
         }

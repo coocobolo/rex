@@ -28,10 +28,16 @@ pub const dynamic_base: u8 = 17; // first evictable slot
 // Hot, accessed every call render.
 entries: [256]u32,
 
-/// Encoded color keys (same format as entries[]) used as reset target for OSC 104.
-/// Never used for rendering directly.
+/// RGB of each xterm color index: the theme for 0-15, the xterm
+/// 256-color cube and grays above, then any OSC 4 override. Slots
+/// holding `.indexed` keys resolve through this, so an override
+/// applies to every cell using that index.
+// Hot, read when rendering an indexed color.
+indexed: [256]Rgb,
+
+/// What OSC 104 restores `indexed` to: the theme and xterm defaults.
 // Warm, accessed on OSC 104.
-theme_ansi: [16]u32,
+indexed_default: [256]Rgb,
 
 /// Next dynamic slot for round-robin eviction (wraps in [dynamic_base..255]).
 // Warm, accessed on every intern()
@@ -57,11 +63,10 @@ const default_entries: [256]u32 = blk: {
     break :blk e;
 };
 
-const default_theme_ansi: [16]u32 = blk: {
-    var t: [16]u32 = undefined;
-    for (0..16) |n| {
-        t[n] = encode(.{ .indexed = @intCast(n) });
-    }
+const xterm_indexed: [256]Rgb = blk: {
+    @setEvalBranchQuota(4096);
+    var t: [256]Rgb = undefined;
+    for (&t, 0..) |*c, n| c.* = Rgb.fromU32(ansi.indexed(n));
     break :blk t;
 };
 
@@ -72,34 +77,30 @@ pub const empty: Palette = .{
     .builtin_background = .black,
     .builtin_foreground = .white,
     .entries = default_entries,
-    .theme_ansi = default_theme_ansi,
+    .indexed = xterm_indexed,
+    .indexed_default = xterm_indexed,
     .next = dynamic_base,
 };
 
 pub const GroundTarget = enum { foreground, background };
 
-/// Resets the palette to its initial state.
+/// Resets the palette to its initial state. The theme (builtin colors
+/// and `indexed_default`) survives; OSC overrides do not.
 pub fn reset(self: *Palette) void {
-    const saved_theme_ansi = self.theme_ansi;
-    // Don't touch builtin_foreground/builtin_background — they survive reset
-    self.* = .empty;
     self.foreground = null;
     self.background = null;
     self.entries = default_entries;
-    self.theme_ansi = saved_theme_ansi;
-    self.entries[ansi_base..][0..16].* = saved_theme_ansi;
+    self.indexed = self.indexed_default;
     self.next = dynamic_base;
 }
 
-/// Apply a theme, Called once at startup.
-/// OSC overrides (4/1011) can still override on top.
+/// Applies a theme. Called once at startup; OSC 4/10/11 can still
+/// override on top.
 pub fn setTheme(self: *Palette, theme: Theme) void {
     self.builtin_background = theme.background;
     self.builtin_foreground = theme.foreground;
-    for (theme.ansi, 0..) |color, index| {
-        self.entries[index + 1] = encode(.{ .rgb = color });
-        self.theme_ansi[index] = encode(.{ .rgb = color });
-    }
+    self.indexed_default[0..16].* = theme.ansi;
+    self.indexed[0..16].* = theme.ansi;
 }
 
 /// Returns the decode Color stored at index.
@@ -178,7 +179,7 @@ pub fn resolve(self: *const Palette, index: u8, comptime target: GroundTarget) u
             const c = self.get(target);
             break :blk (@as(u32, c.r) << 24) | (@as(u32, c.g) << 16) | (@as(u32, c.b) << 8) | 0xFF;
         },
-        0x01 => ansi.indexed(@intCast(key & 0xFF)),
+        0x01 => self.indexed[key & 0xFF].toU32(),
         0x02 => ((key & 0x00FF_FFFF) << 8) | 0xFF, // shift RGB bits up, append alpha
         else => unreachable,
     };
@@ -191,45 +192,31 @@ pub fn resolveRgb(self: *const Palette, index: u8, comptime target: GroundTarget
             const c = self.get(target);
             break :blk .{ c.r, c.g, c.b };
         },
-        0x01 => blk: {
-            const rgba = ansi.indexed(@intCast(key & 0xFF));
-            break :blk .{ @truncate(rgba >> 24), @truncate(rgba >> 16), @truncate(rgba >> 8) };
-        },
+        0x01 => self.indexed[key & 0xFF].toArray(),
         0x02 => .{ @truncate(key >> 16), @truncate(key >> 8), @truncate(key) },
         else => unreachable,
     };
 }
 
-/// Override ANSI color `index` (0-15) with a custom RGB (OSC 4).
+/// Overrides xterm color `index` (0-255) with `rgb` (OSC 4), for cells
+/// already drawn with it and new ones.
 pub fn setIndexed(self: *Palette, index: u8, rgb: Rgb) void {
-    self.entries[ansi_base + index] = encode(.{ .rgb = rgb });
+    self.indexed[index] = rgb;
 }
 
-/// Return the current RGB for ANSI color `index` (0-15).
-/// If the slot was overridden via `setIndexed` returns the override.
-/// Otherwise resolves the built-in xterm ANSI color.
+/// Returns the current RGB of xterm color `index` (0-255).
 pub fn getIndexed(self: *const Palette, index: u8) Rgb {
-    const entry = self.entries[ansi_base + index];
-    return switch (entry >> 24) {
-        0x01 => blk: {
-            // Still the default .indexed entry, resolve via built-in table.
-            const n: u8 = @intCast(entry & 0xFF);
-            const rgba = ansi.indexed(n); // u32: r<<24|g<<16|b<<8|0xFF
-            break :blk Rgb.fromU32(rgba);
-        },
-        0x02 => Rgb.fromColorKey(entry),
-        else => unreachable, // ANSI slots are never .default
-    };
+    return self.indexed[index];
 }
 
-/// Restore ANSI color `index` (0–15) to its built-in default (OSC 104 ; n).
+/// Restores xterm color `index` to its theme or xterm default (OSC 104 ; n).
 pub fn resetIndexed(self: *Palette, index: u8) void {
-    self.entries[ansi_base + index] = self.theme_ansi[index];
+    self.indexed[index] = self.indexed_default[index];
 }
 
-/// Restore all 16 ANSI colors to their built-in defaults (OSC 104 with no arg).
+/// Restores all 256 xterm colors (OSC 104 with no argument).
 pub fn resetAllIndexed(self: *Palette) void {
-    self.entries[ansi_base..][0..16].* = self.theme_ansi;
+    self.indexed = self.indexed_default;
 }
 
 /// Return the current default target as RGB.

@@ -18,5 +18,6 @@ pub const Dimension = @import("dimension.zig").Dimension;
 pub const DirtyFlags = @import("dirty.zig").DirtyFlags;
 
 test {
+    _ = @import("frame_test.zig");
     std.testing.refAllDecls(@This());
 }

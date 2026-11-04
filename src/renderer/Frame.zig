@@ -28,6 +28,15 @@ const Option = term.term.Option;
 const Palette = term.Palette;
 const Screen = term.Screen;
 
+/// Returns the foreground and background `cell` is drawn with. SGR 7
+/// and DECSCNM each swap them, so the two together cancel out.
+pub fn cellColors(palette: *const Palette, cell: term.Cell, reverse_video: bool) [2][3]u8 {
+    var foreground = palette.resolveRgb(cell.foreground, .foreground);
+    var background = palette.resolveRgb(cell.background, .background);
+    if (cell.flags.reverse != reverse_video) std.mem.swap([3]u8, &foreground, &background);
+    return .{ foreground, background };
+}
+
 /// Bit layout (LSB first):
 ///   0: strikethrough
 ///   1: blink
@@ -448,14 +457,9 @@ pub fn Builder(comptime option: Option) type {
                     // Drop the do_reverse logic in build, with the overlay approach, text colors
                     // are unchanged and the semi-transparent highlight provides the visual selection.
                     // This is simpler and looks better than color inversion.
-                    const do_reverse = (c.flags.reverse or reverse_video);
-
-                    // Base colors: resolveColor handles default color substitution + SGR reverse
-                    var foreground = palette.resolveRgb(c.foreground, .foreground);
-                    var background = palette.resolveRgb(c.background, .background);
+                    var foreground, const background = cellColors(palette, c, reverse_video);
 
                     // Invisible text (SGR 8): hide glyph by matching fg to bg
-                    if (do_reverse) std.mem.swap([3]u8, &foreground, &background);
                     if (c.flags.invisible) foreground = background;
 
                     const in_selection = has_selection and selection_state.?.contains(row, col);

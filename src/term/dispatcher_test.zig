@@ -11,6 +11,8 @@ const Color = @import("cell.zig").Color;
 const SavedCursor = @import("cell.zig").SavedCursor;
 
 const Palette = @import("Palette.zig").Palette;
+const Rgb = Color.Rgb;
+const ansi = @import("../color/ansi.zig");
 
 const max_title_len = @import("term.zig").max_title_len;
 
@@ -3605,4 +3607,40 @@ test "m2: DECSTR leaves everything outside the VT510 DECSTR table alone" {
     try testing.expectEqual(.double_width, s.line_attrs[s.physRow(0)]);
     try testing.expectEqual(1, s.cursor.row);
     try testing.expectEqual(2, s.cursor.col);
+}
+
+test "color: OSC 4 on 16-255 applies to text drawn after it" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    t.feed("\x1b]4;100;#0a0b0c;255;#010203\x07");
+    t.feed("\x1b[38;5;100mX\x1b[48;5;255mY");
+    const p = &t.active().palette;
+    const row = t.active().row(0);
+    try testing.expectEqual([3]u8{ 10, 11, 12 }, p.resolveRgb(row[0].foreground, .foreground));
+    try testing.expectEqual([3]u8{ 1, 2, 3 }, p.resolveRgb(row[1].background, .background));
+}
+
+test "color: OSC 104 with no argument resets all 256 indices" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    t.feed("\x1b]4;1;#010101;200;#020202;255;#030303\x07");
+    t.feed("\x1b]104\x07");
+    const p = &t.active().palette;
+    for ([_]u8{ 1, 200, 255 }) |n| {
+        try testing.expectEqual(Rgb.fromU32(ansi.indexed(n)), p.getIndexed(n));
+    }
+}
+
+test "color: OSC 104 resets each index in its list" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    t.feed("\x1b]4;1;#010101;2;#020202;200;#030303\x07");
+    t.feed("\x1b]104;1;200\x07");
+    const p = &t.active().palette;
+    try testing.expectEqual(Rgb.fromU32(ansi.indexed(1)), p.getIndexed(1));
+    try testing.expectEqual(Rgb{ .r = 2, .g = 2, .b = 2 }, p.getIndexed(2));
+    try testing.expectEqual(Rgb.fromU32(ansi.indexed(200)), p.getIndexed(200));
 }

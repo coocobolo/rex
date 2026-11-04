@@ -141,7 +141,10 @@ const seeds = [_][]const u8{
     "\xe2\x82",
 };
 
-const regressions = [_][]const u8{};
+const regressions = [_][]const u8{
+    // OSC 104;92: resetIndexed read theme_ansi past index 15.
+    @embedFile("testdata/strings/crash-e8145383ab77366a.bin"),
+};
 
 test "fuzz strings" {
     try harness.fuzz(run, &seeds, &regressions);
