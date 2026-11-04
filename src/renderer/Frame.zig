@@ -38,6 +38,21 @@ pub fn cellColors(palette: *const Palette, cell: term.Cell, reverse_video: bool)
     return .{ foreground, background };
 }
 
+/// User settings of the frame builder.
+pub const BuilderOption = struct {
+    /// Opacity of SGR 2 (dim) text, 0.0 to 1.0. Decorations follow it
+    /// unless Decoration.Option.dim is off.
+    dim_alpha: f32 = 0.5,
+
+    /// Colors, dim and blink rules for the decoration runs.
+    decoration: Decoration.Option = .{},
+};
+
+/// Converts an opacity from 0.0 to 1.0 to a color byte, clamped.
+pub fn alphaByte(alpha: f32) u8 {
+    return @intFromFloat(@round(std.math.clamp(alpha, 0.0, 1.0) * 255.0));
+}
+
 /// Returns the decoration run for one cell, or null when the cell has
 /// no visible decoration. `foreground` is the text color after reverse
 /// video and the selection override; `foreground_alpha` carries SGR 2.
@@ -243,8 +258,10 @@ pub fn Builder(comptime option: Option) type {
 
         /// Colors, dim and blink rules for the decoration runs.
         decoration: Decoration.Option,
+        /// Alpha byte of SGR 2 (dim) text, from BuilderOption.dim_alpha.
+        dim_alpha: u8,
 
-        pub fn init(gpa: Allocator, decoration: Decoration.Option) !Self {
+        pub fn init(gpa: Allocator, builder_option: BuilderOption) !Self {
             var gray_buffer: std.ArrayListUnmanaged(Cell.Instance) = try .initCapacity(gpa, max_cells);
             errdefer gray_buffer.deinit(gpa);
 
@@ -262,7 +279,8 @@ pub fn Builder(comptime option: Option) type {
 
             return .{
                 .background_buffer = background_buffer,
-                .decoration = decoration,
+                .decoration = builder_option.decoration,
+                .dim_alpha = alphaByte(builder_option.dim_alpha),
                 .decoration_buffer = decoration_buffer,
                 .gray_buffer = gray_buffer,
                 .color_buffer = color_buffer,
@@ -529,7 +547,7 @@ pub fn Builder(comptime option: Option) type {
                         if (selection_state.?.fg) |sel_fg| foreground = sel_fg;
                     }
 
-                    const foreground_alpha: u8 = if (c.flags.dim) 128 else 255;
+                    const foreground_alpha: u8 = if (c.flags.dim) self.dim_alpha else 255;
 
                     // Background instance (always, even for empty cells)
                     self.background_buffer.appendAssumeCapacity(.{

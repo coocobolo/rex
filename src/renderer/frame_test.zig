@@ -134,3 +134,10 @@ test "build: SGR text produces merged decoration runs" {
     try testing.expectEqual(3, runs.items[1].col);
     try testing.expectEqual(2, runs.items[1].span);
 }
+
+test "alphaByte: rounds and clamps an opacity to a color byte" {
+    try testing.expectEqual(128, Frame.alphaByte(0.5));
+    try testing.expectEqual(0, Frame.alphaByte(-1.0));
+    try testing.expectEqual(255, Frame.alphaByte(2.0));
+    try testing.expectEqual(64, Frame.alphaByte(0.25));
+}
