@@ -22,7 +22,7 @@ const renderer_mod = rex.renderer;
 const Atlas = renderer_mod.Atlas;
 const gl = renderer_mod.gl;
 const Window = renderer_mod.Window;
-const c = Window.c;
+const c = @import("glfw");
 
 const Background = renderer_mod.Background;
 const Cursor = renderer_mod.Cursor;

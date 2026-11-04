@@ -1,4 +1,4 @@
-//! This file is wrapper the GLAD-loaded OpenGL symbols as a Zig module.
+//! The GLAD-loaded OpenGL types, constants and functions.
 
 const std = @import("std");
 
@@ -67,8 +67,10 @@ pub const TEXTURE_WRAP_T = c.GL_TEXTURE_WRAP_T;
 pub const TEXTURE_SWIZZLE_A = c.GL_TEXTURE_SWIZZLE_A;
 pub const TEXTURE_SWIZZLE_R = c.GL_TEXTURE_SWIZZLE_R;
 pub const TEXTURE_SWIZZLE_RGBA = c.GL_TEXTURE_SWIZZLE_RGBA;
+pub const CONTEXT_PROFILE_MASK = c.GL_CONTEXT_PROFILE_MASK;
+pub const CONTEXT_CORE_PROFILE_BIT = c.GL_CONTEXT_CORE_PROFILE_BIT;
 
-// Functions — thin wrappers so callers don't need @cImport
+// Functions, re-exported so callers need no @cImport of their own.
 pub const genVertexArrays = c.glGenVertexArrays;
 pub const bindVertexArray = c.glBindVertexArray;
 pub const deleteVertexArrays = c.glDeleteVertexArrays;

@@ -9,9 +9,7 @@ const Dimension = @import("dimension.zig").Dimension;
 
 const gl = @import("gl.zig");
 
-pub const c = @cImport({
-    @cInclude("GLFW/glfw3.h");
-});
+const c = @import("glfw");
 
 pub const GlfwWindow = c.GLFWwindow;
 
@@ -30,13 +28,7 @@ pub fn init(width: u16, height: u16, title: [:0]const u8) !Window {
     var major: c_int = 0;
     var minor: c_int = 0;
     var revision: c_int = 0;
-
     c.glfwGetVersion(&major, &minor, &revision);
-
-    // std.debug.print(
-    //     "GLFW version: {}.{}.{}\n",
-    //     .{ major, minor, revision },
-    // );
 
     _ = c.glfwSetErrorCallback(glfwErrorCallback);
     if (c.glfwInit() == 0) return error.GlfwInitFailed;
@@ -44,14 +36,11 @@ pub fn init(width: u16, height: u16, title: [:0]const u8) !Window {
     c.glfwWindowHint(c.GLFW_CONTEXT_VERSION_MAJOR, major);
     c.glfwWindowHint(c.GLFW_CONTEXT_VERSION_MINOR, minor);
     c.glfwWindowHint(c.GLFW_OPENGL_PROFILE, c.GLFW_OPENGL_CORE_PROFILE);
-    c.glfwWindowHint(c.GLFW_OPENGL_FORWARD_COMPAT, c.GL_TRUE); // required on macOS, harmless on Linux
+    c.glfwWindowHint(c.GLFW_OPENGL_FORWARD_COMPAT, c.GLFW_TRUE); // required on macOS, harmless on Linux
     c.glfwWindowHint(c.GLFW_DECORATED, c.GLFW_TRUE);
     c.glfwWindowHint(c.GLFW_RESIZABLE, c.GLFW_TRUE);
     c.glfwWindowHint(c.GLFW_FOCUSED, c.GLFW_TRUE);
     c.glfwWindowHint(c.GLFW_TRANSPARENT_FRAMEBUFFER, c.GLFW_TRUE);
-
-    // c.glfwWindowHint(c.GLFW_ALPHA_BITS, 8);
-    // c.glfwWindowHint(c.GLFW_SRGB_CAPABLE, c.GLFW_FALSE);
 
     const win = c.glfwCreateWindow(
         @intCast(width),
@@ -73,8 +62,8 @@ pub fn init(width: u16, height: u16, title: [:0]const u8) !Window {
     }
 
     var profile: c_int = 0;
-    gl.getIntegerv(c.GL_CONTEXT_PROFILE_MASK, &profile);
-    if (profile & c.GL_CONTEXT_CORE_PROFILE_BIT == 0) {
+    gl.getIntegerv(gl.CONTEXT_PROFILE_MASK, &profile);
+    if (profile & gl.CONTEXT_CORE_PROFILE_BIT == 0) {
         log.warn("got compatibility profile, not the core!", .{});
     }
 
@@ -267,8 +256,8 @@ pub fn testGlContext() !*c.GLFWwindow {
     if (gl.gladLoadGLLoader(loader) == 0) return error.GladLoadFailed;
 
     var profile: c_int = 0;
-    gl.getIntegerv(c.GL_CONTEXT_PROFILE_MASK, &profile);
-    if (profile & c.GL_CONTEXT_CORE_PROFILE_BIT == 0) {
+    gl.getIntegerv(gl.CONTEXT_PROFILE_MASK, &profile);
+    if (profile & gl.CONTEXT_CORE_PROFILE_BIT == 0) {
         log.warn("WARNING: got compatibility profile, not core!", .{});
     }
 

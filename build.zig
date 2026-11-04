@@ -86,6 +86,17 @@ pub fn build(b: *std.Build) !void {
 
     const c_mod = termio_c.createModule();
 
+    // The GLFW C API as `@import("glfw")`. The only GLFW translation in
+    // the tree, so the window and input code share one set of types.
+    const glfw_c = b.addTranslateC(.{
+        .root_source_file = b.path("src/glfw.h"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    glfw_c.addIncludePath(glfw_dep.path("include"));
+    const glfw_mod = glfw_c.createModule();
+
     // Core library module
     const mod = b.addModule("rex", .{
         .root_source_file = b.path("src/root.zig"),
@@ -94,6 +105,7 @@ pub fn build(b: *std.Build) !void {
         .link_libc = true,
         .imports = &.{
             .{ .name = "c", .module = c_mod },
+            .{ .name = "glfw", .module = glfw_mod },
         },
     });
 
