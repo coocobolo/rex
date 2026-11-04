@@ -343,7 +343,7 @@ pub fn Terminal(comptime option: Option) type {
 
         /// Icon name (OSC 1). Rarely used; stored separately from title.
         icon_name: [max_title_len:0]u8 = std.mem.zeroes([max_title_len:0]u8),
-        icon_name_len: u8 = 0,
+        icon_name_len: usize = 0,
 
         answerback: [max_answerback_len]u8 = std.mem.zeroes([max_answerback_len]u8),
         answerback_len: u8 = 0,
@@ -1020,7 +1020,7 @@ pub fn Terminal(comptime option: Option) type {
             const len = @min(title.len, max_title_len);
             @memcpy(self.title[0..len], title[0..len]);
             self.title[len] = 0;
-            self.title_len = @intCast(len);
+            self.title_len = len;
         }
 
         /// Set the icon name (OSC 1).
@@ -1028,7 +1028,7 @@ pub fn Terminal(comptime option: Option) type {
             const len = @min(name.len, max_title_len);
             @memcpy(self.icon_name[0..len], name[0..len]);
             self.icon_name[len] = 0;
-            self.icon_name_len = @intCast(len);
+            self.icon_name_len = len;
         }
 
         /// Returns the current title as a null-terminated slice.

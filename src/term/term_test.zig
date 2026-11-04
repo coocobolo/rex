@@ -722,3 +722,13 @@ test "m2: ASCII after a cut UTF-8 sequence, fed byte by byte" {
     try testing.expectEqual(0xFFFD, r[1].codepoint);
     try testing.expectEqual('A', r[2].codepoint);
 }
+
+test "setIconName: a name of max_title_len or more is kept, truncated" {
+    // Found by the strings fuzz target: icon_name_len was a u8, so a
+    // 256-byte name overflowed it.
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    t.feed("\x1b]1;" ++ "n" ** (max_title_len + 10) ++ "\x07");
+    try testing.expectEqual(max_title_len, t.getIconName().len);
+}
