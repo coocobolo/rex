@@ -51,16 +51,16 @@ pub const Decoder = struct {
         // mid-sequence: caller must go byte-by-byte
         if (self.state != accept) return 0;
 
-        const N = @sizeOf(usize);
-        const MASK = 0x80 * ((std.math.maxInt(usize)) / 0xFF);
+        const word_len = @sizeOf(usize);
+        const high_bits = 0x80 * ((std.math.maxInt(usize)) / 0xFF);
 
         var i: usize = 0;
-        while (i + N <= bytes.len) : (i += N) {
-            const word = std.mem.readInt(usize, bytes[i..][0..N], .native);
-            if (word & MASK != 0) break;
+        while (i + word_len <= bytes.len) : (i += word_len) {
+            const word = std.mem.readInt(usize, bytes[i..][0..word_len], .native);
+            if (word & high_bits != 0) break;
         }
 
-        // Capture the <N tail bytes too, so short runs (or the tails of a long one) are
+        // Capture the <word_len tail bytes too, so short runs (or the tails of a long one) are
         // still fully included in a single reported prefix length.
         while (i < bytes.len and bytes[i] < 0x80) : (i += 1) {}
         return i;

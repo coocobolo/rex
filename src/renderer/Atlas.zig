@@ -161,8 +161,8 @@ pub const PackingState = struct {
 };
 
 // Default atlas dimensions set for HiDPI
-pub const ATLAS_WIDTH: u16 = 2048;
-pub const ATLAS_HEIGHT: u16 = 2048;
+pub const texture_width: u16 = 2048;
+pub const texture_height: u16 = 2048;
 
 const Atlas = @This();
 
@@ -199,8 +199,8 @@ sequence_cache: std.AutoHashMap(u64, Metric),
 /// NOTE future if we need runtime value for dimension
 /// for now keep with comptime default to HiDPI
 // dimension: Dimension = .{
-//     .width = ATLAS_WIDTH,
-//     .height = ATLAS_HEIGHT,
+//     .width = texture_width,
+//     .height = texture_height,
 // ,
 
 pub const empty: Atlas = .{
@@ -222,7 +222,7 @@ pub fn create(gpa: Allocator) !Atlas {
     gl.genTextures(1, &self.gray_texture);
     errdefer gl.deleteTextures(1, &self.gray_texture);
     gl.bindTexture(gl.TEXTURE_2D, self.gray_texture);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, ATLAS_WIDTH, ATLAS_HEIGHT, 0, gl.RED, gl.UNSIGNED_BYTE, null);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, texture_width, texture_height, 0, gl.RED, gl.UNSIGNED_BYTE, null);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
@@ -255,7 +255,7 @@ pub fn create(gpa: Allocator) !Atlas {
     gl.genTextures(1, &self.color_texture);
     errdefer gl.deleteTextures(1, &self.color_texture);
     gl.bindTexture(gl.TEXTURE_2D, self.color_texture);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, ATLAS_WIDTH, ATLAS_HEIGHT, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, texture_width, texture_height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
@@ -459,7 +459,7 @@ fn hashSequence(cps: []const u21, face: FaceKind) u64 {
 
 fn pack(self: *Atlas, kind: GlyphKind, w: u16, h: u16) !struct { u16, u16 } {
     const state = if (kind == .color) &self.state.color else &self.state.gray;
-    return state.pack(w, h, ATLAS_WIDTH, ATLAS_HEIGHT);
+    return state.pack(w, h, texture_width, texture_height);
 }
 
 fn hashSequence1(cps: []const u21) u64 {

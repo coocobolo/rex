@@ -1,16 +1,12 @@
 const std = @import("std");
-const time = std.time;
 const Io = std.Io;
 
-const KiB = 1024;
-const MiB = 1024 * KiB;
-const NsPerSecond = 1_000_000_000.0;
+const kib = 1024;
+const mib = 1024 * kib;
+const ns_per_second = 1_000_000_000.0;
 
-// Import your actual Decoder module here.
 const utf8 = @import("utf8.zig");
 const Decoder = utf8.Decoder;
-
-const N = 10_000_000;
 
 const Result = struct {
     throughput_mibs: f64,
@@ -46,11 +42,11 @@ fn throughput(elapsed_ns: i96, byte_count: usize) f64 {
         return std.math.inf(f64);
     }
 
-    const elapsed_s = @as(f64, @floatFromInt(elapsed_ns)) / NsPerSecond;
+    const elapsed_s = @as(f64, @floatFromInt(elapsed_ns)) / ns_per_second;
 
     const bytes = @as(f64, @floatFromInt(byte_count));
 
-    return (bytes / elapsed_s) / MiB;
+    return (bytes / elapsed_s) / mib;
 }
 
 fn warmupAsciiPrefixLenSwar(
@@ -190,7 +186,7 @@ const Corpus = struct {
 
 fn benchmarkIterations(buf_len: usize) usize {
     // Try to process at least 64 MiB per benchmark sample.
-    const target_bytes: usize = 64 * MiB;
+    const target_bytes: usize = 64 * mib;
 
     const calculated = target_bytes / @max(buf_len, 1);
 

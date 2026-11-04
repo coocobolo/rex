@@ -546,9 +546,9 @@ pub const SequenceKind = enum {
     unknown,
 };
 
-const ZWJ: u21 = 0x200D;
-const VS15: u21 = 0xFE0E; // text presentation selector
-const VS16: u21 = 0xFE0F; // emoji presentation selector
+const zwj: u21 = 0x200D; // zero width joiner
+const vs15: u21 = 0xFE0E; // text presentation selector
+const vs16: u21 = 0xFE0F; // emoji presentation selector
 
 inline fn isSkinToneModifier(cp: u21) bool {
     // Fitzpatrick types 1-2 .. 6
@@ -583,8 +583,8 @@ pub fn classifySequence(cps: []const u21) SequenceKind {
 
     for (cps[1..]) |cp| {
         switch (cp) {
-            ZWJ => has_zwj = true,
-            VS15, VS16 => {}, // presentation selector: doesn't change classification
+            zwj => has_zwj = true,
+            vs15, vs16 => {}, // presentation selector: doesn't change classification
             else => if (isSkinToneModifier(cp)) {
                 has_modifier = true;
             },

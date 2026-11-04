@@ -181,15 +181,15 @@ test "upload: glyph wider than atlas returns GlyphTooWide" {
     var atlas = try Atlas.create(alloc);
     defer atlas.destroy();
 
-    // width > ATLAS_WIDTH
+    // width > texture_width
     const glyph: Rasterizer.Glyph = .{
         .bitmap = undefined,
-        .width = Atlas.ATLAS_WIDTH + 1,
+        .width = Atlas.texture_width + 1,
         .height = 16,
-        .pitch = Atlas.ATLAS_WIDTH + 1,
+        .pitch = Atlas.texture_width + 1,
         .bearing_x = 0,
         .bearing_y = 16,
-        .advance = Atlas.ATLAS_WIDTH + 1,
+        .advance = Atlas.texture_width + 1,
         .kind = .gray,
     };
 
@@ -211,8 +211,8 @@ fn testCreateAndPreRasterize(win: *c.GLFWwindow) !void {
 
     for (0x20..0x7F) |cp| {
         const m = try atlas.get(alloc, &rasterizer, @intCast(cp), .regular);
-        try testing.expect(m.atlas_x < Atlas.ATLAS_WIDTH);
-        try testing.expect(m.atlas_y < Atlas.ATLAS_HEIGHT);
+        try testing.expect(m.atlas_x < Atlas.texture_width);
+        try testing.expect(m.atlas_y < Atlas.texture_height);
     }
 }
 
@@ -272,8 +272,8 @@ fn testGetSequenceCacheMiss(win: *c.GLFWwindow) !void {
     const m = try atlas.getSequence(alloc, &rasterizer, &cps, .emoji);
 
     // Must have been packed somewhere in the color atlas
-    try testing.expect(m.atlas_x < Atlas.ATLAS_WIDTH);
-    try testing.expect(m.atlas_y < Atlas.ATLAS_HEIGHT);
+    try testing.expect(m.atlas_x < Atlas.texture_width);
+    try testing.expect(m.atlas_y < Atlas.texture_height);
     try testing.expectEqual(.color, m.kind);
 }
 

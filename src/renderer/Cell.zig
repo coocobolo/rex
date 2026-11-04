@@ -88,8 +88,8 @@ pub fn draw(
     self.shader.use();
     self.shader.set2f(
         "u_atlas_size",
-        @floatFromInt(Atlas.ATLAS_WIDTH),
-        @floatFromInt(Atlas.ATLAS_HEIGHT),
+        @floatFromInt(Atlas.texture_width),
+        @floatFromInt(Atlas.texture_height),
     );
     atlas.bindTextures(gl.TEXTURE0, gl.TEXTURE1);
     self.shader.set2f("u_cell_size", dimension.cell.width, dimension.cell.height);

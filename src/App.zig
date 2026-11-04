@@ -59,22 +59,20 @@ const pomodoro = rex.builtin.pomodoro;
 //
 // 16,384 total rows (e.g., 1,000 rows + 15,384 scrollback)
 
-const MAX_ROWS: usize = 200;
-const MAX_COLS: usize = 220;
-const MAX_SCROLLBACK: usize = 3896;
-const TAB_WIDTH: usize = 8;
-const EMULATOR_VERSION = "0.1.0";
-const EMULATOR_NAME = "rex";
-const MAX_BUFFER_SIZE: usize = std.math.maxInt(u16) - 1;
-const BACKGROUND_COLOR: [4]f32 = .{ 0, 0, 0, 0.99 };
-const SCROLL_LINES = 3;
+const max_rows: usize = 200;
+const max_cols: usize = 220;
+const max_scrollback: usize = 3896;
+const tab_width: usize = 8;
+const emulator_version = "0.1.0";
+const emulator_name = "rex";
+const max_read_size: usize = std.math.maxInt(u16) - 1;
+const scroll_lines = 3;
 
-const COMPLETE_WAV = @embedFile("audio/complete.wav");
-const BELL_VOLUME: u8 = 100; // 1 Hz
-const BLINK_HALF_PERIOD_MS: u64 = 500;
-const BLINK_RAPID_HALF_PERIOD_MS: u64 = 250;
+const bell_volume: u8 = 100; // 1 Hz
+const blink_half_period_ms: u64 = 500;
+const blink_rapid_half_period_ms: u64 = 250;
 
-const POMODORO_STATE_BINARY_FILE = "pomodoro_stats.bin";
+const pomodoro_state_file = "pomodoro_stats.bin";
 
 pub const Config = struct {
     blink: struct {
@@ -109,12 +107,12 @@ pub const Config = struct {
 };
 
 const terminal_option: TerminalOption = .{
-    .max_rows = MAX_ROWS,
-    .max_cols = MAX_COLS,
-    .tab_width = TAB_WIDTH,
-    .name = EMULATOR_NAME,
-    .version = EMULATOR_VERSION,
-    .max_scrollback = MAX_SCROLLBACK,
+    .max_rows = max_rows,
+    .max_cols = max_cols,
+    .tab_width = tab_width,
+    .name = emulator_name,
+    .version = emulator_version,
+    .max_scrollback = max_scrollback,
 };
 
 pub const FrameBuilderType = FrameBuilder(terminal_option);
@@ -178,8 +176,8 @@ needs_redraw: bool = true,
 // Blink state
 blink_on: bool = true,
 blink_rapid_on: bool = true,
-blink: PeriodicTimer(BLINK_HALF_PERIOD_MS),
-blink_rapid: PeriodicTimer(BLINK_RAPID_HALF_PERIOD_MS),
+blink: PeriodicTimer(blink_half_period_ms),
+blink_rapid: PeriodicTimer(blink_rapid_half_period_ms),
 
 // Window state
 last_frame: std.Io.Clock.Timestamp,
@@ -301,7 +299,7 @@ pub fn init(gpa: std.mem.Allocator, io: std.Io, environ: *const std.process.Envi
 
     var dirs = try rex.dirs.Application.resolve(
         gpa,
-        EMULATOR_NAME,
+        emulator_name,
         home_dir,
         &envmap,
     );
@@ -392,7 +390,7 @@ pub fn init(gpa: std.mem.Allocator, io: std.Io, environ: *const std.process.Envi
         .waiting = false,
     };
 
-    const pomodoro_report = pomodoro.load(io, dirs.state, POMODORO_STATE_BINARY_FILE);
+    const pomodoro_report = pomodoro.load(io, dirs.state, pomodoro_state_file);
     if (pomodoro_report.toState()) |state| {
         pomodoro_state.phase = state.phase;
         pomodoro_state.remaining_ms = state.remaining_ms;
@@ -416,14 +414,14 @@ pub fn init(gpa: std.mem.Allocator, io: std.Io, environ: *const std.process.Envi
         .window = win,
         .background_color = .{ background_color.r, background_color.g, background_color.b, background_alpha },
         .blink_rapid = blk: {
-            if (config.blink.rapid_half_period != BLINK_RAPID_HALF_PERIOD_MS) {
+            if (config.blink.rapid_half_period != blink_rapid_half_period_ms) {
                 break :blk PeriodicTimer(config.blink.rapid_half_period){};
             } else {
                 break :blk .{};
             }
         },
         .blink = blk: {
-            if (config.blink.half_period != BLINK_HALF_PERIOD_MS) {
+            if (config.blink.half_period != blink_half_period_ms) {
                 break :blk PeriodicTimer(config.blink.half_period){};
             } else {
                 break :blk .{};
@@ -462,7 +460,7 @@ pub fn deinit(self: *App, gpa: std.mem.Allocator) void {
         &self.pomodoro_stats,
         &self.pomodoro_state,
         self.dirs.state,
-        POMODORO_STATE_BINARY_FILE,
+        pomodoro_state_file,
     ) catch |err| {
         log.err("failed to save pomodoro stats: {any}", .{err});
     };
@@ -503,9 +501,9 @@ pub fn run(self: *App) !void {
     self.window.setScrollCallback(scrollCb);
     self.window.setWindowFocusCallback(windowFocusCb);
 
-    var buffer: [MAX_BUFFER_SIZE]u8 = undefined;
+    var buffer: [max_read_size]u8 = undefined;
 
-    // var future = self.io.async(Audio.playEmbedded, .{ &self.audio, self.io, COMPLETE_WAV });
+    // var future = self.io.async(Audio.playEmbedded, .{ &self.audio, self.io, @embedFile("audio/complete.wav") });
     // defer future.await(self.io);
     //
     // self.audio.play("/usr/share/sounds/sound-icons/trumpet-1.wav");
@@ -567,10 +565,10 @@ pub fn run(self: *App) !void {
                 &self.pomodoro_stats,
                 &self.pomodoro_state,
                 self.dirs.state,
-                POMODORO_STATE_BINARY_FILE,
+                pomodoro_state_file,
             ) catch {};
 
-            self.window.ringBell(BELL_VOLUME);
+            self.window.ringBell(bell_volume);
             self.last_title = now;
             self.updateWindowTitle();
             self.needs_redraw = true;
@@ -618,7 +616,7 @@ pub fn run(self: *App) !void {
                     };
                 }
 
-                if (events.bell) self.window.ringBell(BELL_VOLUME);
+                if (events.bell) self.window.ringBell(bell_volume);
 
                 if (events.resize) |resize| {
                     self.pty.resize(
@@ -995,11 +993,11 @@ fn handleAction(self: *App, action: rex.input.Action) void {
             }
         },
         .scroll_up => {
-            self.terminal.active().scrollViewportBack(SCROLL_LINES);
+            self.terminal.active().scrollViewportBack(scroll_lines);
             self.needs_redraw = true;
         },
         .scroll_down => {
-            self.terminal.active().scrollViewportForward(SCROLL_LINES);
+            self.terminal.active().scrollViewportForward(scroll_lines);
             self.needs_redraw = true;
         },
         .increase_font_size => {
@@ -1071,7 +1069,7 @@ fn handleAction(self: *App, action: rex.input.Action) void {
             if (was_idle and self.pomodoro_state.phase == .task) {
                 self.pomodoro_stats.sessions += 1;
             }
-            self.window.ringBell(BELL_VOLUME);
+            self.window.ringBell(bell_volume);
             self.updateWindowTitle();
         },
         .pomodoro_reset => {
@@ -1080,7 +1078,7 @@ fn handleAction(self: *App, action: rex.input.Action) void {
         },
         .pomodoro_skip => {
             self.pomodoro_state.skip();
-            self.window.ringBell(BELL_VOLUME);
+            self.window.ringBell(bell_volume);
             self.updateWindowTitle();
         },
         .pomodoro_auto_transition => {
@@ -1184,8 +1182,8 @@ const keyCb: c.GLFWkeyfun = struct {
 
 fn mouseCellPos(self: *App, xpos: f32, ypos: f32) struct { u16, u16 } {
     const cw, const ch = .{ self.rasterizer.cell_width, self.rasterizer.cell_height };
-    const col: u16 = @intCast(@min(@as(u32, @intFromFloat(@max(0, xpos))) / cw, MAX_COLS - 1));
-    const row: u16 = @intCast(@min(@as(u32, @intFromFloat(@max(0, ypos))) / ch, MAX_ROWS - 1));
+    const col: u16 = @intCast(@min(@as(u32, @intFromFloat(@max(0, xpos))) / cw, max_cols - 1));
+    const row: u16 = @intCast(@min(@as(u32, @intFromFloat(@max(0, ypos))) / ch, max_rows - 1));
     return .{ col, row };
 }
 
@@ -1223,7 +1221,7 @@ fn copySelectionToClipboard(self: *App) void {
     const clamped_hi: i64 = std.math.clamp(hi_anchor, -scrollback_used, active_rows - 1);
     if (clamped_hi < clamped_lo) return; // nothing retained to copy
 
-    var buf: [MAX_BUFFER_SIZE]u8 = undefined;
+    var buf: [max_read_size]u8 = undefined;
     var pos: usize = 0;
 
     var anchor_row: i64 = clamped_lo;

@@ -6,10 +6,6 @@ const std = @import("std");
 const builtin = @import("builtin");
 const optimize_mode = builtin.mode;
 
-pub const std_options: std.Options = .{
-    .log_level = .debug,
-};
-
 const log = std.log.scoped(.screen);
 
 const Cell = @import("cell.zig").Cell;
@@ -156,7 +152,7 @@ fn nextPowerOfTwo(comptime n: usize) usize {
 /// `max_rows` / `max_cols` are capacity bounds. The actual active dimensions
 /// are `active_rows` / `active_cols` (runtime, <= the comptime maxima).
 ///
-/// `max_cols` stays comptime becuase the atlas glyph cache and the renderer
+/// `max_cols` stays comptime because the atlas glyph cache and the renderer
 /// instance buffer are sized from it at compile time.
 ///
 /// Maximum scrollback lines retained above the active area.
@@ -169,7 +165,7 @@ pub fn Screen(comptime option: Option) type {
 
     const is_scrollback_used = max_scrollback > 0;
 
-    const DEFAULT_SCROLL_BOTTOM: u16 = @intCast(max_rows -| 1);
+    const default_scroll_bottom: u16 = @intCast(max_rows -| 1);
     const max_usize = std.math.maxInt(usize);
     comptime {
         if (max_rows == 0) {
@@ -402,7 +398,7 @@ pub fn Screen(comptime option: Option) type {
                 .cells = cells,
                 .palette = .empty,
                 .tab_stops = comptime defaultTabStops(),
-                .scroll_bottom = DEFAULT_SCROLL_BOTTOM,
+                .scroll_bottom = default_scroll_bottom,
                 .scrollback_used = if (is_scrollback_used) 0 else {},
                 .viewport_offset = if (is_scrollback_used) 0 else {},
                 .grapheme_arena = std.heap.ArenaAllocator.init(gpa),
