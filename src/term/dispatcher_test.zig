@@ -2818,10 +2818,7 @@ test "csi: DSR XTVERSION xterm name and version" {
     try testing.expectEqualStrings("\x1bP>|test 0.0.1\x1b\\", t.events.response.slice());
 }
 
-test "csi: DECXCPR report cursor positioin" {
-    // TERMV4 M2 item 10: DECXCPR (CSI ? 6 n) reply lacks the '?' marker.
-    if (true) return error.SkipZigTest;
-
+test "csi: DECXCPR report cursor position" {
     var t = try Term.create(alloc);
     defer t.destroy(alloc);
 

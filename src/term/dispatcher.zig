@@ -257,7 +257,7 @@ pub const Csi = struct {
 
             // DEC DSR / CSI ? Ps n
             0x3F6E => switch (p1_0) {
-                6 => terminal.reply(.csi, "{d};{d}R", .{ screen.cursor.row + 1, screen.cursor.col + 1 }), // DECXCPR
+                6 => terminal.reply(.csi, "?{d};{d}R", .{ screen.cursor.row + 1, screen.cursor.col + 1 }), // DECXCPR
                 else => {},
             },
 
