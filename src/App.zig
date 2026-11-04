@@ -182,7 +182,8 @@ last_title: std.Io.Clock.Timestamp,
 // Environment data
 dirs: rex.dirs.Application,
 
-/// Counts whole `period_ms` periods as time passes.
+/// Counts whole `period_ms` periods as time passes. A period of 0
+/// disables the timer: it never fires and sets no deadline.
 fn PeriodicTimer(comptime period_ms: u64) type {
     return struct {
         elapsed_ms: u64 = 0,
@@ -190,15 +191,17 @@ fn PeriodicTimer(comptime period_ms: u64) type {
 
         /// Adds `dt_ms` and returns how many periods ended.
         pub fn tick(self: *Self, dt_ms: u64) u64 {
+            if (period_ms == 0) return 0;
             const total = self.elapsed_ms + dt_ms;
             const periods = total / period_ms;
             self.elapsed_ms = total % period_ms;
             return periods;
         }
 
-        /// Milliseconds until the current period ends.
+        /// Milliseconds until the current period ends, or the largest
+        /// u64 when the timer is disabled.
         pub fn remaining(self: *const Self) u64 {
-            if (period_ms == 0) return 0;
+            if (period_ms == 0) return std.math.maxInt(u64);
             return period_ms - self.elapsed_ms;
         }
     };
@@ -1482,3 +1485,17 @@ const framebufferSizeCb: c.GLFWframebuffersizefun = struct {
         app.handleResize(.{ .height = @intCast(h), .width = @intCast(w) });
     }
 }.cb;
+
+test "PeriodicTimer: counts whole periods and keeps the remainder" {
+    var timer: PeriodicTimer(500) = .{};
+    try std.testing.expectEqual(0, timer.tick(499));
+    try std.testing.expectEqual(1, timer.remaining());
+    try std.testing.expectEqual(3, timer.tick(1001));
+    try std.testing.expectEqual(500, timer.remaining());
+}
+
+test "PeriodicTimer: a zero period never fires and sets no deadline" {
+    var timer: PeriodicTimer(0) = .{};
+    try std.testing.expectEqual(0, timer.tick(1000));
+    try std.testing.expectEqual(std.math.maxInt(u64), timer.remaining());
+}
