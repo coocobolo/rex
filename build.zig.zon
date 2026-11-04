@@ -1,11 +1,8 @@
 .{
     .name = .rex,
     .version = "0.16.0",
+    .minimum_zig_version = "0.16.0",
     .dependencies = .{
-        .glad = .{
-            .url = "https://glad.dav1d.de/generated/tmptfnr7ekbglad/glad.zip",
-            .hash = "N-V-__8AAL2TGQBAmhj74dNFbpOGTCMYibtsLg5jR7DDVn68",
-        },
         .freetype = .{
             .url = "git+https://gitlab.freedesktop.org/freetype/freetype.git?ref=VER-2-13-3#42608f77f20749dd6ddc9e0536788eaad70ea4b5",
             .hash = "N-V-__8AAKfbpwAXnUJ6TJEaqZGWgp6F_8OhiLErejRxQ7Y5",
@@ -18,7 +15,7 @@
     .paths = .{
         "build.zig",
         "build.zig.zon",
-        "examples/a/build.zig",
+        "vendor",
     },
     .fingerprint = 0xee6003c0657fb507,
 }

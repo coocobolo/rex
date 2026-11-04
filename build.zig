@@ -34,7 +34,9 @@ pub fn build(b: *std.Build) !void {
         else => @panic("Unsupported GLFW platform"),
     }
 
-    const glad_dep = b.dependency("glad", .{});
+    // glad 0.1.36, gl 4.5 compatibility, vendored: the generator only
+    // serves its zips from temporary URLs.
+    const glad_dir = b.path("vendor/glad");
     const glad_lib = b.addLibrary(.{
         .name = "glad",
         .linkage = .static,
@@ -45,8 +47,8 @@ pub fn build(b: *std.Build) !void {
         }),
     });
 
-    glad_lib.root_module.addCSourceFile(.{ .file = glad_dep.path("src/glad.c") });
-    glad_lib.root_module.addIncludePath(glad_dep.path("include"));
+    glad_lib.root_module.addCSourceFile(.{ .file = glad_dir.path(b, "src/glad.c") });
+    glad_lib.root_module.addIncludePath(glad_dir.path(b, "include"));
 
     const freetype_dep = b.dependency("freetype", .{});
     const freetype_lib = b.addLibrary(.{
@@ -105,7 +107,7 @@ pub fn build(b: *std.Build) !void {
     mod.linkSystemLibrary("z", .{});
     mod.linkSystemLibrary("png", .{});
 
-    mod.addIncludePath(glad_dep.path("include"));
+    mod.addIncludePath(glad_dir.path(b, "include"));
     mod.linkLibrary(glad_lib);
 
     mod.addIncludePath(glfw_dep.path("include"));
@@ -123,7 +125,6 @@ pub fn build(b: *std.Build) !void {
         mod.linkSystemLibrary("dl", .{});
         mod.linkSystemLibrary("m", .{});
         mod.linkSystemLibrary("pthread", .{});
-        mod.linkSystemLibrary("X11", .{});
         // Install the X11 extension development headers on your system, e.g. on Ubuntu/Debian:
         // sudo apt install libxcursor-dev libxrandr-dev libxinerama-dev libxi-dev libx11-dev libxext-dev
     } else {
