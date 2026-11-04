@@ -1,6 +1,8 @@
 //! The terminal: `Terminal(option)` owns the primary and alternate
 //! screens, modes, palette and parser state, applies the actions the
-//! dispatcher decodes, and queues replies for the pty.
+//! dispatcher decodes, and queues replies for the pty. Every reply
+//! goes through `Terminal.reply` and the bounded `Events.Response`
+//! queue. It must not import renderer/ or touch the pty itself.
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -30,6 +32,56 @@ pub const max_answerback_len = 32;
 const log = std.log.scoped(.term);
 
 pub const ScreenBuffer = enum { primary, alternate };
+
+/// A colour slot that OSC 10-19 can set or query. The tag value is the
+/// OSC code (xterm ctlseqs, "Operating System Commands").
+pub const DynamicColor = enum(u8) {
+    fg = 10,
+    bg = 11,
+    cursor = 12,
+    selection_bg = 17,
+    selection_fg = 19,
+};
+
+/// A 0-based cell position. Replies that report one add 1, since the
+/// wire format is 1-based.
+pub const CellPosition = struct { row: u16, col: u16 };
+
+/// One reply to the host, as a value. `Terminal.reply` encodes it in the
+/// current C1 format and queues it through `Events.Response`, so every
+/// reply shares one overflow policy: queued whole or dropped whole.
+pub const Reply = union(enum) {
+    /// ENQ: the configured answerback string, sent as is.
+    answerback: []const u8,
+    /// DECID (ESC Z), the obsolete DA1 request: CSI ? 1 ; 2 c.
+    decid,
+    /// DA1 (CSI c): VT220, with ANSI colour (22) and clipboard (52).
+    primary_attributes,
+    /// DA2 (CSI > c): CSI > 1 ; 0 ; 0 c.
+    secondary_attributes,
+    /// DSR 5, operating status: CSI 0 n, meaning no malfunction.
+    status_ok,
+    /// CPR (DSR 6). xterm reports the absolute position, even under DECOM.
+    cursor_position: CellPosition,
+    /// DECXCPR (CSI ? 6 n): as CPR, with the DEC private marker.
+    dec_cursor_position: CellPosition,
+    /// XTVERSION (CSI > q): DCS > | name version ST.
+    xtversion,
+    /// OSC 4 query reply, with the palette's 8-bit channels.
+    palette_color: struct { index: u8, rgb: Rgb },
+    /// OSC 10-19 query reply. Each 8-bit channel is widened to 16 bits
+    /// by repeating the byte, as xterm does.
+    dynamic_color: struct { slot: DynamicColor, rgb: Rgb },
+    /// SGR mouse report (mode 1006): CSI < Pb ; Px ; Py M or m.
+    mouse_sgr: struct { code: u8, at: CellPosition, press: bool },
+    /// X10/normal mouse report: CSI M Cb Cx Cy, each byte offset by 32.
+    /// Positions past `mouse_x10_max` cannot be encoded.
+    mouse_x10: struct { code: u8, at: CellPosition },
+
+    /// Largest 0-based row or column the X10 encoding can carry: the
+    /// byte is 32 + 1 + position and must fit in a u8.
+    pub const mouse_x10_max: u16 = 255 - 32 - 1;
+};
 
 /// Mode state as DECRPM reports it (VT510, DECRQM/DECRPM): the reply's
 /// Ps value for one mode.
@@ -201,10 +253,13 @@ pub const Events = struct {
             self.len += written.len;
         }
 
+        /// The queued replies, oldest first. Valid until the next write
+        /// or `clear`.
         pub fn slice(self: *const Response) []const u8 {
             return self.buf[0..self.len];
         }
 
+        /// True when no reply is queued.
         pub fn isEmpty(self: *const Response) bool {
             return self.len == 0;
         }
@@ -224,7 +279,7 @@ pub const Events = struct {
             self.title or
             self.icon_name or
             self.cursor_color or
-            self.response.len > 0 or
+            !self.response.isEmpty() or
             self.resize != null;
     }
 
@@ -385,13 +440,7 @@ pub fn Terminal(comptime option: Option) type {
         osc_overflow: bool = false,
         dcs_overflow: bool = false,
 
-        pub const ColorTarget = enum {
-            fg,
-            bg,
-            cursor,
-            selection_fg,
-            selection_bg,
-        };
+        pub const ColorTarget = DynamicColor;
 
         /// Allocates both screens' cell storage. The returned value owns
         /// it; release with `destroy`.
@@ -1065,10 +1114,49 @@ pub fn Terminal(comptime option: Option) type {
             }
         }
 
-        /// Queues one reply: the `intro` introducer, `fmt` formatted with
-        /// `args`, then ST for string replies (DCS, OSC), all in the
-        /// current C1 format. The reply is queued whole or dropped whole.
-        pub fn reply(self: *Self, comptime intro: SequenceType, comptime fmt: []const u8, args: anytype) void {
+        /// Queues `r` for the host, encoded in the current C1 format
+        /// (S7C1T/S8C1T). It is queued whole, or dropped whole and counted
+        /// in `events.response.dropped` when the queue is full.
+        pub fn reply(self: *Self, r: Reply) void {
+            switch (r) {
+                .answerback => |bytes| self.events.response.append(bytes),
+                .decid => self.replyFmt(.csi, "?1;2c", .{}),
+                .primary_attributes => self.replyFmt(.csi, "?62;22;52c", .{}),
+                .secondary_attributes => self.replyFmt(.csi, ">1;0;0c", .{}),
+                .status_ok => self.replyFmt(.csi, "0n", .{}),
+                .cursor_position => |at| self.replyFmt(.csi, "{d};{d}R", .{ @as(u32, at.row) + 1, @as(u32, at.col) + 1 }),
+                .dec_cursor_position => |at| self.replyFmt(.csi, "?{d};{d}R", .{ @as(u32, at.row) + 1, @as(u32, at.col) + 1 }),
+                .xtversion => self.replyFmt(.dcs, ">|{s} {s}", .{ option.name, option.version }),
+                .palette_color => |c| self.replyFmt(.osc, "4;{d};rgb:{x:0>2}/{x:0>2}/{x:0>2}", .{ c.index, c.rgb.r, c.rgb.g, c.rgb.b }),
+                .dynamic_color => |c| self.replyFmt(.osc, "{d};rgb:{x:0>4}/{x:0>4}/{x:0>4}", .{
+                    @intFromEnum(c.slot),
+                    @as(u16, c.rgb.r) * 257,
+                    @as(u16, c.rgb.g) * 257,
+                    @as(u16, c.rgb.b) * 257,
+                }),
+                .mouse_sgr => |m| self.replyFmt(.csi, "<{d};{d};{d}{c}", .{
+                    m.code,
+                    @as(u32, m.at.col) + 1,
+                    @as(u32, m.at.row) + 1,
+                    @as(u8, if (m.press) 'M' else 'm'),
+                }),
+                .mouse_x10 => |m| {
+                    // Drop what the encoding cannot carry rather than send
+                    // a wrapped, wrong byte.
+                    if (m.code > 255 - 32) return;
+                    if (m.at.col > Reply.mouse_x10_max or m.at.row > Reply.mouse_x10_max) return;
+                    self.replyFmt(.csi, "M{c}{c}{c}", .{
+                        m.code + 32,
+                        @as(u8, @intCast(m.at.col + 1 + 32)),
+                        @as(u8, @intCast(m.at.row + 1 + 32)),
+                    });
+                },
+            }
+        }
+
+        /// Formats one reply: the `intro` introducer, `fmt` with `args`,
+        /// then ST for string replies (DCS, OSC).
+        fn replyFmt(self: *Self, comptime intro: SequenceType, comptime fmt: []const u8, args: anytype) void {
             const c1 = self.control_format;
             const st = switch (intro) {
                 .dcs, .osc => seqIntroducer(.st, c1),
@@ -1079,7 +1167,7 @@ pub fn Terminal(comptime option: Option) type {
 
         /// XTVERSION reply: `DCS > | name version ST`.
         pub fn xtversion(self: *Self) void {
-            self.reply(.dcs, ">|{s} {s}", .{ option.name, option.version });
+            self.reply(.xtversion);
         }
 
         /// Resize both screens to `rows` × `cols`.
@@ -1140,7 +1228,7 @@ pub fn Terminal(comptime option: Option) type {
 
                 if (std.mem.eql(u8, spec, "?")) {
                     const color = self.active().palette.getIndexed(idx);
-                    self.reply(.osc, "4;{d};rgb:{x:0>2}/{x:0>2}/{x:0>2}", .{ idx, color.r, color.g, color.b });
+                    self.reply(.{ .palette_color = .{ .index = idx, .rgb = color } });
                 } else if (Rgb.parseSpec(spec)) |c| {
                     self.active().palette.setIndexed(idx, c);
                 }
@@ -1160,35 +1248,21 @@ pub fn Terminal(comptime option: Option) type {
 
             const code = button | mods;
 
-            // SGR: ESC [ < Pb ; Px ; Py M/m
+            const at: CellPosition = .{ .row = row, .col = col };
             if (mode.mouse_sgr) {
-                const final: u8 = if (press) 'M' else 'm';
-                self.reply(.csi, "<{d};{d};{d}{c}", .{ code, col + 1, row + 1, final });
+                self.reply(.{ .mouse_sgr = .{ .code = code, .at = at, .press = press } });
                 return;
             }
 
-            // otherwise, X10/normal: ESC [ M Cb Cx Cy (max 223 cols/rows)
+            // X10/normal encoding has no release button: 3 means "released".
             if (col >= option.max_cols or row >= option.max_rows) return;
-            const cb = if (press) code + 32 else 3 + 32;
-            const cx: u8 = @truncate(col + 1 + 32);
-            const cy: u8 = @truncate(row + 1 + 32);
-
-            self.reply(.csi, "M{c}{c}{c}", .{ cb, cx, cy });
+            self.reply(.{ .mouse_x10 = .{ .code = if (press) code else 3, .at = at } });
         }
 
         pub fn setOrQueryColor(self: *Self, data: []const u8, comptime target: ColorTarget) void {
             const spec = std.mem.trim(u8, data, " ");
 
             if (std.mem.eql(u8, data, "?")) {
-                // Query: respond with current color
-                const osc_code: u8 = switch (target) {
-                    .fg => 10,
-                    .bg => 11,
-                    .cursor => 12,
-                    .selection_bg => 17,
-                    .selection_fg => 19,
-                };
-
                 const color: Rgb = switch (target) {
                     .fg => self.active().palette.get(.foreground),
                     .bg => self.active().palette.get(.background),
@@ -1197,13 +1271,7 @@ pub fn Terminal(comptime option: Option) type {
                     .cursor => self.cursor_color orelse self.active().palette.get(.foreground),
                 };
 
-                // 8-bit channels widen to 16 bits by repeating the byte.
-                self.reply(.osc, "{d};rgb:{x:0>4}/{x:0>4}/{x:0>4}", .{
-                    osc_code,
-                    @as(u16, color.r) * 257,
-                    @as(u16, color.g) * 257,
-                    @as(u16, color.b) * 257,
-                });
+                self.reply(.{ .dynamic_color = .{ .slot = target, .rgb = color } });
             } else if (Rgb.parseSpec(spec)) |color| {
                 switch (target) {
                     .fg => self.active().palette.set(.foreground, color),

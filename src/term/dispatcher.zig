@@ -1,5 +1,7 @@
 //! Maps parsed C0, ESC, CSI, OSC and DCS sequences to Terminal
-//! operations and replies.
+//! operations and replies. It holds no state of its own and must not
+//! format reply bytes: it names a `Reply` and `Terminal.reply` encodes
+//! it.
 
 const std = @import("std");
 
@@ -46,7 +48,7 @@ pub const Escape = struct {
             'O' => term.active().singleShift3(), // SS3
             // DECID, obsolete form of DA1.
             // https://invisible-island.net/xterm/manpage/xterm.html#VT100-Widget-Resources:decTerminalID
-            'Z' => term.reply(.csi, "?1;2c", .{}),
+            'Z' => term.reply(.decid),
 
             'c' => term.hardReset(), // RIS
 
@@ -105,7 +107,7 @@ pub const C0 = struct {
     pub fn dispatch(comptime option: Option, term: *Terminal(option), byte: u8) void {
         switch (byte) {
             0x00 => {}, // NUL
-            0x05 => term.events.response.append(term.getAnswerback()), // ENQ
+            0x05 => term.reply(.{ .answerback = term.getAnswerback() }), // ENQ
             0x07 => { // BEL
                 if (!term.events.bell) term.events.bell = true;
             },
@@ -199,8 +201,7 @@ pub const Csi = struct {
 
             'a' => screen.cursorRight(p1), // HPR / CSI Ps a
             'b' => screen.repeatChar(p1), // REP / CSI Ps b
-            // DA1 / CSI c: VT220 with ANSI colour (22) and clipboard (52).
-            'c' => if (p1_0 == 0) terminal.reply(.csi, "?62;22;52c", .{}),
+            'c' => if (p1_0 == 0) terminal.reply(.primary_attributes), // DA1 / CSI c
 
             'm' => {
                 sgr.parse(option, terminal, parameters); // SGR / CSI Ps m;
@@ -221,10 +222,8 @@ pub const Csi = struct {
 
             // DSR / CSI Ps n
             'n' => switch (p1_0) {
-                5 => terminal.reply(.csi, "0n", .{}), // operating status: OK
-                // CPR: 1-based absolute position. Under DECOM xterm still
-                // reports absolute, not relative to the scroll region.
-                6 => terminal.reply(.csi, "{d};{d}R", .{ screen.cursor.row + 1, screen.cursor.col + 1 }),
+                5 => terminal.reply(.status_ok),
+                6 => terminal.reply(.{ .cursor_position = .{ .row = screen.cursor.row, .col = screen.cursor.col } }), // CPR
                 else => {},
             },
 
@@ -238,7 +237,7 @@ pub const Csi = struct {
             },
 
             // DA2 / CSI > c.
-            0x3E63 => if (p1_0 == 0) terminal.reply(.csi, ">1;0;0c", .{}),
+            0x3E63 => if (p1_0 == 0) terminal.reply(.secondary_attributes),
 
             0x3E70 => terminal.xtversion(), // XTVERSION / CSI > Ps q
             0x2071 => terminal.setCursorStyle(p1_0), // DECSCUSR / CSI Ps SP q
@@ -257,7 +256,7 @@ pub const Csi = struct {
 
             // DEC DSR / CSI ? Ps n
             0x3F6E => switch (p1_0) {
-                6 => terminal.reply(.csi, "?{d};{d}R", .{ screen.cursor.row + 1, screen.cursor.col + 1 }), // DECXCPR
+                6 => terminal.reply(.{ .dec_cursor_position = .{ .row = screen.cursor.row, .col = screen.cursor.col } }), // DECXCPR
                 else => {},
             },
 
