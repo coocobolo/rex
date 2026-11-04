@@ -13,7 +13,7 @@ const c = window.c;
 const testGlContext = window.testGlContext;
 
 var gl_win: ?*c.GLFWwindow = null;
-fn getOrCreatedGLContext() !*c.GLFWwindow {
+fn sharedGlContext() !*c.GLFWwindow {
     if (gl_win) |win| return win;
     gl_win = try testGlContext();
     return gl_win.?;
@@ -302,7 +302,7 @@ fn testGetSequenceEmptyReturnsError(win: *c.GLFWwindow) !void {
 }
 
 test "atlas integration" {
-    const win = try getOrCreatedGLContext();
+    const win = try sharedGlContext();
     defer c.glfwDestroyWindow(win);
     defer c.glfwTerminate();
 

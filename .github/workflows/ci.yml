@@ -18,7 +18,8 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             libx11-dev libxrandr-dev libxi-dev libxcursor-dev \
             libxinerama-dev libxext-dev libgl-dev libegl-dev \
-            libpng-dev zlib1g-dev
+            libpng-dev zlib1g-dev \
+            xvfb libgl1-mesa-dri
 
       # Reads minimum_zig_version from build.zig.zon and caches the
       # Zig global cache between runs.
@@ -26,4 +27,5 @@ jobs:
 
       - run: zig fmt --check .
       - run: zig build
-      - run: zig build test
+      # GL tests need a display; Xvfb plus Mesa gives a software one.
+      - run: xvfb-run -a zig build test
