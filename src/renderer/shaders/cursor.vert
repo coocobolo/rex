@@ -6,14 +6,14 @@ uniform uvec2 u_cell_pos;       // (col, row) in grid units
 uniform vec2 u_cell_size;       // (cell_w, cell_h) in pixels
 uniform vec2 u_screen_size;     // framebuffer (w, h) in pixels
 uniform int u_shape;            // 0=block, 1=underline, 2=beam
-uniform float u_underline_frac; // e.g. 0.12
-uniform float u_bar_frac;       // e.g. 0.12
-uniform float u_bar_offset_y;     // 1.0 default offset
+uniform float u_underline_frac; // underline height, fraction of the cell height
+uniform float u_bar_frac;       // bar width, fraction of the cell width
+uniform float u_bar_offset_y;   // underline bottom, fraction of the cell height
 
 out vec2 v_uv;
 flat out vec2 v_size; // actual pixel size of this cursor quad
 
-const int SHAPE_BLOCK= 0;
+const int SHAPE_BLOCK = 0;
 const int SHAPE_UNDERLINE = 1;
 const int SHAPE_BEAM = 2;
 

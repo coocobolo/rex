@@ -19,13 +19,8 @@ float roundedBox(vec2 uv, vec2 size, float r) {
 }
 
 void main() {
-  // Only round the block cursor; underline/bar are too thin to benefit.
-  // float r = (u_shape == 0) ? u_radius : 0.0;
-
-  // Clamp radius to half the smallest dimension — works for all shapes.
-  // Block: min(cell_w, cell_h)/2 — large enough for u_radius = 4.6
-  // Underline: min(cell_w, cell_h*0.12)/2 — small but non-zero, rounds the ends
-  // Bar: min(cell_w*0.12, cell_h)/2 — same
+  // Every shape is rounded, the radius clamped to half its smaller side:
+  // the block keeps u_radius, the thin underline and bar get round ends.
   float r = min(u_radius, min(v_size.x, v_size.y) * 0.5);
   float d = roundedBox(v_uv, v_size, r);
 

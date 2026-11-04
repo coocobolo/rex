@@ -1,7 +1,8 @@
-const std = @import("std");
-const log = std.log.scoped(.selection);
+//! Selection highlight: one instance per selected row, drawn as a
+//! rounded, optionally bordered overlay over the cell backgrounds.
 
-const gl = @import("gl.zig");
+const std = @import("std");
+
 const Shader = @import("Shader.zig");
 const Dimension = @import("dimension.zig").Dimension;
 const Kind = @import("../Selection.zig").Kind;
@@ -28,12 +29,16 @@ pub const State = struct {
         .kind = .character,
     };
 
-    fn normalized(self: State) struct {
+    /// The selected area with its top left corner first.
+    const Bounds = struct {
         lo_row: u16,
         lo_col: u16,
         hi_row: u16,
         hi_col: u16,
-    } {
+    };
+
+    /// Orders the endpoints so the earlier one in reading order comes first.
+    fn normalized(self: State) Bounds {
         const start_before_end = self.start_row < self.end_row or
             (self.start_row == self.end_row and self.start_col <= self.end_col);
 
@@ -54,14 +59,10 @@ pub const State = struct {
         };
     }
 
-    /// For block selection, columns are independent of row ordering each row uses the
-    /// same [lo_col, hi_col] pair regardless of which endpoint (start..end) is above or below.
-    fn normalizedBlock(self: State) struct {
-        lo_row: u16,
-        lo_col: u16,
-        hi_row: u16,
-        hi_col: u16,
-    } {
+    /// For block selection, columns are independent of row ordering: each
+    /// row uses the same [lo_col, hi_col] pair regardless of which endpoint
+    /// is above or below.
+    fn normalizedBlock(self: State) Bounds {
         return .{
             .lo_row = @min(self.start_row, self.end_row),
             .hi_row = @max(self.start_row, self.end_row),
@@ -95,7 +96,7 @@ pub const Instance = extern struct {
     col: u16,
     row: u16,
     span: u16,
-    // bit 0 = draw+top,
+    // bit 0 = draw_top
     // bit 1 = draw_bottom
     // bit 2 = is_rectangular
     flags: u16 = 0,
@@ -114,16 +115,17 @@ pub const Selection = @This();
 pub const BorderStyle = enum(u1) {
     /// Each row gets its own full border rectangle.
     per_row = 0,
-    /// All rows share a single outer perimeter — no internal row dividers.
+    /// All rows share a single outer perimeter, with no internal row dividers.
     unified = 1,
 };
 
 pub const Option = struct {
-    /// RGBA highlight color.
-    /// `.a` is the base opacity multiplier for both border and fill.
-    /// Fill is further scaled by `fill_opacity`.
+    /// RGBA fill color, 0.0 to 1.0. The RGB part is replaced by the
+    /// selection background color when one is set; `.a` stays the fill
+    /// opacity.
     fill_color: [4]f32 = .{ 0.2, 0.2, 0.2, 1.0 },
 
+    /// RGBA border color, 0.0 to 1.0.
     border_color: [4]f32 = .{ 0.4, 0.4, 0.4, 1.0 },
 
     /// Outline/border width in pixels.
@@ -168,7 +170,8 @@ pub fn upload(self: *Selection, instances: []const Instance) void {
     if (instances.len > 0) self.buffer.upload(instances);
 }
 
-/// Draw the selection highlight for the current frame.
+/// Draws the selection highlight for the current frame. `color_override`
+/// replaces the RGB of `Option.fill_color`.
 pub fn draw(
     self: *Selection,
     instances_len: usize,
