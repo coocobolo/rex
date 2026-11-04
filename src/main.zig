@@ -142,7 +142,10 @@ pub fn main(init: std.process.Init) !void {
     const allocator = init.arena.allocator();
     const environ = init.minimal.environ;
 
-    var app: rex.App = try .init(allocator, init.io, &environ, &config);
+    var args = init.minimal.args.iterate();
+    const argv0 = args.next() orelse "rex";
+
+    var app: rex.App = try .init(allocator, init.io, &environ, argv0, &config);
     defer app.deinit(allocator);
 
     try app.run();
