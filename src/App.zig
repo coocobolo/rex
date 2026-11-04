@@ -18,8 +18,6 @@ const rex = @import("root.zig");
 
 const unicode = rex.unicode;
 
-// const Audio = rex.Audio;
-
 const renderer_mod = rex.renderer;
 const Atlas = renderer_mod.Atlas;
 const gl = renderer_mod.gl;
@@ -68,7 +66,8 @@ const emulator_name = "rex";
 const max_read_size: usize = std.math.maxInt(u16) - 1;
 const scroll_lines = 3;
 
-const bell_volume: u8 = 100; // 1 Hz
+/// XBell volume, as a percent of the X server bell volume.
+const bell_volume: u8 = 100;
 const blink_half_period_ms: u64 = 500;
 const blink_rapid_half_period_ms: u64 = 250;
 
@@ -120,7 +119,6 @@ pub const RendererType = Renderer(terminal_option);
 pub const ScreenType = Screen(terminal_option);
 pub const TerminalType = Terminal(terminal_option);
 
-// audio: Audio,
 allocator: std.mem.Allocator,
 atlas: Atlas,
 
@@ -428,7 +426,6 @@ pub fn init(gpa: std.mem.Allocator, io: std.Io, environ: *const std.process.Envi
             }
         },
         .dirs = dirs,
-        //.audio = .init(gpa),
         .allocator = gpa,
         .terminal = terminal,
         .renderer = renderer,
@@ -465,8 +462,6 @@ pub fn deinit(self: *App, gpa: std.mem.Allocator) void {
         log.err("failed to save pomodoro stats: {any}", .{err});
     };
     self.dirs.deinit(gpa);
-
-    // self.audio.deinit(gpa);
 }
 
 pub fn tick(self: *App, dt_ms: u64) bool {
@@ -502,11 +497,6 @@ pub fn run(self: *App) !void {
     self.window.setWindowFocusCallback(windowFocusCb);
 
     var buffer: [max_read_size]u8 = undefined;
-
-    // var future = self.io.async(Audio.playEmbedded, .{ &self.audio, self.io, @embedFile("audio/complete.wav") });
-    // defer future.await(self.io);
-    //
-    // self.audio.play("/usr/share/sounds/sound-icons/trumpet-1.wav");
 
     // FIXME! The main loop is doing three different jobs:
     // 1. Reading the PTY.

@@ -48,25 +48,6 @@ pub fn build(b: *std.Build) !void {
     glad_lib.root_module.addCSourceFile(.{ .file = glad_dep.path("src/glad.c") });
     glad_lib.root_module.addIncludePath(glad_dep.path("include"));
 
-    // const miniaudio_dep = b.dependency("miniaudio", .{});
-    // const miniaudio = b.addLibrary(.{
-    //     .name = "miniaudio",
-    //     .linkage = .static,
-    //     .root_module = b.createModule(.{
-    //         .target = target,
-    //         .optimize = optimize,
-    //         .link_libc = true,
-    //     }),
-    // });
-    // miniaudio.root_module.addCSourceFile(.{
-    //     .file = miniaudio_dep.path("miniaudio.c"),
-    //     .flags = &.{
-    //         // "-DMA_NO_RUNTIME_LINKING", // optional: disable dlopen
-    //         "-DMA_ENABLE_VORBIS",
-    //     },
-    // });
-    // miniaudio.root_module.addIncludePath(miniaudio_dep.path(""));
-
     const freetype_dep = b.dependency("freetype", .{});
     const freetype_lib = b.addLibrary(.{
         .linkage = .static,
@@ -123,9 +104,6 @@ pub fn build(b: *std.Build) !void {
     // Therefore its final consumer must link these system libraries.
     mod.linkSystemLibrary("z", .{});
     mod.linkSystemLibrary("png", .{});
-
-    // mod.addIncludePath(miniaudio_dep.path(""));
-    // mod.linkLibrary(miniaudio);
 
     mod.addIncludePath(glad_dep.path("include"));
     mod.linkLibrary(glad_lib);
