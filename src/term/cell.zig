@@ -14,11 +14,11 @@ const x11_colors = @import("../color/x11.zig");
 ///               theme changes recolor existing content without a
 ///               full redraw.
 ///
-///   .indexed    one of the 256 ANSI/xterm palette entries (0–255).
-///               Entries 0–15 are the standard 16 colors; 16–231 are the
-///               6×6×6 color cube; 232–255 are the grayscale ramp.
+///   .indexed    one of the 256 ANSI/xterm palette entries (0 to 255).
+///               Entries 0 to 15 are the standard 16 colors; 16 to 231 are the
+///               6×6×6 color cube; 232 to 255 are the grayscale ramp.
 ///
-///   .rgb        24-bit true color (r, g, b each 0–255).
+///   .rgb        24-bit true color (r, g, b each 0 to 255).
 ///               Used for SGR 38;2;r;g;b and 48;2;r;g;b sequences.
 ///
 /// Layout (Zig union(enum), tag = u8, max payload = 3 bytes)
@@ -115,7 +115,7 @@ pub const Color = union(enum) {
                         return .{ .r = r, .g = g, .b = b };
                     },
                     12 => {
-                        // 16-bit per channel — take the high byte
+                        // 16-bit per channel, take the high byte
                         const r = std.fmt.parseInt(u16, hex[0..4], 16) catch return null;
                         const g = std.fmt.parseInt(u16, hex[4..8], 16) catch return null;
                         const b = std.fmt.parseInt(u16, hex[8..12], 16) catch return null;
@@ -155,8 +155,8 @@ pub const Color = union(enum) {
             if (s.len == 0 or s.len > 4) return null;
 
             const v = std.fmt.parseInt(u16, s, 16) catch return null;
-            // Scale to 8-bit: 1 digit (0-F) → *17, 2 digits (00-FF) → as-is,
-            // 3 digits (000-FFF) → >>4, 4 digits (0000-FFFF) → >>8
+            // Scale to 8-bit: 1 digit (0-F) times 17, 2 digits (00-FF) as-is,
+            // 3 digits (000-FFF) shifted right by 4, 4 digits (0000-FFFF) by 8
             return switch (s.len) {
                 1 => @intCast(v * 17),
                 2 => @intCast(v),
@@ -172,16 +172,15 @@ comptime {
     std.debug.assert(4 == @sizeOf(Color));
 }
 
-/// Underline style encoded in 2 bits.
+/// Underline style, 3 bits of AttrFlags.
 ///
 /// Matches the SGR 4 sub-parameter space:
-///   SGR 4   → single
-///   SGR 4:2 → double
-///   SGR 4:3 → curly  (kitty / VTE extension)
-///   SGR 4:4 → dotted (kitty / VTE extension)
-///   SGR 4:5 → dashed  (kitty / VTE extension)
-///
-/// Stored inside AttrFlags to keep the entire flags field at exactly 1 byte.
+///   SGR 4 or 4:1: single
+///   SGR 4:2 or 21: double
+///   SGR 4:3: curly (kitty and VTE extension)
+///   SGR 4:4: dotted (kitty and VTE extension)
+///   SGR 4:5: dashed (kitty and VTE extension)
+///   SGR 4:0 or 24: none
 pub const UnderlineStyle = enum(u3) {
     none = 0,
     single = 1,
@@ -202,7 +201,7 @@ pub const Charset = enum(u4) {
     ascii = 0, // ISO 646 / US-ASCII (default)
     dec_special = 1, // DEC Special Graphics (box drawing)
     dec_suppl = 2, // DEC Supplemental (VT220)
-    uk = 3, // British NRC (# → £)
+    uk = 3, // British NRC (# shows as £)
     dutch = 4, // Dutch NRC
     finnish = 5, // Finnish NRC
     french = 6, // French NRC
@@ -258,7 +257,7 @@ pub const Charset = enum(u4) {
             'M' => .ascii, // ISO 8859-9  Turkish  (not yet implemented)
             'V' => .ascii, // ISO 8859-10 Nordic   (not yet implemented)
             'Y' => .ascii, // ISO 8859-15 Latin-9  (not yet implemented)
-            else => .ascii, // unknown — pass-through
+            else => .ascii, // unknown, pass-through
         };
     }
 };
@@ -433,7 +432,7 @@ comptime {
 
 /// VT100/VT220 character set state, packed into 4 bytes (u32).
 ///
-/// Terminals maintain four charset slots (G0–G3), each designatable to
+/// Terminals maintain four charset slots (G0 to G3), each designatable to
 /// a named character set via ESC ( X … ESC + X. The GL register selects
 /// which slot maps to the 7-bit range; GR selects the 8-bit range.
 /// SS2 (ESC N) and SS3 (ESC O) temporarily override GL for one character.
@@ -443,9 +442,9 @@ comptime {
 /// [7:4]      g1              G1 slot charset (Charset, 4 bits)
 /// [11:8]     g2              G2 slot charset (Charset, 4 bits)
 /// [15:12]    g3              G3 slot charset (Charset, 4 bits)
-/// [17:16]    gl              active GL register (0–3 = G0–G3)
-/// [19:18]    gr              active GR register (0–3 = G0–G3)
-/// [22:20]    single_shift    0–3 = G0–G3 pending; 4 = none (sentinel)
+/// [17:16]    gl              active GL register (0 to 3 = G0 to G3)
+/// [19:18]    gr              active GR register (0 to 3 = G0 to G3)
+/// [22:20]    single_shift    0 to 3 = G0 to G3 pending; 4 = none (sentinel)
 /// [31:23]    _pad            reserved, must be 0
 pub const CharsetState = packed struct(u32) {
     g0: Charset = .ascii,
@@ -454,11 +453,11 @@ pub const CharsetState = packed struct(u32) {
     g3: Charset = .ascii,
     // 4×4 = 16 bits used
 
-    gl: u2 = 0, // GL register (0–3 = G0–G3)
-    gr: u2 = 2, // GR register (0–3 = G0–G3)
+    gl: u2 = 0, // GL register (0 to 3 = G0 to G3)
+    gr: u2 = 2, // GR register (0 to 3 = G0 to G3)
 
     /// Single-shift override for the next character only (SS2/SS3).
-    /// Values 0–3 = G0–G3 pending. Value 4 = no shift pending (sentinel).
+    /// Values 0 to 3 = G0 to G3 pending. Value 4 = no shift pending (sentinel).
     /// Replaces `?u2` (which would cost 4 bytes due to Zig issue #104).
     ss: u3 = no_shift,
     _pad: u9 = 0,
@@ -480,7 +479,7 @@ pub const CharsetState = packed struct(u32) {
     // Only the 12 replaceable positions are listed; all other bytes pass through.
     // Replaceable positions: # @ [ \ ] ^ ` { | } ~
 
-    /// Returns the charset in slot `index` (0–3 = G0–G3).
+    /// Returns the charset in slot `index` (0 to 3 = G0 to G3).
     pub fn slot(self: CharsetState, index: u2) Charset {
         return switch (index) {
             0 => self.g0,
@@ -510,7 +509,7 @@ pub const CharsetState = packed struct(u32) {
 
     /// DEC Special Graphics (VT100 line-drawing charset).
     ///
-    /// Only the 0x60–0x7E range is remapped; everything else passes through.
+    /// Only the 0x60 to 0x7E range is remapped; everything else passes through.
     /// The mapping follows the VT100 User Guide table 3-9.
     fn translateDecSpecial(cp: u21) u21 {
         if (cp < 0x60 or cp > 0x7E) return cp;
@@ -527,7 +526,7 @@ pub const CharsetState = packed struct(u32) {
     /// Single-shift (SS2/SS3) overrides GL for exactly one character.
     /// After consuming the single-shift, it is cleared automatically.
     ///
-    /// Only the 0x20–0x7E printable ASCII range is remapped; control
+    /// Only the 0x20 to 0x7E printable ASCII range is remapped; control
     /// characters and codepoints outside that range pass through unchanged.
     pub fn translate(self: *CharsetState, cp: u21) u21 {
         // Determine which slot to use: single-shift overrides GL.
@@ -546,7 +545,7 @@ pub const CharsetState = packed struct(u32) {
         return switch (self.slot(index)) {
             .ascii => unreachable, // asci is fast path doesn't has to pay for the range check
             .dec_special => translateDecSpecial(cp),
-            // dec_suppl and iso_latin1 are GR sets (0xA0–0xFF range).
+            // dec_suppl and iso_latin1 are GR sets (0xA0 to 0xFF range).
             // When designated as GL they are used via locking shift; the
             // 7-bit printable range passes through unchanged here.
             // Full GR translation requires a separate translateGr() path.
@@ -646,11 +645,11 @@ pub const SavedCursor = struct {
 };
 
 comptime {
-    std.debug.assert(16 == @sizeOf(Cursor));
-    std.debug.assert(16 == @sizeOf(SavedCursor));
+    std.debug.assert(20 == @sizeOf(Cursor));
+    std.debug.assert(20 == @sizeOf(SavedCursor));
 }
 
-/// SGR text-decoration flags packed into a single byte.
+/// SGR text attribute flags, packed into 12 bits of the Cell.
 pub const AttrFlags = packed struct(u12) {
     bold: bool = false, // SGR 1
     dim: bool = false, // SGR 2
@@ -681,16 +680,22 @@ comptime {
     std.debug.assert(12 == @bitSizeOf(AttrFlags));
 }
 
-/// SGR (Select Graphic Rendition) attributes for a single cell.
+/// SGR (Select Graphic Rendition) attributes of the cursor pen.
 pub const Attr = struct {
     flags: AttrFlags = .{},
+    /// Palette index of the foreground, 0 = default.
     fg: u8 = 0,
+    /// Palette index of the background, 0 = default.
     bg: u8 = 0,
+    /// Underline color from SGR 58, reset by SGR 59 and SGR 0.
+    /// `.default` draws the underline in the foreground color. Only the
+    /// pen keeps it: a printed Cell has no room for it, so cells get
+    /// their underline color once the per-screen Style table lands.
+    underline_color: Color = .default,
 };
 
 comptime {
-    std.debug.assert(4 == @sizeOf(Attr));
-    std.debug.assert(32 == @bitSizeOf(Attr));
+    std.debug.assert(8 == @sizeOf(Attr));
 }
 
 pub const Kind = enum(u3) {
