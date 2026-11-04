@@ -15,6 +15,7 @@ pub const Terminal = term.Terminal;
 pub const Option = term.Option;
 pub const Events = term.Events;
 pub const Response = term.Response;
+pub const Frame = @import("Frame.zig").Frame;
 
 pub const screen = @import("screen.zig");
 pub const Screen = screen.Screen;
@@ -33,5 +34,6 @@ test {
     _ = @import("charset.zig");
     _ = @import("Style.zig");
     _ = @import("cell.zig");
+    _ = @import("Frame.zig");
     std.testing.refAllDecls(@This());
 }

@@ -152,6 +152,7 @@ fn sameTerminalOption(comptime a: TerminalOption, comptime b: TerminalOption) bo
 }
 
 pub const FrameBuilderType = FrameBuilder(terminal_option);
+pub const FrameType = rex.terminal.Frame(terminal_option);
 pub const RendererType = Renderer(terminal_option);
 pub const ScreenType = Screen(terminal_option);
 pub const TerminalType = Terminal(terminal_option);
@@ -164,6 +165,7 @@ background_color: [4]f32,
 
 rasterizer: Rasterizer,
 frame_builder: FrameBuilderType,
+frame_snapshot: FrameType,
 
 io: std.Io,
 renderer: RendererType,
@@ -322,6 +324,9 @@ pub fn init(
     });
     errdefer frame_builder.deinit(gpa);
 
+    var frame_snapshot: FrameType = try .init(gpa);
+    errdefer frame_snapshot.deinit(gpa);
+
     atlas.preRasterize(gpa, &rasterizer, .{ .start = 0x20, .end = 0x7F });
 
     var renderer = try RendererType.init(.{
@@ -374,6 +379,7 @@ pub fn init(
         .rasterizer = rasterizer,
         .atlas = atlas,
         .frame_builder = frame_builder,
+        .frame_snapshot = frame_snapshot,
         .config = config,
         .font_size = config.font.height,
         .pomodoro_state = pomodoro_state,
@@ -387,6 +393,7 @@ pub fn init(
 
 pub fn deinit(self: *App, gpa: std.mem.Allocator) void {
     self.renderer.deinit();
+    self.frame_snapshot.deinit(gpa);
     self.frame_builder.deinit(gpa);
     self.atlas.destroy();
     self.rasterizer.destroy(gpa);
@@ -610,19 +617,19 @@ fn drainAndWriteReplies(self: *App) void {
 fn renderFrame(self: *App) !bool {
     const terminal = &self.terminal;
     const atlas = &self.atlas;
-    const screen = self.terminal.active();
 
-    const cursor_color: ?[3]u8 = if (terminal.cursor_color) |color| .{ color.r, color.g, color.b } else null;
+    _ = terminal.snapshot(&self.frame_snapshot);
+
     const selection_state = self.buildSelectionState();
 
     const frame = try self.frame_builder.build(
         self.allocator,
-        screen,
+        &self.frame_snapshot,
         atlas,
         &self.rasterizer,
         self.blink_on,
         selection_state,
-        cursor_color,
+        null,
     );
 
     if (!frame.dirty.any()) return false;
