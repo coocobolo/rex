@@ -1,0 +1,29 @@
+name: ci
+
+on:
+  push:
+    branches: [main, develop, feat/term]
+  pull_request:
+    branches: [main, develop, feat/term]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libx11-dev libxrandr-dev libxi-dev libxcursor-dev \
+            libxinerama-dev libxext-dev libgl-dev libegl-dev \
+            libpng-dev zlib1g-dev
+
+      # Reads minimum_zig_version from build.zig.zon and caches the
+      # Zig global cache between runs.
+      - uses: mlugg/setup-zig@v2.2.1
+
+      - run: zig fmt --check .
+      - run: zig build
+      - run: zig build test
