@@ -49,12 +49,19 @@ pub const State = struct {
 pub const Cursor = @This();
 
 pub const Option = struct {
+    /// Corner radius in pixels, clamped to half the cursor's smaller side.
     radius: f32 = 5.0,
+    /// Height of the underline cursor, as a fraction of the cell height.
     underline_frac: f32 = 0.16,
+    /// Width of the bar (beam) cursor, as a fraction of the cell width.
     bar_frac: f32 = 0.16,
+    /// Bottom of the underline cursor, as a fraction of the cell height
+    /// down from its top. 1.0 sits on the cell bottom.
     bar_offset_y: f32 = 1.0,
+    /// Cursor opacity, 0.0 to 1.0.
     alpha: f32 = 1.0,
-    /// outline width when unfocused; 0 = always filled
+    /// Outline width in pixels when the window is unfocused; 0 keeps the
+    /// cursor filled.
     hollow_border_width: f32 = 3.0,
 };
 
