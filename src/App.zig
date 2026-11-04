@@ -1333,21 +1333,13 @@ fn handleScrollbarDrag(self: *App) bool {
 fn scrollbarThumb(self: *const App) Scrollbar.Thumb {
     const screen = &self.terminal.primary;
     const frame_height: f32 = @floatFromInt(self.frame_buffer_size.height);
-    const active_rows: f32 = @floatFromInt(screen.active_rows);
-    const scrollback_used: f32 = @floatFromInt(screen.scrollback_used);
-    const viewport_offset: f32 = @floatFromInt(screen.viewport_offset);
-
-    const height_frac = active_rows / (active_rows + scrollback_used);
-    // A resize can leave viewport_offset past scrollback_used for a
-    // moment, hence the clamp.
-    const scroll_frac = if (scrollback_used == 0) 0 else std.math.clamp(viewport_offset / scrollback_used, 0.0, 1.0);
-    return .of(frame_height, 1.0 - scroll_frac, height_frac, self.config.window.scrollbar.min_thumb_height);
+    const fracs: Scrollbar.Fractions = .of(screen.active_rows, screen.scrollback_used, screen.viewport_offset);
+    return .of(frame_height, fracs.top, fracs.height, self.config.window.scrollbar.min_thumb_height);
 }
 
 /// The primary screen's viewport offset for a thumb at `top_frac`.
 fn viewportOffsetAt(self: *const App, top_frac: f32) u32 {
-    const scrollback_used: f32 = @floatFromInt(self.terminal.primary.scrollback_used);
-    return @intFromFloat(@round((1.0 - top_frac) * scrollback_used));
+    return Scrollbar.Fractions.viewportOffsetAt(top_frac, self.terminal.primary.scrollback_used);
 }
 
 fn updateScrollbarHover(self: *App) void {
