@@ -1,6 +1,7 @@
 const std = @import("std");
 const testing = std.testing;
 const tables = @import("wcwidth_table.zig");
+const expected = @import("wcwidth_expected.zig");
 
 const wcwidth_mod = @import("wcwidth_v2.zig");
 
@@ -15,154 +16,6 @@ const corpus = [_][]const u8{
     @embedFile("testdata/fuzz/wcwidth/crash-630ff0a4f49ee617.bin"),
     @embedFile("testdata/fuzz/wcwidth/crash-8185a9074f803ffc.bin"),
 };
-
-const c = @cImport({
-    // wcwidth() is specified by X/Open/POSIX.
-    @cDefine("_XOPEN_SOURCE", "700");
-    @cInclude("locale.h");
-    @cInclude("wchar.h");
-});
-
-fn useUtf8Locale() !void {
-    // C.UTF-8 is normally available on Linux.
-    if (c.setlocale(c.LC_CTYPE, "C.UTF-8") == null) {
-        return error.SkipZigTest;
-    }
-}
-
-fn libcWcwidth(codepoint: u21) c_int {
-    return c.wcwidth(@as(c.wchar_t, @intCast(codepoint)));
-}
-
-fn isScalarValue(codepoint: u21) bool {
-    return codepoint <= 0x10ffff and !(codepoint >= 0xd800 and codepoint <= 0xdfff);
-}
-
-/// Maps libc's raw wcwidth() return value to our Width enum.
-/// Returns null when libc reports "non-printable" (-1), since that's
-/// not a direct 1:1 mapping to a single Width value at this layer --
-/// the caller decides what -1 means for our model.
-fn expectedFromLibc(codepoint: u21, value: c_int) !?Width {
-    return switch (value) {
-        -1 => null,
-        0 => .zero,
-        1 => .narrow,
-        2 => .wide,
-        else => {
-            std.debug.print(
-                "libc wcwidth(U+{X:0>6}) returned unexpected value {d}\n",
-                .{ codepoint, value },
-            );
-            return error.UnexpectedLibcWidth;
-        },
-    };
-}
-
-fn expectWidth(codepoint: u21, expected: Width, actual: Width) !void {
-    if (expected != actual) {
-        std.debug.print(
-            "width mismatch: U+{X:0>6} | 0x{X} expected={s}, actual={s}\n",
-            .{ codepoint, codepoint, @tagName(expected), @tagName(actual) },
-        );
-    }
-    try testing.expectEqual(expected, actual);
-}
-
-/// Codepoints where our classification is a documented, deliberate
-/// deviation from the *specific* libc oracle bound to this test run.
-/// Each entry must cite why (traced to a known libc/UCD discrepancy),
-/// per the standard set for the Hangul-jamo and Tags-block overrides.
-const known_divergences = std.StaticStringMap(void).initComptime(.{});
-// (or a small []const struct{codepoint:u21, why:[]const u8} list --
-// a map isn't necessary if the list stays short; the point is it must
-// be a reviewable, named list, not an unconditional `return`.)
-
-const KnownDivergence = struct {
-    start: u21,
-    end: u21, // inclusive
-    note: []const u8,
-};
-const known_divergences_list = [_]KnownDivergence{
-    .{
-        .start = 0x2637,
-        .end = 0x2637,
-        .note = "EastAsianWidth.txt marks U+2630..U+2637 (Yijing trigrams) W; " ++
-            "glibc's compiled table predates/ignores this and reports 1. " ++
-            "We follow the UCD, not glibc, here.",
-    },
-    // .{
-    //     .start = 0x20000,
-    //     .end = 0x3FFFD,
-    //     .note = "musl's wcwidth unconditionally treats all of Plane 2/3 " ++
-    //         "(wc-0x20000U < 0x20000) as width 2, matching EastAsianWidth.txt's " ++
-    //         "documented 'unassigned defaults to Wide' rule for these planes. " ++
-    //         "glibc instead returns -1 for genuinely unassigned codepoints in " ++
-    //         "this range. We follow musl (our §1 compliance target), not the " ++
-    //         "ambient glibc oracle. This range subsumes any individual " ++
-    //         "unassigned Cn codepoint the fuzzer finds here (e.g. U+356DD); " ++
-    //         "do not add per-codepoint entries for this block.",
-    // },
-    // Hangul jamo (U+1160..U+11FF) and the Tags off-by-one
-    // (U+E007F) are resolved at the *table* level (generator overrides),
-    // so they should no longer appear as divergences here -- if they do,
-    // that's a regression, not a known case.
-};
-
-fn findDivergence(codepoint: u21, expected: ?Width, actual: Width) ?KnownDivergence {
-    for (known_divergences_list) |d| {
-        if (codepoint >= d.start and codepoint <= d.end) return d;
-    }
-
-    // Plane 2/3 special case: our table (musl-faithful) always returns
-    // .wide here via default_wide_ranges, even for genuinely-unassigned
-    // codepoints. glibc instead returns -1 (non-printable) for those.
-    // Only swallow the mismatch when it's EXACTLY this shape --
-    // expected==null (libc says non-printable) and actual==.wide --
-    // so a real bug (e.g. libc disagreeing on an assigned character,
-    // or our table producing .narrow/.control/.ambiguous instead of
-    // .wide) still fails loudly instead of being masked.
-    const in_plane_2_3 = (codepoint >= 0x20000 and codepoint <= 0x3FFFD);
-    if (in_plane_2_3 and expected == null and actual == .wide) {
-        return .{
-            .start = codepoint,
-            .end = codepoint,
-            .note = "Plane 2/3 unassigned: musl defaults to wide, glibc returns -1",
-        };
-    }
-
-    return null;
-}
-
-fn checkAgainstLibc(codepoint: u21) !void {
-    if (!isScalarValue(codepoint)) return; // surrogates/out-of-range: not libc's problem to classify
-
-    const libc_result = libcWcwidth(codepoint);
-    const expected = try expectedFromLibc(codepoint, libc_result);
-
-    const actual_narrow = wcwidth(codepoint, .narrow);
-    const actual_wide = wcwidth(codepoint, .wide);
-    // .ambiguous only changes narrow<->wide; anything else must be
-    // identical between the two calls, or the config parameter is
-    // leaking into unrelated classifications.
-    if (actual_narrow != .narrow and actual_narrow != .wide) {
-        try testing.expectEqual(actual_narrow, actual_wide);
-    }
-
-    if (findDivergence(codepoint, expected, actual_narrow)) |d| {
-        // documented, intentionally skip strict comparison
-        std.debug.print("found divergence cp=0x{x} note={s}\n", .{ codepoint, d.note });
-        return;
-    }
-
-    if (expected == null) {
-        // libc considers this non-printable. We must agree it's
-        // .control -- NOT silently pass regardless of our answer.
-        try expectWidth(codepoint, .control, actual_narrow);
-        return;
-    }
-
-    try expectWidth(codepoint, expected.?, actual_narrow);
-}
 
 fn unpackCodepoint(v: u32) u21 {
     return @intCast(v >> 11);
@@ -287,53 +140,126 @@ test "wcwidth: other C0 controls remain .control" {
     try testing.expectEqual(wcwidth(0x007f, .narrow), .control); // DEL
 }
 
-// test "wcwidth: debug 0x13869" {
-//     try testing.expectEqual(.control, wcwidth(0x13869, .wide));
-// }
+/// Code points where wcwidth_table.zig deliberately differs from the
+/// UCD oracle in wcwidth_expected.zig. Each entry says why. Empty means
+/// the two generators agree everywhere.
+const Exception = struct { first: u21, last: u21, why: []const u8 };
+const exceptions = [_]Exception{
+    .{
+        .first = 0x1F1E6,
+        .last = 0x1F1FF,
+        .why = "Regional indicators are Emoji_Presentation but East_Asian_Width " ++
+            "N. A lone indicator is one column (UAX #11, xterm, glibc); a " ++
+            "flag pair is sized as a grapheme cluster, not per code point.",
+    },
+};
 
-test "wcwidth: agrees with libc for selected scalar values" {
-    try useUtf8Locale();
+fn isException(cp: u21) bool {
+    for (exceptions) |e| if (cp >= e.first and cp <= e.last) return true;
+    return false;
+}
 
-    const inputs = [_]u21{
-        0x0000, // NUL
-        0x0001, // C0 control
-        0x0020, // space
-        0x0041, // ASCII
-        0x007f, // DEL
-        0x00a0, // no-break space
-        0x0301, // combining acute accent
-        0x200d, // zero-width joiner
-        0x3000, // ideographic space
-        0x4e00, // CJK
-        0x1f600, // GRINNING FACE
-        0xe007f, // tag character
+fn propertyOf(class: expected.Class) Property {
+    return switch (class) {
+        .control => .control,
+        .zero => .zero,
+        .narrow => .narrow,
+        .wide => .wide,
+        .ambiguous => .ambiguous,
     };
+}
 
-    for (inputs) |codepoint| {
-        try checkAgainstLibc(codepoint);
+/// Checks the table lookup for `cp` against the UCD oracle.
+fn checkAgainstOracle(cp: u21) !void {
+    if (cp > 0x10FFFF or isException(cp)) return;
+    const want = propertyOf(expected.classOf(cp));
+    const got = lookup(cp);
+    if (want != got) {
+        std.debug.print("U+{X:0>4}: oracle {t}, table {t}\n", .{ cp, want, got });
+        return error.TestExpectedEqual;
     }
 }
 
-test "wcwidth: fuzzes against libc" {
-    try useUtf8Locale();
+test "wcwidth: ascii and C1 controls" {
+    try testing.expectEqual(.narrow, wcwidth(' ', .narrow));
+    try testing.expectEqual(.narrow, wcwidth('A', .narrow));
+    try testing.expectEqual(.narrow, wcwidth('~', .narrow));
+    try testing.expectEqual(.control, wcwidth(0x80, .narrow));
+    try testing.expectEqual(.control, wcwidth(0x9B, .narrow)); // CSI
+    try testing.expectEqual(.control, wcwidth(0x9F, .narrow));
+    try testing.expectEqual(.narrow, wcwidth(0xA0, .narrow)); // NBSP
+}
 
+test "wcwidth: combining marks, ZWJ and VS16 are zero" {
+    try testing.expectEqual(.zero, wcwidth(0x0301, .narrow)); // combining acute
+    try testing.expectEqual(.zero, wcwidth(0x20DD, .narrow)); // enclosing circle (Me)
+    try testing.expectEqual(.zero, wcwidth(0x200D, .narrow)); // ZWJ
+    try testing.expectEqual(.zero, wcwidth(0xFE0F, .narrow)); // VS16
+    try testing.expectEqual(.zero, wcwidth(0x1160, .narrow)); // Hangul jungseong filler
+    try testing.expectEqual(.zero, wcwidth(0xE007F, .narrow)); // cancel tag
+}
+
+test "wcwidth: CJK and emoji are wide" {
+    try testing.expectEqual(.wide, wcwidth(0x3000, .narrow)); // ideographic space
+    try testing.expectEqual(.wide, wcwidth(0x4E00, .narrow));
+    try testing.expectEqual(.wide, wcwidth(0xAC00, .narrow)); // Hangul syllable
+    try testing.expectEqual(.wide, wcwidth(0xFF21, .narrow)); // fullwidth A
+    try testing.expectEqual(.wide, wcwidth(0x20000, .narrow)); // plane 2
+    try testing.expectEqual(.wide, wcwidth(0x1F600, .narrow)); // grinning face
+    try testing.expectEqual(.wide, wcwidth(0x231A, .narrow)); // watch (Emoji_Presentation)
+}
+
+test "wcwidth: ambiguous follows the policy" {
+    for ([_]u21{ 0x00A1, 0x00B1, 0x2460, 0x03B1 }) |cp| {
+        try testing.expectEqual(.narrow, wcwidth(cp, .narrow));
+        try testing.expectEqual(.wide, wcwidth(cp, .wide));
+    }
+    // Non-ambiguous classes ignore the policy.
+    try testing.expectEqual(.zero, wcwidth(0x0301, .wide));
+    try testing.expectEqual(.narrow, wcwidth('A', .wide));
+}
+
+test "wcwidth: surrogates and out-of-range are control" {
+    try testing.expectEqual(.control, wcwidth(0xD800, .narrow));
+    try testing.expectEqual(.control, wcwidth(0xDFFF, .narrow));
+    try testing.expectEqual(.control, wcwidth(0x110000, .narrow));
+}
+
+test "lookup: oracle ranges match at every boundary" {
+    for (expected.ranges) |r| {
+        try checkAgainstOracle(r.first);
+        try checkAgainstOracle(r.last);
+    }
+}
+
+test "lookup(exhaustive): every code point matches the UCD oracle" {
+    // About 1 s in Debug; run with -Dslow.
+    if (!@import("test_options").slow) return error.SkipZigTest;
+    // Report every disagreeing range, not just the first code point.
+    var failed = false;
+    var run_start: ?u21 = null;
+    var cp: u32 = 0;
+    while (cp <= 0x110000) : (cp += 1) {
+        const bad = cp <= 0x10FFFF and !isException(@intCast(cp)) and
+            propertyOf(expected.classOf(@intCast(cp))) != lookup(@intCast(cp));
+        if (bad and run_start == null) run_start = @intCast(cp);
+        if (!bad) if (run_start) |first| {
+            const last: u21 = @intCast(cp - 1);
+            std.debug.print("U+{X:0>4}..U+{X:0>4}: oracle {t}, table {t}\n", .{
+                first, last, propertyOf(expected.classOf(first)), lookup(first),
+            });
+            failed = true;
+            run_start = null;
+        };
+    }
+    if (failed) return error.TestExpectedEqual;
+}
+
+test "wcwidth: fuzz against the UCD oracle" {
     const T = struct {
         fn fuzz(_: void, smith: *testing.Smith) !void {
-            const codepoint = smith.value(u21);
-            try checkAgainstLibc(codepoint);
+            try checkAgainstOracle(smith.value(u21));
         }
     };
-
-    // const testdata_dir = try std.Io.Dir.openDir(.cwd(), io, "testdata/fuzz/wcwidth", .{ .iterate = true });
-    // defer testdata_dir.close(io);
-    // var it = testdata_dir.iterate();
-    //
-    // while (try it.next(io)) |entry| {
-    //     std.debug.print("entry: {any}\n", .{entry});
-    // }
-
-    const context: void = {};
-    try testing.fuzz(context, T.fuzz, .{
-        .corpus = &corpus,
-    });
+    try testing.fuzz({}, T.fuzz, .{ .corpus = &corpus });
 }

@@ -243,10 +243,10 @@ pub fn build(b: *std.Build) !void {
     //     Adding a suite is one row in `suites`.
     //   - `-Dtest-filter=<substr>` (repeatable) and `-Dslow` apply to all.
     const suites = .{
-        // name, root, links libc
-        .{ "term", "src/term_tests.zig", false }, // term/root.zig; see file
-        .{ "vt", "src/vt/root.zig", false },
-        .{ "unicode", "src/unicode/root.zig", true }, // vs libc wcwidth
+        // name, root
+        .{ "term", "src/term_tests.zig" }, // term/root.zig; see file
+        .{ "vt", "src/vt/root.zig" },
+        .{ "unicode", "src/unicode/root.zig" },
     };
     inline for (suites) |suite| {
         const suite_tests = b.addTest(.{
@@ -255,7 +255,6 @@ pub fn build(b: *std.Build) !void {
                 .root_source_file = b.path(suite[1]),
                 .target = target,
                 .optimize = optimize,
-                .link_libc = suite[2],
                 .imports = &.{
                     .{ .name = "test_options", .module = test_options_mod },
                 },
@@ -325,6 +324,31 @@ pub fn build(b: *std.Build) !void {
     {
         const gen_step = b.step("gen-nfc", "Regenerate src/term/nfc_table.zig from UnicodeData.txt");
         gen_step.dependOn(&update_nfc.step);
+    }
+
+    // Regenerates src/unicode/wcwidth_expected.zig, the test oracle for
+    // the wcwidth table. Run after updating the UCD files in tools/, then
+    // commit the result.
+    const gen_wcwidth = b.addExecutable(.{
+        .name = "gen_wcwidth_expected",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/gen_wcwidth_expected.zig"),
+            .target = b.graph.host,
+            .optimize = .ReleaseFast,
+        }),
+    });
+    const run_gen_wcwidth = b.addRunArtifact(gen_wcwidth);
+    run_gen_wcwidth.addFileArg(b.path("tools/DerivedGeneralCategory.txt"));
+    run_gen_wcwidth.addFileArg(b.path("tools/EastAsianWidth.txt"));
+    run_gen_wcwidth.addFileArg(b.path("tools/emoji-data.txt"));
+    const update_wcwidth = b.addUpdateSourceFiles();
+    update_wcwidth.addCopyFileToSource(
+        run_gen_wcwidth.captureStdOut(.{}),
+        "src/unicode/wcwidth_expected.zig",
+    );
+    {
+        const gen_step = b.step("gen-wcwidth", "Regenerate src/unicode/wcwidth_expected.zig from the UCD");
+        gen_step.dependOn(&update_wcwidth.step);
     }
 }
 
