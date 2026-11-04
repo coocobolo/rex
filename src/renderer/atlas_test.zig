@@ -4,6 +4,7 @@ const alloc = std.testing.allocator;
 
 const Atlas = @import("Atlas.zig");
 const window = @import("Window.zig");
+const gl = @import("gl.zig");
 const ft = @import("../freetype/root.zig");
 
 const FontConfig = ft.FontConfig;
@@ -73,6 +74,21 @@ fn fakeColorGlyph(buf: []u8, w: u16, h: u16) Rasterizer.Glyph {
         .advance = w,
         .kind = .color,
     };
+}
+
+test "GL context: core profile at the required version" {
+    const win = try testGlContext();
+    defer c.glfwDestroyWindow(win);
+    defer c.glfwTerminate();
+    var major: c_int = 0;
+    var minor: c_int = 0;
+    var profile: c_int = 0;
+    gl.getIntegerv(gl.MAJOR_VERSION, &major);
+    gl.getIntegerv(gl.MINOR_VERSION, &minor);
+    gl.getIntegerv(gl.CONTEXT_PROFILE_MASK, &profile);
+    const want = window.gl_version;
+    try testing.expect(major > want.major or (major == want.major and minor >= want.minor));
+    try testing.expect(profile & gl.CONTEXT_CORE_PROFILE_BIT != 0);
 }
 
 test "upload: gray glyph returns valid metric" {

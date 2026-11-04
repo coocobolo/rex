@@ -69,6 +69,8 @@ pub const TEXTURE_SWIZZLE_R = c.GL_TEXTURE_SWIZZLE_R;
 pub const TEXTURE_SWIZZLE_RGBA = c.GL_TEXTURE_SWIZZLE_RGBA;
 pub const CONTEXT_PROFILE_MASK = c.GL_CONTEXT_PROFILE_MASK;
 pub const CONTEXT_CORE_PROFILE_BIT = c.GL_CONTEXT_CORE_PROFILE_BIT;
+pub const MAJOR_VERSION = c.GL_MAJOR_VERSION;
+pub const MINOR_VERSION = c.GL_MINOR_VERSION;
 
 // Functions, re-exported so callers need no @cImport of their own.
 pub const genVertexArrays = c.glGenVertexArrays;
