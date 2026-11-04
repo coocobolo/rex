@@ -24,7 +24,6 @@ const wc = @import("../unicode/wcwidth.zig");
 
 const InputEngine = @import("InputEngine.zig");
 
-const alphabet = "0123456789abcdef";
 pub const max_title_len = 256;
 pub const max_answerback_len = 32;
 
@@ -148,76 +147,43 @@ pub const Events = struct {
 
     hard_reset: bool = false,
 
-    /// A response must be written back to the PTY master fd.
-    /// Produced by: DA1 (CSI ? 1 ; 2 c), CPR (CSI 6 n), XTVERSION, etc.
-    /// The caller writes the current buffer slice to the PTY.
+    /// Replies to write back to the pty master: DA1, CPR, XTVERSION,
+    /// colour queries and mouse reports. Write `slice()`, then `clear()`.
     response: Response = .{},
 
     /// `CSI 8 ; rows ; cols t` the application requested a terminal resize.
     /// The caller should resize the PTY and call `terminal.resize(rows, cols)`.
     resize: ?Resize = null,
 
+    /// Bounded queue of replies for the pty, in the order the queries
+    /// were parsed. Each write is one whole reply:
+    /// it is queued entirely or dropped entirely and counted, so the
+    /// host never sends a truncated sequence.
     pub const Response = struct {
-        buf: [256]u8 = undefined,
+        pub const capacity = 1024;
+
+        buf: [capacity]u8 = undefined,
         len: usize = 0,
+        /// Replies dropped because they did not fit whole.
+        dropped: u32 = 0,
 
-        pub fn fits(self: *const Response, n: usize) bool {
-            return n <= (self.buf.len - self.len);
-        }
-
-        /// Append a response string. Silently truncates if the buffer is full.
-        pub fn append(self: *Response, s: []const u8) void {
-            if (!self.fits(s.len)) return;
-            @memcpy(self.buf[self.len..][0..s.len], s);
-            self.len += s.len;
-        }
-
-        /// Append a single ASCII character.
-        pub fn appendByte(self: *Response, b: u8) void {
-            if (!self.fits(1)) return;
-            self.buf[self.len] = b;
-            self.len += 1;
-        }
-
-        /// Append an unsigned integer in decimal, no allocations, no SIMD.
-        pub fn appendInt(self: *Response, value: u32) void {
-            var tmp: [10]u8 = undefined; // max u32 = 4294967295 (10 digits)
-            var i: usize = tmp.len;
-            var v = value;
-            if (v == 0) {
-                self.appendByte('0');
+        /// Queues `bytes` as one reply, or drops it whole.
+        pub fn append(self: *Response, bytes: []const u8) void {
+            if (bytes.len > capacity - self.len) {
+                self.dropped +|= 1;
                 return;
             }
-            while (v > 0) {
-                i -= 1;
-                tmp[i] = '0' + @as(u8, @intCast(v % 10));
-                v /= 10;
-            }
-            self.append(tmp[i..]);
+            @memcpy(self.buf[self.len..][0..bytes.len], bytes);
+            self.len += bytes.len;
         }
 
-        // Appends exactly two lowercase hex digits for a u8: 0..255 -> "00".."ff"
-        pub fn appendHex(self: *Response, v: u8) void {
-            if (!self.fits(2)) return;
-            self.buf[self.len] = alphabet[v >> 4];
-            self.buf[self.len + 1] = alphabet[v & 0x0F];
-            self.len += 2;
-        }
-
-        // add to Response
-        pub fn appendHexU16(self: *Response, v: u16) void {
-            if (!self.fits(4)) return;
-            self.buf[self.len + 0] = alphabet[(v >> 12) & 0xF];
-            self.buf[self.len + 1] = alphabet[(v >> 8) & 0xF];
-            self.buf[self.len + 2] = alphabet[(v >> 4) & 0xF];
-            self.buf[self.len + 3] = alphabet[v & 0xF];
-            self.len += 4;
-        }
-
-        /// Write a formatted string into the response buffer.
-        /// Silently drops the entire formatted string if the remaining space is too small.
+        /// Queues `fmt` formatted with `args` as one reply, or drops it
+        /// whole.
         pub fn print(self: *Response, comptime fmt: []const u8, args: anytype) void {
-            const written = std.fmt.bufPrint(self.buf[self.len..], fmt, args) catch return;
+            const written = std.fmt.bufPrint(self.buf[self.len..], fmt, args) catch {
+                self.dropped +|= 1;
+                return;
+            };
             self.len += written.len;
         }
 
@@ -229,9 +195,10 @@ pub const Events = struct {
             return self.len == 0;
         }
 
+        /// Empties the queue after the host has written it. Keeps
+        /// `dropped`.
         pub fn clear(self: *Response) void {
             self.len = 0;
-            self.buf = undefined;
         }
     };
 
@@ -1037,14 +1004,21 @@ pub fn Terminal(comptime option: Option) type {
             }
         }
 
+        /// Queues one reply: the `intro` introducer, `fmt` formatted with
+        /// `args`, then ST for string replies (DCS, OSC), all in the
+        /// current C1 format. The reply is queued whole or dropped whole.
+        pub fn reply(self: *Self, comptime intro: SequenceType, comptime fmt: []const u8, args: anytype) void {
+            const c1 = self.control_format;
+            const st = switch (intro) {
+                .dcs, .osc => seqIntroducer(.st, c1),
+                .csi, .st => "",
+            };
+            self.events.response.print("{s}" ++ fmt ++ "{s}", .{seqIntroducer(intro, c1)} ++ args ++ .{st});
+        }
+
+        /// XTVERSION reply: `DCS > | name version ST`.
         pub fn xtversion(self: *Self) void {
-            const control_format = self.control_format;
-            self.events.response.append(seqIntroducer(.dcs, control_format));
-            self.events.response.append(">|");
-            self.events.response.append(option.name);
-            self.events.response.appendByte(' ');
-            self.events.response.append(option.version);
-            self.events.response.append(seqIntroducer(.st, control_format));
+            self.reply(.dcs, ">|{s} {s}", .{ option.name, option.version });
         }
 
         /// Resize both screens to `rows` × `cols`.
@@ -1101,31 +1075,17 @@ pub fn Terminal(comptime option: Option) type {
                 rest = if (semi2 < rest.len) rest[semi2 + 1 ..] else "";
 
                 if (std.mem.eql(u8, spec, "?")) {
-                    // Query: respond with current color
-
                     const color = self.active().palette.getIndexed(idx);
-                    const control_format = self.control_format;
-
-                    self.events.response.append(seqIntroducer(.osc, control_format));
-                    self.events.response.append("4;");
-                    self.events.response.appendInt(@intCast(idx));
-                    self.events.response.append(";rgb:");
-
-                    self.events.response.appendHex(color.r);
-                    self.events.response.append("/");
-                    self.events.response.appendHex(color.g);
-                    self.events.response.append("/");
-                    self.events.response.appendHex(color.b);
-
-                    self.events.response.append(seqIntroducer(.st, control_format));
+                    self.reply(.osc, "4;{d};rgb:{x:0>2}/{x:0>2}/{x:0>2}", .{ idx, color.r, color.g, color.b });
                 } else if (Rgb.parseSpec(spec)) |c| {
                     self.active().palette.setIndexed(idx, c);
                 }
             }
         }
 
+        /// Queues a mouse report for the active tracking mode and encoding.
+        /// Queues nothing when mouse reporting is off.
         pub fn sendMouse(self: *Self, col: u16, row: u16, button: u8, mods: u8, press: bool) void {
-            self.events.response.clear();
             const mode = self.mode;
 
             // check if any mouse mode is active
@@ -1134,13 +1094,12 @@ pub fn Terminal(comptime option: Option) type {
             // X10 mode: only button press (button 0-2) no release, no motion, no scroll.
             if (mode.mouse_x10 and (!press or button > 2)) return;
 
-            const prefix = seqIntroducer(.csi, self.control_format);
             const code = button | mods;
 
             // SGR: ESC [ < Pb ; Px ; Py M/m
             if (mode.mouse_sgr) {
                 const final: u8 = if (press) 'M' else 'm';
-                self.events.response.print("{s}<{d};{d};{d}{c}", .{ prefix, code, col + 1, row + 1, final });
+                self.reply(.csi, "<{d};{d};{d}{c}", .{ code, col + 1, row + 1, final });
                 return;
             }
 
@@ -1150,12 +1109,11 @@ pub fn Terminal(comptime option: Option) type {
             const cx: u8 = @truncate(col + 1 + 32);
             const cy: u8 = @truncate(row + 1 + 32);
 
-            self.events.response.print("{s}M{c}{c}{c}", .{ prefix, cb, cx, cy });
+            self.reply(.csi, "M{c}{c}{c}", .{ cb, cx, cy });
         }
 
         pub fn setOrQueryColor(self: *Self, data: []const u8, comptime target: ColorTarget) void {
             const spec = std.mem.trim(u8, data, " ");
-            const control_format = self.control_format;
 
             if (std.mem.eql(u8, data, "?")) {
                 // Query: respond with current color
@@ -1175,21 +1133,13 @@ pub fn Terminal(comptime option: Option) type {
                     .cursor => self.cursor_color orelse self.active().palette.get(.foreground),
                 };
 
-                self.events.response.append(seqIntroducer(.osc, control_format));
-                self.events.response.appendInt(@intCast(osc_code));
-                self.events.response.append(";rgb:");
-
-                const r: u16 = @as(u16, color.r) * 257;
-                const g: u16 = @as(u16, color.g) * 257;
-                const b: u16 = @as(u16, color.b) * 257;
-
-                self.events.response.appendHexU16(r);
-                self.events.response.append("/");
-                self.events.response.appendHexU16(g);
-                self.events.response.append("/");
-                self.events.response.appendHexU16(b);
-
-                self.events.response.append(seqIntroducer(.st, control_format));
+                // 8-bit channels widen to 16 bits by repeating the byte.
+                self.reply(.osc, "{d};rgb:{x:0>4}/{x:0>4}/{x:0>4}", .{
+                    osc_code,
+                    @as(u16, color.r) * 257,
+                    @as(u16, color.g) * 257,
+                    @as(u16, color.b) * 257,
+                });
             } else if (Rgb.parseSpec(spec)) |color| {
                 switch (target) {
                     .fg => self.active().palette.set(.foreground, color),

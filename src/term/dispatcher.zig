@@ -11,8 +11,6 @@ const Palette = @import("Palette.zig").Palette;
 const Screen = @import("screen.zig").Screen;
 const sgr = @import("sgr.zig");
 
-const seqIntroducer = @import("term.zig").seqIntroducer;
-
 /// helper: get param value or default fallback, skipping sub-params
 fn paramOr(params: []const Parameter, index: usize, default: u16) u16 {
     var n: usize = 0;
@@ -46,11 +44,9 @@ pub const Escape = struct {
             'M' => term.active().reverseIndex(), // RI
             'N' => term.active().singleShift2(), // SS2
             'O' => term.active().singleShift3(), // SS3
-            'Z' => {
-                // FIXME obsolete CSI 0 C
-                // (see details)[https://invisible-island.net/xterm/manpage/xterm.html#VT100-Widget-Resources:decTerminalID]
-                term.events.response.append("\x1b[?1;2c"); // DECID: DA1 response
-            },
+            // DECID, obsolete form of DA1.
+            // https://invisible-island.net/xterm/manpage/xterm.html#VT100-Widget-Resources:decTerminalID
+            'Z' => term.reply(.csi, "?1;2c", .{}),
 
             'c' => term.hardReset(), // RIS
 
@@ -157,12 +153,6 @@ pub const Csi = struct {
         const p2_0 = paramOr(parameters, 1, 0);
         const p2 = if (p2_0 > 0) p2_0 else 1;
 
-        var buf: [32]u8 = undefined;
-        var w: std.Io.Writer = .fixed(&buf);
-
-        const control_format = terminal.control_format;
-        const prefix = seqIntroducer(.csi, control_format);
-
         // Resolved once per sequence. Cases that can switch screens
         // (DECSET 47/1047/1049, DECSTR) go through `terminal` instead.
         const screen = terminal.active();
@@ -209,22 +199,8 @@ pub const Csi = struct {
 
             'a' => screen.cursorRight(p1), // HPR / CSI Ps a
             'b' => screen.repeatChar(p1), // REP / CSI Ps b
-            'c' => {
-                switch (p1_0) {
-                    // claim vt220 with color ansi, xterm compatibile (52)
-                    0 => {
-                        terminal.events.response.append(prefix);
-                        terminal.events.response.append("?"); // if your escape starts with ?
-                        terminal.events.response.appendInt(62); // write integer as ASCII
-                        terminal.events.response.append(";"); // separator
-                        terminal.events.response.appendInt(22);
-                        terminal.events.response.append(";");
-                        terminal.events.response.appendInt(52);
-                        terminal.events.response.append("c"); // final char
-                    },
-                    else => {},
-                }
-            },
+            // DA1 / CSI c: VT220 with ANSI colour (22) and clipboard (52).
+            'c' => if (p1_0 == 0) terminal.reply(.csi, "?62;22;52c", .{}),
 
             'm' => {
                 sgr.parse(option, terminal, parameters); // SGR / CSI Ps m;
@@ -243,30 +219,13 @@ pub const Csi = struct {
                 screen.setScrollRegion(p1_0, p2_0);
             },
 
-            'n' => {
-                switch (p1_0) {
-                    5 => terminal.events.response.append("\x1b[0n"),
-                    6 => {
-                        // DSR / CSI Ps n
-                        // CPR: report 1-based absolute position.
-                        // When DECOM is active, xterm still reports absolute (not relative
-                        // to scroll region). Match xterm behavior.
-
-                        w.print("{s}{d};{d}R", .{
-                            prefix,
-                            screen.cursor.row + 1,
-                            screen.cursor.col + 1,
-                        }) catch {};
-                        terminal.events.response.append(buf[0..w.end]);
-
-                        // terminal.events.response.append(prefix);
-                        // terminal.events.response.appendInt(@intCast(screen.cursor.row + 1));
-                        // terminal.events.response.append(";");
-                        // terminal.events.response.appendInt(@intCast(screen.cursor.col + 1));
-                        // terminal.events.response.append("R");
-                    },
-                    else => {},
-                }
+            // DSR / CSI Ps n
+            'n' => switch (p1_0) {
+                5 => terminal.reply(.csi, "0n", .{}), // operating status: OK
+                // CPR: 1-based absolute position. Under DECOM xterm still
+                // reports absolute, not relative to the scroll region.
+                6 => terminal.reply(.csi, "{d};{d}R", .{ screen.cursor.row + 1, screen.cursor.col + 1 }),
+                else => {},
             },
 
             0x0068, 0x006c => {
@@ -278,21 +237,8 @@ pub const Csi = struct {
                 }
             },
 
-            0x3E63 => { // DA2 / CSI > Ps c
-                switch (p1_0) {
-                    0 => {
-                        terminal.events.response.append(prefix);
-                        terminal.events.response.append(">");
-                        terminal.events.response.appendInt(1);
-                        terminal.events.response.append(";");
-                        terminal.events.response.appendInt(0);
-                        terminal.events.response.append(";");
-                        terminal.events.response.appendInt(0);
-                        terminal.events.response.append("c");
-                    },
-                    else => {},
-                }
-            },
+            // DA2 / CSI > c.
+            0x3E63 => if (p1_0 == 0) terminal.reply(.csi, ">1;0;0c", .{}),
 
             0x3E70 => terminal.xtversion(), // XTVERSION / CSI > Ps q
             0x2071 => terminal.setCursorStyle(p1_0), // DECSCUSR / CSI Ps SP q
@@ -309,26 +255,10 @@ pub const Csi = struct {
             0x2170 => terminal.softReset(), // DECSTR / CSI ! p
             0x2270 => terminal.decscl(p1_0, p2_0), // DECSCL | CSI Ps;Pc " p
 
-            0x3F6E => {
-                // Device Status Report (DSR, DEC-specific) / CSI ? Ps n
-                switch (p1_0) {
-                    6 => {
-                        // terminal.events.response.append(prefix);
-                        // terminal.events.response.append("?");
-                        // terminal.events.response.appendInt(@intCast(screen.cursor.row + 1));
-                        // terminal.events.response.append(";");
-                        // terminal.events.response.appendInt(@intCast(screen.cursor.col + 1));
-                        // terminal.events.response.append("R");
-
-                        w.print("{s}{d};{d}R", .{
-                            prefix,
-                            screen.cursor.row + 1,
-                            screen.cursor.col + 1,
-                        }) catch {};
-                        terminal.events.response.append(buf[0..w.end]);
-                    },
-                    else => {},
-                }
+            // DEC DSR / CSI ? Ps n
+            0x3F6E => switch (p1_0) {
+                6 => terminal.reply(.csi, "{d};{d}R", .{ screen.cursor.row + 1, screen.cursor.col + 1 }), // DECXCPR
+                else => {},
             },
 
             // FIXME requires protected

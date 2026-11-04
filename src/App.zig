@@ -608,7 +608,7 @@ pub fn run(self: *App) !void {
             had_data = true;
 
             if (terminal.events.any()) {
-                const events = terminal.events;
+                const events = &terminal.events;
                 if (!events.response.isEmpty()) {
                     const resp = events.response.slice();
                     _ = self.pty.writeAll(resp) catch |err| {
@@ -1548,6 +1548,7 @@ fn flushScroll(self: *App) void {
             _ = self.pty.writeAll(terminal.events.response.slice()) catch |err| {
                 log.err("flushScroll: pty write failed: {}", .{err});
             };
+            terminal.events.response.clear();
         }
 
         return;
@@ -1596,7 +1597,6 @@ const scrollCb: c.GLFWscrollfun = struct {
 }.cb;
 
 fn sendMouseMotion(self: *App, col: u16, row: u16) void {
-    self.terminal.events.response.clear();
     const mode = self.terminal.mode;
     if (mode.mouse_any) {
         const left_held = (self.mouse_buttons_held & 1) != 0;
@@ -1611,6 +1611,7 @@ fn sendMouseMotion(self: *App, col: u16, row: u16) void {
     _ = self.pty.writeAll(self.terminal.events.response.slice()) catch |err| {
         log.err("sendMouseMotion: pty write failed: {}", .{err});
     };
+    self.terminal.events.response.clear();
 }
 
 const cursorPosCb: c.GLFWcursorposfun = struct {

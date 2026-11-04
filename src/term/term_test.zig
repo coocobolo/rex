@@ -150,35 +150,61 @@ test "Terminal: default modes" {
 
 test "Response: filling the buffer" {
     var r: Response = .{};
-    r.append("x" ** 255);
-    r.append("y"); // len 255 + 1 = 256; shouldn't panic
+    r.append("x" ** (Response.capacity - 1));
+    r.append("y"); // exactly full
 
-    try testing.expectEqual(256, r.len);
-    r.append("z"); // no room, dropped
-    try testing.expectEqual(256, r.len);
+    try testing.expectEqual(Response.capacity, r.len);
+    r.append("z"); // no room, dropped and counted
+    try testing.expectEqual(Response.capacity, r.len);
+    try testing.expectEqual(1, r.dropped);
 }
 
-test "Response: a reply that doesn't fit is dropped, not half-written" {
+test "Response: a print that doesn't fit is dropped, not half-written" {
     var r: Response = .{};
-    r.append("x" ** 250);
+    r.append("x" ** (Response.capacity - 6));
     r.print("{d}", .{1234567}); // needs 7, 6 free
-    r.appendHexU16(0xBEEF); // need 4, fits
+    try testing.expectEqual(Response.capacity - 6, r.len);
+    try testing.expectEqual(1, r.dropped);
 
-    try testing.expectEqual(254, r.len);
-    r.appendHex(0xAB); // needs 2, 2 free, fits
-    r.appendHex(0xCD); // no room
-    try testing.expectEqual(256, r.len);
+    r.print("{x:0>4}", .{0xBEEF}); // needs 4, fits
+    try testing.expectEqualStrings("beef", r.slice()[Response.capacity - 6 ..]);
 }
 
 test "Terminal: 60x CPR in one feed does not panic" {
     var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
-    t.feed("\x1b[6n" ** 60); // ~7 bytes each, 256 total
+    t.feed("\x1b[6n" ** 60);
     const s = t.events.response.slice();
-    try testing.expect(s.len <= 256);
+    try testing.expect(s.len <= Response.capacity);
     // Whole replies only each one starts with ESC and ends with 'R'.
     try testing.expectEqual(std.mem.count(u8, s, "\x1b"), std.mem.count(u8, s, "R"));
+}
+
+test "reply: one that doesn't fit whole is dropped, not half-written" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    // Fill the queue with whole CPRs until a DA1 no longer fits.
+    const cpr = "\x1b[1;1R";
+    const n = t.events.response.buf.len / cpr.len;
+    for (0..n) |_| t.feed("\x1b[6n");
+    t.feed("\x1b[c");
+
+    const s = t.events.response.slice();
+    try testing.expectEqual(n * cpr.len, s.len);
+    var it = std.mem.window(u8, s, cpr.len, cpr.len);
+    while (it.next()) |r| try testing.expectEqualStrings(cpr, r);
+    try testing.expectEqual(1, t.events.response.dropped);
+}
+
+test "reply: a mouse report queues after pending replies" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    t.feed("\x1b[?1000h\x1b[?1006h\x1b[6n");
+    t.sendMouse(2, 3, 0, 0, true);
+    try testing.expectEqualStrings("\x1b[1;1R\x1b[<0;3;4M", t.events.response.slice());
 }
 
 test "Terminal: feed printable ASCII" {
