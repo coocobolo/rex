@@ -181,6 +181,8 @@ last_title: std.Io.Clock.Timestamp,
 
 // Environment data
 dirs: rex.dirs.Application,
+/// How rex was started, for when /proc/self/exe cannot be read.
+argv0: []const u8,
 
 /// Counts whole `period_ms` periods as time passes. A period of 0
 /// disables the timer: it never fires and sets no deadline.
@@ -207,7 +209,13 @@ fn PeriodicTimer(comptime period_ms: u64) type {
     };
 }
 
-pub fn init(gpa: std.mem.Allocator, io: std.Io, environ: *const std.process.Environ, comptime config: *const Config) !App {
+pub fn init(
+    gpa: std.mem.Allocator,
+    io: std.Io,
+    environ: *const std.process.Environ,
+    argv0: []const u8,
+    comptime config: *const Config,
+) !App {
     log.debug("envi.block.len: {d}", .{environ.block.slice.len});
 
     const home_dir = try environ.getAlloc(gpa, "HOME");
@@ -334,6 +342,7 @@ pub fn init(gpa: std.mem.Allocator, io: std.Io, environ: *const std.process.Envi
             }
         },
         .dirs = dirs,
+        .argv0 = argv0,
         .allocator = gpa,
         .terminal = terminal,
         .renderer = renderer,
@@ -886,7 +895,7 @@ fn handleAction(self: *App, action: rex.input.Action) void {
             // applies one size.
             self.font_size_pending = self.config.font.height;
         },
-        .new_window => {}, // TODO: open a new, independent terminal window.
+        .new_window => self.openNewWindow(),
         .pomodoro_toggle => {
             const was_idle = self.pomodoro_state.phase == .idle;
             self.pomodoro_state.toggle();
@@ -920,6 +929,68 @@ fn handleAction(self: *App, action: rex.input.Action) void {
                 log.err("handleAction: send to pty write failed: {}", .{err});
             };
         },
+    }
+}
+
+/// Starts another rex as a separate process in the shell's working
+/// directory. The new window does not depend on this one: it has its
+/// own process group and null stdio, and outlives this process. A
+/// failure is logged and this window carries on.
+fn openNewWindow(self: *App) void {
+    var exe_buf: [std.fs.max_path_bytes]u8 = undefined;
+    // Linux reads /proc/self/exe here, which works whatever PATH and
+    // the working directory have become since rex started.
+    const exe: []const u8 = if (std.process.executablePath(self.io, &exe_buf)) |len|
+        exe_buf[0..len]
+    else |err| blk: {
+        log.warn("new window: executable path unavailable ({}), using argv[0]", .{err});
+        break :blk self.argv0;
+    };
+
+    // chdir follows the /proc/<pid>/cwd link to wherever the shell is.
+    var cwd_buf: [32]u8 = undefined;
+    const shell_cwd: ?[]const u8 = if (self.pty.pid > 0)
+        std.fmt.bufPrint(&cwd_buf, "/proc/{d}/cwd", .{self.pty.pid}) catch null
+    else
+        null;
+
+    const child = spawnWindow(self.io, exe, if (shell_cwd) |path| .{ .path = path } else .inherit) catch |err| retry: {
+        if (shell_cwd == null) break :retry err;
+        log.warn("new window: cannot start in the shell's directory ({}), retrying here", .{err});
+        break :retry spawnWindow(self.io, exe, .inherit);
+    } catch |err| {
+        log.err("new window: cannot start {s}: {}", .{ exe, err });
+        return;
+    };
+
+    const pid = child.id orelse return;
+    // Wait for the child on a small thread, so it leaves no zombie.
+    // If this process exits first, init adopts and reaps it instead.
+    const reaper = std.Thread.spawn(.{ .stack_size = 64 * 1024 }, reapChild, .{pid}) catch |err| {
+        log.warn("new window: no reaper thread ({}); pid {d} stays a zombie until rex exits", .{ err, pid });
+        return;
+    };
+    reaper.detach();
+}
+
+fn spawnWindow(io: std.Io, exe: []const u8, cwd: std.process.Child.Cwd) std.process.SpawnError!std.process.Child {
+    return std.process.spawn(io, .{
+        .argv = &.{exe},
+        .cwd = cwd,
+        .stdin = .ignore,
+        .stdout = .ignore,
+        .stderr = .ignore,
+        // Its own process group, so a hangup or Ctrl+C aimed at this
+        // rex's group does not reach the new window.
+        .pgid = 0,
+    });
+}
+
+fn reapChild(pid: posix.pid_t) void {
+    var status: c_int = undefined;
+    while (true) {
+        const rc = system.waitpid(pid, &status, 0);
+        if (rc == pid or posix.errno(rc) != .INTR) return;
     }
 }
 
