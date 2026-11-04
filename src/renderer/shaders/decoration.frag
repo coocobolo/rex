@@ -35,6 +35,7 @@ uniform float u_strikethrough_y;
 uniform float u_strikethrough_thickness;
 uniform float u_overline_y;
 uniform float u_overline_thickness;
+uniform float u_baseline; // first pixel row below the glyph bodies
 
 out vec4 frag_color;
 
@@ -99,8 +100,11 @@ float underlineCoverage(uint style, vec2 p) {
 const int MAX_INK_SCAN = 64;
 
 // True when the mask column `dx` pixels from `base` has ink within
-// u_ink_gap pixels above or below it.
-bool inkColumn(ivec2 base, int dx, ivec2 size) {
+// u_ink_gap pixels above or below it. For a line pixel at cell row
+// `row` below the baseline, ink above the baseline is the glyph body
+// resting on it, not a descender, and is ignored.
+bool inkColumn(ivec2 base, int dx, ivec2 size, int row) {
+  int baseline = int(u_baseline);
   int x = base.x + dx;
   if (x < 0 || x >= size.x)
     return false;
@@ -112,6 +116,9 @@ bool inkColumn(ivec2 base, int dx, ivec2 size) {
     int y = base.y + dy;
     if (y < 0 || y >= size.y)
       continue;
+    // The mask grows upwards, the cell row downwards.
+    if (row >= baseline && row - dy < baseline)
+      continue;
     if (texelFetch(u_ink_mask, ivec2(x, y), 0).r >= u_ink_threshold)
       return true;
   }
@@ -120,7 +127,7 @@ bool inkColumn(ivec2 base, int dx, ivec2 size) {
 
 // 0.0 where the underline gives way to ink: within u_ink_gap pixels of
 // it, or on a piece shorter than u_ink_min_segment between two inks.
-float inkSkip() {
+float inkSkip(int row) {
   ivec2 base = ivec2(gl_FragCoord.xy);
   ivec2 size = textureSize(u_ink_mask, 0);
   int reach = min(u_ink_gap + u_ink_min_segment + 1, MAX_INK_SCAN);
@@ -129,7 +136,7 @@ float inkSkip() {
   for (int k = 0; k <= MAX_INK_SCAN; k++) {
     if (k > reach)
       break;
-    if (inkColumn(base, -k, size)) {
+    if (inkColumn(base, -k, size, row)) {
       left = k;
       break;
     }
@@ -141,7 +148,7 @@ float inkSkip() {
   for (int k = 1; k <= MAX_INK_SCAN; k++) {
     if (k > reach)
       break;
-    if (inkColumn(base, k, size)) {
+    if (inkColumn(base, k, size, row)) {
       right = k;
       break;
     }
@@ -179,7 +186,7 @@ void main() {
   if (ul_style != UL_NONE) {
     float coverage = underlineCoverage(ul_style, p);
     if (coverage > 0.0 && (u_skip_ink_styles & (1u << ul_style)) != 0u)
-      coverage *= inkSkip();
+      coverage *= inkSkip(int(floor(p.y)));
     color = over(color, v_underline, coverage);
   }
   if ((v_flags & FLAG_OVERLINE) != 0u)

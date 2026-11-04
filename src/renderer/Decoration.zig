@@ -156,7 +156,8 @@ pub const Option = struct {
     underline: Line = .{},
 
     /// Gap between the two lines of a double underline, in pixels.
-    /// null uses the underline thickness.
+    /// null uses the underline thickness, narrowed down to 1 px when
+    /// that keeps the upper line below the baseline, off the glyphs.
     double_gap: ?f32 = null,
 
     /// Curly underline, a sine wave centred on the underline.
@@ -231,6 +232,10 @@ pub const Metrics = struct {
     strikethrough_thickness: f32,
     overline_y: f32,
     overline_thickness: f32,
+    /// Baseline, down from the top of the cell. Ink above it does not
+    /// break a line drawn below it, so glyphs resting on the baseline
+    /// keep a double underline whole.
+    baseline: f32,
 
     /// Resolves the font's lines through the user's `option`.
     pub fn resolve(font: Rasterizer.Metrics, option: Option) Metrics {
@@ -247,7 +252,6 @@ pub const Metrics = struct {
             .y = 0,
             .thickness = underline.thickness,
         }, height);
-        const gap = @round(@max(0, option.double_gap orelse underline.thickness));
         const cell_width: f32 = @floatFromInt(@max(font.cell_width, 1));
         const cell_height: f32 = @floatFromInt(@max(height, 1));
         const t = underline.thickness;
@@ -269,7 +273,8 @@ pub const Metrics = struct {
         return .{
             .underline_y = underline.y,
             .underline_thickness = underline.thickness,
-            .double_y = @max(0, underline.y - gap - underline.thickness),
+            .double_y = doubleY(underline, @floatFromInt(font.ascender), option.double_gap),
+            .baseline = @floatFromInt(font.ascender),
             .curly_y = curly_y,
             .curly_amplitude = amplitude,
             .curly_wavelength = @max(2.0, option.curly.wavelength orelse cell_width),
@@ -284,6 +289,17 @@ pub const Metrics = struct {
             .overline_y = overline.y,
             .overline_thickness = overline.thickness,
         };
+    }
+
+    /// Top of the upper line of a double underline: `gap` above the
+    /// underline when set, else one underline thickness above it, moved
+    /// down to the baseline when the cell leaves room for a 1 px gap.
+    fn doubleY(underline: Rasterizer.Line, baseline: f32, gap: ?f32) f32 {
+        const t = underline.thickness;
+        if (gap) |g| return @max(0, underline.y - @round(@max(0, g)) - t);
+        const upper = underline.y - 2 * t;
+        if (upper >= baseline) return @max(0, upper);
+        return @max(0, @max(upper, @min(baseline, underline.y - t - 1)));
     }
 
     /// The shader scans at most this many pixels each way for ink.
@@ -321,6 +337,7 @@ pub const Metrics = struct {
         shader.set1f("u_strikethrough_thickness", self.strikethrough_thickness);
         shader.set1f("u_overline_y", self.overline_y);
         shader.set1f("u_overline_thickness", self.overline_thickness);
+        shader.set1f("u_baseline", self.baseline);
     }
 };
 
