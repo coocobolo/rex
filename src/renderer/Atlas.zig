@@ -35,7 +35,7 @@ pub const Metric = struct {
     advance: u16,
 
     /// Top-left X of the glyph's region in its atlas texture; the
-    /// shader's UVs are atlas_x / texture_width and so on. Meaningless
+    /// shader's UVs are atlas_x / Atlas.width and so on. Meaningless
     /// when width or height is 0.
     atlas_x: u16,
     /// Top-left Y of the glyph's region; same caveat as `atlas_x`.
@@ -88,21 +88,29 @@ pub const PackingState = struct {
     }
 };
 
-/// Atlas texture size in pixels. It has no effect on rendering
-/// quality or window size; it only bounds how many distinct glyphs
-/// fit before packing fails with `error.AtlasFull`.
+/// Atlas texture size in pixels, shared by the gray and color
+/// textures. It has no effect on rendering quality or window size; it
+/// only bounds how many distinct glyphs fit before packing fails with
+/// `error.AtlasFull`, and how much GPU memory the atlas takes (5 bytes
+/// per pixel for both textures, 20 MiB at 2048x2048).
 ///
 /// 1024x1024 is usually enough for gray glyphs (ASCII plus common
 /// Unicode). Color emoji are larger (typically 64x64 or 128x128 per
 /// glyph), so the color atlas fills faster. On HiDPI the cell height
-/// is 32-40px instead of 16-20px, so both atlases default to
-/// 2048x2048. Make these runtime values if a smaller atlas is ever
-/// needed.
-pub const texture_width: u16 = 2048;
-/// See `texture_width`.
-pub const texture_height: u16 = 2048;
+/// is 32-40px instead of 16-20px, so both default to 2048x2048.
+pub const Option = struct {
+    /// Default 2048. Clamped to 1 and GL_MAX_TEXTURE_SIZE.
+    width: u16 = 2048,
+    /// Default 2048. Clamped to 1 and GL_MAX_TEXTURE_SIZE.
+    height: u16 = 2048,
+};
 
 const Atlas = @This();
+
+/// Texture width in pixels, from Option.width after clamping.
+width: u16,
+/// Texture height in pixels, from Option.height after clamping.
+height: u16,
 
 gray_texture: gl.GLuint,
 color_texture: gl.GLuint,
@@ -120,15 +128,26 @@ glyph_cache: std.AutoHashMap(Key, Metric),
 sequence_cache: std.AutoHashMap(u64, Metric),
 
 pub const empty: Atlas = .{
+    .width = 0,
+    .height = 0,
     .color_texture = undefined,
     .gray_texture = undefined,
     .glyph_cache = undefined,
     .sequence_cache = undefined,
 };
 
-/// Creates both textures. Needs a current GL context.
-pub fn create(gpa: Allocator) !Atlas {
+/// Creates both textures at the option's size, clamped to what the
+/// GL driver allows. Needs a current GL context.
+pub fn create(gpa: Allocator, option: Option) !Atlas {
     var self: Atlas = .empty;
+    var max_size: gl.GLint = 0;
+    gl.getIntegerv(gl.MAX_TEXTURE_SIZE, &max_size);
+    self.width = clampSize(option.width, max_size);
+    self.height = clampSize(option.height, max_size);
+    if (self.width != option.width or self.height != option.height) {
+        log.warn("atlas size {d}x{d} clamped to {d}x{d}", .{ option.width, option.height, self.width, self.height });
+    }
+
     self.glyph_cache = .init(gpa);
     errdefer self.glyph_cache.deinit();
 
@@ -139,7 +158,7 @@ pub fn create(gpa: Allocator) !Atlas {
     gl.genTextures(1, &self.gray_texture);
     errdefer gl.deleteTextures(1, &self.gray_texture);
     gl.bindTexture(gl.TEXTURE_2D, self.gray_texture);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, texture_width, texture_height, 0, gl.RED, gl.UNSIGNED_BYTE, null);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, self.width, self.height, 0, gl.RED, gl.UNSIGNED_BYTE, null);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
@@ -158,13 +177,20 @@ pub fn create(gpa: Allocator) !Atlas {
     gl.genTextures(1, &self.color_texture);
     errdefer gl.deleteTextures(1, &self.color_texture);
     gl.bindTexture(gl.TEXTURE_2D, self.color_texture);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, texture_width, texture_height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, self.width, self.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
 
     return self;
+}
+
+/// Clamps a requested texture side to 1 and the driver's limit. A
+/// non-positive limit (no context in tests) leaves only the lower bound.
+pub fn clampSize(requested: u16, max_size: gl.GLint) u16 {
+    const limit: u16 = if (max_size <= 0) std.math.maxInt(u16) else @intCast(@min(max_size, std.math.maxInt(u16)));
+    return std.math.clamp(requested, 1, limit);
 }
 
 /// Pre-rasterizes and caches glyphs for all font faces in the half-open
@@ -307,7 +333,7 @@ pub fn hashSequence(cps: []const u21, face: FaceKind, span: Span) u64 {
 
 fn pack(self: *Atlas, kind: GlyphKind, w: u16, h: u16) !struct { u16, u16 } {
     const state = if (kind == .color) &self.state.color else &self.state.gray;
-    return state.pack(w, h, texture_width, texture_height);
+    return state.pack(w, h, self.width, self.height);
 }
 
 /// Drops every cached glyph, resets packing and always clears both

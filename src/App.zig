@@ -86,6 +86,9 @@ pub const Config = struct {
         decoration: renderer_mod.Decoration.Option = .{},
         /// Opacity of SGR 2 (dim) text, 0.0 to 1.0.
         dim_alpha: f32 = 0.5,
+        /// Glyph atlas texture size, default 2048x2048. Bigger fits more
+        /// distinct glyphs (emoji, CJK, large fonts) before it is full.
+        atlas: Atlas.Option = .{},
         selection: renderer_mod.Selection.Option,
         /// Initial window size, in screen coordinates.
         size: Dimension(u16) = .{ .width = 1920, .height = 1080 },
@@ -309,7 +312,7 @@ pub fn init(
     var rasterizer: Rasterizer = try .create(gpa, config.font);
     errdefer rasterizer.destroy(gpa);
 
-    var atlas: Atlas = try .create(gpa);
+    var atlas: Atlas = try .create(gpa, config.window.atlas);
     errdefer atlas.destroy();
 
     var frame_builder: FrameBuilderType = try .init(gpa, .{
