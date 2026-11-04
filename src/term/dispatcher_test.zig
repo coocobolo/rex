@@ -1,7 +1,6 @@
 const std = @import("std");
 const testing = std.testing;
 
-const Option = @import("term.zig").Option;
 const Terminal = @import("term.zig").Terminal;
 const Mode = @import("term.zig").Mode;
 
@@ -15,22 +14,15 @@ const Palette = @import("Palette.zig").Palette;
 
 const max_title_len = @import("term.zig").max_title_len;
 
-const O: Option = .{
-    .max_rows = 12,
-    .max_cols = 24,
-    .tab_width = 8,
-    .max_scrollback = 20,
-    .name = "test",
-    .version = "0.0.1",
-};
+const test_option = @import("test_fixtures.zig").test_option;
 
-const T = Terminal(O);
+const Term = Terminal(test_option);
 const alloc = testing.allocator;
 
 // C0 / Execute
 
 test "c0: NUL is ignored" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("A");
@@ -44,7 +36,7 @@ test "c0: NUL is ignored" {
 }
 
 test "c0: ENQ sends answerback" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.setAnswerback("xterm");
@@ -54,7 +46,7 @@ test "c0: ENQ sends answerback" {
 }
 
 test "c0: ENQ with empty answerback sends nothing" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     // answerback is empty by default
@@ -64,7 +56,7 @@ test "c0: ENQ with empty answerback sends nothing" {
 }
 
 test "c0: ENQ multiple times concatenates into response buffer" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.setAnswerback("ab");
@@ -74,7 +66,7 @@ test "c0: ENQ multiple times concatenates into response buffer" {
 }
 
 test "c0: BEL sets events.bell" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x07");
@@ -83,7 +75,7 @@ test "c0: BEL sets events.bell" {
 }
 
 test "c0: BEL is deduplicated (multiple BELs : one flag)" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x07\x07\x07");
@@ -93,7 +85,7 @@ test "c0: BEL is deduplicated (multiple BELs : one flag)" {
 }
 
 test "c0: BS moves cursor left by 1" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("AB");
@@ -104,7 +96,7 @@ test "c0: BS moves cursor left by 1" {
 }
 
 test "c0: BS at column 0 stays at column 0" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     try testing.expectEqual(@as(u16, 0), t.active().cursor.col);
@@ -113,21 +105,21 @@ test "c0: BS at column 0 stays at column 0" {
 }
 
 test "c0: BS clears wrap_pending" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     // Fill the row to trigger wrap_pending
-    t.feed("A" ** O.max_cols);
+    t.feed("A" ** test_option.max_cols);
     try testing.expect(t.active().cursor.wrap_pending);
 
     t.feed("\x08"); // BS
     try testing.expect(!t.active().cursor.wrap_pending);
     // Cursor should be at last col - 1 (wrap_pending was at last col)
-    try testing.expectEqual(@as(u16, O.max_cols - 2), t.active().cursor.col);
+    try testing.expectEqual(@as(u16, test_option.max_cols - 2), t.active().cursor.col);
 }
 
 test "c0: HT advances to next tab stop" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     // Default tab stops every 8 columns; from col 0 : col 8
@@ -137,7 +129,7 @@ test "c0: HT advances to next tab stop" {
 }
 
 test "c0: HT from mid-tab advances to next tab stop" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().cursor.col = 3;
@@ -147,18 +139,18 @@ test "c0: HT from mid-tab advances to next tab stop" {
 }
 
 test "c0: HT clamps at last column when no tab stop fits" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     // col 20 in a 24-col terminal, next tab stop (24) is past the edge
     t.active().cursor.col = 20;
     t.feed("\x09");
 
-    try testing.expectEqual(@as(u16, O.max_cols - 1), t.active().cursor.col);
+    try testing.expectEqual(@as(u16, test_option.max_cols - 1), t.active().cursor.col);
 }
 
 test "c0: LF moves cursor down one row" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("A");
@@ -171,7 +163,7 @@ test "c0: LF moves cursor down one row" {
 }
 
 test "c0: VT behaves like LF" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().cursor.row = 0;
@@ -181,7 +173,7 @@ test "c0: VT behaves like LF" {
 }
 
 test "c0: FF behaves like LF" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().cursor.row = 0;
@@ -191,7 +183,7 @@ test "c0: FF behaves like LF" {
 }
 
 test "c0: LF with newline mode also performs CR" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.mode.linefeed = true;
@@ -204,7 +196,7 @@ test "c0: LF with newline mode also performs CR" {
 }
 
 test "c0: LF without newline mode does not CR" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     // modes.newline defaults to false
@@ -215,7 +207,7 @@ test "c0: LF without newline mode does not CR" {
 }
 
 test "c0: LF at scroll_bottom scrolls up" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     // Move cursor to last row of scroll region
@@ -229,7 +221,7 @@ test "c0: LF at scroll_bottom scrolls up" {
 }
 
 test "c0: CR resets cursor to column 0" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("ABC");
@@ -241,10 +233,10 @@ test "c0: CR resets cursor to column 0" {
 }
 
 test "c0: CR clears wrap_pending" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
-    t.feed("A" ** O.max_cols); // fill row : wrap_pending = true
+    t.feed("A" ** test_option.max_cols); // fill row : wrap_pending = true
     try testing.expect(t.active().cursor.wrap_pending);
 
     t.feed("\x0D"); // CR
@@ -253,7 +245,7 @@ test "c0: CR clears wrap_pending" {
 }
 
 test "c0: CR does not change row" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().cursor.row = 5;
@@ -264,7 +256,7 @@ test "c0: CR does not change row" {
 }
 
 test "c0: CRLF moves to start of next line" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().cursor.col = 10;
@@ -276,7 +268,7 @@ test "c0: CRLF moves to start of next line" {
 }
 
 test "c0: SO activates G1 charset" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x0E"); // SO
@@ -284,7 +276,7 @@ test "c0: SO activates G1 charset" {
 }
 
 test "c0: SI restores G0 charset" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x0E"); // SO : GL = G1
@@ -293,7 +285,7 @@ test "c0: SI restores G0 charset" {
 }
 
 test "c0: CR+LF sequence (classic newline)" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("Hello");
@@ -303,7 +295,7 @@ test "c0: CR+LF sequence (classic newline)" {
 }
 
 test "c0: CAN is ignored" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().cursor.col = 5;
@@ -314,7 +306,7 @@ test "c0: CAN is ignored" {
 }
 
 test "c0: SUB is ignored" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().cursor.col = 5;
@@ -325,7 +317,7 @@ test "c0: SUB is ignored" {
 }
 
 test "c0: DEL is ignored" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().cursor.col = 5;
@@ -336,7 +328,7 @@ test "c0: DEL is ignored" {
 }
 
 test "c0: events.clear resets bell and response" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.setAnswerback("hi");
@@ -353,7 +345,7 @@ test "c0: events.clear resets bell and response" {
 }
 
 test "escape: ESC 7 saves cursor position" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().cursor.row = 3;
@@ -365,7 +357,7 @@ test "escape: ESC 7 saves cursor position" {
 }
 
 test "escape: ESC 8 restore cursor position" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().cursor.row = 5;
@@ -381,7 +373,7 @@ test "escape: ESC 8 restore cursor position" {
 }
 
 test "escape: ESC 7 saves cursor SGR attributes" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().cursor.attr.flags.bold = true;
@@ -391,7 +383,7 @@ test "escape: ESC 7 saves cursor SGR attributes" {
 }
 
 test "escape: ESC 8 restore cursor SGR attributes" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().cursor.attr.flags.bold = true;
@@ -404,7 +396,7 @@ test "escape: ESC 8 restore cursor SGR attributes" {
 }
 
 test "escape: ESC 7/8 round-trip preserves origin mode" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().cursor.origin = true;
@@ -417,7 +409,7 @@ test "escape: ESC 7/8 round-trip preserves origin mode" {
 }
 
 test "escape: ESC c DECSC all cells cleared" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("Hello, World!");
@@ -429,7 +421,7 @@ test "escape: ESC c DECSC all cells cleared" {
 }
 
 test "escape: ESC c DECSC cursor reset to home" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b[15;40H"); // CUP
@@ -439,7 +431,7 @@ test "escape: ESC c DECSC cursor reset to home" {
 }
 
 test "escape: ESC c DECSC cursor attr reset" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b[1;3m"); // bold + italic
@@ -448,7 +440,7 @@ test "escape: ESC c DECSC cursor attr reset" {
 }
 
 test "escape: ESC c DECSC scroll margins reset" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b[5;20r");
@@ -458,7 +450,7 @@ test "escape: ESC c DECSC scroll margins reset" {
 }
 
 test "escape: ESC c DECSC modes reset to defaults" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b[?7l"); // DECAWM off
@@ -471,7 +463,7 @@ test "escape: ESC c DECSC modes reset to defaults" {
 }
 
 test "escape: ESC c DECSC tab stops restored to defaults" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b[3g"); // TBC — clear all tab stops
@@ -483,7 +475,7 @@ test "escape: ESC c DECSC tab stops restored to defaults" {
 }
 
 test "escape: ESC c DECSC palette reset to ANSI defaults" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     // Intern an RGB color to occupy a dynamic slot
@@ -505,7 +497,7 @@ test "escape: ESC c DECSC palette reset to ANSI defaults" {
 }
 
 test "escape: ESC c DECSC scroll_offset reset" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     // Fill screen to trigger scrollback
@@ -517,7 +509,7 @@ test "escape: ESC c DECSC scroll_offset reset" {
 }
 
 test "escape: ESC c DECSC dirty_rows covers full screen" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     // Clear dirty state manually
@@ -530,7 +522,7 @@ test "escape: ESC c DECSC dirty_rows covers full screen" {
 }
 
 test "escape: ESC c DECSC saved_cursor reset" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b[10;20H");
@@ -540,7 +532,7 @@ test "escape: ESC c DECSC saved_cursor reset" {
 }
 
 test "escape: ESC D moves cursor down (IND)" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().cursor.row = 2;
@@ -550,7 +542,7 @@ test "escape: ESC D moves cursor down (IND)" {
 }
 
 test "escape: ESC D at scroll_bottom scrolls up" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().cursor.row = t.active().scroll_bottom;
@@ -562,7 +554,7 @@ test "escape: ESC D at scroll_bottom scrolls up" {
 }
 
 test "escape: ESC E moves cursor down and resets column (NEL)" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().cursor.row = 2;
@@ -574,7 +566,7 @@ test "escape: ESC E moves cursor down and resets column (NEL)" {
 }
 
 test "escape: ESC E clears wrap_pending" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().cursor.wrap_pending = true;
@@ -584,7 +576,7 @@ test "escape: ESC E clears wrap_pending" {
 }
 
 test "escape: ESC H sets tab stop at cursor column" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().cursor.col = 13;
@@ -594,7 +586,7 @@ test "escape: ESC H sets tab stop at cursor column" {
 }
 
 test "escape: ESC M moves cursor up (RI)" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().cursor.row = 5;
@@ -607,7 +599,7 @@ test "escape: ESC M at scroll_top scrolls down" {
     // TERMV4 M2 item 9: full-screen scrollDown trips wrapAdd assert (b > max_rows) when scrollback is on.
     if (true) return error.SkipZigTest;
 
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().cursor.row = t.active().scroll_top;
@@ -619,7 +611,7 @@ test "escape: ESC M at scroll_top scrolls down" {
 }
 
 test "escape: ESC = enables keypad application mode (DECKPAM)" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b=");
@@ -628,7 +620,7 @@ test "escape: ESC = enables keypad application mode (DECKPAM)" {
 }
 
 test "escape: ESC > disables keypad application mode (DECKPNM)" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.mode.keypad_app = true;
@@ -638,7 +630,7 @@ test "escape: ESC > disables keypad application mode (DECKPNM)" {
 }
 
 test "escape: DECKPAM/DECKPNM toggle" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b="); // on
@@ -648,7 +640,7 @@ test "escape: DECKPAM/DECKPNM toggle" {
 }
 
 test "escape: ESC SP G enables 8-bit C1 (S8C1T)" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b G");
@@ -656,7 +648,7 @@ test "escape: ESC SP G enables 8-bit C1 (S8C1T)" {
 }
 
 test "escape: ESC SP F restores 7-bit C1 (S7C1T)" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.control_format = .s8c1t; // set initial state
@@ -668,7 +660,7 @@ test "escape: ESC SP L sets s7c1t and level1 (ANSI level 1)" {
     // TERMV4 decision 6: ANSI conformance levels (ESC SP L/M/N) are not implemented; single xterm profile.
     if (true) return error.SkipZigTest;
 
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.control_format = .s8c1t; // set initial state
@@ -682,7 +674,7 @@ test "escape: ESC SP M sets s8c1t and level2 (ANSI level 2)" {
     // TERMV4 decision 6: ANSI conformance levels (ESC SP L/M/N) are not implemented; single xterm profile.
     if (true) return error.SkipZigTest;
 
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b M"); // ESC SP M | DECSCL level 2
@@ -695,7 +687,7 @@ test "escape: ESC SP N sets s8c1t and level3 (ANSI level 3)" {
     // TERMV4 decision 6: ANSI conformance levels (ESC SP L/M/N) are not implemented; single xterm profile.
     if (true) return error.SkipZigTest;
 
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b N"); // ESC SP N | DECSCL level 3
@@ -705,7 +697,7 @@ test "escape: ESC SP N sets s8c1t and level3 (ANSI level 3)" {
 }
 
 test "escape: ESC # 8 fills screen with E (DECALN)" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b#8");
@@ -720,7 +712,7 @@ test "escape: ESC # 8 fills screen with E (DECALN)" {
 }
 
 test "escape: ESC # 8 homes cursor" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().cursor.row = 5;
@@ -732,7 +724,7 @@ test "escape: ESC # 8 homes cursor" {
 }
 
 test "escape: ESC # 8 marks all rows dirty" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().dirty_rows = .empty;
@@ -742,7 +734,7 @@ test "escape: ESC # 8 marks all rows dirty" {
 }
 
 test "escape: ESC # 3 sets double_top on current row" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().cursor.row = 2;
@@ -752,7 +744,7 @@ test "escape: ESC # 3 sets double_top on current row" {
 }
 
 test "escape: ESC # 4 sets double_bottom on current row" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().cursor.row = 2;
@@ -762,7 +754,7 @@ test "escape: ESC # 4 sets double_bottom on current row" {
 }
 
 test "escape: ESC # 5 sets normal on current row" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().cursor.row = 2;
@@ -773,7 +765,7 @@ test "escape: ESC # 5 sets normal on current row" {
 }
 
 test "escape: ESC # 6 sets double_width on current row" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().cursor.row = 3;
@@ -783,7 +775,7 @@ test "escape: ESC # 6 sets double_width on current row" {
 }
 
 test "escape: ESC ( 0 designates G0 = DEC Special Graphics" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b(0");
@@ -791,7 +783,7 @@ test "escape: ESC ( 0 designates G0 = DEC Special Graphics" {
 }
 
 test "escape: ESC ( B designates G0 = ASCII" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().cursor.charset.setSlot(0, .dec_special);
@@ -801,7 +793,7 @@ test "escape: ESC ( B designates G0 = ASCII" {
 }
 
 test "escape: ESC ) 0 designates G1 = DEC Special Graphics" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b)0");
@@ -809,7 +801,7 @@ test "escape: ESC ) 0 designates G1 = DEC Special Graphics" {
 }
 
 test "escape: ESC * A designates G2 = UK NRC" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b*A");
@@ -817,7 +809,7 @@ test "escape: ESC * A designates G2 = UK NRC" {
 }
 
 test "escape: ESC + B designates G3 = ASCII" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().cursor.charset.setSlot(0, .dec_special);
@@ -827,7 +819,7 @@ test "escape: ESC + B designates G3 = ASCII" {
 }
 
 test "escape: ESC - A designates G1 = iso_latin1" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b\x2d\x41"); // ESC - A
@@ -839,7 +831,7 @@ test "escape: ESC - A designates G1 = iso_latin1" {
 }
 
 test "escape: ESC - B designates G1 = ascii (96-char)" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     // let's set G1 to something non-default so we can verify the change
@@ -849,7 +841,7 @@ test "escape: ESC - B designates G1 = ascii (96-char)" {
 }
 
 test "escape: ESC - 0 designates G1 = dec_special (96-char)" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     // '0' is not a valid 96-char set final byte; falls back to .ascii
@@ -859,7 +851,7 @@ test "escape: ESC - 0 designates G1 = dec_special (96-char)" {
 }
 
 test "escape: ESC . A designates G2 = iso_latin1" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b\x2e\x41"); // ESC . A
@@ -871,7 +863,7 @@ test "escape: ESC . A designates G2 = iso_latin1" {
 }
 
 test "escape: ESC . B designates G2 = ascii (96-char)" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b\x2e\x41"); // ESC . A  : G2 = iso_latin1
@@ -880,7 +872,7 @@ test "escape: ESC . B designates G2 = ascii (96-char)" {
 }
 
 test "escape: ESC / A designates G3 = iso_latin1" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b\x2f\x41"); // ESC / A
@@ -892,7 +884,7 @@ test "escape: ESC / A designates G3 = iso_latin1" {
 }
 
 test "escape: ESC / 0 designates G3 = dec_special (96-char)" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b-0"); // FIXME not implemented
@@ -901,7 +893,7 @@ test "escape: ESC / 0 designates G3 = dec_special (96-char)" {
 }
 
 test "escape: 96-char designation does not change GL or GR" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     const gl_before = t.active().cursor.charset.gl;
@@ -916,7 +908,7 @@ test "escape: 96-char designation does not change GL or GR" {
 }
 
 test "escape: 96-char G1 designation overrides prior 94-char G1 designation" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b\x29\x30"); // ESC ) 0  : G1 = dec_special (94-char)
@@ -928,7 +920,7 @@ test "escape: 96-char G1 designation overrides prior 94-char G1 designation" {
 
 test "escape: 96-char G2 designation is per-screen" {
     // TODO: re-enable once CSI ? 1049 h/l alt-screen switch is implemented
-    // const t = try T.create(alloc);
+    // const t = try Term.create(alloc);
     // defer t.destroy(alloc);
     //
     // t.feed("\x1b\x2e\x41"); // ESC . A, primary G2 = iso_latin1
@@ -941,7 +933,7 @@ test "escape: 96-char G2 designation is per-screen" {
 }
 
 test "csi: ANSI SC save cursor" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().cursor.row = 5;
@@ -960,7 +952,7 @@ test "csi: ANSI SC save cursor" {
 }
 
 test "csi: ANSI RC save cursor" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().cursor.row = 5;
@@ -981,7 +973,7 @@ test "csi: ANSI RC save cursor" {
 }
 
 test "csi: CUU cursor up by n" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().cursor.row = 5;
@@ -990,7 +982,7 @@ test "csi: CUU cursor up by n" {
 }
 
 test "csi: CUU default param = 1" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().cursor.row = 3;
@@ -999,7 +991,7 @@ test "csi: CUU default param = 1" {
 }
 
 test "csi: CUU clamps at row 0" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().cursor.row = 1;
@@ -1008,7 +1000,7 @@ test "csi: CUU clamps at row 0" {
 }
 
 test "csi: CUD cursor down by n" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().cursor.row = 2;
@@ -1017,7 +1009,7 @@ test "csi: CUD cursor down by n" {
 }
 
 test "csi: CUD default param = 1" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().cursor.row = 2;
@@ -1026,7 +1018,7 @@ test "csi: CUD default param = 1" {
 }
 
 test "csi: CUD clamps at last row" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().cursor.row = @intCast(t.active().active_rows - 2);
@@ -1035,7 +1027,7 @@ test "csi: CUD clamps at last row" {
 }
 
 test "csi: CUF cursor right by n" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().cursor.col = 2;
@@ -1044,7 +1036,7 @@ test "csi: CUF cursor right by n" {
 }
 
 test "csi: CUF default param = 1" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().cursor.col = 2;
@@ -1053,7 +1045,7 @@ test "csi: CUF default param = 1" {
 }
 
 test "csi: CUF clamps at last column" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().cursor.col = @intCast(t.active().active_cols - 2);
@@ -1062,7 +1054,7 @@ test "csi: CUF clamps at last column" {
 }
 
 test "csi: CUB cursor left by n" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().cursor.col = 8;
@@ -1071,7 +1063,7 @@ test "csi: CUB cursor left by n" {
 }
 
 test "csi: CUB default param = 1" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().cursor.col = 5;
@@ -1080,7 +1072,7 @@ test "csi: CUB default param = 1" {
 }
 
 test "csi: CUB clamps at column 0" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().cursor.col = 1;
@@ -1089,7 +1081,7 @@ test "csi: CUB clamps at column 0" {
 }
 
 test "csi: CNL moves cursor down and reset column" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().cursor.row = 2;
@@ -1101,7 +1093,7 @@ test "csi: CNL moves cursor down and reset column" {
 }
 
 test "csi: CNL default param = 1" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().cursor.row = 3;
@@ -1113,7 +1105,7 @@ test "csi: CNL default param = 1" {
 }
 
 test "csi: CPL moves cursor up and resets column" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().cursor.row = 5;
@@ -1125,7 +1117,7 @@ test "csi: CPL moves cursor up and resets column" {
 }
 
 test "csi: CPL default param = 1" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().cursor.row = 4;
@@ -1137,7 +1129,7 @@ test "csi: CPL default param = 1" {
 }
 
 test "csi: CHA sets column (1-based)" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().cursor.col = 0;
@@ -1147,7 +1139,7 @@ test "csi: CHA sets column (1-based)" {
 }
 
 test "csi: CHA param 1, column 0" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().cursor.col = 10;
@@ -1157,7 +1149,7 @@ test "csi: CHA param 1, column 0" {
 }
 
 test "csi: CHA default param = 1, column 0" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().cursor.col = 10;
@@ -1167,7 +1159,7 @@ test "csi: CHA default param = 1, column 0" {
 }
 
 test "csi: CHA clamps at last column" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b[9999G");
@@ -1175,7 +1167,7 @@ test "csi: CHA clamps at last column" {
 }
 
 test "csi: CUP positions cursor (1-based row and col)" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().cursor.row = 5;
@@ -1188,7 +1180,7 @@ test "csi: CUP positions cursor (1-based row and col)" {
 }
 
 test "csi: CUP param 1;1, home (0,0)" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().cursor.row = 5;
@@ -1201,7 +1193,7 @@ test "csi: CUP param 1;1, home (0,0)" {
 }
 
 test "csi: CUP clamps to active area" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b[999;999H");
@@ -1211,7 +1203,7 @@ test "csi: CUP clamps to active area" {
 }
 
 test "csi: HVP positioni cursor identically to CUP" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b[3;6f"); // (3,6) = (2,5) for internal
@@ -1221,7 +1213,7 @@ test "csi: HVP positioni cursor identically to CUP" {
 }
 
 test "csi: VPA sets row (1-based, ignores DECOM)" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().cursor.row = 0;
@@ -1231,7 +1223,7 @@ test "csi: VPA sets row (1-based, ignores DECOM)" {
 }
 
 test "csi: VPA param 1 = row 0" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().cursor.row = 5;
@@ -1241,7 +1233,7 @@ test "csi: VPA param 1 = row 0" {
 }
 
 test "csi: VPA default param = 1 = row 0" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().cursor.row = 5;
@@ -1251,7 +1243,7 @@ test "csi: VPA default param = 1 = row 0" {
 }
 
 test "csi: VPR moves cursor down by n (relative)" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().cursor.row = 2;
@@ -1261,7 +1253,7 @@ test "csi: VPR moves cursor down by n (relative)" {
 }
 
 test "csi: HPA sets column (1-based)" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().cursor.col = 0;
@@ -1270,7 +1262,7 @@ test "csi: HPA sets column (1-based)" {
 }
 
 test "csi: HPA param 1 = col 0" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().cursor.col = 5;
@@ -1279,7 +1271,7 @@ test "csi: HPA param 1 = col 0" {
 }
 
 test "csi: HPR moves cursor right by n (relative)" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().cursor.col = 3;
@@ -1288,7 +1280,7 @@ test "csi: HPR moves cursor right by n (relative)" {
 }
 
 test "csi: cursor movement clears wrap_pending" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().cursor.wrap_pending = true;
@@ -1297,7 +1289,7 @@ test "csi: cursor movement clears wrap_pending" {
 }
 
 test "csi: DECSTR scroll margins reset to full screen" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     // Set non-default scroll margins via DECSTBM
@@ -1308,7 +1300,7 @@ test "csi: DECSTR scroll margins reset to full screen" {
 }
 
 test "csi: DECSTR cursor attr reset to default" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b[1;3;4m"); // bold + italic + underline
@@ -1318,7 +1310,7 @@ test "csi: DECSTR cursor attr reset to default" {
 }
 
 test "csi: DECSTR cursor attr fg/bg reset to palette default_idx" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b[38;5;196m"); // fg = indexed 196
@@ -1329,7 +1321,7 @@ test "csi: DECSTR cursor attr fg/bg reset to palette default_idx" {
 }
 
 test "csi: DECSTR origin mode cleared" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b[?6h"); // DECOM on
@@ -1338,7 +1330,7 @@ test "csi: DECSTR origin mode cleared" {
 }
 
 test "csi: DECSTR auto_wrap restored to true" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b[?7l"); // DECAWM off
@@ -1347,7 +1339,7 @@ test "csi: DECSTR auto_wrap restored to true" {
 }
 
 test "csi: DECSTR insert mode cleared" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b[4h"); // IRM on
@@ -1356,7 +1348,7 @@ test "csi: DECSTR insert mode cleared" {
 }
 
 test "csi: DECSTR wrap_pending cleared" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().cursor.wrap_pending = true;
@@ -1365,7 +1357,7 @@ test "csi: DECSTR wrap_pending cleared" {
 }
 
 test "csi: DECSTR saved_cursor reset to default" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b7"); // DECSC — save current cursor
@@ -1376,7 +1368,7 @@ test "csi: DECSTR saved_cursor reset to default" {
 }
 
 test "csi: DECSTR cell content preserved" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("Hello");
@@ -1388,7 +1380,7 @@ test "csi: DECSTR cell content preserved" {
 }
 
 test "csi: DECSTR cursor position preserved" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b[10;20H"); // CUP row=10, col=20
@@ -1399,7 +1391,7 @@ test "csi: DECSTR cursor position preserved" {
 }
 
 test "csi: DECSTR tab stops preserved" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b[3g"); // TBC; clear all tab stops
@@ -1410,7 +1402,7 @@ test "csi: DECSTR tab stops preserved" {
 }
 
 test "csi: ED 0 erases cursor-to-end-of-screen" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     // Fill the entire screen with 'A'.
@@ -1451,7 +1443,7 @@ test "csi: ED 0 erases cursor-to-end-of-screen" {
 }
 
 test "csi: ED 1 erases start-of-screen-to-cursor" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     for (0..t.active().active_rows) |r| {
@@ -1485,7 +1477,7 @@ test "csi: ED 1 erases start-of-screen-to-cursor" {
 }
 
 test "csi: ED 2 erases entire screen, cursor stays" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     for (0..t.active().active_rows) |r| {
@@ -1509,7 +1501,7 @@ test "csi: ED 2 erases entire screen, cursor stays" {
 }
 
 test "csi: ED uses current background color for blank cells" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     // Set a non-default background color.
@@ -1528,7 +1520,7 @@ test "csi: ED uses current background color for blank cells" {
 }
 
 test "csi: ED 0 clears wrap_pending" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().cursor.wrap_pending = true;
@@ -1537,7 +1529,7 @@ test "csi: ED 0 clears wrap_pending" {
 }
 
 test "csi: EL 0 erases cursor-to-end-of-line" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     for (t.active().rowMut(1)[0..t.active().active_cols]) |*c| {
@@ -1559,7 +1551,7 @@ test "csi: EL 0 erases cursor-to-end-of-line" {
 }
 
 test "csi: EL 1 erases start-of-line-to-cursor" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     for (t.active().rowMut(0)[0..t.active().active_cols]) |*c| {
@@ -1578,7 +1570,7 @@ test "csi: EL 1 erases start-of-line-to-cursor" {
 }
 
 test "csi: EL 2 erases entire line" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     for (t.active().rowMut(2)[0..t.active().active_cols]) |*c| {
@@ -1598,7 +1590,7 @@ test "csi: EL 2 erases entire line" {
 }
 
 test "csi: EL uses current background color for blank cells" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b[42m"); // SGR 42 = green background
@@ -1614,7 +1606,7 @@ test "csi: EL uses current background color for blank cells" {
 }
 
 test "csi: EL does not affect other rows" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     for (0..t.active().active_rows) |r| {
@@ -1641,7 +1633,7 @@ test "csi: EL does not affect other rows" {
 }
 
 test "csi: EL 0 clears wrap_pending" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().cursor.wrap_pending = true;
@@ -1650,7 +1642,7 @@ test "csi: EL 0 clears wrap_pending" {
 }
 
 test "csi: ECH erases n chars at cursor, cursor does not move" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     for (t.active().rowMut(0)[0..t.active().active_cols]) |*c| {
@@ -1674,7 +1666,7 @@ test "csi: ECH erases n chars at cursor, cursor does not move" {
 }
 
 test "csi: ECH 0 erases 1 char (default parameter rule)" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     for (t.active().rowMut(0)[0..t.active().active_cols]) |*c| {
@@ -1692,7 +1684,7 @@ test "csi: ECH 0 erases 1 char (default parameter rule)" {
 }
 
 test "csi: ECH clamps to end of line" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     for (t.active().rowMut(0)[0..t.active().active_cols]) |*c| {
@@ -1711,7 +1703,7 @@ test "csi: ECH clamps to end of line" {
 }
 
 test "csi: ECH uses current background color" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b[43m"); // SGR 43 = yellow background
@@ -1728,7 +1720,7 @@ test "csi: ECH uses current background color" {
 }
 
 test "csi: ECH does not shift remaining chars (unlike DCH)" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     // Write 'A','B','C','D','E' at cols 0-4.
@@ -1752,7 +1744,7 @@ test "csi: ECH does not shift remaining chars (unlike DCH)" {
 }
 
 test "csi: ICH inserts blank cells and shifts right" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     // row 0: A B C D E at cols 0-4
@@ -1779,7 +1771,7 @@ test "csi: ICH inserts blank cells and shifts right" {
 }
 
 test "csi: ICH cursor does not move" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().cursor.row = 0;
@@ -1790,7 +1782,7 @@ test "csi: ICH cursor does not move" {
 }
 
 test "csi: ICH n=0 treated as n=1" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     {
@@ -1809,7 +1801,7 @@ test "csi: ICH n=0 treated as n=1" {
 }
 
 test "csi: ICH clears wrap_pending" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().cursor.wrap_pending = true;
@@ -1818,7 +1810,7 @@ test "csi: ICH clears wrap_pending" {
 }
 
 test "csi: ICH blank cells use current background color" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b[41m"); // SGR 41 = bg indexed 1
@@ -1835,7 +1827,7 @@ test "csi: ICH blank cells use current background color" {
 }
 
 test "csi: ICH at last column replaces cell with blank" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     const last = t.active().active_cols - 1;
@@ -1848,7 +1840,7 @@ test "csi: ICH at last column replaces cell with blank" {
 }
 
 test "csi: DCH deletes cells and shifts left" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     {
@@ -1873,7 +1865,7 @@ test "csi: DCH deletes cells and shifts left" {
 }
 
 test "csi: DCH cursor does not move" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().cursor.row = 0;
@@ -1884,7 +1876,7 @@ test "csi: DCH cursor does not move" {
 }
 
 test "csi: DCH n=0 treated as n=1" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     {
@@ -1904,7 +1896,7 @@ test "csi: DCH n=0 treated as n=1" {
 }
 
 test "csi: DCH clears wrap_pending" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().cursor.wrap_pending = true;
@@ -1913,7 +1905,7 @@ test "csi: DCH clears wrap_pending" {
 }
 
 test "csi: DCH vacated cells use current background color" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b[41m"); // SGR 41 = bg indexed 1
@@ -1938,7 +1930,7 @@ test "csi: DCH vacated cells use current background color" {
 }
 
 test "csi: IL inserts blank line and shifts rows down" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     for (0..4) |r| {
@@ -1957,7 +1949,7 @@ test "csi: IL inserts blank line and shifts rows down" {
 }
 
 test "csi: IL cursor moves to column 0" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().cursor.row = 2;
@@ -1968,7 +1960,7 @@ test "csi: IL cursor moves to column 0" {
 }
 
 test "csi: IL n=0 treated as n=1" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().rowMut(0)[0] = .{ .codepoint = 'A', .kind = .narrow };
@@ -1983,7 +1975,7 @@ test "csi: IL n=0 treated as n=1" {
 }
 
 test "csi: IL respects scroll region, rows outside region unchanged" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     // Scroll region: rows 1-3 (0-based)
@@ -2005,7 +1997,7 @@ test "csi: IL respects scroll region, rows outside region unchanged" {
 }
 
 test "csi: IL outside scroll region is no-op" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().scroll_top = 2;
@@ -2041,7 +2033,7 @@ test "csi: IL outside scroll region is no-op" {
 }
 
 test "csi: DL 1 delete one line at cursor" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     // Fill rows 0-4 with 'A'-'E'.
@@ -2064,7 +2056,7 @@ test "csi: DL 1 delete one line at cursor" {
 }
 
 test "csi: DL 2 delete two lines" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     for (0..5) |r| {
@@ -2082,7 +2074,7 @@ test "csi: DL 2 delete two lines" {
 }
 
 test "csi: DL n=0 treated as n=1" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     for (0..5) |r| {
@@ -2097,7 +2089,7 @@ test "csi: DL n=0 treated as n=1" {
 }
 
 test "csi: DL clamps when n > region height" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     for (0..5) |r| {
@@ -2115,7 +2107,7 @@ test "csi: DL clamps when n > region height" {
 }
 
 test "csi: DL with scroll region" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().scroll_top = 1;
@@ -2136,7 +2128,7 @@ test "csi: DL with scroll region" {
 }
 
 test "csi: DL outside scroll region is no-op" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().scroll_top = 2;
@@ -2159,7 +2151,7 @@ test "csi: DL outside scroll region is no-op" {
 }
 
 test "csi: DL blank lines use current background color" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b[41m"); // SGR 41 = bg indexed 1
@@ -2181,7 +2173,7 @@ test "csi: DL blank lines use current background color" {
 }
 
 test "csi: DL cursor row preserved, col reset to 0" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().cursor.row = 2;
@@ -2194,7 +2186,7 @@ test "csi: DL cursor row preserved, col reset to 0" {
 }
 
 test "csi: DL clears wrap_pending" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().cursor.row = 1;
@@ -2205,7 +2197,7 @@ test "csi: DL clears wrap_pending" {
 }
 
 test "csi: DL at bottom of scroll region deletes last line only" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().scroll_top = 1;
@@ -2227,7 +2219,7 @@ test "csi: DL at bottom of scroll region deletes last line only" {
 }
 
 test "csi: SU 1 scrolls content up, blank line at bottom" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     // Fill rows 0-4 with 'A'-'E'.
@@ -2245,7 +2237,7 @@ test "csi: SU 1 scrolls content up, blank line at bottom" {
 }
 
 test "csi: SU n=0 treated as n=1" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     for (0..5) |r| {
@@ -2259,7 +2251,7 @@ test "csi: SU n=0 treated as n=1" {
 }
 
 test "csi: SU 2 scrolls up by 2" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     for (0..5) |r| {
@@ -2276,7 +2268,7 @@ test "csi: SU 2 scrolls up by 2" {
 }
 
 test "csi: SU n >= region height clears entire scroll region" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     for (0..5) |r| {
@@ -2291,7 +2283,7 @@ test "csi: SU n >= region height clears entire scroll region" {
 }
 
 test "csi: SU respects scroll region" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     // scroll region: rows 1-3
@@ -2312,7 +2304,7 @@ test "csi: SU respects scroll region" {
 }
 
 test "csi: SU blank lines use current background color" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b[41m"); // SGR 41 = bg indexed 1
@@ -2334,7 +2326,7 @@ test "csi: SU blank lines use current background color" {
 }
 
 test "csi: SU does not move cursor" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().cursor.row = 2;
@@ -2350,7 +2342,7 @@ test "csi: SD 1 scrolls content down, blank line at top" {
     // TERMV4 M2 item 9: full-screen scrollDown trips wrapAdd assert (b > max_rows) when scrollback is on.
     if (true) return error.SkipZigTest;
 
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     for (0..5) |r| {
@@ -2370,7 +2362,7 @@ test "csi: SD n=0 treated as n=1" {
     // TERMV4 M2 item 9: full-screen scrollDown trips wrapAdd assert (b > max_rows) when scrollback is on.
     if (true) return error.SkipZigTest;
 
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     for (0..5) |r| {
@@ -2387,7 +2379,7 @@ test "csi: SD 2 scrolls down by 2" {
     // TERMV4 M2 item 9: full-screen scrollDown trips wrapAdd assert (b > max_rows) when scrollback is on.
     if (true) return error.SkipZigTest;
 
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     for (0..5) |r| {
@@ -2407,7 +2399,7 @@ test "csi: SD n >= region height clears entire scroll region" {
     // TERMV4 M2 item 9: full-screen scrollDown trips wrapAdd assert (b > max_rows) when scrollback is on.
     if (true) return error.SkipZigTest;
 
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     for (0..5) |r| {
@@ -2422,7 +2414,7 @@ test "csi: SD n >= region height clears entire scroll region" {
 }
 
 test "csi: SD respects scroll region" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     // scroll region: rows 1-3
@@ -2446,7 +2438,7 @@ test "csi: SD blank lines use current background color" {
     // TERMV4 M2 item 9: full-screen scrollDown trips wrapAdd assert (b > max_rows) when scrollback is on.
     if (true) return error.SkipZigTest;
 
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b[42m"); // SGR 42 = bg indexed 2 (green)
@@ -2467,7 +2459,7 @@ test "csi: SD does not move cursor" {
     // TERMV4 M2 item 9: full-screen scrollDown trips wrapAdd assert (b > max_rows) when scrollback is on.
     if (true) return error.SkipZigTest;
 
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().cursor.row = 2;
@@ -2483,7 +2475,7 @@ test "csi: SU then SD round-trips content" {
     // TERMV4 M2 item 9: full-screen scrollDown trips wrapAdd assert (b > max_rows) when scrollback is on.
     if (true) return error.SkipZigTest;
 
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     for (0..5) |r| {
@@ -2502,7 +2494,7 @@ test "csi: SU then SD round-trips content" {
 }
 
 test "csi: DECSTBM sets scroll region" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b[3;7r"); // top=3, bottom=7 (1-based) : 2, 6 (0-based)
@@ -2512,7 +2504,7 @@ test "csi: DECSTBM sets scroll region" {
 }
 
 test "csi: DECSTBM moves cursor to home" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().cursor.row = 3;
@@ -2525,7 +2517,7 @@ test "csi: DECSTBM moves cursor to home" {
 }
 
 test "csi: DECSTBM clears wrap_pending" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().cursor.wrap_pending = true;
@@ -2536,7 +2528,7 @@ test "csi: DECSTBM clears wrap_pending" {
 }
 
 test "csi: DECSTBM no params resets to full screen" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     // First set a non-default region.
@@ -2551,7 +2543,7 @@ test "csi: DECSTBM no params resets to full screen" {
 }
 
 test "csi: DECSTBM 0;0 resets to full screen" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b[3;7r");
@@ -2562,7 +2554,7 @@ test "csi: DECSTBM 0;0 resets to full screen" {
 }
 
 test "csi: DECSTBM top >= bottom is ignored" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     // Set a valid region first.
@@ -2578,7 +2570,7 @@ test "csi: DECSTBM top >= bottom is ignored" {
 }
 
 test "csi: DECSTBM top > bottom is ignored" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b[2;6r");
@@ -2593,7 +2585,7 @@ test "csi: DECSTBM top > bottom is ignored" {
 }
 
 test "csi: DECSTBM bottom clamped to active rows" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     // Request bottom beyond screen height.
@@ -2604,7 +2596,7 @@ test "csi: DECSTBM bottom clamped to active rows" {
 }
 
 test "csi: DECSTBM scroll region is used by SU" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     // Fill rows 0-4 with 'A'-'E'.
@@ -2629,7 +2621,7 @@ test "csi: DECSTBM scroll region is used by SU" {
 }
 
 test "csi: CHT moves to next tab stop" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().cursor.col = 0;
@@ -2638,7 +2630,7 @@ test "csi: CHT moves to next tab stop" {
 }
 
 test "csi: CHT n=2 skips two tab stops" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().cursor.col = 0;
@@ -2647,7 +2639,7 @@ test "csi: CHT n=2 skips two tab stops" {
 }
 
 test "csi: CHT from mid-column advances to next stop" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().cursor.col = 5;
@@ -2656,7 +2648,7 @@ test "csi: CHT from mid-column advances to next stop" {
 }
 
 test "csi: CHT n=0 treated as n=1" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().cursor.col = 0;
@@ -2665,7 +2657,7 @@ test "csi: CHT n=0 treated as n=1" {
 }
 
 test "csi: CHT past last tab stop clamps to last column" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     // Clear all tab stops so there is nothing to the right of the cursor.
@@ -2680,7 +2672,7 @@ test "csi: CHT past last tab stop clamps to last column" {
 }
 
 test "csi: CHT does not change row" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().cursor.row = 3;
@@ -2691,7 +2683,7 @@ test "csi: CHT does not change row" {
 }
 
 test "csi: CHT clears wrap_pending" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().cursor.wrap_pending = true;
@@ -2701,7 +2693,7 @@ test "csi: CHT clears wrap_pending" {
 }
 
 test "csi: CHT with custom tab stop" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     // Clear all tab stops, set one at col 5.
@@ -2715,7 +2707,7 @@ test "csi: CHT with custom tab stop" {
 }
 
 test "csi: CBT moves to previous tab stop" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().cursor.col = 16;
@@ -2724,7 +2716,7 @@ test "csi: CBT moves to previous tab stop" {
 }
 
 test "csi: CBT n=2 skips two tab stops" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().cursor.col = 24;
@@ -2733,7 +2725,7 @@ test "csi: CBT n=2 skips two tab stops" {
 }
 
 test "csi: CBT from mid-column goes to previous stop" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     // col 5 is between tab stops 0 and 8; CBT should land on col 0
@@ -2745,7 +2737,7 @@ test "csi: CBT from mid-column goes to previous stop" {
 }
 
 test "csi: CBT n=0 treated as n=1" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().cursor.col = 16;
@@ -2754,7 +2746,7 @@ test "csi: CBT n=0 treated as n=1" {
 }
 
 test "csi: CBT past first tab stop clamps to col 0" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     // From col 8 (first default tab stop), CBT 1 : no stop to the left : col 0.
@@ -2764,7 +2756,7 @@ test "csi: CBT past first tab stop clamps to col 0" {
 }
 
 test "csi: CBT n larger than available stops clamps to col 0" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     // From col 16 there is only one tab stop to the left (col 8).
@@ -2775,7 +2767,7 @@ test "csi: CBT n larger than available stops clamps to col 0" {
 }
 
 test "csi: CBT does not change row" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().cursor.row = 3;
@@ -2786,7 +2778,7 @@ test "csi: CBT does not change row" {
 }
 
 test "csi: CBT clears wrap_pending" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().cursor.wrap_pending = true;
@@ -2796,7 +2788,7 @@ test "csi: CBT clears wrap_pending" {
 }
 
 test "csi: CBT at col 0 is a no-op (already at leftmost)" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().cursor.col = 0;
@@ -2805,7 +2797,7 @@ test "csi: CBT at col 0 is a no-op (already at leftmost)" {
 }
 
 test "csi: CHT then CBT returns to original column" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().cursor.col = 8;
@@ -2815,7 +2807,7 @@ test "csi: CHT then CBT returns to original column" {
 }
 
 test "csi: DSR 5 reporting" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.control_format = .s7c1t;
@@ -2826,7 +2818,7 @@ test "csi: DSR 5 reporting" {
 }
 
 test "csi: DSR 6 reporting" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().cursor.row = 5;
@@ -2840,7 +2832,7 @@ test "csi: DSR 6 reporting" {
 }
 
 test "csi: DSR XTVERSION xterm name and version" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.control_format = .s7c1t;
@@ -2854,7 +2846,7 @@ test "csi: DECXCPR report cursor positioin" {
     // TERMV4 M2 item 10: DECXCPR (CSI ? 6 n) reply lacks the '?' marker.
     if (true) return error.SkipZigTest;
 
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().cursor.row = 5;
@@ -2868,7 +2860,7 @@ test "csi: DECXCPR report cursor positioin" {
 }
 
 test "csi: DA1 send device attributes" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().cursor.row = 5;
@@ -2882,7 +2874,7 @@ test "csi: DA1 send device attributes" {
 }
 
 test "csi: DA2 send device attributes" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().cursor.row = 5;
@@ -2896,7 +2888,7 @@ test "csi: DA2 send device attributes" {
 }
 
 test "csi: REP repeats last char" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("A"); // putChar 'A'
@@ -2911,7 +2903,7 @@ test "csi: REP repeats last char" {
 }
 
 test "csi: REP keeps the width the character was printed with" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     // UTF-8 input and REP share one width table: ❤ is one cell both ways.
@@ -2926,7 +2918,7 @@ test "csi: REP keeps the width the character was printed with" {
 }
 
 test "csi: REP n=0 treated as n=1" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("B");
@@ -2937,7 +2929,7 @@ test "csi: REP n=0 treated as n=1" {
 }
 
 test "csi: REP uses current SGR attributes, not original" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b[31m"); // fg = indexed 1 (red)
@@ -2955,7 +2947,7 @@ test "csi: REP uses current SGR attributes, not original" {
 }
 
 test "csi: REP no-op when no previous char" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     // No putChar called yet; last_char == 0.
@@ -2965,7 +2957,7 @@ test "csi: REP no-op when no previous char" {
 }
 
 test "csi: DECSCUSR sets cursor style" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b[2 q"); // DECSCUSR 2 = steady block
@@ -2979,7 +2971,7 @@ test "csi: DECSCUSR sets cursor style" {
 }
 
 test "csi: DECSCUSR unknown value resets to default" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b[2 q"); // set to steady block first
@@ -2988,7 +2980,7 @@ test "csi: DECSCUSR unknown value resets to default" {
 }
 
 test "escape: ESC c resets cursor style" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b[6 q"); // steady bar
@@ -2997,7 +2989,7 @@ test "escape: ESC c resets cursor style" {
 }
 
 test "sgr: empty params = reset" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().cursor.attr.flags.bold = true;
@@ -3008,7 +3000,7 @@ test "sgr: empty params = reset" {
 }
 
 test "sgr: 0 explicit reset" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.active().cursor.attr.flags.bold = true;
@@ -3019,7 +3011,7 @@ test "sgr: 0 explicit reset" {
 }
 
 test "sgr: 0 in sequence resets then continues" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b[0;1m"); // reset then bold
@@ -3028,7 +3020,7 @@ test "sgr: 0 in sequence resets then continues" {
 }
 
 test "sgr: 1 = bold on" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b[1m");
@@ -3036,7 +3028,7 @@ test "sgr: 1 = bold on" {
 }
 
 test "sgr: 22 = bold off" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b[1m");
@@ -3045,7 +3037,7 @@ test "sgr: 22 = bold off" {
 }
 
 test "sgr: 2 = dim on" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b[2m");
@@ -3053,7 +3045,7 @@ test "sgr: 2 = dim on" {
 }
 
 test "sgr: 22 = dim off" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b[2m");
@@ -3062,7 +3054,7 @@ test "sgr: 22 = dim off" {
 }
 
 test "sgr: 22 resets both bold and dim" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b[1m");
@@ -3073,7 +3065,7 @@ test "sgr: 22 resets both bold and dim" {
 }
 
 test "sgr: 3 = italic on" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b[3m");
@@ -3081,7 +3073,7 @@ test "sgr: 3 = italic on" {
 }
 
 test "sgr: 23 = italic off" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b[3m");
@@ -3090,7 +3082,7 @@ test "sgr: 23 = italic off" {
 }
 
 test "sgr: 4 = single underline" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b[4m");
@@ -3098,7 +3090,7 @@ test "sgr: 4 = single underline" {
 }
 
 test "sgr: 4:0 = underline off (sub-param)" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b[4m");
@@ -3107,7 +3099,7 @@ test "sgr: 4:0 = underline off (sub-param)" {
 }
 
 test "sgr: 4:1 = single underline (sub-param)" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b[4:1m");
@@ -3115,7 +3107,7 @@ test "sgr: 4:1 = single underline (sub-param)" {
 }
 
 test "sgr: 4:2 = double underline (sub-param)" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b[4:2m");
@@ -3123,7 +3115,7 @@ test "sgr: 4:2 = double underline (sub-param)" {
 }
 
 test "sgr: 4:3 = curly underline (sub-param)" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b[4:3m");
@@ -3131,7 +3123,7 @@ test "sgr: 4:3 = curly underline (sub-param)" {
 }
 
 test "sgr: 4:4 = dotted underline (sub-param)" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b[4:4m");
@@ -3139,7 +3131,7 @@ test "sgr: 4:4 = dotted underline (sub-param)" {
 }
 
 test "sgr: 4:5 = dashed underline (sub-param)" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b[4:5m");
@@ -3147,7 +3139,7 @@ test "sgr: 4:5 = dashed underline (sub-param)" {
 }
 
 test "sgr: 21 = double underline (legacy)" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b[21m");
@@ -3155,7 +3147,7 @@ test "sgr: 21 = double underline (legacy)" {
 }
 
 test "sgr: 24 = underline off" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b[4m");
@@ -3164,7 +3156,7 @@ test "sgr: 24 = underline off" {
 }
 
 test "sgr: 5 = blink on" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b[5m");
@@ -3173,7 +3165,7 @@ test "sgr: 5 = blink on" {
 }
 
 test "sgr: 6 = rapid blink on" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b[6m");
@@ -3182,7 +3174,7 @@ test "sgr: 6 = rapid blink on" {
 }
 
 test "sgr: 25 = blink off (clears both blink and blink_rapid)" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b[5m");
@@ -3193,7 +3185,7 @@ test "sgr: 25 = blink off (clears both blink and blink_rapid)" {
 }
 
 test "sgr: 7 = reverse on" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b[7m");
@@ -3201,7 +3193,7 @@ test "sgr: 7 = reverse on" {
 }
 
 test "sgr: 27 = reverse off" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b[7m");
@@ -3210,7 +3202,7 @@ test "sgr: 27 = reverse off" {
 }
 
 test "sgr: 8 = invisible on" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b[8m");
@@ -3218,7 +3210,7 @@ test "sgr: 8 = invisible on" {
 }
 
 test "sgr: 28 = invisible off" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b[8m");
@@ -3227,7 +3219,7 @@ test "sgr: 28 = invisible off" {
 }
 
 test "sgr: 9 = strikethrough on" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b[9m");
@@ -3235,7 +3227,7 @@ test "sgr: 9 = strikethrough on" {
 }
 
 test "sgr: 29 = strikethrough off" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b[9m");
@@ -3244,7 +3236,7 @@ test "sgr: 29 = strikethrough off" {
 }
 
 test "sgr: 53 = overline on" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b[53m");
@@ -3252,7 +3244,7 @@ test "sgr: 53 = overline on" {
 }
 
 test "sgr: 55 = overline off" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b[53m");
@@ -3261,7 +3253,7 @@ test "sgr: 55 = overline off" {
 }
 
 test "sgr: 30 = fg black (indexed 0)" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b[30m");
@@ -3272,7 +3264,7 @@ test "sgr: 30 = fg black (indexed 0)" {
 }
 
 test "sgr: 37 = fg white (indexed 7)" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b[37m");
@@ -3283,7 +3275,7 @@ test "sgr: 37 = fg white (indexed 7)" {
 }
 
 test "sgr: 39 = fg default" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b[31m"); // set red
@@ -3296,7 +3288,7 @@ test "sgr: 39 = fg default" {
 }
 
 test "sgr: 40 = bg black (indexed 0)" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b[40m");
@@ -3307,7 +3299,7 @@ test "sgr: 40 = bg black (indexed 0)" {
 }
 
 test "sgr: 47 = bg white (indexed 7)" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b[47m");
@@ -3318,7 +3310,7 @@ test "sgr: 47 = bg white (indexed 7)" {
 }
 
 test "sgr: 49 = bg default" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b[41m");
@@ -3331,7 +3323,7 @@ test "sgr: 49 = bg default" {
 }
 
 test "sgr: 90 = fg bright black (indexed 8)" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b[90m");
@@ -3342,7 +3334,7 @@ test "sgr: 90 = fg bright black (indexed 8)" {
 }
 
 test "sgr: 97 = fg bright white (indexed 15)" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b[97m");
@@ -3353,7 +3345,7 @@ test "sgr: 97 = fg bright white (indexed 15)" {
 }
 
 test "sgr: 100 = bg bright black (indexed 8)" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b[100m");
@@ -3364,7 +3356,7 @@ test "sgr: 100 = bg bright black (indexed 8)" {
 }
 
 test "sgr: 107 = bg bright white (indexed 15)" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b[107m");
@@ -3375,7 +3367,7 @@ test "sgr: 107 = bg bright white (indexed 15)" {
 }
 
 test "sgr: 38;5;200 = fg indexed 200" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b[38;5;200m");
@@ -3386,7 +3378,7 @@ test "sgr: 38;5;200 = fg indexed 200" {
 }
 
 test "sgr: 38;5;0 = fg indexed 0" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b[38;5;0m");
@@ -3397,7 +3389,7 @@ test "sgr: 38;5;0 = fg indexed 0" {
 }
 
 test "sgr: 38;5;255 = fg indexed 255" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b[38;5;255m");
@@ -3408,7 +3400,7 @@ test "sgr: 38;5;255 = fg indexed 255" {
 }
 
 test "sgr: 38:5:200 = fg indexed 200 (colon form)" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b[38:5:200m");
@@ -3419,7 +3411,7 @@ test "sgr: 38:5:200 = fg indexed 200 (colon form)" {
 }
 
 test "sgr: 38;2;255;0;128 = fg rgb(255,0,128)" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b[38;2;255;0;128m");
@@ -3430,7 +3422,7 @@ test "sgr: 38;2;255;0;128 = fg rgb(255,0,128)" {
 }
 
 test "sgr: 38;2;0;0;0 = fg rgb(0,0,0)" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b[38;2;0;0;0m");
@@ -3441,7 +3433,7 @@ test "sgr: 38;2;0;0;0 = fg rgb(0,0,0)" {
 }
 
 test "sgr: 38:2:255:128:0 = fg rgb(255,128,0) (colon form)" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b[38:2:255:128:0m");
@@ -3452,7 +3444,7 @@ test "sgr: 38:2:255:128:0 = fg rgb(255,128,0) (colon form)" {
 }
 
 test "sgr: 48;5;100 = bg indexed 100" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b[48;5;100m");
@@ -3463,7 +3455,7 @@ test "sgr: 48;5;100 = bg indexed 100" {
 }
 
 test "sgr: 48;2;10;20;30 = bg rgb(10,20,30)" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b[48;2;10;20;30m");
@@ -3474,7 +3466,7 @@ test "sgr: 48;2;10;20;30 = bg rgb(10,20,30)" {
 }
 
 test "sgr: same rgb color twice = same palette index" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b[38;2;100;150;200m");
@@ -3488,7 +3480,7 @@ test "sgr: same rgb color twice = same palette index" {
 }
 
 test "sgr: combined bold + italic + fg in one sequence" {
-    var t = try T.create(alloc);
+    var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
     t.feed("\x1b[1;3;32m"); // bold + italic + fg green (indexed 2)

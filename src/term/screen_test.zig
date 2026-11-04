@@ -19,7 +19,7 @@ const CharsetState = @import("cell.zig").CharsetState;
 
 const testing = std.testing;
 
-// type aliases for test screens
+// test screen dimensions
 const test_tab_width: usize = 8;
 const test_max_cols: usize = 24;
 const test_max_rows: usize = 24;
@@ -30,8 +30,6 @@ const AltScreen = Screen(.{
     .max_cols = test_max_cols,
     .tab_width = test_tab_width,
     .max_scrollback = 0,
-    .version = "",
-    .name = "",
 }); // no scrollback
 
 const PrimaryScreen = Screen(.{
@@ -39,8 +37,6 @@ const PrimaryScreen = Screen(.{
     .max_cols = test_max_cols,
     .tab_width = test_tab_width,
     .max_scrollback = test_max_scrollback,
-    .version = "",
-    .name = "",
 }); // with scrollback
 
 // Screen rounds its ring up to a power of two (see `nextPowerOfTwo` in screen.zig).

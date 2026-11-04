@@ -7,7 +7,7 @@ const screen = @import("screen.zig");
 const Screen = screen.Screen;
 const Cell = @import("cell.zig").Cell;
 
-const S = Screen(.{
+const BenchScreen = Screen(.{
     .max_rows = 24,
     .max_cols = 80,
     .tab_width = 8,
@@ -25,7 +25,7 @@ const zero_row_length: usize = 80;
 
 fn benchScrollBottomRegion(io: Io, gpa: Allocator, iterations: usize) !Nanoseconds {
     if (iterations == 0) return 0;
-    var s: S = try .create(gpa);
+    var s: BenchScreen = try .create(gpa);
     defer s.destroy(gpa);
 
     // Reverse the top row (e.g. a status line at row 1), scroll region is
@@ -45,7 +45,7 @@ fn benchScrollBottomRegion(io: Io, gpa: Allocator, iterations: usize) !Nanosecon
 fn benchScrollTopRegion(io: Io, gpa: Allocator, iterations: usize) !Nanoseconds {
     if (iterations == 0) return 0;
 
-    var s: S = try .create(gpa);
+    var s: BenchScreen = try .create(gpa);
     defer s.destroy(gpa);
 
     // Reverse the top row (e.g. a status line at row 1), scroll region is
@@ -65,7 +65,7 @@ fn benchScrollTopRegion(io: Io, gpa: Allocator, iterations: usize) !Nanoseconds 
 fn benchScrollBottomSmallRegion(io: Io, gpa: Allocator, iterations: usize) !Nanoseconds {
     if (iterations == 0) return 0;
 
-    var s: S = try .create(gpa);
+    var s: BenchScreen = try .create(gpa);
     defer s.destroy(gpa);
 
     // A small region (e.g. 4 rows) to check whether cost scales with
@@ -84,7 +84,7 @@ fn benchScrollBottomSmallRegion(io: Io, gpa: Allocator, iterations: usize) !Nano
 fn benchScrollDownBottomRegion(io: Io, gpa: Allocator, iterations: usize) !Nanoseconds {
     if (iterations == 0) return 0;
 
-    var s: S = try .create(gpa);
+    var s: BenchScreen = try .create(gpa);
     defer s.destroy(gpa);
 
     s.setScrollRegion(2, 24);
@@ -101,7 +101,7 @@ fn benchScrollDownBottomRegion(io: Io, gpa: Allocator, iterations: usize) !Nanos
 fn benchScrollFullScreen(io: Io, gpa: Allocator, iterations: usize) !Nanoseconds {
     if (iterations == 0) return 0;
 
-    var s: S = try .create(gpa);
+    var s: BenchScreen = try .create(gpa);
     defer s.destroy(gpa);
 
     const start = Io.Clock.now(.awake, io);

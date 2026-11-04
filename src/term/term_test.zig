@@ -4,7 +4,6 @@ const testing = std.testing;
 const Mode = @import("term.zig").Mode;
 const Terminal = @import("term.zig").Terminal;
 const Events = @import("term.zig").Events;
-const Option = @import("term.zig").Option;
 const Attr = @import("cell.zig").Attr;
 const Cell = @import("cell.zig").Cell;
 
@@ -12,16 +11,9 @@ const max_title_len = @import("term.zig").max_title_len;
 
 const Response = Events.Response;
 
-const option: Option = .{
-    .max_rows = 12,
-    .max_cols = 24,
-    .tab_width = 8,
-    .max_scrollback = 20,
-    .name = "test",
-    .version = "0.0.1",
-};
+const test_option = @import("test_fixtures.zig").test_option;
 
-const Term = Terminal(option);
+const Term = Terminal(test_option);
 const alloc = testing.allocator;
 
 test "Terminal: create and destroy ok" {
@@ -73,11 +65,11 @@ test "resize: clamps to max dimensions" {
 
     t.resize(999, 999);
 
-    try testing.expectEqual(option.max_rows, t.primary.active_rows);
-    try testing.expectEqual(option.max_cols, t.primary.active_cols);
+    try testing.expectEqual(test_option.max_rows, t.primary.active_rows);
+    try testing.expectEqual(test_option.max_cols, t.primary.active_cols);
 
-    try testing.expectEqual(option.max_rows, t.alternate.active_rows);
-    try testing.expectEqual(option.max_cols, t.alternate.active_cols);
+    try testing.expectEqual(test_option.max_rows, t.alternate.active_rows);
+    try testing.expectEqual(test_option.max_cols, t.alternate.active_cols);
 }
 
 test "setTitle/getTitle: round-trip" {
@@ -666,7 +658,7 @@ test "grapheme intern: ED 2 keeps clusters referenced by scrollback" {
     defer t.destroy(alloc);
 
     t.feed("e\xCC\x81");
-    for (0..option.max_rows) |_| t.feed("\n");
+    for (0..test_option.max_rows) |_| t.feed("\n");
     t.feed("\x1b[2J");
     try testing.expect(t.active().grapheme_table.count() > 0);
     try expectAllClustersResolve(&t);
