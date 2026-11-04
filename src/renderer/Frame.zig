@@ -37,6 +37,13 @@ pub fn cellColors(palette: *const Palette, cell: term.Cell, reverse_video: bool)
     return .{ foreground, background };
 }
 
+/// Returns the cursor color: OSC 12 when set, else the default
+/// foreground, as the OSC 12 query reports. The SGR pen does not
+/// change it.
+pub fn cursorColor(palette: *const Palette, osc_color: ?[3]u8) [3]u8 {
+    return osc_color orelse palette.get(.foreground).toArray();
+}
+
 /// Bit layout (LSB first):
 ///   0: strikethrough
 ///   1: blink
@@ -607,7 +614,7 @@ pub fn Builder(comptime option: Option) type {
             glyph_fg: [3]u8,
         ) Cursor.State {
             const in_selection = if (selection_state) |sel| sel.contains(cursor.row, cursor.col) else false;
-            const resovled_rgb: [3]u8 = if (color) |cc| cc else palette.resolveRgb(cursor.attr.fg, .foreground);
+            const resolved_rgb = cursorColor(palette, color);
 
             var glyph_fg_final = glyph_fg;
             if (in_selection) {
@@ -619,7 +626,7 @@ pub fn Builder(comptime option: Option) type {
             return .{
                 .blink_on = blink_on,
                 .col = cursor.col,
-                .color = resovled_rgb,
+                .color = resolved_rgb,
                 .glyph = glyph,
                 .glyph_fg = glyph_fg_final,
                 .row = cursor.row,

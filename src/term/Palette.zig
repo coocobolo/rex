@@ -50,6 +50,8 @@ background: ?Rgb,
 
 builtin_foreground: Rgb = .white,
 builtin_background: Rgb = .black,
+builtin_selection_foreground: Rgb = .white,
+builtin_selection_background: Rgb = .black,
 
 const default_entries: [256]u32 = blk: {
     var e: [256]u32 = undefined;
@@ -99,6 +101,8 @@ pub fn reset(self: *Palette) void {
 pub fn setTheme(self: *Palette, theme: Theme) void {
     self.builtin_background = theme.background;
     self.builtin_foreground = theme.foreground;
+    self.builtin_selection_background = theme.selection_background;
+    self.builtin_selection_foreground = theme.selection_foreground;
     self.indexed_default[0..16].* = theme.ansi;
     self.indexed[0..16].* = theme.ansi;
 }

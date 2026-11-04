@@ -305,6 +305,12 @@ pub const Osc = struct {
             // OSC 112 — Reset default cursor color
             112 => term.cursor_color = null,
 
+            // OSC 117 — Reset selection background color
+            117 => term.selection_background = null,
+
+            // OSC 119 — Reset selection foreground color
+            119 => term.selection_foreground = null,
+
             else => {}, //std.debug.print("unhandled dispatch={f}\n", .{sequence}),
         }
     }

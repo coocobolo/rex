@@ -13,6 +13,7 @@ const SavedCursor = @import("cell.zig").SavedCursor;
 const Palette = @import("Palette.zig").Palette;
 const Rgb = Color.Rgb;
 const ansi = @import("../color/ansi.zig");
+const Theme = @import("Theme.zig");
 
 const max_title_len = @import("term.zig").max_title_len;
 
@@ -3643,4 +3644,61 @@ test "color: OSC 104 resets each index in its list" {
     try testing.expectEqual(Rgb.fromU32(ansi.indexed(1)), p.getIndexed(1));
     try testing.expectEqual(Rgb{ .r = 2, .g = 2, .b = 2 }, p.getIndexed(2));
     try testing.expectEqual(Rgb.fromU32(ansi.indexed(200)), p.getIndexed(200));
+}
+
+/// A theme whose colors differ from every built-in default.
+const test_theme: Theme = blk: {
+    var t = Theme.graphite;
+    t.background = .{ .r = 0x10, .g = 0x20, .b = 0x30 };
+    t.foreground = .{ .r = 0xE0, .g = 0xD0, .b = 0xC0 };
+    t.selection_background = .{ .r = 0x11, .g = 0x22, .b = 0x33 };
+    t.selection_foreground = .{ .r = 0x44, .g = 0x55, .b = 0x66 };
+    for (&t.ansi, 0..) |*c, n| c.* = .{ .r = @intCast(n), .g = 0x42, .b = 0x24 };
+    break :blk t;
+};
+
+test "color: the theme applies to both screens" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    t.setTheme(test_theme);
+    t.feed("\x1b[?1049h");
+    const p = &t.active().palette;
+    try testing.expectEqual(test_theme.background, p.get(.background));
+    try testing.expectEqual(test_theme.foreground, p.get(.foreground));
+    try testing.expectEqual(test_theme.ansi[1], p.getIndexed(1));
+}
+
+test "color: OSC 12 survives a screen switch" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    t.feed("\x1b]12;#123456\x07\x1b[?1049h");
+    try testing.expectEqual(Rgb{ .r = 0x12, .g = 0x34, .b = 0x56 }, t.cursor_color.?);
+    t.feed("\x1b[?1049l");
+    try testing.expectEqual(Rgb{ .r = 0x12, .g = 0x34, .b = 0x56 }, t.cursor_color.?);
+}
+
+test "color: OSC 17 and 19 queries fall back to the theme" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    t.setTheme(test_theme);
+    t.feed("\x1b]17;?\x07");
+    try testing.expect(std.mem.indexOf(u8, t.events.response.slice(), "17;rgb:1111/2222/3333") != null);
+    t.events.clear();
+    t.feed("\x1b]19;?\x07");
+    try testing.expect(std.mem.indexOf(u8, t.events.response.slice(), "19;rgb:4444/5555/6666") != null);
+}
+
+test "color: OSC 117 and 119 reset the selection colors" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    t.feed("\x1b]17;#010203\x07\x1b]19;#040506\x07");
+    try testing.expect(t.selection_background != null and t.selection_foreground != null);
+    t.feed("\x1b]117\x07");
+    try testing.expectEqual(null, t.selection_background);
+    t.feed("\x1b]119\x07");
+    try testing.expectEqual(null, t.selection_foreground);
 }

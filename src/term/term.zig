@@ -817,7 +817,8 @@ pub fn Terminal(comptime option: Option) type {
             if (self.active_buffer == target) return;
             self.active_buffer = target;
 
-            self.cursor_color = null;
+            // OSC 10-19 colors belong to the terminal, not a screen, so
+            // the cursor color stays.
             self.active().dirty_rows = .full;
             self.events.selection_reset = true;
         }
@@ -1151,8 +1152,8 @@ pub fn Terminal(comptime option: Option) type {
                 const color: Rgb = switch (target) {
                     .fg => self.active().palette.get(.foreground),
                     .bg => self.active().palette.get(.background),
-                    .selection_bg => self.selection_background orelse .black,
-                    .selection_fg => self.selection_foreground orelse .white,
+                    .selection_bg => self.selection_background orelse self.active().palette.builtin_selection_background,
+                    .selection_fg => self.selection_foreground orelse self.active().palette.builtin_selection_foreground,
                     .cursor => self.cursor_color orelse self.active().palette.get(.foreground),
                 };
 
@@ -1172,6 +1173,13 @@ pub fn Terminal(comptime option: Option) type {
                     .selection_fg => self.selection_foreground = color,
                 }
             }
+        }
+
+        /// Applies `theme` to both screens, so the alternate screen
+        /// starts with the same colors as the primary.
+        pub fn setTheme(self: *Self, theme: Theme) void {
+            self.primary.palette.setTheme(theme);
+            self.alternate.palette.setTheme(theme);
         }
 
         /// OSC 104 [; n [; n ...]] ST: resets each listed color, or all 256

@@ -24,3 +24,13 @@ test "cellColors: SGR 7 and DECSCNM each swap, together they cancel" {
     try testing.expectEqual([2][3]u8{ bg, fg }, Frame.cellColors(&screen.palette, row[0], true));
     try testing.expectEqual([2][3]u8{ fg, bg }, Frame.cellColors(&screen.palette, row[1], true));
 }
+
+test "cursorColor: without OSC 12 the cursor is the default foreground" {
+    var t = try Term.create(testing.allocator);
+    defer t.destroy(testing.allocator);
+
+    t.feed("\x1b]10;#111111\x07\x1b[31m");
+    const screen = t.active();
+    try testing.expectEqual([3]u8{ 0x11, 0x11, 0x11 }, Frame.cursorColor(&screen.palette, null));
+    try testing.expectEqual([3]u8{ 1, 2, 3 }, Frame.cursorColor(&screen.palette, .{ 1, 2, 3 }));
+}

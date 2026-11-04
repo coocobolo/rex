@@ -400,7 +400,7 @@ pub fn init(gpa: std.mem.Allocator, io: std.Io, environ: *const std.process.Envi
     var terminal = try TerminalType.create(gpa);
     errdefer terminal.destroy(gpa);
 
-    terminal.primary.palette.setTheme(config.theme);
+    terminal.setTheme(config.theme);
 
     const background_color = config.theme.background;
     const background_alpha = config.window.background.alpha;
