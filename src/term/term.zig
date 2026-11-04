@@ -53,9 +53,8 @@ pub const CellPosition = struct { row: u16, col: u16 };
 pub const Reply = union(enum) {
     /// ENQ: the configured answerback string, sent as is.
     answerback: []const u8,
-    /// DECID (ESC Z), the obsolete DA1 request: CSI ? 1 ; 2 c.
-    decid,
-    /// DA1 (CSI c): VT220, with ANSI colour (22) and clipboard (52).
+    /// DA1 (CSI c), also sent for DECID (ESC Z) as xterm does: VT220,
+    /// with ANSI colour (22) and clipboard (52).
     primary_attributes,
     /// DA2 (CSI > c): CSI > 1 ; 0 ; 0 c.
     secondary_attributes,
@@ -1120,7 +1119,6 @@ pub fn Terminal(comptime option: Option) type {
         pub fn reply(self: *Self, r: Reply) void {
             switch (r) {
                 .answerback => |bytes| self.events.response.append(bytes),
-                .decid => self.replyFmt(.csi, "?1;2c", .{}),
                 .primary_attributes => self.replyFmt(.csi, "?62;22;52c", .{}),
                 .secondary_attributes => self.replyFmt(.csi, ">1;0;0c", .{}),
                 .status_ok => self.replyFmt(.csi, "0n", .{}),
