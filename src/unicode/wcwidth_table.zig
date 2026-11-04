@@ -16,6 +16,7 @@
 //!
 //! Terminal-policy overrides:
 //!   U+1160..U+11FF -> .zero
+//!   U+00AD         -> .narrow
 //!
 //! The UCD does not define POSIX wcwidth() results directly. East_Asian_Width
 //! is a Unicode character property intended primarily for East Asian legacy
@@ -46,7 +47,6 @@ pub const entries = [_]u32{
     0x00052002,
     0x0005380A,
     0x00055002,
-    0x00056803,
     0x00057002,
     0x00058022,
     0x0005B022,

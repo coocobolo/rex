@@ -4,17 +4,17 @@
 const std = @import("std");
 const tables = @import("wcwidth_table.zig");
 
-/// Final width classification returned as column column-occupying glyph width.
+/// Final width classification of a code point, in terminal columns.
 pub const Width = enum {
     /// Not printable or not representable as a column-occupying glyph
     /// (musl's -1). Caller must decide: substitute, strip, or error.
     control,
-    /// Occupies zero column bubt is composable (combining marks, ZWJ,
+    /// Occupies zero columns but is composable (combining marks, ZWJ,
     /// variation selectors, tag characters), musl's 0.
     zero,
     /// Occupies exactly one column.
     narrow,
-    /// Occupies exactly two column.
+    /// Occupies exactly two columns.
     wide,
 };
 

@@ -18,7 +18,11 @@
 //!  General_Category Mn, Me, Cf            .zero
 //!  East_Asian_Width W or F                .wide
 //!  East_Asian_Width A                     .ambiguous
-//!  everything else (including unassigned) .narrow
+//!  any other assigned character           .narrow
+//!  unassigned, noncharacters, surrogates  .control
+//!
+//! Terminal-policy overrides are applied last; see
+//! `terminal_zero_width_overrides` and `terminal_narrow_overrides`.
 //!
 //! Table entry (u32):
 //!   bits [0,3)   property enum (3 bits, 5 values used)
@@ -77,6 +81,13 @@ const terminal_zero_width_overrides = [_][2]u21{
     .{ 0x1160, 0x11FF }, // Hangul Jungseong/Jongseong
 };
 
+// U+00AD SOFT HYPHEN is General_Category Cf, which would make it
+// zero-width. Terminals print it as a visible hyphen in one cell
+// (xterm, glibc and musl wcwidth all return 1), so it stays narrow.
+const terminal_narrow_overrides = [_][2]u21{
+    .{ 0x00AD, 0x00AD }, // SOFT HYPHEN
+};
+
 pub fn main(init: std.process.Init) !void {
     const io = init.io;
     var arena = init.arena.allocator();
@@ -94,7 +105,7 @@ pub fn main(init: std.process.Init) !void {
     try applyEastAsianWidth(io, arena, working, eaw_path);
 
     applyDefaultDoubleRangeOverrides(working);
-    applyTerminalPolicyOverridesOverrides(working);
+    applyTerminalPolicyOverrides(working);
 
     // noncharacters/surrogates forced to .control
     {
@@ -213,11 +224,15 @@ fn applyUnicodeData(io: std.Io, gpa: mem.Allocator, dest: []Working, path: []con
     }
 }
 
-fn applyTerminalPolicyOverridesOverrides(dest: []Working) void {
+fn applyTerminalPolicyOverrides(dest: []Working) void {
     for (terminal_zero_width_overrides) |range| {
         fillRange(dest, range[0], range[1], .zero);
     }
+    for (terminal_narrow_overrides) |range| {
+        fillRange(dest, range[0], range[1], .narrow);
+    }
 }
+
 fn applyDefaultDoubleRangeOverrides(dest: []Working) void {
     for (default_wide_ranges) |range| {
         for (range[0]..range[1] + 1) |cp| {
@@ -293,6 +308,7 @@ fn writeOutput(w: *std.Io.Writer, entries: []const Entry) !void {
         \\//!
         \\//! Terminal-policy overrides:
         \\//!   U+1160..U+11FF -> .zero
+        \\//!   U+00AD         -> .narrow
         \\//!
         \\//! The UCD does not define POSIX wcwidth() results directly. East_Asian_Width
         \\//! is a Unicode character property intended primarily for East Asian legacy

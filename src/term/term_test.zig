@@ -228,11 +228,23 @@ test "print: UTF-8 two-byte sequence decoded correctly" {
 
     // U+00E9 LATIN SMALL LETTER E WITH ACUTE, 2-byte UTF-8: 0xC3 0xA9
     t.feed("\xC3\xA9");
-    // FIXME broken
 
-    // try testing.expectEqual(@as(u21, 0x00E9), t.active().getCell(0, 0).codepoint);
-    // try testing.expectEqual(@as(u8, 1), t.active().getCell(0, 0).width);
-    // try testing.expectEqual(@as(u16, 1), t.active().cursor.col);
+    try testing.expectEqual(@as(u32, 0x00E9), t.active().cellAt(0, 0).codepoint);
+    try testing.expectEqual(.narrow, t.active().cellAt(0, 0).kind);
+    try testing.expectEqual(@as(u16, 1), t.active().cursor.col);
+}
+
+test "print: soft hyphen from UTF-8 takes one cell" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    // U+00AD SOFT HYPHEN is Cf, but terminals print it (xterm, glibc).
+    t.feed("a\xC2\xADb");
+
+    try testing.expectEqual(@as(u32, 0x00AD), t.active().cellAt(0, 1).codepoint);
+    try testing.expectEqual(.narrow, t.active().cellAt(0, 1).kind);
+    try testing.expectEqual(@as(u32, 'b'), t.active().cellAt(0, 2).codepoint);
+    try testing.expectEqual(@as(u16, 3), t.active().cursor.col);
 }
 
 test "print: wide CJK character occupies two columns" {
@@ -242,14 +254,10 @@ test "print: wide CJK character occupies two columns" {
     // U+4E2D CJK UNIFIED IDEOGRAPH, 3-byte UTF-8: 0xE4 0xB8 0xAD
     t.feed("\xE4\xB8\xAD");
 
-    // FIXME broken
-    // try testing.expectEqual(@as(u21, 0x4E2D), t.active().getCell(0, 0).codepoint);
-    // try testing.expectEqual(@as(u8, 2), t.active().getCell(0, 0).width);
-    // // col 1 is the continuation placeholder
-    // try testing.expectEqual(@as(u21, 0), t.active().getCell(0, 1).codepoint);
-    // try testing.expectEqual(@as(u8, 3), t.active().getCell(0, 1).width);
-    // // cursor advanced by 2
-    // try testing.expectEqual(@as(u16, 2), t.active().cursor.col);
+    try testing.expectEqual(@as(u32, 0x4E2D), t.active().cellAt(0, 0).codepoint);
+    try testing.expectEqual(.wide_left, t.active().cellAt(0, 0).kind);
+    try testing.expectEqual(.wide_right, t.active().cellAt(0, 1).kind);
+    try testing.expectEqual(@as(u16, 2), t.active().cursor.col);
 }
 
 test "print: auto-wrap sets wrap_pending at last column" {

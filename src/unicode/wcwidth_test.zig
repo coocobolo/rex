@@ -94,7 +94,7 @@ test "lookup: max valid codepoint does not crash and resolves sanely" {
     _ = lookup(0x10FFFF);
 }
 
-test "lookup: unassigned/private-use codepoints default to ambigous, not narrow" {
+test "lookup: private-use code points are ambiguous, not narrow" {
     // U+E000 (start of Private Use Area) has no East_Asian_Width or
     // General_Category override that would make it non-narrow.
     try testing.expectEqual(lookup(0xe000), .ambiguous);
@@ -144,10 +144,15 @@ test "wcwidth: other C0 controls remain .control" {
 }
 
 /// Code points where wcwidth_table.zig deliberately differs from the
-/// UCD oracle in wcwidth_expected.zig. Each entry says why. Empty means
-/// the two generators agree everywhere.
+/// UCD oracle in wcwidth_expected.zig. Each entry says why.
 const Exception = struct { first: u21, last: u21, why: []const u8 };
 const exceptions = [_]Exception{
+    .{
+        .first = 0x00AD,
+        .last = 0x00AD,
+        .why = "SOFT HYPHEN is General_Category Cf but prints as a visible " ++
+            "hyphen; xterm, glibc and musl give it one column.",
+    },
     .{
         .first = 0x1F1E6,
         .last = 0x1F1FF,
@@ -191,6 +196,14 @@ test "wcwidth: ascii and C1 controls" {
     try testing.expectEqual(.control, wcwidth(0x9B, .narrow)); // CSI
     try testing.expectEqual(.control, wcwidth(0x9F, .narrow));
     try testing.expectEqual(.narrow, wcwidth(0xA0, .narrow)); // NBSP
+}
+
+test "wcwidth: soft hyphen is one column" {
+    try testing.expectEqual(.narrow, wcwidth(0x00AD, .narrow));
+    try testing.expectEqual(.narrow, wcwidth(0x00AD, .wide));
+    // Its Cf neighbours in other blocks stay zero-width.
+    try testing.expectEqual(.zero, wcwidth(0x200B, .narrow)); // ZWSP
+    try testing.expectEqual(.zero, wcwidth(0x2060, .narrow)); // word joiner
 }
 
 test "wcwidth: combining marks, ZWJ and VS16 are zero" {
