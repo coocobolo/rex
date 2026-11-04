@@ -28,5 +28,6 @@ pub const builtin = @import("builtin/root.zig");
 // pub const Audio = @import("Audio.zig");
 
 test {
+    _ = @import("fuzz/root.zig");
     std.testing.refAllDecls(@This());
 }

@@ -302,6 +302,28 @@ pub fn build(b: *std.Build) !void {
     test_step.dependOn(tests.run(tests.add("test-rex", mod, test_filters)));
     test_step.dependOn(tests.run(tests.add("test-exe", exe.root_module, test_filters)));
 
+    // Fuzzing (see CONTRIBUTING.md, "Fuzzing"):
+    //   - One target per file in src/fuzz/, each built on
+    //     src/fuzz/harness.zig. Adding one is a row in `fuzz_targets`.
+    //   - `zig build fuzz` runs every target's seeds, saved regressions
+    //     and seeded mutations (also part of `zig build test`);
+    //     `zig build fuzz-<name>` runs one target.
+    //   - Add `--fuzz -Dllvm` to fuzz until stopped, or `--fuzz=<runs>`.
+    const fuzz_targets = .{ "grapheme", "parser", "strings", "terminal", "utf8", "wcwidth" };
+    const fuzz_module = b.createModule(.{
+        .root_source_file = b.path("src/fuzz_tests.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = test_imports,
+    });
+    const fuzz_all = b.step("fuzz", "Run every fuzz target (--fuzz -Dllvm to fuzz)");
+    fuzz_all.dependOn(tests.run(tests.add("fuzz", fuzz_module, test_filters)));
+    inline for (fuzz_targets) |name| {
+        const fuzz_one = tests.add("fuzz-" ++ name, fuzz_module, &.{"fuzz " ++ name});
+        const step = b.step("fuzz-" ++ name, "Run the " ++ name ++ " fuzz target (--fuzz -Dllvm to fuzz)");
+        step.dependOn(tests.run(fuzz_one));
+    }
+
     // Code generation (see CONTRIBUTING.md, "Generated code").
     //
     // Each generator in tools/gen/ is run as `<gen> <out.zig> <inputs>...`,

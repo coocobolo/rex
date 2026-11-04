@@ -12,5 +12,4 @@ pub const Action = parser.Action;
 
 test {
     _ = @import("parser_test.zig");
-    _ = @import("parser_fuzzy_test.zig");
 }

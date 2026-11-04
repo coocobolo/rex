@@ -1,10 +1,12 @@
 //! Checks wcwidth_table.zig against the generated UCD oracle
-//! (wcwidth_expected.zig); see `exceptions` for known deviations.
+//! (wcwidth_expected.zig) through wcwidth_oracle.zig, which lists the
+//! known deviations.
 
 const std = @import("std");
 const testing = std.testing;
 const tables = @import("wcwidth_table.zig");
 const expected = @import("wcwidth_expected.zig");
+const oracle = @import("wcwidth_oracle.zig");
 
 const wc = @import("wcwidth.zig");
 
@@ -15,11 +17,6 @@ const AmbiguousWidth = wc.AmbiguousWidth;
 
 const Property = tables.Property;
 
-const corpus = [_][]const u8{
-    @embedFile("testdata/fuzz/wcwidth/crash-630ff0a4f49ee617.bin"),
-    @embedFile("testdata/fuzz/wcwidth/crash-8185a9074f803ffc.bin"),
-};
-
 fn unpackCodepoint(v: u32) u21 {
     return @intCast(v >> 11);
 }
@@ -28,11 +25,11 @@ fn unpackSize(v: u32) u32 {
     return ((v >> 3) & 0xff) + 1;
 }
 
-fn unpackProperty(v: u32) tables.Property {
+fn unpackProperty(v: u32) Property {
     return @enumFromInt(@as(u3, @intCast(v & 0x7)));
 }
 
-fn linearLookup(entries: []const u32, cp: u21) tables.Property {
+fn linearLookup(entries: []const u32, cp: u21) Property {
     for (entries) |e| {
         const start = unpackCodepoint(e);
         const size = unpackSize(e);
@@ -143,51 +140,6 @@ test "wcwidth: other C0 controls remain .control" {
     try testing.expectEqual(wcwidth(0x007f, .narrow), .control); // DEL
 }
 
-/// Code points where wcwidth_table.zig deliberately differs from the
-/// UCD oracle in wcwidth_expected.zig. Each entry says why.
-const Exception = struct { first: u21, last: u21, why: []const u8 };
-const exceptions = [_]Exception{
-    .{
-        .first = 0x00AD,
-        .last = 0x00AD,
-        .why = "SOFT HYPHEN is General_Category Cf but prints as a visible " ++
-            "hyphen; xterm, glibc and musl give it one column.",
-    },
-    .{
-        .first = 0x1F1E6,
-        .last = 0x1F1FF,
-        .why = "Regional indicators are Emoji_Presentation but East_Asian_Width " ++
-            "N. A lone indicator is one column (UAX #11, xterm, glibc); a " ++
-            "flag pair is sized as a grapheme cluster, not per code point.",
-    },
-};
-
-fn isException(cp: u21) bool {
-    for (exceptions) |e| if (cp >= e.first and cp <= e.last) return true;
-    return false;
-}
-
-fn propertyOf(class: expected.Class) Property {
-    return switch (class) {
-        .control => .control,
-        .zero => .zero,
-        .narrow => .narrow,
-        .wide => .wide,
-        .ambiguous => .ambiguous,
-    };
-}
-
-/// Checks the table lookup for `cp` against the UCD oracle.
-fn checkAgainstOracle(cp: u21) !void {
-    if (cp > 0x10FFFF or isException(cp)) return;
-    const want = propertyOf(expected.classOf(cp));
-    const got = lookup(cp);
-    if (want != got) {
-        std.debug.print("U+{X:0>4}: oracle {t}, table {t}\n", .{ cp, want, got });
-        return error.TestExpectedEqual;
-    }
-}
-
 test "wcwidth: ascii and C1 controls" {
     try testing.expectEqual(.narrow, wcwidth(' ', .narrow));
     try testing.expectEqual(.narrow, wcwidth('A', .narrow));
@@ -243,8 +195,8 @@ test "wcwidth: surrogates and out-of-range are control" {
 
 test "lookup: oracle ranges match at every boundary" {
     for (expected.ranges) |r| {
-        try checkAgainstOracle(r.first);
-        try checkAgainstOracle(r.last);
+        try oracle.check(r.first);
+        try oracle.check(r.last);
     }
 }
 
@@ -256,26 +208,17 @@ test "lookup(exhaustive): every code point matches the UCD oracle" {
     var run_start: ?u21 = null;
     var cp: u32 = 0;
     while (cp <= 0x110000) : (cp += 1) {
-        const bad = cp <= 0x10FFFF and !isException(@intCast(cp)) and
-            propertyOf(expected.classOf(@intCast(cp))) != lookup(@intCast(cp));
+        const bad = cp <= 0x10FFFF and !oracle.isException(@intCast(cp)) and
+            oracle.propertyOf(expected.classOf(@intCast(cp))) != lookup(@intCast(cp));
         if (bad and run_start == null) run_start = @intCast(cp);
         if (!bad) if (run_start) |first| {
             const last: u21 = @intCast(cp - 1);
             std.debug.print("U+{X:0>4}..U+{X:0>4}: oracle {t}, table {t}\n", .{
-                first, last, propertyOf(expected.classOf(first)), lookup(first),
+                first, last, oracle.propertyOf(expected.classOf(first)), lookup(first),
             });
             failed = true;
             run_start = null;
         };
     }
     if (failed) return error.TestExpectedEqual;
-}
-
-test "wcwidth: fuzz against the UCD oracle" {
-    const T = struct {
-        fn fuzz(_: void, smith: *testing.Smith) !void {
-            try checkAgainstOracle(smith.value(u21));
-        }
-    };
-    try testing.fuzz({}, T.fuzz, .{ .corpus = &corpus });
 }
