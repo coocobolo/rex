@@ -274,10 +274,10 @@ pub fn Screen(comptime option: Option) type {
 
         // Active dimensions
 
-        /// Current active rows (<= max_rows). Updated by `setActiveSize`.
+        /// Current active rows (<= max_rows). Updated by `setActive`.
         active_rows: u16 = @intCast(max_rows),
 
-        /// Current active columns (<= max_cols). Updated by `setActiveSize`.
+        /// Current active columns (<= max_cols). Updated by `setActive`.
         active_cols: u16 = @intCast(max_cols),
 
         // Cursor
