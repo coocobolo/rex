@@ -85,10 +85,45 @@ const MouseMode = enum { x10, normal, button, any };
 pub const Option = struct {
     max_rows: usize,
     max_cols: usize,
-    tab_width: usize,
+    tab_width: usize = 8,
     max_scrollback: usize,
-    name: []const u8,
-    version: []const u8,
+    name: []const u8 = "rex",
+    version: []const u8 = "0.1.0",
+
+    /// Total logcail rows = 4096 (Exact power of two, 0% waste).
+    pub const compact = Option{
+        .max_rows = 200,
+        .max_cols = 80,
+        .max_scrollback = 3896,
+    };
+
+    /// Total logical rows = 8,192 (Exact power of two, 0% waste)
+    pub const standard = Option{
+        .max_rows = 500,
+        .max_cols = 120,
+        .max_scrollback = 7692,
+    };
+
+    /// Total logical rows = 16,384 (Exact power of two, 0% waste)
+    pub const heavy = Option{
+        .max_rows = 1000,
+        .max_cols = 200,
+        .max_scrollback = 15384,
+    };
+
+    /// Automatically adjusts max_scrollback so the resulting ring buffer
+    /// is 100% memory-efficient (no wasted power-of-two space).
+    pub fn optimized(max_rows: usize, max_cols: usize, min_scrollback: usize) Option {
+        const target_logical = max_rows + min_scrollback;
+        const ring_rows = std.math.ceilPowerOfTwo(usize, target_logical) catch target_logical;
+
+        return .{
+            .max_rows = max_rows,
+            .max_cols = max_cols,
+            // Snap scollback up so it fills the power-of-two boundary perfectly
+            .max_scrollback = ring_rows -| max_rows,
+        };
+    }
 };
 
 /// Events produced by `Terminal` after feed bytes.
@@ -302,6 +337,10 @@ pub const sequence_table: [2][SequenceType.count][]const u8 = blk: {
 pub fn seqIntroducer(comptime target: SequenceType, c1_mode: ControlFormat) []const u8 {
     return sequence_table[@intFromEnum(c1_mode)][@intFromEnum(target)];
 }
+
+pub const InputEngine = struct {
+
+};
 
 /// VT/ANSI terminal state machine.
 ///

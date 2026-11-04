@@ -181,6 +181,7 @@ pub fn Screen(comptime option: Option) type {
     const max_cols = option.max_cols;
     const tab_width = option.tab_width;
     const max_scrollback = option.max_scrollback;
+
     const is_scrollback_used = max_scrollback > 0;
 
     const DEFAULT_SCROLL_BOTTOM: u16 = @intCast(max_rows -| 1);
@@ -200,8 +201,29 @@ pub fn Screen(comptime option: Option) type {
         }
     }
 
-    // Total rows in the ring buffer (active capacity + scrollback capacity)
+    comptime {
+        const logical = max_rows + max_scrollback;
+        const ring_rows = std.math.ceilPowerOfTwo(usize, logical) catch {
+            @compileError("logical_ring_rows is too large for power-of-two calculation");
+        };
 
+        // Calculate memory waste percentage: (wasted rows / total ring rows) * 100
+        const wasted_rows = ring_rows - logical;
+        const waste_percent = (wasted_rows * 100) / ring_rows;
+
+        // If more than 40% of the allocated ring buffer sits empty, fail at compile time
+        if (waste_percent > 40) {
+            @compileError(std.fmt.comptimePrint(
+                \\Inefficient buffer configuration detected!
+                \\  - Logical rows requested: {d} (max_rows: {d} + max_scrollback: {d})
+                \\  - Resulting ring_rows:    {d} (next power of two)
+                \\  - Wasted allocation:     {d}% ({d} empty rows)
+                \\Please adjust `max_scrollback` to sit closer to a power-of-two boundary (e.g., 4096, 8192, 16384).
+            , .{ logical, max_rows, max_scrollback, ring_rows, waste_percent, wasted_rows }));
+        }
+    }
+
+    // Total rows in the ring buffer (active capacity + scrollback capacity)
     const logical_ring_rows = max_rows + max_scrollback;
     const ring_rows = nextPowerOfTwo(logical_ring_rows);
     const ring_mask = ring_rows - 1;
@@ -337,7 +359,7 @@ pub fn Screen(comptime option: Option) type {
         /// Logical-to-physical row remapping for O(region_height) region scroll.
         /// row_map[r] is the offset added to scroll_offset to get the physical index.
         /// Invariant: row_map is a permutation of 0..active_rows-1.
-        row_map: [ring_rows]u16,
+        row_map: []u16,
 
         row_map_generation: u32 = 0,
 
@@ -383,12 +405,7 @@ pub fn Screen(comptime option: Option) type {
             const cells = try gpa.alignedAlloc(Cell, .@"64", ring_rows * max_cols);
             @memset(cells, Cell{});
 
-            // const row_map = try allocator.alloc(u16, ring_rows);
-            // for (0..ring_rows) |i| {
-            //     row_map[i] = @intCast(i);
-            // }
-
-            var row_map: [ring_rows]u16 = undefined;
+            var row_map = try gpa.alloc(u16, ring_rows);
             for (0..ring_rows) |i| row_map[i] = @intCast(i);
 
             return .{
@@ -408,9 +425,12 @@ pub fn Screen(comptime option: Option) type {
 
         pub fn destroy(self: *Self, allocator: std.mem.Allocator) void {
             allocator.free(self.cells);
+            allocator.free(self.row_map);
             self.grapheme_table.deinit();
             self.grapheme_reverse.deinit();
             self.grapheme_arena.deinit();
+            self.ext_attrs.deinit(allocator);
+            self.url_table.deinit(allocator);
         }
 
         /// Maps logical row `r` (0 = top of active area) to a physical index

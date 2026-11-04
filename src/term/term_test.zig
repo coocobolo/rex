@@ -161,7 +161,7 @@ test "Response: a reply that doesn't fit is dropped, not half-written" {
     try testing.expectEqual(256, r.len);
 }
 
-test "Response: 60x CPR in one feed does not panic" {
+test "Terminal: 60x CPR in one feed does not panic" {
     const t = try Term.create(alloc);
     defer t.destroy(alloc);
 
@@ -517,4 +517,18 @@ test "hardReset: answerback preserved" {
     t.hardReset();
 
     try testing.expectEqualStrings("xterm", t.getAnswerback());
+}
+
+test "Terminal: xtversion 7-bit reply" {
+    const t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    t.control_format = .s8c1t;
+    t.xtversion();
+
+    // const out = t.events.response.slice();
+    // for (out) |b| {
+    //     std.debug.print("'{c}'\n{x:0>2}\n", .{ b, b });
+    // }
+    try testing.expectEqualStrings("\x90>|test 0.0.1\x9c", t.events.response.slice());
 }

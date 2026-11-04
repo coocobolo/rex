@@ -52,10 +52,16 @@ const Screen = rex.terminal.screen.Screen;
 
 const pomodoro = rex.builtin.pomodoro;
 
-const MAX_ROWS: usize = 208;
+// Common Power-of-Two Targets to Aim for:
+// 4,096 total rows (e.g., 200 rows + 3,896 scrollback)
+//
+// 8,192 total rows (e.g., 500 rows + 7,692 scrollback)
+//
+// 16,384 total rows (e.g., 1,000 rows + 15,384 scrollback)
+
+const MAX_ROWS: usize = 200;
 const MAX_COLS: usize = 220;
-// const MAX_SCROLLBACK: usize = 304;
-const MAX_SCROLLBACK: usize = 3888;
+const MAX_SCROLLBACK: usize = 3896;
 const TAB_WIDTH: usize = 8;
 const EMULATOR_VERSION = "0.1.0";
 const EMULATOR_NAME = "rex";
@@ -128,7 +134,7 @@ frame_builder: FrameBuilderType,
 
 io: std.Io,
 renderer: RendererType,
-terminal: *TerminalType,
+terminal: TerminalType,
 
 word_classifier: unicode.Classifier,
 

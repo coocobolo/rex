@@ -1,6 +1,8 @@
 const std = @import("std");
+
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
+
 const screen = @import("screen.zig");
 const Screen = screen.Screen;
 const Cell = @import("cell.zig").Cell;
