@@ -33,7 +33,7 @@ const Allocator = std.mem.Allocator;
 
 const rex = @import("rex");
 
-const vt = rex.VT;
+const vt = rex.vt.parser;
 const Parser = vt.Parser;
 const ChecksumDispatcher = vt.ChecksumDispatcher;
 const support = @import("../../support.zig");
