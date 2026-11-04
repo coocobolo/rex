@@ -3517,3 +3517,17 @@ test "m2: ASCII run past the margin with DECAWM off stays on the row" {
     try testing.expectEqual('B', s.row(0)[test_option.max_cols - 1].codepoint);
     try testing.expectEqual(0, s.row(1)[0].codepoint);
 }
+
+test "m2: wide char at the last column with DECAWM off stays on the row" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    const last = test_option.max_cols - 1;
+    t.feed("\x1b[?7l" ++ "A" ** (test_option.max_cols - 1) ++ "中");
+    const s = t.active();
+    try testing.expectEqual(0, s.cursor.row);
+    try testing.expectEqual(last, s.cursor.col);
+    try testing.expectEqual('A', s.row(0)[last - 1].codepoint);
+    try testing.expectEqual(0, s.row(0)[last].codepoint); // dropped, not split
+    try testing.expectEqual(0, s.row(1)[0].codepoint);
+}

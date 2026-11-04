@@ -1022,8 +1022,12 @@ pub fn Screen(comptime option: Option) type {
 
             const needs_blank_left_half = (self_kind == .wide_right and cursor_col > 0);
 
-            // Wide char or graphme wide at last column
+            // Wide char or grapheme wide at last column
             const wide_at_end = (is_wide and cursor_col + 1 >= self.active_cols);
+
+            // DECAWM off: a wide char has no room and may not wrap, so it is
+            // dropped and the cursor stays (xterm).
+            if (wide_at_end and !self.mode.auto_wrap) return;
 
             // Split-wide-char: right slot currently contains left-half of another wide char
             const needs_blank_right_of_right: bool = blk: {
@@ -1051,7 +1055,7 @@ pub fn Screen(comptime option: Option) type {
                 row_mut[cursor_col - 1] = Cell{ .background = cell.background };
             }
 
-            // Wide char or graphme wide at last column
+            // Wide char or grapheme wide at last column
             // No room for the right-half placeholder, fill this column with a blank,
             // wrap inline, then place the wide char at column 0 of the new row_mut.
             if (wide_at_end) {
