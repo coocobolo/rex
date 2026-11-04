@@ -1,3 +1,6 @@
+//! Loads the font faces through FreeType and rasterizes glyphs into
+//! bitmaps for the atlas.
+
 const std = @import("std");
 const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
@@ -20,54 +23,29 @@ pub const GlyphKind = enum { gray, color };
 /// VS16 emoji, clusters and the ambiguous-width option match the grid.
 pub const Span = enum(u1) { single, double };
 
-/// FreeType stores all metrics internally in 26.6 fixed point, the top 26 bits
-/// are the integer pixel part, the bottom 6 bits are the fractional part
-/// (1/64th pixel precision).
-///
-/// raw value 2112 (26.6 fixed point)
-/// integer   2112 >> 6   = 33 (pixels, truncated)
-/// float     2112 / 64.0 = 33.0 (exact, but happens to be whole here)
-///
-/// raw value 2124 (26.6 fixed point)
-/// integer   2124 >> 6   = 33 (pixels, truncated, lost 12/64 = 0.1875 px)
-/// float     2124 / 64.0 = 33.1875 (sub-pixel preserved)
-///
-/// When we compute ascender as i16, means doing "x >> 6" (or equivalent integer
-/// division), which truncates the fractional part. The shader receives 33.0 instead
-/// of 33.1875.
-///
-/// The bearing_offset calculation becomes:
-/// // u_ascender  = 33.0 (truncated)
-/// // a_bearing.y = 28 (integer, from FreeType bitmap metrics)
-/// u_ascender - float(a_bearing.y) = 33.0 - 28.0 = 5.0 // glyph top is 5px bellow cell top
-///
-/// With sub-pixel ascender:
-/// u_ascender - float(a_bearing.y) = 33.1875 - 28.0 = 5.1875 // glyph top is 5.1875 bellow cell top
-///
-/// What the difference looks like visually,
+/// Font-wide metrics in pixels, from the regular face. FreeType keeps
+/// them in 26.6 fixed point (1/64 px); `ascender` and the cell size are
+/// truncated to whole pixels, the line positions keep the fraction.
 pub const Metrics = struct {
-    // Cell dimensions
     cell_width: u16,
     cell_height: u16,
 
-    // Baseline position from top of cell (pixels, positive downward)
-    // equals to ascender in cell-local coordinates.
+    /// Baseline, down from the top of the cell.
     ascender: i16,
 
-    // Pixels below baseline (positive = downward). Typically 1–4px.
+    /// Distance below the baseline, positive downward.
     descender: i16,
 
-    // Underline: y from top of cell (pixels), positive downward
-    // = ascender + underline_position (where ul_pos is positive below baseline)
+    /// Top of the underline, down from the top of the cell.
     underline_y: f32,
     underline_thickness: f32,
 
-    // Strikethrough: y from top of cell (pixels), positive downward
+    /// Top of the strikethrough, down from the top of the cell.
     strikethrough_y: f32,
     strikethrough_thickness: f32,
 
-    // Overline: always 0.0 (top of cell) — no font metric for this
-    // Derived: overline_y = 0.0, thickness = underline_thickness
+    // No font metric exists for an overline: it sits at the top of the
+    // cell, as thick as the underline.
 
     pub const empty: Metrics = .{
         .cell_width = 0,
@@ -81,9 +59,12 @@ pub const Metrics = struct {
     };
 };
 
+/// One rasterized glyph: its bitmap and FreeType metrics.
 pub const Glyph = struct {
-    /// For .gray glyphs: owned by FreeType, valid until the next rasterize() call on the same face.
-    /// For .color glyphs: points into the rasterizer's scratch buffer, valid until the next rasterize() call (any glyph).
+    /// Gray glyphs point into FreeType's glyph slot, valid until the next
+    /// rasterize on the same face. Color glyphs point into the scratch
+    /// buffer, valid until the next rasterize of any glyph. Undefined
+    /// when width or height is 0.
     bitmap: [*]const u8,
 
     /// Width of the bitmap in pixels.
@@ -107,8 +88,6 @@ pub const Glyph = struct {
     kind: GlyphKind,
 };
 
-/// Loads font faces through FreeType and rasterizes glyphs into bitmap data
-/// that can be stored in a texture atlas and rendered by the graphics system.
 const Rasterizer = @This();
 
 library: c.FT_Library,
@@ -121,6 +100,8 @@ face: struct {
     regular: c.FT_Face,
 },
 
+/// Extra faces tried, in order, for code points the styled and emoji
+/// faces lack.
 fallback_faces: []c.FT_Face,
 
 /// Width of a single glyph cell in pixels.
@@ -134,6 +115,7 @@ ascender: i16,
 
 metrics: Metrics,
 
+/// Holds the scaled bitmap of the last color glyph.
 scratch: std.ArrayListUnmanaged(u8),
 
 pub const empty: Rasterizer = .{
@@ -152,21 +134,6 @@ pub const empty: Rasterizer = .{
         .regular = undefined,
     },
 };
-
-fn initStyledFace(gpa: Allocator, lib: c.FT_Library, spec: Config.FontSpec, width: u32, height: u32) !c.FT_Face {
-    const face = try ft.initFace(lib, spec.path, width, height);
-    errdefer ft.doneFace(face) catch {};
-
-    if (spec.weight_axis) |w| {
-        if (ft.hasMM(face)) {
-            const mm_var = try ft.getMMVar(lib, face);
-            defer _ = c.FT_Done_MM_Var(lib, mm_var);
-            try ft.setVarAxis(gpa, face, mm_var, .{ 'w', 'g', 'h', 't' }, w);
-        }
-    }
-
-    return face;
-}
 
 const VariableFontOption = struct {
     path: [*:0]const u8,
@@ -276,8 +243,8 @@ pub fn create(gpa: Allocator, config: Config) !Rasterizer {
     self.ascender = std.math.cast(i16, metrics.ascender >> 6) orelse std.math.maxInt(i16);
     self.cell_height = std.math.cast(u16, metrics.height >> 6) orelse std.math.maxInt(u16);
 
-    self.metrics.cell_height = std.math.cast(u16, metrics.height >> 6) orelse std.math.maxInt(u16);
-    self.metrics.ascender = std.math.cast(i16, metrics.descender) orelse std.math.maxInt(i16);
+    self.metrics.cell_height = self.cell_height;
+    self.metrics.ascender = self.ascender;
 
     const scale = metrics.y_scale; // FT_Fixed 16.16
     const ascender_f: f32 = @floatFromInt(self.ascender);
@@ -309,9 +276,8 @@ pub fn create(gpa: Allocator, config: Config) !Rasterizer {
         self.metrics.strikethrough_thickness = self.metrics.underline_thickness;
     }
 
-    // NOTE Fallback faces are loaded at the same pixel_height as the primary font,
-    // so glyph metrics stay consistent.
-    // Load fallback faces (best-effort: skip any that fail to load)
+    // Fallback faces load at the primary font's size so their glyphs fit
+    // the same cells. A fallback that fails to load is skipped.
     var fb_list: std.ArrayListUnmanaged(c.FT_Face) = .empty;
     errdefer {
         for (fb_list.items) |fb| ft.doneFace(fb) catch {};
@@ -326,42 +292,16 @@ pub fn create(gpa: Allocator, config: Config) !Rasterizer {
     }
     self.fallback_faces = try fb_list.toOwnedSlice(gpa);
 
-    // self.cell_width = @intCast(metrics.max_advance >> 6);
-    //
-    // About cell_width from max_advance vs glyph advance
-    // metrics.max_advance is the maximum advance across all glyphs.
-    // For a monospace font this equals every glyph's advance. So it's
-    // correct. But if we ever load a proportional fallback font by
-    // mistake, max_advance will be larger than the actual width.
-    // Using FT_LoadChar(face, 'M', FT_LOAD_DEFAULT) and reading
-    // glyph->advance.x >> 6 is more explicit intent, but max_advance
-    // is fine for a monospace terminal font ONLY. But the problem is we are not.
-
-    // WTF NOT max_advance value?
-    // it includes glyphs like combining marks or special symbols
-    // that may have a larger advance than the regular text glyphs.
-    // On some fonts it can be 1px wider than the actual character
-    // advance, which causes a 1px gap between cells that accumulates
-    // visibly across a wide terminal.
-
-    // 'M' vs '0'
-    // Both are fine for monospace fonts. Some terminal (xterm, st) use
-    // '0' because it's digit and less likely to be affected by font
-    // hinting quirks.
-
-    // Derive cell_width from a reference glyph advance.
-    // 'M' is the conventional reference (em-width), but any ASCII
-    // printable character works for a monospace font.
+    // The cell width is the advance of 'M'. max_advance is not used
+    // because it covers every glyph, combining marks and symbols too,
+    // and can be a pixel wider than the text glyphs, which leaves gaps
+    // that add up across a wide terminal.
     if (ft.loadChar(self.face.regular, 'M', c.FT_LOAD_DEFAULT)) {
         self.cell_width = @intCast(self.face.regular.*.glyph.*.advance.x >> 6);
-        // In debug builds, assert the font is actually monospace by spot-checking a few characters
+        // In debug builds, warn when the font is not monospace. These
+        // span the narrowest and widest glyphs of a proportional font.
         if (builtin.mode == .Debug) {
             const ref_advance = self.face.regular.*.glyph.*.advance.x;
-
-            // The characters iIlW0@ are chosen because they span the extremes,
-            // 'i' and 'l' are the narrowest in proportional fonts, 'W' and 'M'
-            // are the widest. If they all have the same advance, the font is monospace.
-
             for ("iIlW0@") |ch| {
                 ft.loadChar(self.face.regular, ch, c.FT_LOAD_DEFAULT) catch continue;
                 const adv = self.face.regular.*.glyph.*.advance.x;
@@ -376,6 +316,7 @@ pub fn create(gpa: Allocator, config: Config) !Rasterizer {
         log.warn("FT_Load_Char('M') failed, falling back to max_advance", .{});
         self.cell_width = @intCast(metrics.max_advance >> 6);
     }
+    self.metrics.cell_width = self.cell_width;
 
     return self;
 }
@@ -394,46 +335,34 @@ pub fn destroy(self: *Rasterizer, gpa: Allocator) void {
     ft.doneFreeType(self.library) catch {};
 }
 
-/// Rasterizes a codepoint using the requested font face and returns
-/// the resulting glyph bitmap and metrics. Color glyphs are scaled to
-/// fit `span` cells.
-///
-/// The returned bitmap is owned by FreeType and remains valid only
-/// until the next rasterize() call on the same face.
+/// Rasterizes `codepoint` in the `kind` face, or the first face that
+/// has it, and returns its bitmap and metrics. Color glyphs are scaled
+/// to fit `span` cells. See `Glyph.bitmap` for how long the bitmap
+/// stays valid.
 pub fn rasterize(self: *Rasterizer, gpa: Allocator, codepoint: u21, kind: FaceKind, span: Span) !Glyph {
     const face, const is_color = self.findFace(codepoint, kind);
 
-    // load flags depend on whether this is an emoji face which requires color texture
-    //
-    // NOTE FT_HAS_COLOR is a C macro defined as ((face)->face_flags & FT_FACE_FLAG_COLOR).
-    // Zig may or may not translate it depending on your translate-c setup.
-    // If it doesn't compile, use the flag directly
-    // const is_color = key.face == .emoji and (face.*.face_flags & c.FT_FACE_FLAG_COLOR) != 0;
+    // Color faces render BGRA bitmaps; text uses light hinting.
     const flags: c.FT_Int32 = if (is_color)
         c.FT_LOAD_COLOR | c.FT_LOAD_RENDER
     else
-        // c.FT_LOAD_RENDER | c.FT_LOAD_TARGET_NORMAL;
-        c.FT_LOAD_RENDER | c.FT_LOAD_TARGET_LIGHT; // FT_LOAD_DEFAULT is 0, so FT_LOAD_RENDER alone is equivalent.
+        c.FT_LOAD_RENDER | c.FT_LOAD_TARGET_LIGHT;
 
     try ft.loadChar(face, codepoint, flags);
 
     const glyph = face.*.glyph;
     const bmp = glyph.*.bitmap;
 
-    // FreeType can produce different pixel modes. FT_LOAD_RENDER normally gives
-    // FT_PIXEL_MODE_GRAY, but bitmap fonts can give FT_PIXEL_MODE_MONO (1-bit).
-    // Uploading mono data as GL_RED will produce garbage.
+    // Only 8-bit gray and BGRA can be uploaded. Bitmap fonts can give
+    // FT_PIXEL_MODE_MONO (1 bit per pixel), which would upload as garbage.
     if (!is_color and bmp.pixel_mode != @as(u8, c.FT_PIXEL_MODE_GRAY)) return error.UnsupportedPixelMode;
     if (is_color and bmp.pixel_mode != @as(u8, c.FT_PIXEL_MODE_BGRA)) return error.UnsupportedPixelMode;
 
     const advance: u16 = std.math.cast(u16, glyph.*.advance.x >> 6) orelse self.cell_width;
 
-    // Zero-size bitmap (space character) bmp.buffer is null for
-    // glyphs with no ink/pixels to upload (e.g., space, combining marks).
-    // glTexSubImage2D with a null pointer crashes.
-    // Still return a valid metric so the caller can advance the cursor correctly.
+    // Glyphs with no ink (space, some combining marks) have a null
+    // buffer. Return just the advance; there is nothing to upload.
     if (bmp.width == 0 or bmp.rows == 0) {
-        // bearing_x/y are irrelevant when there is no bitmap to draw.
         return .{
             .advance = advance,
             .bitmap = undefined,
@@ -520,9 +449,9 @@ pub fn rowPitch(ft_pitch: c_int) error{ BottomUpBitmap, GlyphTooLarge }!u16 {
     return std.math.cast(u16, ft_pitch) orelse error.GlyphTooLarge;
 }
 
-/// Returns the best FT_Face for the given codepoint, falling back from
-/// the requested kind -> emoji -> regular if the glyph is missing.
-/// Also returns whether the chosen face is a color (BGRA) face.
+/// Returns the first face that has `codepoint`, trying the `kind` face,
+/// then the emoji face, then each fallback, and whether it is a color
+/// (BGRA) face. Falls back to the regular face, which draws .notdef.
 fn findFace(self: *Rasterizer, codepoint: u21, kind: FaceKind) struct { c.FT_Face, bool } {
     const primary = self.faceFromKind(kind);
     if (c.FT_Get_Char_Index(primary, codepoint) != 0) {
@@ -539,128 +468,15 @@ fn findFace(self: *Rasterizer, codepoint: u21, kind: FaceKind) struct { c.FT_Fac
             return .{ fb, c.FT_HAS_COLOR(fb) };
     }
 
-    // Fall back to regular renders .notdef tofu, but at least it's the right size
+    // The regular face's .notdef box at least has the right size.
     return .{ self.face.regular, false };
 }
 
-pub const SequenceKind = enum {
-    /// Base + emoji modifier(s) (Fitzpatrick skin tone) and/or VS15/VS16.
-    /// e.g. [WAVING_HAND, SKIN_TONE_MEDIUM]
-    modifier_sequence,
-    /// Contains at least one ZWJ (U+200D) joining pictographs.
-    /// e.g., [WOMAN, ZWJ, COMPUTER]
-    zwj_sequence,
-    /// Exactly two Regional inidicator codepoints (flag).
-    regional_pair,
-    /// Anything else that ended up in the multi-codepoint grapheme path
-    /// (e.g, base + combining marks that are not emoji related).
-    unknown,
-};
-
-const zwj: u21 = 0x200D; // zero width joiner
-const vs15: u21 = 0xFE0E; // text presentation selector
-const vs16: u21 = 0xFE0F; // emoji presentation selector
-
-inline fn isSkinToneModifier(cp: u21) bool {
-    // Fitzpatrick types 1-2 .. 6
-    return cp >= 0x1F3FB and cp <= 0x1F3FF;
-}
-
-fn isRegionalIndicator(cp: u21) bool {
-    return cp >= 0x1F1E6 and cp <= 0x1F1FF;
-}
-
-/// NOTE! from this design:
-/// 1. Order maters: check regional_pair first since its a fixed-shape, fully
-/// enumarable case (always exactly 2 codepoints).
-/// 2. ZWJ takes priority over modifier when both appear (e.g., 👩🏽‍💻 = WOMAN + SKIN_TONE + ZWJ +
-/// COMPUTER is still fundamentally a ZWJ sequence problem, not just "base + modifier").
-/// 3. VS15/VS16 are deliberately inert here, they only affect presentation stlye (text
-/// vs emoji glyph), not composition, so they should not force a sequence into .zwj_sequence/
-/// .modifier_sequence on their own if thats all thats presnt alongside the base.
-/// 4. the assert cps.len >= 2 since single-codepoint grapheme entries should never reach
-/// rasterizeSequence(), if they can, drop that assert and add a cps.len == 1 => .unknown early
-/// return instaead.
-pub fn classifySequence(cps: []const u21) SequenceKind {
-    std.debug.assert(cps.len >= 2); // single-cp shouldn't reach here
-
-    // Regional indicator flag pair: exactly two RI codepoints, nothing else.
-    if (cps.len == 2 and isRegionalIndicator(cps[0]) and isRegionalIndicator(cps[1])) {
-        return .regional_pair;
-    }
-
-    var has_zwj = false;
-    var has_modifier = false;
-
-    for (cps[1..]) |cp| {
-        switch (cp) {
-            zwj => has_zwj = true,
-            vs15, vs16 => {}, // presentation selector: doesn't change classification
-            else => if (isSkinToneModifier(cp)) {
-                has_modifier = true;
-            },
-        }
-    }
-
-    if (has_zwj) return .zwj_sequence;
-    if (has_modifier) return .modifier_sequence;
-    return .unknown;
-}
-
-/// Rasterizes a ZWJ sequence.
-///
-/// Without HarfBuzz, falls back to the base codepoint (cps[0]).
-/// This renders the first emoji in the sequence rather than the
-/// composed form (e.g., 👩‍💻 renders as 👨 instead of the family emoji).
-///
-/// Full ZWJ rendering requires HarfBuzz shaping (Phase 2).
-///
-/// FIXME
-/// Phase 2: Add HarfBuzz, shape sequences
-/// Phase 3: multi-glyph compositing (defer)
+/// Rasterizes a multi-code-point grapheme cluster. Without shaping
+/// (HarfBuzz) this draws only the first code point, so a ZWJ sequence
+/// such as WOMAN + ZWJ + PERSONAL COMPUTER shows just the woman.
 pub fn rasterizeSequence(self: *Rasterizer, gpa: Allocator, cps: []const u21, face: FaceKind, span: Span) !Glyph {
     if (cps.len == 0) return error.EmptySequence;
-    return self.rasterize(gpa, cps[0], face, span);
-}
-
-pub fn rasterizeSequenceDraft(self: *Rasterizer, gpa: Allocator, cps: []const u21, face: FaceKind, span: Span) !Glyph {
-    if (cps.len == 0) return error.EmptySequence;
-    if (cps.len == 1) return self.rasterize(gpa, cps[0], face, span);
-
-    // Phase 2 (deferred): try a real GSUB/ligature lookup here first.
-    // if (self.tryLigatureLookup(cps, face)) |glyph_id| {
-    //     return self.rasterizeGlyphId(gpa, glyph_id, face);
-    // }
-
-    return switch (classifySequence(cps)) {
-        // Base is still semantically valid without the modifier — degrade
-        // gracefully rather than treating this as "unknown."
-        .modifier_sequence => self.rasterize(gpa, cps[0], face, span),
-
-        // Regional indicator pairs: until compositing/ligature lookup lands,
-        // fall back to the first flag letter rather than silently claiming
-        // it's a country it isn't. Same honesty argument as ZWJ.
-        .regional_pair => self.rasterize(gpa, cps[0], face, span),
-
-        // ZWJ-joined sequence with no font ligature available: rendering
-        // just cps[0] silently asserts a wrong meaning (see doc comment
-        // above). Composite fallback lands in a follow-up change; for now
-        // route through the same explicit function so the call site is
-        // ready for it and the intent is documented in one place.
-        .zwj_sequence => self.rasterizeUnknownZwjFallback(gpa, cps, face, span),
-
-        .unknown => self.rasterize(gpa, cps[0], face, span),
-    };
-
-    // return self.rasterize(gpa, cps[0], face, span);
-}
-
-/// Placeholder until Phase 3 (multi-glyph compositing) lands.
-/// Currently renders only the base codepoint, same as the old behavior,
-/// but isolated here so the "this is a known limitation" fact is
-/// localized to one call site instead of being implicit in
-/// rasterizeSequence's switch.
-fn rasterizeUnknownZwjFallback(self: *Rasterizer, gpa: Allocator, cps: []const u21, face: FaceKind, span: Span) !Glyph {
     return self.rasterize(gpa, cps[0], face, span);
 }
 
@@ -674,12 +490,15 @@ fn faceFromKind(self: *Rasterizer, kind: FaceKind) c.FT_Face {
     };
 }
 
+/// Scales a premultiplied BGRA bitmap down to `dst_w` by `dst_h` with
+/// an area average: each destination pixel is the mean of the source
+/// pixels it covers, weighted by overlap. `dst` is tightly packed.
 fn scaleDownBgraArea(
     // zig fmt: off
-    src: [*]const u8, 
-    dst: [*]u8, 
+    src: [*]const u8,
+    dst: [*]u8,
     src_w: u16, src_h: u16, src_pitch: u16,
-    dst_w: u16, dst_h: u16, 
+    dst_w: u16, dst_h: u16,
     // zig fmt: on
 ) void {
     const sw: f32 = @floatFromInt(src_w);
