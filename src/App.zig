@@ -276,13 +276,7 @@ pub fn init(
 
     var renderer = try RendererType.init(.{
         .background = config.window.background,
-        .font_metrics = .{
-            .ascender = rasterizer.ascender,
-            .dimension = .{
-                .width = @floatFromInt(rasterizer.cell_width),
-                .height = @floatFromInt(rasterizer.cell_height),
-            },
-        },
+        .font_metrics = rasterizer.metrics,
         .cursor = config.window.cursor,
         .scrollbar = config.window.scrollbar,
         .selection = config.window.selection,
@@ -813,11 +807,7 @@ fn setFontSize(self: *App, new_size: u32) void {
     };
     self.rasterizer.destroy(self.allocator);
     self.rasterizer = new_rasterizer;
-    self.renderer.cell_dimension = .{
-        .width = @floatFromInt(self.rasterizer.cell_width),
-        .height = @floatFromInt(self.rasterizer.cell_height),
-    };
-    self.renderer.cell_ascender = self.rasterizer.ascender;
+    self.renderer.setFontMetrics(self.rasterizer.metrics);
 
     // Invalidate atlas, all cached glyphs are wrong size now
     self.atlas.invalidate();

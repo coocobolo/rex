@@ -9,19 +9,18 @@ const Background = @import("Background.zig");
 const buffer = @import("buffer.zig");
 const Cell = @import("Cell.zig");
 const Cursor = @import("Cursor.zig");
+const Decoration = @import("Decoration.zig");
 const Dimension = @import("dimension.zig").Dimension;
 const FrameData = @import("Frame.zig");
 const Scrollbar = @import("Scrollbar.zig");
 const Selection = @import("Selection.zig");
 const Shader = @import("Shader.zig");
 
+const Rasterizer = @import("../freetype/root.zig").Rasterizer;
 const TerminalOption = @import("../term/root.zig").term.Option;
 
 pub const Option = struct {
-    font_metrics: struct {
-        ascender: i16,
-        dimension: Dimension(f32),
-    },
+    font_metrics: Rasterizer.Metrics,
     background: Background.Option,
     cursor: Cursor.Option,
     scrollbar: Scrollbar.Option,
@@ -40,6 +39,7 @@ pub fn Renderer(comptime option: TerminalOption) type {
         cell_ascender: i16,
         cell_dimension: Dimension(f32),
         cursor: Cursor,
+        decoration_metrics: Decoration.Metrics,
         selection: Selection,
         scrollbar: Scrollbar,
 
@@ -59,15 +59,29 @@ pub fn Renderer(comptime option: TerminalOption) type {
             var cell = try Cell.init(max_cells);
             errdefer cell.deinit();
 
-            return .{
+            var self: Self = .{
                 .background = background,
                 .cell = cell,
-                .cell_ascender = opt.font_metrics.ascender,
-                .cell_dimension = opt.font_metrics.dimension,
+                .cell_ascender = undefined,
+                .cell_dimension = undefined,
                 .cursor = cursor,
+                .decoration_metrics = undefined,
                 .scrollbar = scrollbar,
                 .selection = selection,
             };
+            self.setFontMetrics(opt.font_metrics);
+            return self;
+        }
+
+        /// Takes the cell size, baseline and decoration lines from the
+        /// font. Called at init and whenever the font size changes.
+        pub fn setFontMetrics(self: *Self, font: Rasterizer.Metrics) void {
+            self.cell_ascender = font.ascender;
+            self.cell_dimension = .{
+                .width = @floatFromInt(font.cell_width),
+                .height = @floatFromInt(font.cell_height),
+            };
+            self.decoration_metrics = .fromFont(font);
         }
 
         pub fn deinit(self: *Self) void {
@@ -116,6 +130,7 @@ pub fn Renderer(comptime option: TerminalOption) type {
                     .frame = frame_dimension,
                 },
                 background_color[3],
+                self.decoration_metrics,
                 cursor_state.blink_on,
                 cursor_state.blink_rapid_on,
             );

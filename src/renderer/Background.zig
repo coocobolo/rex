@@ -1,6 +1,7 @@
 const std = @import("std");
 const log = std.log.scoped(.background);
 
+const Decoration = @import("Decoration.zig");
 const Flags = @import("Frame.zig").Flags;
 const gl = @import("gl.zig");
 const Shader = @import("Shader.zig");
@@ -85,6 +86,7 @@ pub fn draw(
         frame: Dimension(f32),
     },
     background_alpha: ?f32,
+    decoration: Decoration.Metrics,
     blink_on: bool,
     blink_rapid_on: bool,
 ) void {
@@ -93,6 +95,7 @@ pub fn draw(
     self.shader.set2f("u_cell_size", dimension.cell.width, dimension.cell.height);
     self.shader.set2f("u_screen_size", dimension.frame.width, dimension.frame.height);
     self.shader.set1f("u_bg_alpha", background_alpha orelse self.option.alpha);
+    decoration.apply(self.shader);
     self.shader.set1i("u_blink_on", @intFromBool(blink_on));
     self.shader.set1i("u_blink_rapid_on", @intFromBool(blink_rapid_on));
     self.buffer.draw(instance_length);
