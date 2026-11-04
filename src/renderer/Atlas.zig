@@ -213,7 +213,8 @@ pub fn get(self: *Atlas, gpa: Allocator, rasterizer: *Rasterizer, codepoint: u21
     return gop.value_ptr.*;
 }
 
-/// Packs `glyph` into its texture and copies its bitmap there.
+/// Packs `glyph` into its texture and copies its bitmap there. Fails
+/// with `error.InvalidPitch` when the pitch cannot hold a row.
 ///
 /// This binds the texture and leaves texture 0 bound, so it must not
 /// run between `bindTextures` and the draw that samples them.
@@ -232,16 +233,17 @@ pub fn upload(self: *Atlas, glyph: Rasterizer.Glyph) !Metric {
         };
     }
 
+    // UNPACK_ROW_LENGTH is in pixels, so the pitch must hold whole
+    // pixels and at least one row of them.
+    const is_color = glyph.kind == .color;
+    const bpp: u32 = if (is_color) 4 else 1;
+    if (glyph.pitch % bpp != 0 or glyph.pitch / bpp < glyph.width) return error.InvalidPitch;
+
     const atlas_x, const atlas_y = try self.pack(glyph.kind, glyph.width, glyph.height);
 
-    // Copy into the texture. UNPACK_ROW_LENGTH is in pixels, so the
-    // byte pitch is divided by bytes per pixel. FT_LOAD_RENDER gives a
-    // top-down bitmap, so the pitch is positive.
-    const is_color = glyph.kind == .color;
     const texture = if (is_color) self.color_texture else self.gray_texture;
     const format: gl.GLenum = if (is_color) gl.BGRA else gl.RED;
 
-    const bpp: u32 = if (is_color) 4 else 1;
     gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
     gl.pixelStorei(gl.UNPACK_ROW_LENGTH, @intCast(glyph.pitch / bpp));
     gl.bindTexture(gl.TEXTURE_2D, texture);
