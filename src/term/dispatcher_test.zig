@@ -657,7 +657,7 @@ test "escape: ESC SP F restores 7-bit C1 (S7C1T)" {
 }
 
 test "escape: ESC SP L sets s7c1t and level1 (ANSI level 1)" {
-    // TERMV4 decision 6: ANSI conformance levels (ESC SP L/M/N) are not implemented; single xterm profile.
+    // ANSI conformance levels (ESC SP L/M/N) are not implemented; single xterm profile.
     if (true) return error.SkipZigTest;
 
     var t = try Term.create(alloc);
@@ -671,7 +671,7 @@ test "escape: ESC SP L sets s7c1t and level1 (ANSI level 1)" {
 }
 
 test "escape: ESC SP M sets s8c1t and level2 (ANSI level 2)" {
-    // TERMV4 decision 6: ANSI conformance levels (ESC SP L/M/N) are not implemented; single xterm profile.
+    // ANSI conformance levels (ESC SP L/M/N) are not implemented; single xterm profile.
     if (true) return error.SkipZigTest;
 
     var t = try Term.create(alloc);
@@ -684,7 +684,7 @@ test "escape: ESC SP M sets s8c1t and level2 (ANSI level 2)" {
 }
 
 test "escape: ESC SP N sets s8c1t and level3 (ANSI level 3)" {
-    // TERMV4 decision 6: ANSI conformance levels (ESC SP L/M/N) are not implemented; single xterm profile.
+    // ANSI conformance levels (ESC SP L/M/N) are not implemented; single xterm profile.
     if (true) return error.SkipZigTest;
 
     var t = try Term.create(alloc);
