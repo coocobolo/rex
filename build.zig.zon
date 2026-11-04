@@ -6,10 +6,6 @@
             .url = "https://glad.dav1d.de/generated/tmptfnr7ekbglad/glad.zip",
             .hash = "N-V-__8AAL2TGQBAmhj74dNFbpOGTCMYibtsLg5jR7DDVn68",
         },
-        .miniaudio = .{
-            .url = "git+https://github.com/mackron/miniaudio.git",
-            .hash = "N-V-__8AAHNWwAASlNuYbrP1-3UqXdwbYvZ_6nIJhpAcRMfi",
-        },
         .freetype = .{
             .url = "git+https://gitlab.freedesktop.org/freetype/freetype.git?ref=VER-2-13-3#42608f77f20749dd6ddc9e0536788eaad70ea4b5",
             .hash = "N-V-__8AAKfbpwAXnUJ6TJEaqZGWgp6F_8OhiLErejRxQ7Y5",

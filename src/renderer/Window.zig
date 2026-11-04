@@ -152,7 +152,7 @@ fn ringBellX11(volume: u8) void {
     if (builtin.os.tag == .linux or builtin.os.tag == .freebsd) {
         const display = x11.XOpenDisplay(null) orelse return;
         defer _ = x11.XCloseDisplay(display);
-        _ = x11.XBell(display, @intCast(volume)); // 100 = default volume
+        _ = x11.XBell(display, @intCast(volume)); // percent of base volume
         _ = x11.XFlush(display);
     }
 }
