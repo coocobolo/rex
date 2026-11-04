@@ -3148,6 +3148,105 @@ test "sgr: 24 = underline off" {
     try testing.expectEqual(.none, t.active().cursor.attr.flags.underline);
 }
 
+test "sgr: 9 and 29 set and clear strikethrough" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    t.feed("\x1b[9m");
+    try testing.expect(t.active().cursor.attr.flags.strikethrough);
+    t.feed("\x1b[29m");
+    try testing.expect(!t.active().cursor.attr.flags.strikethrough);
+}
+
+test "sgr: 53 and 55 set and clear overline" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    t.feed("\x1b[53m");
+    try testing.expect(t.active().cursor.attr.flags.overline);
+    t.feed("\x1b[55m");
+    try testing.expect(!t.active().cursor.attr.flags.overline);
+}
+
+test "sgr: decorations land in printed cells" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    t.feed("\x1b[4:3;9;53mA\x1b[0mB");
+    const row = t.active().row(0);
+    try testing.expectEqual(.curly, row[0].flags.underline);
+    try testing.expect(row[0].flags.strikethrough and row[0].flags.overline);
+    try testing.expectEqual(.none, row[1].flags.underline);
+    try testing.expect(!row[1].flags.strikethrough and !row[1].flags.overline);
+}
+
+test "sgr: 4 with an unknown style falls back to single" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    t.feed("\x1b[4:9m");
+    try testing.expectEqual(.single, t.active().cursor.attr.flags.underline);
+}
+
+fn expectUnderlineColor(seq: []const u8, expected: Color) !void {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    t.feed(seq);
+    try testing.expectEqual(expected, t.active().cursor.attr.underline_color);
+}
+
+test "sgr: 58 sets the underline color in every 38 form" {
+    const rgb: Color = .fromRgb(255, 128, 0);
+    try expectUnderlineColor("\x1b[58;2;255;128;0m", rgb);
+    try expectUnderlineColor("\x1b[58:2:255:128:0m", rgb);
+    try expectUnderlineColor("\x1b[58:2::255:128:0m", rgb);
+    try expectUnderlineColor("\x1b[58:2:0:255:128:0m", rgb);
+    try expectUnderlineColor("\x1b[58;5;196m", .{ .indexed = 196 });
+    try expectUnderlineColor("\x1b[58:5:196m", .{ .indexed = 196 });
+}
+
+test "sgr: 58 leaves fg, bg and the palette alone" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    const before = t.active().palette.entries;
+    t.feed("\x1b[58:2::1:2:3m");
+    const attr = t.active().cursor.attr;
+    try testing.expectEqual(0, attr.fg);
+    try testing.expectEqual(0, attr.bg);
+    try testing.expectEqual(before, t.active().palette.entries);
+}
+
+test "sgr: 59 and 0 reset the underline color" {
+    try expectUnderlineColor("\x1b[58;5;1m\x1b[59m", .default);
+    try expectUnderlineColor("\x1b[58;5;1m\x1b[0m", .default);
+    try expectUnderlineColor("\x1b[58;5;1m\x1b[m", .default);
+}
+
+test "sgr: 58 consumes its parameters, the codes after it still apply" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    t.feed("\x1b[4:3;58:2::255:0:0;1m");
+    const attr = t.active().cursor.attr;
+    try testing.expectEqual(.curly, attr.flags.underline);
+    try testing.expect(attr.flags.bold);
+    try testing.expect(!attr.flags.dim);
+    try testing.expectEqual(Color.fromRgb(255, 0, 0), attr.underline_color);
+}
+
+test "sgr: sub-parameters of an unknown code are skipped" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    // Without the skip, the trailing :0 would reset the pen and :1 set bold.
+    t.feed("\x1b[4m\x1b[99:1:0m");
+    const attr = t.active().cursor.attr;
+    try testing.expectEqual(.single, attr.flags.underline);
+    try testing.expect(!attr.flags.bold);
+}
+
 test "sgr: 5 = blink on" {
     var t = try Term.create(alloc);
     defer t.destroy(alloc);

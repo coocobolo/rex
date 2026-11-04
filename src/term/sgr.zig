@@ -2,16 +2,20 @@
 //! Parses a CSI SGR sequence and applies the resulting attributes to `attr`.
 //!
 //! Handles:
-//!   1. Standard SGR codes (0–29, 30–37, 39, 40–47, 49, 90–97, 100–107)
+//!   1. Standard SGR codes (0 to 29, 30 to 37, 39, 40 to 47, 49, 53, 55,
+//!      90 to 97, 100 to 107)
 //!   2. 256-color:  38;5;n   and  38:5:n
-//!   3. True color: 38;2;r;g;b  and  38:2:r:g:b  (and 38:2::r:g:b with color space)
-//!   4. Underline color: 58;2;r;g;b  and  58:5:n
-//!   5. Underline style sub-params: 4:0–4:5
+//!   3. True color: 38;2;r;g;b  and  38:2:r:g:b  (and 38:2:cs:r:g:b or
+//!      38:2::r:g:b with a color space, ITU T.416)
+//!   4. Underline color: 58 in every form of 38, and 59 to reset it
+//!      (kitty, https://sw.kovidgoyal.net/kitty/underlines/)
+//!   5. Underline style sub-params: 4:0 to 4:5
+//!
+//! Sub-parameters of a code that takes none are skipped, so `CSI 99:1:0 m`
+//! does not reset the pen through the trailing 0.
 
 const std = @import("std");
 
-// const ControlSequence = @import("parser.zig").ControlSequence;
-// const Separator = @import("parser.zig").Separator;
 const Parameter = @import("../vt/parser.zig").Parameter;
 
 const Option = @import("term.zig").Option;
@@ -106,24 +110,20 @@ pub fn parse(comptime option: Option, term: *Terminal(option), params: []const P
             // Bright background
             100...107 => attr.bg = palette.intern(.{ .indexed = @intCast(code - 100 + 8) }),
 
-            // FIXME requires parse parseExtColor accept a target {fg, bg, underline}
-            // Underline colour (Kitty/VTE extension, widely supported)
-
-            // 58 => i = parseExtColor(palette, attr, params, i, n, .underline),
-            // 59 => attr.underline_color = Palette.default_idx,
-
-            // selection sgr color
-            // 17 => self.selection_bg = parseOscColor(param),
-            // 19 => self.selection_fg = parseOscColor(param),
-            // 117 => self.selection_bg = null,
-            // 119 => self.selection_fg = null,
+            // Underline colour (kitty and VTE extension, widely supported)
+            58 => i = parseExtColor(palette, attr, params, i, n, .underline),
+            59 => attr.underline_color = .default,
 
             else => {}, // unknown; silently ignore
         }
+
+        // Skip sub-parameters the code did not consume, such as a stray
+        // `:0` after an unknown code, so they are not read as codes.
+        while (i + 1 < n and params[i + 1].separator == .sub_parameter) i += 1;
     }
 }
 
-/// Parse an extended colour (38 or 48) starting at index `i`.
+/// Parse an extended colour (38, 48 or 58) starting at index `i`.
 /// Consumes the kind byte and its sub-parameters.
 /// Returns the index of the LAST consumed value; the caller's `i += 1`
 /// will then advance past it.
@@ -146,6 +146,16 @@ fn parseExtColor(
     if (index + 1 >= count) return index;
 
     const kind = params[index + 1].value;
+    const set = struct {
+        fn set(p: *Palette, a: *Attr, t: ColorTarget, color: Color) void {
+            switch (t) {
+                .fg => a.fg = p.intern(color),
+                .bg => a.bg = p.intern(color),
+                // Kept as a Color, not a palette slot: see Attr.underline_color.
+                .underline => a.underline_color = color,
+            }
+        }
+    }.set;
     switch (kind) {
         2 => {
             // Detect ECMA-48 5-param form: 38:2:cs:r:g:b
@@ -155,19 +165,12 @@ fn parseExtColor(
                 params[index + 5].separator == .sub_parameter;
 
             if (has_color_space) {
-                // 38:2:cs:r:g:b — skip color space at i+2
+                // 38:2:cs:r:g:b, skip the color space at i+2
                 if (index + 5 >= count) return index + 1;
                 const r: u8 = @truncate(params[index + 3].value);
                 const g: u8 = @truncate(params[index + 4].value);
                 const b: u8 = @truncate(params[index + 5].value);
-                const color: Color = .{ .rgb = .{ .r = r, .g = g, .b = b } };
-                // if (is_fg) attr.fg = palette.intern(color) else attr.bg = palette.intern(color);
-                switch (target) {
-                    .fg => attr.fg = palette.intern(color),
-                    .bg => attr.bg = palette.intern(color),
-                    // .underline => attr.flags.underline = palette.intern(color),
-                    .underline => {},
-                }
+                set(palette, attr, target, .{ .rgb = .{ .r = r, .g = g, .b = b } });
                 return index + 5;
             } else {
                 // 38:2:r:g:b or 38;2;r;g;b
@@ -175,14 +178,7 @@ fn parseExtColor(
                 const r: u8 = @truncate(params[index + 2].value);
                 const g: u8 = @truncate(params[index + 3].value);
                 const b: u8 = @truncate(params[index + 4].value);
-                const color: Color = .{ .rgb = .{ .r = r, .g = g, .b = b } };
-                // if (is_fg) attr.fg = palette.intern(color) else attr.bg = palette.intern(color);
-                switch (target) {
-                    .fg => attr.fg = palette.intern(color),
-                    .bg => attr.bg = palette.intern(color),
-                    // .underline => attr.flags.underline = palette.intern(color),
-                    .underline => {},
-                }
+                set(palette, attr, target, .{ .rgb = .{ .r = r, .g = g, .b = b } });
                 return index + 4;
             }
         },
@@ -190,14 +186,7 @@ fn parseExtColor(
             // 256-colour: kind + n = 2 extra values
             if (index + 2 >= count) return index + 1; // malformed; skip kind only
             const n: u8 = @intCast(@min(params[index + 2].value, 255));
-            const color: Color = .{ .indexed = n };
-            // if (is_fg) attr.fg = palette.intern(color) else attr.bg = palette.intern(color);
-            switch (target) {
-                .fg => attr.fg = palette.intern(color),
-                .bg => attr.bg = palette.intern(color),
-                // .underline => attr.flags.underline = palette.intern(color),
-                .underline => {},
-            }
+            set(palette, attr, target, .{ .indexed = n });
             return index + 2; // last consumed index
         },
         else => return index + 1, // unknown kind; skip kind only
