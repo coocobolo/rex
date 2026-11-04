@@ -24,19 +24,24 @@ else
 
 handle: *c.GLFWwindow,
 
-pub fn init(width: u16, height: u16, title: [:0]const u8) !Window {
-    var major: c_int = 0;
-    var minor: c_int = 0;
-    var revision: c_int = 0;
-    c.glfwGetVersion(&major, &minor, &revision);
+/// The OpenGL core version the renderer needs. The shaders are GLSL
+/// 330, but Atlas.invalidate calls glClearTexImage, which is core only
+/// from 4.4.
+pub const gl_version: struct { major: c_int, minor: c_int } = .{ .major = 4, .minor = 4 };
 
+/// Asks GLFW for a core `gl_version` context in the next window.
+fn hintContext() void {
+    c.glfwWindowHint(c.GLFW_CONTEXT_VERSION_MAJOR, gl_version.major);
+    c.glfwWindowHint(c.GLFW_CONTEXT_VERSION_MINOR, gl_version.minor);
+    c.glfwWindowHint(c.GLFW_OPENGL_PROFILE, c.GLFW_OPENGL_CORE_PROFILE);
+    c.glfwWindowHint(c.GLFW_OPENGL_FORWARD_COMPAT, c.GLFW_TRUE); // required on macOS, harmless on Linux
+}
+
+pub fn init(width: u16, height: u16, title: [:0]const u8) !Window {
     _ = c.glfwSetErrorCallback(glfwErrorCallback);
     if (c.glfwInit() == 0) return error.GlfwInitFailed;
 
-    c.glfwWindowHint(c.GLFW_CONTEXT_VERSION_MAJOR, major);
-    c.glfwWindowHint(c.GLFW_CONTEXT_VERSION_MINOR, minor);
-    c.glfwWindowHint(c.GLFW_OPENGL_PROFILE, c.GLFW_OPENGL_CORE_PROFILE);
-    c.glfwWindowHint(c.GLFW_OPENGL_FORWARD_COMPAT, c.GLFW_TRUE); // required on macOS, harmless on Linux
+    hintContext();
     c.glfwWindowHint(c.GLFW_DECORATED, c.GLFW_TRUE);
     c.glfwWindowHint(c.GLFW_RESIZABLE, c.GLFW_TRUE);
     c.glfwWindowHint(c.GLFW_FOCUSED, c.GLFW_TRUE);
@@ -64,7 +69,7 @@ pub fn init(width: u16, height: u16, title: [:0]const u8) !Window {
     var profile: c_int = 0;
     gl.getIntegerv(gl.CONTEXT_PROFILE_MASK, &profile);
     if (profile & gl.CONTEXT_CORE_PROFILE_BIT == 0) {
-        log.warn("got compatibility profile, not the core!", .{});
+        log.warn("got compatibility profile, not core", .{});
     }
 
     const monitor = c.glfwGetPrimaryMonitor();
@@ -238,8 +243,7 @@ pub fn testGlContext() !*c.GLFWwindow {
     // No display (headless CI without Xvfb): skip GL tests, not fail.
     if (c.glfwInit() == 0) return error.SkipZigTest;
     c.glfwWindowHint(c.GLFW_VISIBLE, c.GLFW_FALSE);
-    c.glfwWindowHint(c.GLFW_CONTEXT_VERSION_MAJOR, 3);
-    c.glfwWindowHint(c.GLFW_CONTEXT_VERSION_MINOR, 3);
+    hintContext();
 
     const win = c.glfwCreateWindow(
         1,
@@ -251,14 +255,13 @@ pub fn testGlContext() !*c.GLFWwindow {
     c.glfwMakeContextCurrent(win);
 
     // Load OpenGL functions via GLAD
-
     const loader: gl.GLADloadproc = &gladGetProcAddress;
     if (gl.gladLoadGLLoader(loader) == 0) return error.GladLoadFailed;
 
     var profile: c_int = 0;
     gl.getIntegerv(gl.CONTEXT_PROFILE_MASK, &profile);
     if (profile & gl.CONTEXT_CORE_PROFILE_BIT == 0) {
-        log.warn("WARNING: got compatibility profile, not core!", .{});
+        log.warn("got compatibility profile, not core", .{});
     }
 
     return win;
