@@ -24,6 +24,13 @@ uniform float u_dot_length;
 uniform float u_dot_gap;
 uniform float u_dash_length;
 uniform float u_dash_gap;
+
+// Ink skipping: glyph coverage of the frame, see InkMask.zig
+uniform sampler2D u_ink_mask;
+uniform uint u_skip_ink_styles; // bit n: UnderlineStyle n skips ink, 0 = off
+uniform int u_ink_gap;          // whole pixels of clearance around ink
+uniform int u_ink_min_segment;  // shortest piece of line kept, in pixels
+uniform float u_ink_threshold;  // coverage counted as ink
 uniform float u_strikethrough_y;
 uniform float u_strikethrough_thickness;
 uniform float u_overline_y;
@@ -88,6 +95,68 @@ float underlineCoverage(uint style, vec2 p) {
   }
 }
 
+// Must match Decoration.Metrics.max_ink_scan
+const int MAX_INK_SCAN = 64;
+
+// True when the mask column `dx` pixels from `base` has ink within
+// u_ink_gap pixels above or below it.
+bool inkColumn(ivec2 base, int dx, ivec2 size) {
+  int x = base.x + dx;
+  if (x < 0 || x >= size.x)
+    return false;
+  for (int dy = -MAX_INK_SCAN; dy <= MAX_INK_SCAN; dy++) {
+    if (dy < -u_ink_gap)
+      continue;
+    if (dy > u_ink_gap)
+      break;
+    int y = base.y + dy;
+    if (y < 0 || y >= size.y)
+      continue;
+    if (texelFetch(u_ink_mask, ivec2(x, y), 0).r >= u_ink_threshold)
+      return true;
+  }
+  return false;
+}
+
+// 0.0 where the underline gives way to ink: within u_ink_gap pixels of
+// it, or on a piece shorter than u_ink_min_segment between two inks.
+float inkSkip() {
+  ivec2 base = ivec2(gl_FragCoord.xy);
+  ivec2 size = textureSize(u_ink_mask, 0);
+  int reach = min(u_ink_gap + u_ink_min_segment + 1, MAX_INK_SCAN);
+
+  int left = reach + 1;
+  for (int k = 0; k <= MAX_INK_SCAN; k++) {
+    if (k > reach)
+      break;
+    if (inkColumn(base, -k, size)) {
+      left = k;
+      break;
+    }
+  }
+  if (left <= u_ink_gap)
+    return 0.0;
+
+  int right = reach + 1;
+  for (int k = 1; k <= MAX_INK_SCAN; k++) {
+    if (k > reach)
+      break;
+    if (inkColumn(base, k, size)) {
+      right = k;
+      break;
+    }
+  }
+  if (right <= u_ink_gap)
+    return 0.0;
+
+  // The piece runs from left - gap - 1 pixels left of here to
+  // right - gap - 1 pixels right of here.
+  if (left <= reach && right <= reach &&
+      left + right - 2 * u_ink_gap - 1 < u_ink_min_segment)
+    return 0.0;
+  return 1.0;
+}
+
 // Paints `color` with `coverage` over the premultiplied `dst`
 vec4 over(vec4 dst, vec4 color, float coverage) {
   float a = color.a * coverage;
@@ -107,8 +176,12 @@ void main() {
   vec4 color = vec4(0.0);
 
   uint ul_style = (v_flags & UNDERLINE_MASK) >> UNDERLINE_SHIFT;
-  if (ul_style != UL_NONE)
-    color = over(color, v_underline, underlineCoverage(ul_style, p));
+  if (ul_style != UL_NONE) {
+    float coverage = underlineCoverage(ul_style, p);
+    if (coverage > 0.0 && (u_skip_ink_styles & (1u << ul_style)) != 0u)
+      coverage *= inkSkip();
+    color = over(color, v_underline, coverage);
+  }
   if ((v_flags & FLAG_OVERLINE) != 0u)
     color = over(color, v_overline, band(p.y, u_overline_y, u_overline_thickness));
   if ((v_flags & FLAG_STRIKETHROUGH) != 0u)

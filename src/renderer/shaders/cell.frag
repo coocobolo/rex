@@ -9,6 +9,7 @@ uniform sampler2D u_atlas_color; // texture unit 1, RGBA premultiplied
 uniform int u_is_color;          // 0 = gray pass, 1 = color emoji pass
 uniform int u_blink_on;          // 0 = slow blink phase off
 uniform int u_blink_rapid_on;    // 0 = rapid blink phase off
+uniform int u_mask_mode;         // 1 = write glyph coverage for the ink mask
 
 out vec4 frag_color;
 
@@ -23,6 +24,14 @@ void main() {
     discard;
   if ((v_flags & FLAG_BLINK_RAPID) != 0u && u_blink_rapid_on == 0)
     discard;
+
+  if (u_mask_mode == 1) {
+    // Ink mask: coverage only, blended with MAX
+    float coverage = u_is_color == 1 ? texture(u_atlas_color, v_uv).a
+                                     : texture(u_atlas_gray, v_uv).a;
+    frag_color = vec4(coverage);
+    return;
+  }
 
   if (u_is_color == 1) {
     // Color emoji: premultiplied RGBA, use ONE, ONE_MINUS_SRC_ALPHA blend

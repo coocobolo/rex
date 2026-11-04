@@ -12,6 +12,7 @@ const Cursor = @import("Cursor.zig");
 const Decoration = @import("Decoration.zig");
 const Dimension = @import("dimension.zig").Dimension;
 const FrameData = @import("Frame.zig");
+const InkMask = @import("InkMask.zig");
 const Scrollbar = @import("Scrollbar.zig");
 const Selection = @import("Selection.zig");
 const Shader = @import("Shader.zig");
@@ -42,6 +43,7 @@ pub fn Renderer(comptime option: TerminalOption) type {
         cursor: Cursor,
         decoration: Decoration,
         decoration_metrics: Decoration.Metrics,
+        ink_mask: InkMask,
         selection: Selection,
         scrollbar: Scrollbar,
 
@@ -72,6 +74,7 @@ pub fn Renderer(comptime option: TerminalOption) type {
                 .cursor = cursor,
                 .decoration = decoration,
                 .decoration_metrics = undefined,
+                .ink_mask = .init(),
                 .scrollbar = scrollbar,
                 .selection = selection,
             };
@@ -94,6 +97,7 @@ pub fn Renderer(comptime option: TerminalOption) type {
         pub fn deinit(self: *Self) void {
             self.cell.deinit();
             self.decoration.deinit();
+            self.ink_mask.deinit();
             self.background.deinit();
             self.scrollbar.deinit();
             self.selection.deinit();
@@ -152,29 +156,23 @@ pub fn Renderer(comptime option: TerminalOption) type {
             );
 
             // Pass 2 and 3: decorations and glyphs, in the configured order
-            if (frame.dirty.cells) self.decoration.upload(frame.decoration_instances);
-            const decorations_over_text = self.decoration.option.order == .over_text;
-            if (!decorations_over_text) self.drawDecorations(frame, frame_dimension, cursor_state.blink_on, cursor_state.blink_rapid_on);
-
             self.cell.upload(frame.gray_instances, frame.color_instances);
-            self.cell.draw(
-                atlas,
-                self.cell_ascender,
-                .{
-                    .blink_on = cursor_state.blink_on,
-                    .blink_rapid_on = cursor_state.blink_rapid_on,
-                },
-                .{
-                    .cell = self.cell_dimension,
-                    .frame = frame_dimension,
-                },
-                .{
-                    .gray = frame.gray_instances.len,
-                    .color = frame.color_instances.len,
-                },
-            );
-
-            if (decorations_over_text) self.drawDecorations(frame, frame_dimension, cursor_state.blink_on, cursor_state.blink_rapid_on);
+            if (frame.dirty.cells) self.decoration.upload(frame.decoration_instances);
+            const glyphs: Cell.DrawArgs = .{
+                .atlas = atlas,
+                .ascender = @floatFromInt(self.cell_ascender),
+                .blink_on = cursor_state.blink_on,
+                .blink_rapid_on = cursor_state.blink_rapid_on,
+                .cell = self.cell_dimension,
+                .frame = frame_dimension,
+                .gray_len = frame.gray_instances.len,
+                .color_len = frame.color_instances.len,
+            };
+            const ink_mask = self.drawInkMask(frame, glyphs);
+            const decorations_over_text = self.decoration.option.order == .over_text;
+            if (!decorations_over_text) self.drawDecorations(frame, frame_dimension, ink_mask, cursor_state.blink_on, cursor_state.blink_rapid_on);
+            self.cell.draw(glyphs);
+            if (decorations_over_text) self.drawDecorations(frame, frame_dimension, ink_mask, cursor_state.blink_on, cursor_state.blink_rapid_on);
 
             // Pass 4: cursor
             if (frame.dirty.cursor) self.cursor.upload(frame.cursor_state);
@@ -204,10 +202,24 @@ pub fn Renderer(comptime option: TerminalOption) type {
             }
         }
 
+        /// Draws the glyph coverage when some run has an underline that
+        /// skips ink, and returns the mask for the decoration pass.
+        fn drawInkMask(self: *Self, frame: FrameData, glyphs: Cell.DrawArgs) ?*const InkMask {
+            if (self.decoration.option.skip_ink.styleBits() == 0) return null;
+            if (!Decoration.anyUnderline(frame.decoration_instances)) return null;
+            const width: u32 = @intFromFloat(glyphs.frame.width);
+            const height: u32 = @intFromFloat(glyphs.frame.height);
+            if (!self.ink_mask.begin(width, height)) return null;
+            self.cell.drawInkMask(glyphs);
+            self.ink_mask.end();
+            return &self.ink_mask;
+        }
+
         fn drawDecorations(
             self: *Self,
             frame: FrameData,
             frame_dimension: Dimension(f32),
+            ink_mask: ?*const InkMask,
             blink_on: bool,
             blink_rapid_on: bool,
         ) void {
@@ -218,6 +230,7 @@ pub fn Renderer(comptime option: TerminalOption) type {
                     .frame = frame_dimension,
                 },
                 self.decoration_metrics,
+                ink_mask,
                 blink_on,
                 blink_rapid_on,
             );

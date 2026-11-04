@@ -77,28 +77,23 @@ pub fn upload(self: *Cell, gray: []const Instance, color: []const Instance) void
     if (color.len > 0) self.color_buffer.upload(color);
 }
 
-pub fn draw(
-    self: *Cell,
+/// What a glyph draw needs: the atlas, the font baseline, the blink
+/// phases, the cell and frame sizes and the instance counts.
+pub const DrawArgs = struct {
     atlas: *const Atlas,
     ascender: f32,
-    cursor_state: struct { blink_on: bool, blink_rapid_on: bool },
-    dimension: struct { cell: Dimension(f32), frame: Dimension(f32) },
-    instance_len: struct { gray: usize, color: usize },
-) void {
-    self.shader.use();
-    self.shader.set2f(
-        "u_atlas_size",
-        @floatFromInt(Atlas.texture_width),
-        @floatFromInt(Atlas.texture_height),
-    );
-    atlas.bindTextures(gl.TEXTURE0, gl.TEXTURE1);
-    self.shader.set2f("u_cell_size", dimension.cell.width, dimension.cell.height);
-    self.shader.set2f("u_screen_size", dimension.frame.width, dimension.frame.height);
-    self.shader.set1f("u_ascender", ascender);
+    blink_on: bool,
+    blink_rapid_on: bool,
+    cell: Dimension(f32),
+    frame: Dimension(f32),
+    gray_len: usize,
+    color_len: usize,
+};
+
+pub fn draw(self: *Cell, args: DrawArgs) void {
+    self.setup(args, false);
     self.shader.set1i("u_is_color", 0);
-    self.shader.set1i("u_blink_on", @intFromBool(cursor_state.blink_on));
-    self.shader.set1i("u_blink_rapid_on", @intFromBool(cursor_state.blink_rapid_on));
-    self.gray_buffer.draw(instance_len.gray);
+    self.gray_buffer.draw(args.gray_len);
 
     // Pass 3: color emoji (premultiplied alpha)
     gl.blendFuncSeparate(
@@ -108,11 +103,48 @@ pub fn draw(
         gl.ONE_MINUS_SRC_ALPHA, // alpha: same
     );
     self.shader.set1i("u_is_color", 1);
-    self.color_buffer.draw(instance_len.color);
+    self.color_buffer.draw(args.color_len);
     gl.blendFuncSeparate(
         gl.SRC_ALPHA,
         gl.ONE_MINUS_SRC_ALPHA,
         gl.ONE,
         gl.ONE_MINUS_SRC_ALPHA,
     );
+}
+
+/// Draws the coverage of every glyph, gray and color, into the bound
+/// framebuffer, keeping the highest coverage where glyphs overlap. The
+/// decoration pass reads it to skip the underline where ink is.
+pub fn drawInkMask(self: *Cell, args: DrawArgs) void {
+    self.setup(args, true);
+    gl.blendEquation(gl.MAX);
+    gl.blendFuncSeparate(gl.ONE, gl.ONE, gl.ONE, gl.ONE);
+    self.shader.set1i("u_is_color", 0);
+    self.gray_buffer.draw(args.gray_len);
+    self.shader.set1i("u_is_color", 1);
+    self.color_buffer.draw(args.color_len);
+    self.shader.set1i("u_mask_mode", 0);
+    gl.blendEquation(gl.FUNC_ADD);
+    gl.blendFuncSeparate(
+        gl.SRC_ALPHA,
+        gl.ONE_MINUS_SRC_ALPHA,
+        gl.ONE,
+        gl.ONE_MINUS_SRC_ALPHA,
+    );
+}
+
+fn setup(self: *Cell, args: DrawArgs, mask: bool) void {
+    self.shader.use();
+    self.shader.set2f(
+        "u_atlas_size",
+        @floatFromInt(Atlas.texture_width),
+        @floatFromInt(Atlas.texture_height),
+    );
+    args.atlas.bindTextures(gl.TEXTURE0, gl.TEXTURE1);
+    self.shader.set2f("u_cell_size", args.cell.width, args.cell.height);
+    self.shader.set2f("u_screen_size", args.frame.width, args.frame.height);
+    self.shader.set1f("u_ascender", args.ascender);
+    self.shader.set1i("u_blink_on", @intFromBool(args.blink_on));
+    self.shader.set1i("u_blink_rapid_on", @intFromBool(args.blink_rapid_on));
+    self.shader.set1i("u_mask_mode", @intFromBool(mask));
 }
