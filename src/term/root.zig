@@ -1,3 +1,7 @@
+//! The terminal emulator core: `Terminal` state, its screens, cells,
+//! palette and grapheme clustering. Depends on vt/, unicode/ and color/
+//! only; nothing here may import renderer/ or other GPU code.
+
 const std = @import("std");
 
 pub const cell = @import("cell.zig");

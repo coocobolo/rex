@@ -1,7 +1,7 @@
 //! Root of `zig build test-term`. The term tests are listed in
 //! term/root.zig; this file only exists because a module cannot import
-//! above its root file's directory, and term/ imports ../vt, ../unicode,
-//! ../color and ../renderer.
+//! above its root file's directory, and term/ imports ../vt, ../unicode
+//! and ../color. It goes away once those become named modules.
 
 test {
     _ = @import("term/root.zig");

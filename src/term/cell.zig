@@ -1,8 +1,10 @@
+//! Cell-level terminal types: colors, attributes, charsets, the cursor
+//! and the packed `Cell` stored in every screen row.
+
 const std = @import("std");
 
 const Palette = @import("Palette.zig").Palette;
 const x11_colors = @import("../color/x11.zig");
-// const Instance = @import("../renderer/instance.zig").Instance;
 
 /// A terminal color value stored in 4 bytes.
 ///
