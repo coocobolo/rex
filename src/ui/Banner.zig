@@ -202,17 +202,8 @@ pub fn render(
     };
 
     const border_color: [3]u8 = if (opt.border_style == .semantic) accent_color else tokens.border;
-
-    const bg_color: [4]f32 = switch (opt.style) {
-        .docked => switch (self.level) {
-            .err => .{ 0.32, 0.08, 0.08, 0.96 },
-            .warn => .{ 0.30, 0.22, 0.05, 0.96 },
-            .info => .{ 0.08, 0.20, 0.30, 0.96 },
-        },
-        .floating => Tokens.toF32Rgba(tokens.card_opaque, 255),
-    };
-
-    const radius: f32 = if (opt.style == .floating) opt.corner_radius else 0.0;
+    const bg_color = Tokens.toF32Rgba(tokens.card_opaque, 255);
+    const radius: f32 = opt.corner_radius;
     const border_width: f32 = opt.border_width;
 
     card_buffer.append(drawer.allocator, .{
@@ -240,8 +231,7 @@ pub fn render(
     }
 
     if (layout.dismiss_w > 0 and layout.dismiss_col + layout.dismiss_w <= total_cols) {
-        const dismiss_color = if (opt.style == .floating) tokens.muted else accent_color;
-        _ = drawer.drawString(layout.dismiss_col, layout.text_row, opt.dismiss_str, dismiss_color, 255, total_cols);
+        _ = drawer.drawString(layout.dismiss_col, layout.text_row, opt.dismiss_str, tokens.muted, 255, total_cols);
 
         if (hotspots) |hs| {
             hs.add(layout.dismiss_col, layout.dismiss_row, layout.dismiss_w, 1, .dismiss_banner);
