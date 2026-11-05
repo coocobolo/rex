@@ -98,6 +98,8 @@ pub fn applyFileConfig(target: *App.Config, file: *const FileConfig, allocator: 
     // Modal options
     if (file.modal_width) |w| target.window.modal.width = w;
     if (file.modal_dim_alpha) |da| target.window.modal.dim_alpha = da;
+    if (file.modal_blur) |b| target.window.modal.blur = b;
+    if (file.modal_blur_radius) |br| target.window.modal.blur_radius = br;
     if (file.modal_close_on_outside_click) |cl| target.window.modal.close_on_outside_click = cl;
     if (file.modal_default_focus) |df| target.window.modal.default_focus = df;
 
@@ -179,6 +181,8 @@ pub fn dumpDefaultConfig(writer: anytype) !void {
         \\[modal]
         \\width = 46
         \\dim_alpha = 180
+        \\blur = false
+        \\blur_radius = 12
         \\close_on_outside_click = true
         \\default_focus = confirm
         \\

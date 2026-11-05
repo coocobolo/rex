@@ -140,6 +140,8 @@ pub const FileConfig = struct {
 
     modal_width: ?u16 = null,
     modal_dim_alpha: ?u8 = null,
+    modal_blur: ?bool = null,
+    modal_blur_radius: ?u8 = null,
     modal_close_on_outside_click: ?bool = null,
     modal_default_focus: ?Modal.DefaultFocus = null,
 

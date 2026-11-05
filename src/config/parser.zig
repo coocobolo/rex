@@ -300,6 +300,16 @@ pub const Parser = struct {
                         diags.warn(line, col, "invalid modal dim alpha '{s}'", .{val});
                         return;
                     };
+                } else if (matchKey(key, "blur")) {
+                    config.modal_blur = parseBool(val) orelse {
+                        diags.warn(line, col, "invalid boolean for modal blur", .{});
+                        return;
+                    };
+                } else if (matchKey(key, "blur-radius") or matchKey(key, "blur_radius")) {
+                    config.modal_blur_radius = std.fmt.parseInt(u8, val, 10) catch {
+                        diags.warn(line, col, "invalid modal blur radius '{s}'", .{val});
+                        return;
+                    };
                 } else if (matchKey(key, "close-on-outside-click")) {
                     config.modal_close_on_outside_click = parseBool(val) orelse {
                         diags.warn(line, col, "invalid boolean for modal close-on-outside-click", .{});

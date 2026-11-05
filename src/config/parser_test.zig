@@ -289,6 +289,8 @@ test "config: dot notation with snake_case properties" {
         \\card.corner_radius = 12.0
         \\card.border_width = 1.5
         \\modal.dim_alpha = 140
+        \\modal.blur = true
+        \\modal.blur_radius = 16
         \\modal.close_on_outside_click = false
         \\toast.border_style = subtle
         \\toast.position = top_right
@@ -313,6 +315,8 @@ test "config: dot notation with snake_case properties" {
     try testing.expectEqual(@as(f32, 12.0), cfg.card_corner_radius.?);
     try testing.expectEqual(@as(f32, 1.5), cfg.card_border_width.?);
     try testing.expectEqual(@as(u8, 140), cfg.modal_dim_alpha.?);
+    try testing.expectEqual(true, cfg.modal_blur.?);
+    try testing.expectEqual(@as(u8, 16), cfg.modal_blur_radius.?);
     try testing.expectEqual(false, cfg.modal_close_on_outside_click.?);
     try testing.expectEqual(.subtle, cfg.toast_border_style.?);
     try testing.expectEqual(.top_right, cfg.toast_position.?);
