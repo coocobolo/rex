@@ -15,10 +15,16 @@ pub const BorderShape = enum {
     sharp,
 };
 
+pub const BorderStyle = enum {
+    semantic,
+    subtle,
+};
+
 pub const Option = struct {
     corner_radius: f32 = 8.0,
     border_width: f32 = 1.0,
     border_shape: BorderShape = .rounded,
+    border_style: BorderStyle = .semantic,
 
     pub inline fn effectiveRadius(self: Option) f32 {
         return switch (self.border_shape) {

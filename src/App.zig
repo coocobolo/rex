@@ -1444,6 +1444,7 @@ fn quitConfirmModalRequest(card_opt: Card.Option, modal_opt: Modal.Option, actio
         .line2 = modal_opt.line2,
         .actions = actions,
         .variant = .warning,
+        .border_style = modal_opt.border_style orelse card_opt.border_style,
         .dim_alpha = modal_opt.dim_alpha,
         .width = modal_opt.width,
         .corner_radius = modal_opt.corner_radius orelse card_opt.effectiveRadius(),

@@ -31,6 +31,7 @@ pub const Option = struct {
     close_on_outside_click: bool = true,
     corner_radius: ?f32 = null,
     border_width: ?f32 = null,
+    border_style: ?Card.BorderStyle = null,
     default_focus: DefaultFocus = .confirm,
     title: []const u8 = "QUIT TERMINAL?",
     line1: []const u8 = "Active terminal session is still running.",
@@ -52,6 +53,7 @@ pub const Request = struct {
     line2: []const u8 = "",
     actions: []const Action = &.{},
     variant: Toast.Variant = .warning,
+    border_style: Card.BorderStyle = .semantic,
     dim_alpha: u8 = 180,
     corner_radius: f32 = 8.0,
     border_width: f32 = 1.0,
@@ -219,6 +221,8 @@ pub fn render(
         .critical => tokens.critical,
     };
 
+    const border_color: [3]u8 = if (req.border_style == .semantic) accent else tokens.border;
+
     if (req.dim_alpha > 0) {
         drawDimmingBackdropOutside(
             drawer.allocator,
@@ -239,7 +243,7 @@ pub fn render(
         .width = layout.width,
         .height = layout.height,
         .bg_color = Tokens.toF32Rgba(tokens.card_opaque, 255),
-        .border_color = Tokens.toF32Rgba(accent, 255),
+        .border_color = Tokens.toF32Rgba(border_color, 255),
         .radius = req.corner_radius,
         .border_width = req.border_width,
     }) catch {};

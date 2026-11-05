@@ -133,16 +133,24 @@ pub const Tokens = struct {
         t.secondary = Rgb.lerp(theme.foreground, theme.background, 0.35).toArray();
         t.muted = Rgb.lerp(theme.foreground, theme.background, 0.60).toArray();
 
-        // Synchronize semantic states from theme ANSI palette
-        t.critical = theme.ansi[1].toArray();
-        t.healthy = theme.ansi[2].toArray();
-        t.warning = theme.ansi[3].toArray();
-        t.info = theme.ansi[4].toArray();
+        // Synchronize semantic states from theme ANSI palette if chromatic (avoid graying out semantic UI)
+        if (isChromatic(theme.ansi[1])) t.critical = theme.ansi[1].toArray();
+        if (isChromatic(theme.ansi[2])) t.healthy = theme.ansi[2].toArray();
+        if (isChromatic(theme.ansi[3])) t.warning = theme.ansi[3].toArray();
+        if (isChromatic(theme.ansi[4])) t.info = theme.ansi[4].toArray();
 
-        // Synchronize interactive accent
-        t.accent = theme.accent.toArray();
+        // Synchronize interactive accent if chromatic or explicitly configured
+        if (!theme.accent.eql(Theme.default_accent) or isChromatic(theme.accent)) {
+            t.accent = theme.accent.toArray();
+        }
 
         return t;
+    }
+
+    fn isChromatic(rgb: Rgb) bool {
+        const diff_rg = if (rgb.r > rgb.g) rgb.r - rgb.g else rgb.g - rgb.r;
+        const diff_gb = if (rgb.g > rgb.b) rgb.g - rgb.b else rgb.b - rgb.g;
+        return (diff_rg > 15 or diff_gb > 15);
     }
 
     /// Derives tokens from any RGB background color using Rec. 601 perceived luminance.

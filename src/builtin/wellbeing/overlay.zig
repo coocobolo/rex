@@ -474,13 +474,14 @@ pub const Overlay = struct {
         }
 
         // Step 2: Emit shader-based rounded rectangle card with SDF anti-aliased border and transparent corners
+        const border_color: [3]u8 = if (self.card_opt.border_style == .semantic) accent_color else self.tokens.border;
         self.card_buffer.append(allocator, .{
             .col = rect.col,
             .row = rect.row,
             .width = rect.width,
             .height = rect.height,
             .bg_color = tokens.toF32Rgba(self.tokens.card_opaque, 255),
-            .border_color = tokens.toF32Rgba(accent_color, 255),
+            .border_color = tokens.toF32Rgba(border_color, 255),
             .radius = self.card_opt.effectiveRadius(),
             .border_width = self.card_opt.border_width,
         }) catch {};
@@ -595,13 +596,14 @@ pub const Overlay = struct {
         const effective_border_w = self.modal_opt.border_width orelse self.card_opt.border_width;
 
         // 3. Emit shader-based rounded rectangle card with SDF anti-aliased border and transparent corners
+        const border_color: [3]u8 = if (self.card_opt.border_style == .semantic) self.tokens.accent else self.tokens.border;
         self.card_buffer.append(allocator, .{
             .col = rect.col,
             .row = rect.row,
             .width = rect.width,
             .height = rect.height,
             .bg_color = tokens.toF32Rgba(self.tokens.card_opaque, 255),
-            .border_color = tokens.toF32Rgba(self.tokens.border, 255),
+            .border_color = tokens.toF32Rgba(border_color, 255),
             .radius = effective_radius,
             .border_width = effective_border_w,
         }) catch {};

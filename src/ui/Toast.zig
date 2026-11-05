@@ -32,10 +32,7 @@ pub const Position = enum {
     bottom_right,
 };
 
-pub const BorderStyle = enum {
-    semantic, // 1px border colored by variant severity
-    subtle, // 1px neutral border from tokens.border
-};
+pub const BorderStyle = Card.BorderStyle;
 
 pub const Option = struct {
     enabled: bool = true,
@@ -106,7 +103,7 @@ pub const stringWidth = Text.measure;
 
 pub fn variantAccent(variant: Variant, tokens: Tokens) [3]u8 {
     return switch (variant) {
-        .neutral => tokens.primary,
+        .neutral => tokens.border,
         .info => tokens.info,
         .success => tokens.healthy,
         .warning => tokens.warning,
