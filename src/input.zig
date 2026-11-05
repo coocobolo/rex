@@ -417,6 +417,9 @@ pub const Action = union(enum) {
     // global debugging stats, option, etc.
     debug,
 
+    // Configuration
+    reload_config,
+
     send_to_pty: []const u8, // for custom sequences
 };
 
@@ -440,6 +443,7 @@ pub const default_keymap: []const Binding = &.{
     .{ .key = .n, .mods = .{ .ctrl = true, .shift = true }, .action = .new_window },
     .{ .key = .p, .mods = .{ .ctrl = true, .shift = true }, .action = .focus_toggle },
     .{ .key = .q, .mods = .{ .ctrl = true, .shift = true }, .action = .quit },
+    .{ .key = .r, .mods = .{ .ctrl = true, .shift = true }, .action = .reload_config },
     .{ .key = .right_bracket, .mods = .{ .ctrl = true, .shift = true }, .action = .focus_skip },
     .{ .key = .t, .mods = .{ .ctrl = true, .shift = true }, .action = .wellbeing_toast_toggle },
     .{ .key = .v, .mods = .{ .ctrl = true, .shift = true }, .action = .paste_clipboard },
