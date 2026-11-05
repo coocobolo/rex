@@ -16,6 +16,7 @@ pub const UiActionTag = enum(u8) {
     wellbeing_toggle_focus = 7,
     wellbeing_reset = 8,
     wellbeing_copy_card = 9,
+    dismiss_banner = 10,
 };
 
 pub const UiAction = union(UiActionTag) {
@@ -29,6 +30,7 @@ pub const UiAction = union(UiActionTag) {
     wellbeing_toggle_focus,
     wellbeing_reset,
     wellbeing_copy_card,
+    dismiss_banner,
 };
 
 pub const Hotspot = extern struct {
@@ -54,6 +56,7 @@ pub const Hotspot = extern struct {
             .wellbeing_toggle_focus => .wellbeing_toggle_focus,
             .wellbeing_reset => .wellbeing_reset,
             .wellbeing_copy_card => .wellbeing_copy_card,
+            .dismiss_banner => .dismiss_banner,
         };
     }
 };
