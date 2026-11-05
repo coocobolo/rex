@@ -335,7 +335,7 @@ pub fn build(b: *std.Build) !void {
     // tools/ucd/VERSION. Adding a table is one row here.
     const generators = .{
         // name, output, inputs
-        .{ "wcwidth-table", "src/unicode/wcwidth_table.zig", .{ ucd ++ "EastAsianWidth.txt", ucd ++ "UnicodeData.txt" } },
+        .{ "wcwidth-table", "src/unicode/wcwidth_table.zig", .{ ucd ++ "EastAsianWidth.txt", ucd ++ "UnicodeData.txt", ucd ++ "emoji-data.txt" } },
         .{ "wcwidth-expected", "src/unicode/wcwidth_expected.zig", .{ ucd ++ "DerivedGeneralCategory.txt", ucd ++ "EastAsianWidth.txt", ucd ++ "emoji-data.txt" } },
         .{ "grapheme-table", "src/term/grapheme_table.zig", .{ ucd ++ "GraphemeBreakProperty.txt", ucd ++ "emoji-data.txt" } },
         .{ "x11-colors", "src/color/x11.zig", .{"tools/x11/rgb.txt"} },

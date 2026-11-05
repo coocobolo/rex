@@ -16,6 +16,12 @@ const font_config: rex.FreeType.FontConfig = .{
     .font = .{
         .family = .{
             // .static = .{
+            //     .regular = "/home/ozy/.local/share/fonts/JetBrainsMono/JetBrainsMonoNerdFontMono-Regular.ttf",
+            //     .bold = "/home/ozy/.local/share/fonts/JetBrainsMono/JetBrainsMonoNerdFontMono-Bold.ttf",
+            //     .italic = "/home/ozy/.local/share/fonts/JetBrainsMono/JetBrainsMonoNerdFontMono-Italic.ttf",
+            //     .bold_italic = "/home/ozy/.local/share/fonts/JetBrainsMono/JetBrainsMonoNerdFontMono-BoldItalic.ttf",
+            // },
+            // .static = .{
             //     .regular = "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
             //     .bold = "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf",
             //     .italic = "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Oblique.ttf",
@@ -28,7 +34,8 @@ const font_config: rex.FreeType.FontConfig = .{
                 .regular_weight = 400,
             },
         },
-        .emoji = .static("/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf"),
+        // .emoji = .static("/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf"),
+        .emoji = .static("/home/ozy/.local/share/fonts/JetBrainsMono/JetBrainsMonoNerdFontMono-Regular.ttf"),
         .fallbacks = &.{
             // General Latin/Greek/Cyrillic and lots of symbols
             .static("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
@@ -43,6 +50,8 @@ const font_config: rex.FreeType.FontConfig = .{
             // Historical / niche scripts
             .static("/usr/share/fonts/truetype/noto/NotoSansRunic-Regular.ttf"),
 
+            .static("/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf"),
+
             // Scripts
             // .static("/usr/share/fonts/truetype/noto/NotoSansArabic-Regular.ttf"),
             // .static("/usr/share/fonts/truetype/noto/NotoSansHebrew-Regular.ttf"),
@@ -55,13 +64,136 @@ const font_config: rex.FreeType.FontConfig = .{
     },
 };
 
-const pomodoro_option: rex.builtin.pomodoro.Option = .{
-    .timer_mode = .countdown,
-    .long_break_ms = 12 * std.time.ms_per_min,
-    .short_break_ms = 6 * std.time.ms_per_min,
-    .task_ms = 45 * std.time.ms_per_min,
-    .tasks_before_long_break = 4,
-    .transition_mode = .manual,
+const prod_wellbeing_option: rex.builtin.wellbeing.Option = .{
+    .enabled = true,
+    .focus = .{
+        .task_ms = 25 * std.time.ms_per_min,
+        .short_break_ms = 5 * std.time.ms_per_min,
+        .long_break_ms = 15 * std.time.ms_per_min,
+        .tasks_before_long_break = 4,
+        .timer_mode = .countdown,
+        .transition_mode = .manual,
+        .mute_notifications_in_task = true,
+        .rotate_break_prompts = true,
+        .lock_input_on_break = false, // Set to true if you want strict break enforcement
+        .show_break_animation = true,
+    },
+    .screen_time = .{
+        .daily_limit_minutes = 480, // 8-hour daily limit
+        .grayscale_on_limit = true,
+        .grayscale_transition_s = 60, // Smooth 1-minute fade into grayscale
+        .idle_threshold_s = 180, // 3-minute idle threshold pauses tracking
+        .proc_sample_interval_s = 5,
+        .track_foreground_apps = true,
+        .lock_input_on_limit = false,
+        .show_limit_animation = false,
+    },
+    .eyesight = .{
+        .enabled = true,
+        .interval_minutes = 20, // 20-20-20 rule
+        .duration_s = 20,
+        .lock_input = false,
+        .show_animation = true,
+        .animation = .pulse_dim,
+        .prompt = "Look at an object 20 feet away for 20 seconds.",
+    },
+    .movement = .{
+        .enabled = true,
+        .interval_minutes = 50,
+        .duration_s = 60,
+        .lock_input = false,
+        .show_animation = true,
+        .animation = .warm_glow,
+        .prompt = "Time to stand up, stretch your back, and move.",
+    },
+    .routines = .{
+        .hydration_interval_minutes = 45,
+        .hydration_prompt = "Stay hydrated: drink some fresh water.",
+        .posture_interval_minutes = 30,
+        .posture_prompt = "Check posture: roll shoulders back and align neck.",
+        .lock_input = false,
+        .show_animation = false,
+    },
+    .winddown = .{
+        .enabled = true,
+        .start_hour = 21, // 9:00 PM
+        .start_minute = 0,
+        .end_hour = 7, // 7:00 AM
+        .end_minute = 0,
+        .warmth_factor = 0.85,
+        .mute_audio_bell = true,
+        .prompt = "Wind-down time. Time to wrap up work for today.",
+    },
+    .privacy = .{
+        .strict_local = true,
+        .track_foreground_apps = true,
+    },
+};
+
+const wellbeing_option: rex.builtin.wellbeing.Option = .{
+    .enabled = true,
+    .focus = .{
+        .task_ms = 12 * std.time.ms_per_s, // 12-second work period
+        .short_break_ms = 8 * std.time.ms_per_s, // 8-second break period
+        .long_break_ms = 12 * std.time.ms_per_s,
+        .tasks_before_long_break = 2,
+        .timer_mode = .countdown,
+        .transition_mode = .auto, // Auto-advances to break to test lock/animation
+        .mute_notifications_in_task = true,
+        .rotate_break_prompts = true,
+        .lock_input_on_break = true, // Locks terminal during break
+        .show_break_animation = true, // Dimming pulse wave during break
+    },
+    .screen_time = .{
+        .daily_limit_minutes = 1, // Reaches limit after 60s of active terminal use
+        .grayscale_on_limit = true,
+        .grayscale_transition_s = 5, // Fades into full monochrome over 5 seconds
+        .idle_threshold_s = 15, // Inactivity for 15s enters idle mode
+        .proc_sample_interval_s = 2, // Samples foreground tools (e.g. nvim/top) every 2s
+        .track_foreground_apps = true,
+        .lock_input_on_limit = false,
+        .show_limit_animation = true,
+    },
+    .eyesight = .{
+        .enabled = true,
+        .interval_minutes = 1, // Fires at the 60-second mark
+        .duration_s = 10, // 10-second rest
+        .lock_input = true, // Locks keyboard input for 10s
+        .show_animation = true,
+        .animation = .pulse_dim, // Dimming pulse breathing wave
+        .prompt = "Look at an object 20 feet away for 20 seconds.",
+    },
+    .movement = .{
+        .enabled = true,
+        .interval_minutes = 2, // Fires at the 120-second mark
+        .duration_s = 15,
+        .lock_input = true, // Locks keyboard input for 15s
+        .show_animation = true,
+        .animation = .warm_glow, // Amber glow breathing wave
+        .prompt = "Time to stand up, stretch your back, and move.",
+    },
+    .routines = .{
+        .hydration_interval_minutes = 1,
+        .hydration_prompt = "Stay hydrated: drink some fresh water.",
+        .posture_interval_minutes = 1,
+        .posture_prompt = "Check posture: roll shoulders back and align neck.",
+        .lock_input = false,
+        .show_animation = false,
+    },
+    .winddown = .{
+        .enabled = true,
+        .start_hour = 0, // Covers entire 24h day for immediate manual verification
+        .start_minute = 0,
+        .end_hour = 23,
+        .end_minute = 59,
+        .warmth_factor = 0.80, // Visible warm amber tint
+        .mute_audio_bell = true, // Mutes terminal bell
+        .prompt = "Wind-down mode active: time to wrap up.",
+    },
+    .privacy = .{
+        .strict_local = true,
+        .track_foreground_apps = true,
+    },
 };
 
 const scrollbar_option = rex.renderer.Scrollbar.Option{
@@ -97,6 +229,34 @@ const cursor_option = rex.renderer.Cursor.Option{
     .radius = 4.0,
 };
 
+const card_option = rex.renderer.Card.Option{
+    .corner_radius = 8.0,
+    .border_width = 1.0,
+    .border_shape = .rounded,
+};
+
+const toast_option = rex.ui.Toast.Option{
+    .enabled = true,
+    .position = .top_right,
+    .border_style = .semantic,
+    .duration_ms = 5000,
+    .min_width = 32,
+    .max_width = 48,
+    .margin_cols = 2,
+    .margin_rows = 1,
+};
+
+const icon_option = rex.ui.Icon.Option{
+    .style = .auto,
+};
+
+const modal_option = rex.ui.Modal.Option{
+    .width = 46,
+    .dim_alpha = 10,
+    .close_on_outside_click = true,
+    .default_focus = .confirm,
+};
+
 pub const BracketPair = struct { open: u21, close: u21 };
 
 /// Terminal limits for the screen types, which App reads at compile
@@ -123,13 +283,18 @@ const config: rex.App.Config = .{
         .cwd = "/home/ozy/.project/rex",
     },
     .theme = .graphite,
-    .pomodoro = pomodoro_option,
+    .wellbeing = prod_wellbeing_option,
     .window = .{
         .background = background_option,
         .cursor = cursor_option,
         .decoration = decoration_option,
         .scrollbar = scrollbar_option,
         .selection = selection_option,
+        .card = card_option,
+        .toast = toast_option,
+        .icon = icon_option,
+        .modal = modal_option,
+        .confirm_quit = true,
     },
     .environments = &.{
         .{ .key = "SHELL", .value = "/bin/bash" },
@@ -138,6 +303,7 @@ const config: rex.App.Config = .{
         .{ .key = "TERMINFO", .value = "/usr/share/terminfo" },
         .{ .key = "COLORTERM", .value = "truecolor" },
     },
+    .threading = .{ .mode = .multi },
     .selection = .{
         .classifier = .{
             .extra_word_chars = &.{ '-', '/', '~', '.', '@' },
@@ -151,6 +317,38 @@ pub fn main(init: std.process.Init) !void {
 
     var args = init.minimal.args.iterate();
     const argv0 = args.next() orelse "rex";
+
+    if (args.next()) |subcmd| {
+        if (std.mem.eql(u8, subcmd, "wellbeing")) {
+            const home_dir = try environ.getAlloc(allocator, "HOME");
+            defer allocator.free(home_dir);
+            var envmap = try environ.createMap(allocator);
+            defer envmap.deinit();
+            var dirs = try rex.dirs.Application.resolve(
+                allocator,
+                rex_terminal_option.name,
+                home_dir,
+                &envmap,
+            );
+            defer dirs.deinit(allocator);
+
+            var wb = rex.builtin.wellbeing.Wellbeing.init(wellbeing_option);
+            wb.loadState(init.io, dirs.state);
+
+            if (args.next()) |action| {
+                if (std.mem.eql(u8, action, "clear")) {
+                    try wb.purgeHistory(init.io, dirs.state);
+                    _ = std.posix.system.write(std.posix.STDOUT_FILENO, "Wellbeing history purged.\n".ptr, "Wellbeing history purged.\n".len);
+                    return;
+                }
+            }
+
+            var buf: [2048]u8 = undefined;
+            const card = wb.renderDashboard(&buf);
+            _ = std.posix.system.write(std.posix.STDOUT_FILENO, card.ptr, card.len);
+            return;
+        }
+    }
 
     var app: rex.App = try .init(allocator, init.io, &environ, argv0, &config);
     defer app.deinit(allocator);
