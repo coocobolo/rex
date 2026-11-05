@@ -203,7 +203,6 @@ pub fn Driver(comptime option: Option) type {
 
                 self.terminal_mutex.lockUncancelable(self.io);
 
-                // 1. Drain input events from GUI
                 if (self.input_queue.hasPending() or (pollfds[1].revents & system.POLL.IN) != 0) {
                     self.input_queue.drainWakeup();
                     while (self.input_queue.pop()) |ev| {
@@ -212,7 +211,6 @@ pub fn Driver(comptime option: Option) type {
                     }
                 }
 
-                // 2. Read from PTY
                 if (!child_closed and pollfds[0].fd >= 0 and ((pollfds[0].revents & (system.POLL.IN | system.POLL.HUP | system.POLL.ERR)) != 0 or pollfds[0].revents == 0)) {
                     drain: while (true) {
                         const n = self.pty.readRaw(&read_buffer) catch |err| switch (err) {
@@ -257,10 +255,8 @@ pub fn Driver(comptime option: Option) type {
                     }
                 }
 
-                // 3. Update shared modes while terminal is in consistent state
                 self.updateSharedModes(&terminal);
 
-                // 4. Publish frame if changed and not held by synchronized output
                 var should_publish = false;
                 const in_timeout_flush = terminal.mode.synchronized_output and
                     (sync_start != null and (sync_start.?.durationTo(std.Io.Clock.Timestamp.now(self.io, .awake)).raw.toMilliseconds() >= self.sync_output_timeout_ms));

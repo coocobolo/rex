@@ -1118,12 +1118,10 @@ pub fn reloadConfig(self: *App) void {
 
     var loaded_any = false;
 
-    // 1. Layer: System config (/etc/rex/config)
     if (rex.config.loadFile(rex.config.system_config_path, &file_cfg, &diags) catch false) {
         loaded_any = true;
     }
 
-    // 2. Layer: User config (~/.config/rex/config)
     if (self.config_path) |p| {
         if (rex.config.loadFile(p, &file_cfg, &diags) catch false) {
             loaded_any = true;
@@ -1821,7 +1819,6 @@ const mouseButtonCb: c.GLFWmousebuttonfun = struct {
 }.cb;
 
 fn handleOverlayClick(self: *App, col: u16, row: u16) bool {
-    // 1. In-stream registered interactive hotspots
     if (self.hotspots.hitTest(col, row)) |action| {
         switch (action) {
             .confirm_quit => self.confirmQuit(),
@@ -1887,7 +1884,6 @@ fn handleOverlayClick(self: *App, col: u16, row: u16) bool {
         return true;
     }
 
-    // 2. Clicks outside or inside modal dialogs
     if (self.quit_confirm_open) {
         const current_frame = self.driver.getFrame();
         var actions: [2]Modal.Action = undefined;
@@ -1907,7 +1903,6 @@ fn handleOverlayClick(self: *App, col: u16, row: u16) bool {
         return true;
     }
 
-    // 3. Clicks outside or inside wellbeing dashboard panel
     if (self.wellbeing_overlay.dashboard_open) {
         if (self.wellbeing_overlay.card_buffer.items.len > 0) {
             const c_item = self.wellbeing_overlay.card_buffer.items[0];
@@ -1924,12 +1919,10 @@ fn handleOverlayClick(self: *App, col: u16, row: u16) bool {
         return true;
     }
 
-    // 4. Lock screen swallows all clicks during active break
     if (self.wellbeing_overlay.lock_screen_active) {
         return true;
     }
 
-    // 5. Fallback for toast dismiss/body
     if (self.config.window.toast.enabled and self.toast_queue.isActive()) {
         const current_frame = self.driver.getFrame();
         if (self.toast_queue.hitTest(

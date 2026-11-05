@@ -573,7 +573,6 @@ pub const Overlay = struct {
     ) void {
         const icon_style = icons.resolveStyle(self.icon_opt.style);
 
-        // 1. Unified Panel Geometry
         var active_apps: u16 = 0;
         for (&wellbeing.data.today.top_apps) |*app| {
             if (app.seconds > 0 and app.name[0] != 0) active_apps += 1;
@@ -587,7 +586,6 @@ pub const Overlay = struct {
 
         const rect = PanelRect{ .col = col, .row = row, .width = modal_w, .height = modal_h };
 
-        // 2. Dimming ONLY outside the panel
         if (self.modal_opt.dim_alpha > 0) {
             self.drawDimmingBackdropOutside(allocator, total_cols, total_rows, rect, .{ self.tokens.bg[0], self.tokens.bg[1], self.tokens.bg[2], self.modal_opt.dim_alpha });
         }
@@ -595,7 +593,6 @@ pub const Overlay = struct {
         const effective_radius = self.modal_opt.corner_radius orelse self.card_opt.effectiveRadius();
         const effective_border_w = self.modal_opt.border_width orelse self.card_opt.border_width;
 
-        // 3. Emit shader-based rounded rectangle card with SDF anti-aliased border and transparent corners
         const border_color: [3]u8 = if (self.card_opt.border_style == .semantic) self.tokens.accent else self.tokens.border;
         self.card_buffer.append(allocator, .{
             .col = rect.col,
@@ -840,11 +837,9 @@ pub const Overlay = struct {
     ) void {
         if (dim_color[3] == 0) return;
 
-        // 1. Top region (above dialog)
         if (rect.row > 0) {
             self.drawBox(allocator, 0, 0, total_cols, rect.row, dim_color);
         }
-        // 2. Middle rows (only to the left and right of dialog, never inside)
         const mid_start = rect.row;
         const mid_end = @min(total_rows, rect.maxRow());
         if (mid_end > mid_start) {
@@ -857,7 +852,6 @@ pub const Overlay = struct {
                 self.drawBox(allocator, right_start, mid_start, total_cols - right_start, mid_h, dim_color);
             }
         }
-        // 3. Bottom region (below dialog)
         if (total_rows > rect.maxRow()) {
             self.drawBox(allocator, 0, rect.maxRow(), total_cols, total_rows - rect.maxRow(), dim_color);
         }

@@ -129,7 +129,6 @@ pub const RemindersEngine = struct {
 
         var triggered: ?Alert = null;
 
-        // 1.Custom Routine (lowest priority, overwritten if higher priority triggers)
         if (self.routines_opt.custom_interval_minutes) |interval| {
             if (self.custom_timer_s >= interval * 60) {
                 self.custom_timer_s = 0;
@@ -144,7 +143,6 @@ pub const RemindersEngine = struct {
             }
         }
 
-        // 2. Posture Check
         if (self.routines_opt.posture_interval_minutes) |interval| {
             if (self.posture_timer_s >= interval * 60) {
                 self.posture_timer_s = 0;
@@ -159,7 +157,6 @@ pub const RemindersEngine = struct {
             }
         }
 
-        // 3. Hydration
         if (self.routines_opt.hydration_interval_minutes) |interval| {
             if (self.hydration_timer_s >= interval * 60) {
                 self.hydration_timer_s = 0;
@@ -175,7 +172,6 @@ pub const RemindersEngine = struct {
             }
         }
 
-        // 4. Eyesight 20-20-20
         if (self.eyesight_opt.enabled) {
             const threshold = self.eyesight_opt.interval_minutes * 60;
             if (self.eyesight_timer_s >= threshold) {
@@ -192,7 +188,6 @@ pub const RemindersEngine = struct {
             }
         }
 
-        // 5. Movement & Stretch (highest priority when coinciding with eyesight)
         if (self.movement_opt.enabled) {
             const threshold = self.movement_opt.interval_minutes * 60;
             if (self.movement_timer_s >= threshold) {

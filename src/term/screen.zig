@@ -1004,16 +1004,8 @@ pub fn Screen(comptime option: Option) type {
         /// `Cell` (codepoint, width, attr). For PTY printable characters, use
         /// `putChar` instead, it handles charset translation and `wcwidth` lookup.
         ///
-        /// Handles:
-        ///   1. Combining characters (width == 0): handled by `putChar`, which
-        ///      appends them to the previous cell's cluster (`attachCombining`).
-        ///   2. Deferred wrap: if `wrap_pending` is set, wraps to the next line
-        ///      (scrolling if at `scroll_bottom`) before writing.
-        ///   3. Insert mode: shifts existing cells right before writing.
-        ///   4. Split-wide-char guards: blanks orphaned halves of wide chars.
-        ///   5. Wide char at last column: fills the last column with a blank and
-        ///      wraps inline before placing the wide char at column 0.
-        ///   6. Continuation placeholder: writes a width=3 right-half placeholder.
+        /// Handles combining characters, deferred wraps, insert mode shifts,
+        /// split wide character guards, end-of-row wrapping, and continuation placeholders.
         pub inline fn writeChar(self: *Self, cell: Cell) void {
             std.debug.assert(cell.kind != .empty and cell.kind != .wide_right);
 
@@ -1042,7 +1034,6 @@ pub fn Screen(comptime option: Option) type {
             // Fetch row_mut AFTER deferred wrap, cursor.row may have changed.
             const row_mut = self.currentRow();
 
-            // 3. Insert mode
             if (self.mode.insert) {
                 const shift = kind.columnSpan();
                 if (cursor_col + shift < self.active_cols) {
@@ -2336,20 +2327,10 @@ pub fn Screen(comptime option: Option) type {
             };
         }
 
-        // Cursor navigation
-        // Key behavioral nuances from the VT100/xterm spac:
-        // 1. `wrap_pending`: must be cleared on every cursor movement, any explicit move cancels a pending wrap.
-        // 2. CUU/CUD respect the scroll region, if the cursor is inside [scroll_top, scroll_bottom], it stops at
-        //    the screen boundary.
-        // 3. CUF/CUD do NOT respect the scroll region, they clamp to [0, active_cols-1].
-        // 4. CUP/CHA in origin mode, row is relative to `scroll_top`, clamped to [scroll_top, scroll_bottom].
-        // 5. All parameter (Ps) are 1-based in the escape sequence layer; convert to 0-based befoore calling these methods.
-
         /// Move cursor to absolute 0-based (row_pos, col_pos).
         ///
         /// In origin mode (DECOM), row is relative to scroll_top and clamped
         /// to [scroll_top, scroll_bottom]. In normal mode, clamped to [0, active_rows-1].
-        /// In normal mode, clamped to [0, active_rows-1].
         ///
         /// Column always clamped to [0, active_cols-1]. Clears `wrap_pending`.
         ///

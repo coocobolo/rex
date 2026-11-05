@@ -1320,8 +1320,8 @@ pub fn Terminal(comptime option: Option) type {
         }
 
         /// Queues a mouse report in the active tracking mode and encoding.
-        /// Off, it queues nothing. X10 sends only presses of buttons 0 to
-        /// 2. The caller filters motion by mode.
+        /// When off, it queues nothing. X10 mode sends only presses of buttons
+        /// 0 to 2, while the caller filters motion by mode.
         pub fn sendMouse(self: *Self, col: u16, row: u16, button: u8, mods: u8, press: bool) void {
             const mode = self.mode;
             const code = switch (mode.mouse_tracking) {

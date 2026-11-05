@@ -405,7 +405,6 @@ test "driver.root: Driver polymorphic union dispatch" {
     const SingleType = Single(test_option);
     const ThreadedType = Threaded(test_option);
 
-    // 1. Single driver variant
     {
         const s = try SingleType.init(testing.allocator, testing.io, Pty.inactive, Theme.graphite);
         var driver = DriverUnion{ .single = s };
@@ -421,7 +420,6 @@ test "driver.root: Driver polymorphic union dispatch" {
         try testing.expectEqual(Pty.inactive.master, driver.getMasterFd());
     }
 
-    // 2. Threaded driver variant
     {
         const th = try ThreadedType.create(testing.allocator, testing.io, Pty.inactive, Theme.graphite, 200);
         var driver = DriverUnion{ .threaded = th };

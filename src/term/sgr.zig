@@ -1,15 +1,10 @@
 //! Select Graphic Rendition (SGR / CSI Ps ... m)
-//! Parses a CSI SGR sequence and applies the resulting attributes to `attr`.
 //!
-//! Handles:
-//!   1. Standard SGR codes (0 to 29, 30 to 37, 39, 40 to 47, 49, 53, 55,
-//!      90 to 97, 100 to 107)
-//!   2. 256-color:  38;5;n   and  38:5:n
-//!   3. True color: 38;2;r;g;b  and  38:2:r:g:b  (and 38:2:cs:r:g:b or
-//!      38:2::r:g:b with a color space, ITU T.416)
-//!   4. Underline color: 58 in every form of 38, and 59 to reset it
-//!      (kitty, https://sw.kovidgoyal.net/kitty/underlines/)
-//!   5. Underline style sub-params: 4:0 to 4:5
+//! Parses a CSI SGR sequence and applies the resulting attributes to `attr`.
+//! Supported attributes include standard SGR codes, 256-color palettes (both
+//! semicolon and colon formats), true color RGB specifications (including
+//! color-space variants), underline color styling (Kitty protocol), and
+//! underline style sub-parameters.
 //!
 //! Sub-parameters of a code that takes none are skipped, so `CSI 99:1:0 m`
 //! does not reset the pen through the trailing 0.
