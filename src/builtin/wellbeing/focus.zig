@@ -1,31 +1,30 @@
 const std = @import("std");
-const Allocator = std.mem.Allocator;
 const Io = std.Io;
 
 const max_u64 = std.math.maxInt(u64);
-const log = std.log.scoped(.pomodoro);
+const log = std.log.scoped(.focus);
 
-const Manager = @import("persistance.zig").Manager;
-
-const magic: u32 = 0x504F4D4F;
-const version: u32 = 1;
-
-pub const Phase = enum {
-    idle,
-    task,
-    short_break,
-    long_break,
+pub const Phase = enum(u8) {
+    idle = 0,
+    task = 1,
+    short_break = 2,
+    long_break = 3,
 };
 
 pub const Option = struct {
     display: Display = .{},
-    long_break_ms: u64,
-    short_break_ms: u64,
-    task_ms: u64,
-    tasks_before_long_break: u8,
+    long_break_ms: u64 = 15 * 60_000,
+    short_break_ms: u64 = 5 * 60_000,
+    task_ms: u64 = 25 * 60_000,
+    tasks_before_long_break: u8 = 4,
     time_fields: TimeFields = .initMany(&.{ .minute, .second }),
-    timer_mode: TimerMode,
-    transition_mode: TransitionMode,
+    timer_mode: TimerMode = .countdown,
+    transition_mode: TransitionMode = .manual,
+    mute_notifications_in_task: bool = true,
+    rotate_break_prompts: bool = true,
+    lock_input_on_break: bool = false,
+    show_break_animation: bool = true,
+    auto_pause_on_alert: bool = true,
 
     pub const TimerMode = enum { countup, countdown };
     pub const TransitionMode = enum { auto, manual };
@@ -33,20 +32,13 @@ pub const Option = struct {
     pub const TimeFields = std.EnumSet(TimeField);
 
     pub const Display = struct {
-        task_icon: []const u8 = "🎯",
-        break_icon: []const u8 = "☕",
-        paused_icon: []const u8 = "▸",
+        task_icon: []const u8 = "FOCUS",
+        break_icon: []const u8 = "BREAK",
+        paused_icon: []const u8 = "PAUSED",
         separator: []const u8 = "  ",
     };
 
-    pub const default: Option = .{
-        .timer_mode = .countdown,
-        .long_break_ms = 15 * 60_000,
-        .short_break_ms = 5 * 60_000,
-        .task_ms = 25 * 60_000,
-        .tasks_before_long_break = 4,
-        .transition_mode = .manual,
-    };
+    pub const default: Option = .{};
 };
 
 pub const Stats = struct {
@@ -94,168 +86,10 @@ pub const Stats = struct {
     }
 };
 
-/// Flat binary layout written to persistence, guaranteees stable field order.
-const Report = extern struct {
-    magic: u32,
-    version: u32,
-
-    // Statistic
-    tasks_completed: u32,
-    long_breaks_taken: u32,
-    sessions: u32,
-    current_streak: u32,
-    best_streak: u32,
-    last_task_day: u32,
-
-    // Snapshot (phase == 0 means .idle, nothing to restore)
-    // on phase .idle, no active session; remaining_ms = 0 is harmless
-    phase: u8,
-    tasks_in_cycle: u8,
-    _pad: [6]u8 = @splat(0), // align u64 fields to offset 40
-    focus_ms: u64,
-    break_ms: u64,
-    remaining_ms: u64,
-
-    pub const empty: Report = std.mem.zeroInit(Report, .{});
-
-    // .{
-    //     .magic = magic,
-    //     .version = version,
-    //     .tasks_completed = 0,
-    //     .long_breaks_taken = 0,
-    //     .sessions = 0,
-    //     .current_streak = 0,
-    //     .best_streak = 0,
-    //     .last_task_day = 0,
-    //     .phase = 0,
-    //     .tasks_in_cycle = 0,
-    // };
-
-    pub fn toState(self: *const Report) ?State {
-        const phase = std.enums.fromInt(Phase, self.phase) orelse return null;
-        return .{
-            .option = .default,
-            .phase = phase,
-            .remaining_ms = self.remaining_ms,
-            .tasks_in_cycle = self.tasks_in_cycle,
-        };
-    }
-
-    pub fn toStats(self: *const Report) Stats {
-        return .{
-            .break_ms = self.break_ms,
-            .focus_ms = self.focus_ms,
-            .sessions = self.sessions,
-            .best_streak = self.best_streak,
-            .last_task_day = self.last_task_day,
-            .current_streak = self.current_streak,
-            .tasks_completed = self.tasks_completed,
-            .long_breaks_taken = self.long_breaks_taken,
-        };
-    }
-};
-
-const report_size = @sizeOf(Report);
-
-pub fn save(
-    io: Io,
-    stats: *const Stats,
-    state: *const State,
-    dirs_state: []const u8,
-    filename: []const u8,
-) !void {
-    // Create parent directories if they don't exist
-    // const parent_dir = std.Io.Dir.path.dirname(dirs_state) orelse dirs_state;
-
-    const dir = try std.Io.Dir.createDirPathOpen(.cwd(), io, dirs_state, .{});
-    defer dir.close(io);
-
-    const report: Report = .{
-        .best_streak = stats.best_streak,
-        .break_ms = stats.break_ms,
-        .current_streak = stats.current_streak,
-        .focus_ms = stats.focus_ms,
-        .last_task_day = stats.last_task_day,
-        .long_breaks_taken = stats.long_breaks_taken,
-        .magic = magic,
-        .phase = @intFromEnum(state.phase),
-        .remaining_ms = state.remaining_ms,
-        .sessions = stats.sessions,
-        .tasks_completed = stats.tasks_completed,
-        .tasks_in_cycle = state.tasks_in_cycle,
-        .version = version,
-    };
-
-    const file = try dir.createFile(io, filename, .{
-        .truncate = true,
-    });
-    defer file.close(io);
-
-    try file.writePositionalAll(io, std.mem.asBytes(&report), 0);
-    log.debug("pomodoro saved ok! {s}/{s} {any}\n", .{ dirs_state, filename, report });
-}
-
-pub const Result = struct {
-    stats: Stats,
-
-    phase: u8,
-    remaining_ms: u64,
-    tasks_in_cycle: u8,
-
-    pub const empty: Result = .{
-        .stats = .empty,
-        .phase = 0,
-        .remaining_ms = 0,
-        .tasks_in_cycle = 0,
-    };
-};
-
-pub fn load(
-    io: Io,
-    state_dir: []const u8,
-    filename: []const u8,
-) Report {
-    log.debug("load report file: {s}/{s}", .{ state_dir, filename });
-    const dir = std.Io.Dir.openDir(.cwd(), io, state_dir, .{}) catch {
-        return .empty;
-    };
-    defer dir.close(io);
-
-    const file = dir.openFile(io, filename, .{ .mode = .read_only }) catch {
-        return .empty;
-    };
-    defer file.close(io);
-
-    var report: Report = undefined;
-    const n = file.readPositionalAll(io, std.mem.asBytes(&report), 0) catch return .empty;
-    if (n != report_size or report.magic != magic or report.version != version) {
-        return .empty;
-    }
-
-    return report;
-
-    // const phase = std.enums.fromInt(Phase, report.phase) orelse .idle;
-    // return .{
-    //     .stats = .{
-    //         .break_ms = report.break_ms,
-    //         .focus_ms = report.focus_ms,
-    //         .sessions = report.sessions,
-    //         .best_streak = report.best_streak,
-    //         .last_task_day = report.last_task_day,
-    //         .current_streak = report.current_streak,
-    //         .tasks_completed = report.tasks_completed,
-    //         .long_breaks_taken = report.long_breaks_taken,
-    //     },
-    //     .phase = report.phase,
-    //     .remaining_ms = report.remaining_ms,
-    //     .tasks_in_cycle = report.tasks_in_cycle,
-    // };
-}
-
 pub const State = struct {
     option: Option,
     remaining_ms: u64 = 0,
-    phase: Phase,
+    phase: Phase = .idle,
     paused: bool = false,
     waiting: bool = false,
 
@@ -339,7 +173,6 @@ pub const State = struct {
     /// Tick the timer by dt_ms. Returns true if the phase just ended
     pub fn tick(self: *State, dt_ms: u64) bool {
         if (self.phase == .idle or self.paused or self.waiting) return false;
-        // if (self.remaining_ms == self.getDuration(self.phase)) return false;
         if (dt_ms >= self.remaining_ms) {
             self.remaining_ms = 0;
             self.waiting = self.option.transition_mode == .manual;
@@ -408,7 +241,7 @@ pub const State = struct {
 
         const is_transition = display_ms == self.remaining_ms;
 
-        // Resolve icon, paused ovverrides only when not waiting (waiting implies paused=false)
+        // Resolve icon, paused overrides only when not waiting (waiting implies paused=false)
         const icon: []const u8 = if (!self.waiting and self.paused and !is_transition)
             display.paused_icon
         else switch (effective_phase) {
