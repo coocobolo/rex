@@ -11,6 +11,13 @@ pub const std_options: std.Options = .{
 };
 
 const native_os = builtin.os.tag;
+const is_posix = native_os != .windows;
+
+var sighup_pending = std.atomic.Value(bool).init(false);
+
+fn sighupHandler(_: posix.SIG) callconv(.c) void {
+    sighup_pending.store(true, .release);
+}
 
 const posix = std.posix;
 const system = posix.system;
@@ -178,7 +185,7 @@ else
 
 /// Whether two terminal options are the same, comparing strings by
 /// content.
-fn sameTerminalOption(comptime a: TerminalOption, comptime b: TerminalOption) bool {
+fn sameTerminalOption(a: TerminalOption, b: TerminalOption) bool {
     return a.max_rows == b.max_rows and
         a.max_cols == b.max_cols and
         a.tab_width == b.tab_width and
@@ -205,7 +212,9 @@ pub const resolveAnchor = rex.driver.resolveAnchor;
 allocator: std.mem.Allocator,
 atlas: Atlas,
 
-config: *const Config,
+config: Config,
+config_watcher: ?rex.config.Watcher = null,
+config_path: ?[]const u8 = null,
 background_color: [4]f32,
 
 rasterizer: Rasterizer,
@@ -299,11 +308,12 @@ pub fn init(
     io: std.Io,
     environ: *const std.process.Environ,
     argv0: []const u8,
-    comptime config: *const Config,
+    config: *const Config,
+    custom_config_path: ?[]const u8,
 ) !App {
-    comptime if (!sameTerminalOption(config.terminal, terminal_option)) {
-        @compileError("Config.terminal differs from the root rex_terminal_option");
-    };
+    if (!sameTerminalOption(config.terminal, terminal_option)) {
+        return error.TerminalOptionMismatch;
+    }
 
     log.debug("envi.block.len: {d}", .{environ.block.slice.len});
 
@@ -328,8 +338,49 @@ pub fn init(
 
     log.debug("dirs: {f}", .{dirs});
 
+    var active_config: Config = config.*;
+
+    // Resolve user configuration path or use custom CLI path
+    var user_cfg_path: ?[]const u8 = null;
+    if (custom_config_path) |ccp| {
+        user_cfg_path = try gpa.dupe(u8, ccp);
+    } else {
+        user_cfg_path = rex.config.resolveUserConfigPath(gpa, &dirs) catch null;
+    }
+    errdefer if (user_cfg_path) |p| gpa.free(p);
+
+    // Layer 1: System config (/etc/rex/config)
+    var sys_diags = rex.config.Diagnostics{};
+    var sys_file_cfg = rex.config.FileConfig{};
+    if (rex.config.loadFile(rex.config.system_config_path, &sys_file_cfg, &sys_diags) catch false) {
+        rex.config.applyFileConfig(&active_config, &sys_file_cfg, gpa) catch |err| {
+            log.warn("failed to apply system config: {}", .{err});
+        };
+    }
+
+    // Layer 2: User config (~/.config/rex/config or custom path)
+    var startup_warning: ?[128]u8 = null;
+    var startup_warn_len: usize = 0;
+    if (user_cfg_path) |p| {
+        var user_diags = rex.config.Diagnostics{};
+        var user_file_cfg = rex.config.FileConfig{};
+        if (rex.config.loadFile(p, &user_file_cfg, &user_diags) catch false) {
+            if (user_diags.hasErrors()) {
+                const first = user_diags.items[0];
+                var buf: [128]u8 = undefined;
+                if (std.fmt.bufPrint(&buf, "Line {d}: {s}", .{ first.line, first.message() })) |msg| {
+                    startup_warning = buf;
+                    startup_warn_len = msg.len;
+                } else |_| {}
+            }
+            rex.config.applyFileConfig(&active_config, &user_file_cfg, gpa) catch |err| {
+                log.warn("failed to apply user config: {}", .{err});
+            };
+        }
+    }
+
     // apply user's overrides environment values
-    for (config.environments) |*envp| {
+    for (active_config.environments) |*envp| {
         try envmap.put(envp.key, envp.value);
     }
 
@@ -340,13 +391,13 @@ pub fn init(
     defer block.deinit(gpa);
 
     var pty = try Pty.spawn(.{
-        .argv = config.termio.argv,
-        .capture_stdout = config.termio.capture_stdout,
-        .cols = config.termio.cols,
-        .cwd = config.termio.cwd,
+        .argv = active_config.termio.argv,
+        .capture_stdout = active_config.termio.capture_stdout,
+        .cols = active_config.termio.cols,
+        .cwd = active_config.termio.cwd,
         .envp = block.slice,
-        .o_flags = config.termio.o_flags,
-        .rows = config.termio.rows,
+        .o_flags = active_config.termio.o_flags,
+        .rows = active_config.termio.rows,
     });
     errdefer pty.close(io);
 
@@ -357,39 +408,39 @@ pub fn init(
 
     log.debug("termio.pty: {f}", .{pty});
 
-    var win: Window = try .init(config.window.size.width, config.window.size.height, config.window.title);
+    var win: Window = try .init(active_config.window.size.width, active_config.window.size.height, active_config.window.title);
     errdefer win.deinit();
 
-    var rasterizer: Rasterizer = try .create(gpa, config.font);
+    var rasterizer: Rasterizer = try .create(gpa, active_config.font);
     errdefer rasterizer.destroy(gpa);
 
-    var atlas: Atlas = try .create(gpa, config.window.atlas);
+    var atlas: Atlas = try .create(gpa, active_config.window.atlas);
     errdefer atlas.destroy();
 
     var frame_builder: FrameBuilderType = try .init(gpa, .{
-        .dim_alpha = config.window.dim_alpha,
-        .decoration = config.window.decoration,
+        .dim_alpha = active_config.window.dim_alpha,
+        .decoration = active_config.window.decoration,
     });
     errdefer frame_builder.deinit(gpa);
 
     atlas.preRasterize(gpa, &rasterizer, .{ .start = 0x20, .end = 0x7F });
 
     var renderer = try RendererType.init(.{
-        .background = config.window.background,
+        .background = active_config.window.background,
         .font_metrics = rasterizer.metrics,
-        .cursor = config.window.cursor,
-        .decoration = config.window.decoration,
-        .scrollbar = config.window.scrollbar,
-        .selection = config.window.selection,
+        .cursor = active_config.window.cursor,
+        .decoration = active_config.window.decoration,
+        .scrollbar = active_config.window.scrollbar,
+        .selection = active_config.window.selection,
     });
     errdefer renderer.deinit();
 
-    var wellbeing_state = wellbeing.Wellbeing.init(config.wellbeing);
+    var wellbeing_state = wellbeing.Wellbeing.init(active_config.wellbeing);
     wellbeing_state.loadState(io, dirs.state);
 
-    var driver: Driver = switch (config.threading.mode) {
-        .single => .{ .single = try SingleDriverType.initWithTimeout(gpa, io, pty, config.theme, config.threading.sync_output_timeout_ms) },
-        .multi => .{ .threaded = try ThreadedDriverType.create(gpa, io, pty, config.theme, config.threading.sync_output_timeout_ms) },
+    var driver: Driver = switch (active_config.threading.mode) {
+        .single => .{ .single = try SingleDriverType.initWithTimeout(gpa, io, pty, active_config.theme, active_config.threading.sync_output_timeout_ms) },
+        .multi => .{ .threaded = try ThreadedDriverType.create(gpa, io, pty, active_config.theme, active_config.threading.sync_output_timeout_ms) },
     };
     errdefer driver.deinit();
 
@@ -397,19 +448,43 @@ pub fn init(
         driver.threaded.wakeup_fn = Window.glfwPostEmptyEvent;
     }
 
-    const background_color = config.theme.background;
-    const background_alpha = config.window.background.alpha;
+    const background_color = active_config.theme.background;
+    const background_alpha = active_config.window.background.alpha;
 
-    const classifier = try unicode.Classifier.init(config.selection.classifier);
+    const classifier = try unicode.Classifier.init(active_config.selection.classifier);
     const now = std.Io.Clock.Timestamp.now(io, .awake);
 
-    return App{
+    var watcher: ?rex.config.Watcher = null;
+    if (user_cfg_path) |cfg_p| {
+        const dir_name = std.fs.path.dirname(cfg_p) orelse dirs.config;
+        const file_name = std.fs.path.basename(cfg_p);
+        watcher = rex.config.Watcher.init(dir_name, file_name);
+    } else {
+        watcher = rex.config.Watcher.init(dirs.config, "config");
+    }
+
+    if (is_posix) {
+        posix.sigaction(.HUP, &.{
+            .handler = .{ .handler = sighupHandler },
+            .mask = posix.sigemptyset(),
+            .flags = 0,
+        }, null);
+    }
+
+    var wellbeing_overlay = wellbeing.overlay.Overlay{};
+    wellbeing_overlay.card_opt = active_config.window.card;
+    wellbeing_overlay.modal_opt = active_config.window.modal;
+    wellbeing_overlay.toast_opt = active_config.window.toast;
+    wellbeing_overlay.icon_opt = active_config.window.icon;
+    wellbeing_overlay.tokens = rex.color.Tokens.fromThemeWithOverride(active_config.theme, active_config.tokens);
+
+    var app = App{
         .io = io,
         .driver = driver,
         .window = win,
         .background_color = .{ background_color.r, background_color.g, background_color.b, background_alpha },
-        .blink = .{ .period_ms = config.blink.half_period },
-        .blink_rapid = .{ .period_ms = config.blink.rapid_half_period },
+        .blink = .{ .period_ms = active_config.blink.half_period },
+        .blink_rapid = .{ .period_ms = active_config.blink.rapid_half_period },
         .dirs = dirs,
         .argv0 = argv0,
         .allocator = gpa,
@@ -417,18 +492,30 @@ pub fn init(
         .rasterizer = rasterizer,
         .atlas = atlas,
         .frame_builder = frame_builder,
-        .config = config,
-        .font_size = config.font.height,
+        .config = active_config,
+        .config_watcher = watcher,
+        .config_path = user_cfg_path,
+        .font_size = active_config.font.height,
         .wellbeing_state = wellbeing_state,
-        .wellbeing_overlay = .{},
+        .wellbeing_overlay = wellbeing_overlay,
+        .toast_queue = .{},
         .frame_buffer_size = .empty,
         .last_frame = now,
         .last_title = now,
         .word_classifier = classifier,
     };
+
+    if (startup_warning) |warn_buf| {
+        app.notifySimple("Config Error", warn_buf[0..startup_warn_len], .warning);
+    }
+
+    return app;
 }
 
 pub fn deinit(self: *App, gpa: std.mem.Allocator) void {
+    if (self.config_watcher) |*w| w.deinit();
+    if (self.config_path) |p| gpa.free(p);
+
     self.renderer.deinit();
     self.frame_builder.deinit(gpa);
     self.atlas.destroy();
@@ -569,6 +656,16 @@ pub fn run(self: *App) !void {
 
         if (self.toast_queue.tick(dt_clamped)) self.needs_redraw = true;
         if (self.renderer.tick(dt_clamped)) self.needs_redraw = true;
+
+        if (is_posix and sighup_pending.swap(false, .acq_rel)) {
+            self.reloadConfig();
+        }
+
+        if (self.config_watcher) |*w| {
+            if (w.checkChanged()) {
+                self.reloadConfig();
+            }
+        }
 
         if (had_data or blink_changed or self.needs_redraw or self.driver.hasNewFrame()) {
             if (try self.renderFrame()) self.needs_redraw = false;
@@ -987,6 +1084,65 @@ fn adjustFontSize(self: *App, delta: i32) void {
     self.setFontSize(@intCast(@max(6, new_size)));
 }
 
+pub fn reloadConfig(self: *App) void {
+    var diags = rex.config.Diagnostics{};
+    var file_cfg = rex.config.FileConfig{};
+
+    var loaded_any = false;
+
+    // 1. Layer: System config (/etc/rex/config)
+    if (rex.config.loadFile(rex.config.system_config_path, &file_cfg, &diags) catch false) {
+        loaded_any = true;
+    }
+
+    // 2. Layer: User config (~/.config/rex/config)
+    if (self.config_path) |p| {
+        if (rex.config.loadFile(p, &file_cfg, &diags) catch false) {
+            loaded_any = true;
+        }
+    }
+
+    if (!loaded_any and diags.count == 0) {
+        self.notifySimple("Configuration", "No config file found", .neutral);
+        return;
+    }
+
+    if (diags.hasErrors()) {
+        const first_msg = diags.items[0].message();
+        self.notifySimple("Config Error", first_msg, .warning);
+        return;
+    }
+
+    // Apply file config onto active config
+    rex.config.applyFileConfig(&self.config, &file_cfg, self.allocator) catch |err| {
+        var err_buf: [64]u8 = undefined;
+        const err_msg = std.fmt.bufPrint(&err_buf, "Failed to apply: {}", .{err}) catch "Apply failed";
+        self.notifySimple("Config Error", err_msg, .warning);
+        return;
+    };
+
+    // Live update renderer background color and alpha
+    const bg = self.config.theme.background;
+    self.background_color = .{ bg.r, bg.g, bg.b, self.config.window.background.alpha };
+    self.renderer.background.option.alpha = self.config.window.background.alpha;
+
+    // Live update font size if modified
+    if (self.config.font.height != self.font_size) {
+        self.setFontSize(self.config.font.height);
+    }
+
+    // Live update wellbeing overlay options and tokens
+    self.wellbeing_overlay.card_opt = self.config.window.card;
+    self.wellbeing_overlay.modal_opt = self.config.window.modal;
+    self.wellbeing_overlay.tokens = rex.color.Tokens.fromThemeWithOverride(self.config.theme, self.config.tokens);
+
+    // Live update wellbeing tracking options
+    self.wellbeing_state.option = self.config.wellbeing;
+
+    self.needs_redraw = true;
+    self.notifySimple("Configuration", "Configuration reloaded", .info);
+}
+
 fn handleAction(self: *App, action: rex.input.Action) void {
     switch (action) {
         .paste_clipboard => self.pasteFromClipboard(),
@@ -1140,6 +1296,7 @@ fn handleAction(self: *App, action: rex.input.Action) void {
         .debug => {
             log.debug("wellbeing_data={any}", .{self.wellbeing_state.data});
         },
+        .reload_config => self.reloadConfig(),
         .send_to_pty => |seq| {
             self.driver.sendBytes(seq) catch |err| {
                 log.err("handleAction: send to pty write failed: {}", .{err});
