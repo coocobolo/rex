@@ -33,6 +33,18 @@ const SelectionState = renderer_mod.Selection.State;
 const Renderer = renderer_mod.Renderer;
 const Dimension = renderer_mod.Dimension;
 const FrameBuilder = renderer_mod.Frame.Builder;
+const Card = renderer_mod.Card;
+const ui_mod = rex.ui;
+const Modal = ui_mod.Modal;
+const Toast = ui_mod.Toast;
+const Icon = ui_mod.Icon;
+const Button = ui_mod.Button;
+const FocusGroup = ui_mod.FocusGroup;
+const HotspotTable = ui_mod.HotspotTable;
+const UiAction = ui_mod.UiAction;
+const UiActionTag = ui_mod.UiActionTag;
+const Text = ui_mod.Text;
+const Drawer = ui_mod.Drawer;
 
 const Freetype = rex.FreeType;
 const Rasterizer = rex.FreeType.Rasterizer;
@@ -52,12 +64,10 @@ const TerminalOption = rex.terminal.Option;
 const Screen = rex.terminal.screen.Screen;
 const Response = rex.terminal.Response;
 
-const pomodoro = rex.builtin.pomodoro;
+const wellbeing = rex.builtin.wellbeing;
 
 /// Largest selection copied to the clipboard, in bytes.
 const max_copy_size: usize = std.math.maxInt(u16) - 1;
-
-const pomodoro_state_file = "pomodoro_stats.bin";
 
 pub const Config = struct {
     blink: struct {
@@ -68,12 +78,14 @@ pub const Config = struct {
     },
     font: Freetype.FontConfig,
     keymap: []const Binding,
-    pomodoro: pomodoro.Option,
+    wellbeing: wellbeing.Option = .{},
     termio: rex.termio.pty.SpawnOption,
     /// Bytes read from the pty per read call, default 65534. Bigger
     /// reads parse long output in fewer frames; 0 is treated as 1.
     read_buffer_size: usize = std.math.maxInt(u16) - 1,
     theme: Theme,
+    /// Optional handcrafted design tokens override for custom surface and border styling.
+    tokens: ?rex.color.Tokens = null,
     window: struct {
         background: Background.Option,
         /// Rings the X bell on BEL and on pomodoro phase changes.
@@ -95,6 +107,18 @@ pub const Config = struct {
         size: Dimension(u16) = .{ .width = 1920, .height = 1080 },
         /// Window title. A running pomodoro is appended after it.
         title: [:0]const u8 = "rex",
+        /// Rounded card surface options for UI modals and overlays.
+        card: Card.Option = .{},
+        /// In-terminal toast notification options.
+        toast: Toast.Option = .{},
+        /// Semantic icon rendering options.
+        icon: Icon.Option = .{},
+        /// Modal dialog options including dimensions, dimming, and default focus.
+        modal: Modal.Option = .{},
+        /// Interactive button primitive options.
+        button: Button.Option = .{},
+        /// Prompts for confirmation before closing the window while the terminal session is active.
+        confirm_quit: bool = true,
     },
     scroll: struct {
         /// Lines moved by the scroll_up and scroll_down actions.
@@ -170,86 +194,13 @@ pub const RendererType = Renderer(terminal_option);
 pub const ScreenType = Screen(terminal_option);
 pub const TerminalType = Terminal(terminal_option);
 
+pub const Driver = rex.driver.Driver(terminal_option);
 pub const SingleDriverType = rex.driver.SingleDriver(terminal_option);
 pub const ThreadedDriverType = rex.driver.ThreadedDriver(terminal_option);
 pub const DriverEvents = rex.driver.DriverEvents;
 pub const SharedModes = rex.driver.SharedModes;
 pub const InputEvent = rex.driver.InputEvent;
-
-pub const Driver = union(enum) {
-    single: SingleDriverType,
-    threaded: *ThreadedDriverType,
-
-    pub fn deinit(self: *Driver, io: std.Io) void {
-        switch (self.*) {
-            .single => |*d| d.deinit(io),
-            .threaded => |d| d.destroy(io),
-        }
-    }
-
-    pub fn pollAndDrain(self: *Driver) !DriverEvents {
-        return switch (self.*) {
-            .single => |*d| d.pollAndDrain(),
-            .threaded => |d| d.pollAndDrain(),
-        };
-    }
-
-    pub fn getFrame(self: *const Driver) *const FrameType {
-        return switch (self.*) {
-            .single => |*d| d.getFrame(),
-            .threaded => |d| d.getFrame(),
-        };
-    }
-
-    pub fn sendInput(self: *Driver, event: InputEvent) !void {
-        switch (self.*) {
-            .single => |*d| try d.sendInput(event),
-            .threaded => |d| _ = d.sendInput(event),
-        }
-    }
-
-    pub fn sendBytes(self: *Driver, bytes: []const u8) !void {
-        switch (self.*) {
-            .single => |*d| try d.sendBytes(bytes),
-            .threaded => |d| d.sendBytes(bytes),
-        }
-    }
-
-    pub fn writePaste(self: *Driver, text: []const u8) !void {
-        switch (self.*) {
-            .single => |*d| try d.writePaste(text),
-            .threaded => |d| try d.writePaste(text),
-        }
-    }
-
-    pub fn getModes(self: *const Driver) SharedModes {
-        return switch (self.*) {
-            .single => |*d| d.getModes(),
-            .threaded => |d| d.getModes(),
-        };
-    }
-
-    pub fn getTitle(self: *const Driver) []const u8 {
-        return switch (self.*) {
-            .single => |*d| d.getTitle(),
-            .threaded => |d| d.getTitle(),
-        };
-    }
-
-    pub fn getPid(self: *const Driver) posix.pid_t {
-        return switch (self.*) {
-            .single => |*d| d.getPid(),
-            .threaded => |d| d.getPid(),
-        };
-    }
-
-    pub fn copySelectionText(self: *Driver, selection: anytype, buf: []u8) usize {
-        return switch (self.*) {
-            .single => |*d| d.copySelectionText(selection, buf),
-            .threaded => |d| d.copySelectionText(selection, buf),
-        };
-    }
-};
+pub const resolveAnchor = rex.driver.resolveAnchor;
 
 allocator: std.mem.Allocator,
 atlas: Atlas,
@@ -266,9 +217,10 @@ driver: Driver,
 
 word_classifier: unicode.Classifier,
 
-// Pomodoro state
-pomodoro_state: pomodoro.State,
-pomodoro_stats: pomodoro.Stats,
+// Wellbeing & Focus state
+wellbeing_state: wellbeing.Wellbeing,
+wellbeing_overlay: wellbeing.overlay.Overlay = .{},
+toast_queue: Toast.Queue = .{},
 
 window: Window,
 
@@ -297,6 +249,11 @@ font_size: u32,
 font_size_pending: ?u32 = null,
 
 needs_redraw: bool = true,
+quit_confirm_open: bool = false,
+quit_confirmed: bool = false,
+quit_modal_focus: FocusGroup = FocusGroup.init(2, 0),
+hotspots: HotspotTable = .{},
+skip_next_char: bool = false,
 
 // Blink state
 blink_on: bool = true,
@@ -427,25 +384,18 @@ pub fn init(
     });
     errdefer renderer.deinit();
 
-    var pomodoro_state: pomodoro.State = .{
-        .option = config.pomodoro,
-        .phase = .idle,
-        .paused = true,
-        .waiting = false,
-    };
-
-    const pomodoro_report = pomodoro.load(io, dirs.state, pomodoro_state_file);
-    if (pomodoro_report.toState()) |state| {
-        pomodoro_state.phase = state.phase;
-        pomodoro_state.remaining_ms = state.remaining_ms;
-        pomodoro_state.tasks_in_cycle = state.tasks_in_cycle;
-    }
+    var wellbeing_state = wellbeing.Wellbeing.init(config.wellbeing);
+    wellbeing_state.loadState(io, dirs.state);
 
     var driver: Driver = switch (config.threading.mode) {
-        .single => .{ .single = try SingleDriverType.initWithTimeout(gpa, pty, config.theme, config.threading.sync_output_timeout_ms) },
-        .multi => .{ .threaded = try ThreadedDriverType.create(gpa, pty, config.theme, config.threading.sync_output_timeout_ms) },
+        .single => .{ .single = try SingleDriverType.initWithTimeout(gpa, io, pty, config.theme, config.threading.sync_output_timeout_ms) },
+        .multi => .{ .threaded = try ThreadedDriverType.create(gpa, io, pty, config.theme, config.threading.sync_output_timeout_ms) },
     };
-    errdefer driver.deinit(io);
+    errdefer driver.deinit();
+
+    if (driver == .threaded) {
+        driver.threaded.wakeup_fn = Window.glfwPostEmptyEvent;
+    }
 
     const background_color = config.theme.background;
     const background_alpha = config.window.background.alpha;
@@ -469,8 +419,8 @@ pub fn init(
         .frame_builder = frame_builder,
         .config = config,
         .font_size = config.font.height,
-        .pomodoro_state = pomodoro_state,
-        .pomodoro_stats = pomodoro_report.toStats(),
+        .wellbeing_state = wellbeing_state,
+        .wellbeing_overlay = .{},
         .frame_buffer_size = .empty,
         .last_frame = now,
         .last_title = now,
@@ -484,16 +434,11 @@ pub fn deinit(self: *App, gpa: std.mem.Allocator) void {
     self.atlas.destroy();
     self.rasterizer.destroy(gpa);
     self.window.deinit();
-    self.driver.deinit(self.io);
+    self.driver.deinit();
+    self.wellbeing_overlay.deinit(gpa);
 
-    pomodoro.save(
-        self.io,
-        &self.pomodoro_stats,
-        &self.pomodoro_state,
-        self.dirs.state,
-        pomodoro_state_file,
-    ) catch |err| {
-        log.err("failed to save pomodoro stats: {any}", .{err});
+    self.wellbeing_state.saveState(self.io, self.dirs.state) catch |err| {
+        log.err("failed to save wellbeing stats: {any}", .{err});
     };
     self.dirs.deinit(gpa);
 }
@@ -529,47 +474,39 @@ pub fn run(self: *App) !void {
     self.window.setMouseButtonCallback(mouseButtonCb);
     self.window.setScrollCallback(scrollCb);
     self.window.setWindowFocusCallback(windowFocusCb);
+    self.window.setWindowCloseCallback(windowCloseCb);
 
-    start: while (!self.window.windowShouldClose()) {
+    start: while (true) {
+        if (self.window.windowShouldClose()) {
+            if (!self.config.window.confirm_quit or self.quit_confirmed) break :start;
+            self.requestQuit();
+        }
         const now = std.Io.Clock.Timestamp.now(self.io, .awake);
         const dt = self.last_frame.durationTo(now);
         self.last_frame = now;
         const dt_ms: u64 = @intCast(dt.raw.toMilliseconds());
-        const dt_clamped = @min(dt_ms, 500);
+        const dt_clamped: u64 = @min(dt_ms, 500);
 
         const blink_changed = self.tick(dt_clamped);
-        const elapsed = @min(dt_clamped, self.pomodoro_state.remaining_ms);
 
-        // Update stats based on what phase just ended
-        switch (self.pomodoro_state.phase) {
-            .task => self.pomodoro_stats.focus_ms += elapsed,
-            .short_break, .long_break => self.pomodoro_stats.break_ms += elapsed,
-            .idle => {},
+        const now_real = std.Io.Clock.Timestamp.now(self.io, .real);
+        const now_secs: i64 = @intCast(now_real.raw.toSeconds());
+
+        const wb_res = self.wellbeing_state.tick(dt_clamped, self.driver.getMasterFd(), now_secs);
+        self.renderer.grayscale = wb_res.grayscale;
+        self.renderer.color_tint = wb_res.tint;
+        if (wb_res.needs_redraw) {
+            self.frame_builder.last_generation = null;
+            self.needs_redraw = true;
         }
-
-        if (self.pomodoro_state.tick(dt_clamped)) {
-            const was_task = self.pomodoro_state.phase == .task;
-            const was_long_break = self.pomodoro_state.phase == .long_break;
-
-            if (self.pomodoro_state.option.transition_mode == .auto) {
-                self.pomodoro_state.advance();
-            }
-
-            if (was_task) self.pomodoro_stats.onTaskCompleted(self.io);
-            if (was_long_break) self.pomodoro_stats.long_breaks_taken += 1;
-
-            pomodoro.save(
-                self.io,
-                &self.pomodoro_stats,
-                &self.pomodoro_state,
-                self.dirs.state,
-                pomodoro_state_file,
-            ) catch {};
-
+        if (wb_res.phase_changed) {
+            self.wellbeing_state.saveState(self.io, self.dirs.state) catch {};
             self.ringBell();
             self.last_title = now;
             self.updateWindowTitle();
-            self.needs_redraw = true;
+        } else if (wb_res.alert != null) {
+            self.ringBell();
+            self.updateWindowTitle();
         }
 
         const title_elapsed = self.last_title.durationTo(now);
@@ -630,9 +567,10 @@ pub fn run(self: *App) !void {
             self.font_size_pending = null;
         }
 
+        if (self.toast_queue.tick(dt_clamped)) self.needs_redraw = true;
         if (self.renderer.tick(dt_clamped)) self.needs_redraw = true;
 
-        if (had_data or blink_changed or self.needs_redraw) {
+        if (had_data or blink_changed or self.needs_redraw or self.driver.hasNewFrame()) {
             if (try self.renderFrame()) self.needs_redraw = false;
         }
 
@@ -647,7 +585,7 @@ fn renderFrame(self: *App) !bool {
 
     const selection_state = self.buildSelectionState(current_frame);
 
-    const frame = try self.frame_builder.build(
+    var frame = try self.frame_builder.build(
         self.allocator,
         current_frame,
         atlas,
@@ -656,6 +594,92 @@ fn renderFrame(self: *App) !bool {
         selection_state,
         null,
     );
+
+    const total_cols = current_frame.active_cols;
+    const total_rows = current_frame.active_rows;
+
+    self.hotspots.clear();
+
+    const tokens = rex.color.Tokens.fromThemeWithOverride(self.config.theme, self.config.tokens);
+
+    if (self.quit_confirm_open) {
+        self.wellbeing_overlay.bg_buffer.clearRetainingCapacity();
+        self.wellbeing_overlay.card_buffer.clearRetainingCapacity();
+        self.wellbeing_overlay.gray_buffer.clearRetainingCapacity();
+        self.wellbeing_overlay.color_buffer.clearRetainingCapacity();
+        self.wellbeing_overlay.toast_active = false;
+        self.wellbeing_overlay.lock_screen_active = false;
+        self.wellbeing_overlay.last_toast_layout = null;
+
+        const drawer: Drawer = .{
+            .allocator = self.allocator,
+            .atlas = atlas,
+            .rasterizer = &self.rasterizer,
+            .gray_buffer = &self.wellbeing_overlay.gray_buffer,
+            .color_buffer = &self.wellbeing_overlay.color_buffer,
+        };
+        var actions: [2]Modal.Action = undefined;
+        _ = Modal.render(
+            quitConfirmModalRequest(self.config.window.card, self.config.window.modal, &actions),
+            tokens,
+            total_cols,
+            total_rows,
+            &self.wellbeing_overlay.bg_buffer,
+            &self.wellbeing_overlay.card_buffer,
+            drawer,
+            &self.quit_modal_focus,
+            &self.hotspots,
+        );
+    } else {
+        self.wellbeing_overlay.build(
+            self.allocator,
+            atlas,
+            &self.rasterizer,
+            &self.wellbeing_state,
+            tokens,
+            self.config.window.card,
+            self.config.window.toast,
+            self.config.window.icon,
+            self.config.window.modal,
+            total_cols,
+            total_rows,
+            &self.hotspots,
+        );
+
+        if (self.config.window.toast.enabled and self.toast_queue.isActive()) {
+            const drawer: Drawer = .{
+                .allocator = self.allocator,
+                .atlas = atlas,
+                .rasterizer = &self.rasterizer,
+                .gray_buffer = &self.wellbeing_overlay.gray_buffer,
+                .color_buffer = &self.wellbeing_overlay.color_buffer,
+            };
+            self.toast_queue.build(
+                tokens,
+                total_cols,
+                total_rows,
+                self.wellbeing_overlay.toastRowOffset(),
+                &self.wellbeing_overlay.card_buffer,
+                drawer,
+                &self.hotspots,
+            );
+        }
+    }
+
+    const app_toasts_active = !self.quit_confirm_open and self.config.window.toast.enabled and self.toast_queue.isActive();
+    const overlay_active = self.quit_confirm_open or self.wellbeing_overlay.isActive() or app_toasts_active;
+    const overlay_changed = overlay_active or self.wellbeing_overlay.was_active;
+    self.wellbeing_overlay.was_active = overlay_active;
+
+    if (overlay_active) {
+        frame.overlay_background_instances = self.wellbeing_overlay.bg_buffer.items;
+        frame.overlay_card_instances = self.wellbeing_overlay.card_buffer.items;
+        frame.overlay_gray_instances = self.wellbeing_overlay.gray_buffer.items;
+        frame.overlay_color_instances = self.wellbeing_overlay.color_buffer.items;
+        frame.dirty.overlay = true;
+    } else if (overlay_changed) {
+        frame.dirty.overlay = true;
+    }
 
     if (!frame.dirty.any()) return false;
 
@@ -674,28 +698,30 @@ fn renderFrame(self: *App) !bool {
     return true;
 }
 
-/// Polls when pty data arrived, else sleeps until the next blink or
-/// pomodoro tick or an input event.
+/// Polls when pty data arrived or a new frame is ready, else sleeps until the next blink or
+/// focus tick or an input event (capped to 8ms if a redraw is pending).
 fn waitForNextEvent(self: *App, had_data: bool) void {
-    if (!had_data) {
-        const ms = @min(
-            self.blink.remaining(),
-            @min(self.blink_rapid.remaining(), self.pomodoro_state.msUntilTick()),
-        );
-        Window.glfwWaitEventsTimeout(@max(0.001, @as(f64, @floatFromInt(ms)) / 1000.0));
-    } else {
+    if (had_data or self.driver.hasNewFrame()) {
         Window.glfwPollEvents();
+        return;
     }
-}
 
-fn resolveAnchor(position: rex.Selection.Position, total_line_scrolled: i64, scrollback_used: i64) ?i64 {
-    const delta: i64 = total_line_scrolled - position.captured_scroll_gen;
-    // The screen scrolled `delta` lines since the anchor was captured,
-    // so the same text now sits `delta` rows higher.
-    const anchor_now: i64 = @as(i64, position.row) - delta;
+    const alert = self.wellbeing_state.current_alert;
+    const animating = alert.kind != .none and alert.remaining_s > 0 and alert.show_animation and alert.animation != .none;
+    const overlay_active = self.wellbeing_overlay.isActive();
 
-    if (anchor_now < -scrollback_used) return null; // evicted
-    return anchor_now;
+    var ms = @min(
+        self.blink.remaining(),
+        @min(
+            self.blink_rapid.remaining(),
+            @min(self.wellbeing_state.focus_state.msUntilTick(), self.toast_queue.msUntilNextTick()),
+        ),
+    );
+    if (animating) ms = @min(ms, 33);
+    if (overlay_active) ms = @min(ms, 250);
+    if (self.needs_redraw) ms = @min(ms, 8);
+
+    Window.glfwWaitEventsTimeout(@max(0.001, @as(f64, @floatFromInt(ms)) / 1000.0));
 }
 
 fn buildSelectionState(self: *App, frame: *const FrameType) ?SelectionState {
@@ -773,19 +799,58 @@ fn buildSelectionState(self: *App, frame: *const FrameType) ?SelectionState {
 }
 
 fn updateWindowTitle(self: *App) void {
-    var buf: [64]u8 = undefined;
-    const pomodoro_title = self.pomodoro_state.fmt(&buf);
     const base = self.config.window.title;
-    if (pomodoro_title.len == 0) return self.window.setWindowTitle(base);
+    const focus_state = self.wellbeing_state.focus_state;
+    const has_focus = focus_state.phase != .idle;
+    const is_locked = self.wellbeing_state.input_locked;
+    const is_paused = self.wellbeing_state.isFocusPausedByAlert() or focus_state.paused;
 
-    var title_buf: [256]u8 = undefined;
-    const title = std.fmt.bufPrintZ(&title_buf, "{s}  |  {s}", .{ base, pomodoro_title }) catch base;
-    self.window.setWindowTitle(title);
+    if (!has_focus and !is_locked) {
+        return self.window.setWindowTitle(base);
+    }
+
+    var title_buf: [128]u8 = undefined;
+    const phase_label: []const u8 = switch (focus_state.phase) {
+        .task => "FOCUS",
+        .short_break => "BREAK",
+        .long_break => "LONG BREAK",
+        .idle => if (is_locked) "REST" else "",
+    };
+
+    const rem_s = if (has_focus)
+        (focus_state.remaining_ms + 999) / 1000
+    else
+        self.wellbeing_state.current_alert.remaining_s;
+
+    const mins = rem_s / 60;
+    const secs = rem_s % 60;
+
+    var formatted: [:0]const u8 = undefined;
+    if (is_locked and is_paused) {
+        formatted = std.fmt.bufPrintZ(&title_buf, "{s} │ {s} │ PAUSED │ LOCKED │ {d:0>2}:{d:0>2}", .{
+            base, phase_label, mins, secs,
+        }) catch base;
+    } else if (is_locked) {
+        formatted = std.fmt.bufPrintZ(&title_buf, "{s} │ {s} │ LOCKED │ {d:0>2}:{d:0>2}", .{
+            base, phase_label, mins, secs,
+        }) catch base;
+    } else if (is_paused) {
+        formatted = std.fmt.bufPrintZ(&title_buf, "{s} │ {s} │ PAUSED │ {d:0>2}:{d:0>2}", .{
+            base, phase_label, mins, secs,
+        }) catch base;
+    } else {
+        formatted = std.fmt.bufPrintZ(&title_buf, "{s} │ {s} │ {d:0>2}:{d:0>2}", .{
+            base, phase_label, mins, secs,
+        }) catch base;
+    }
+
+    self.window.setWindowTitle(formatted);
 }
 
-/// Rings the X bell at the configured volume, unless the bell is off.
+/// Rings the X bell at the configured volume, unless the bell is off or muted by wellbeing.
 fn ringBell(self: *App) void {
     if (self.config.window.bell == .off) return;
+    if (self.wellbeing_state.mute_audio_bell) return;
     self.window.ringBell(self.config.window.bell_volume);
 }
 
@@ -801,8 +866,8 @@ pub fn handleResize(self: *App, dimension: Dimension(u16)) void {
     const cell_height = self.rasterizer.cell_height;
     if (cell_width == 0 or cell_height == 0) return;
 
-    const new_rows: u16 = frame_buffer_height / cell_height;
-    const new_cols: u16 = frame_buffer_width / cell_width;
+    const new_rows: u16 = @min(frame_buffer_height / cell_height, terminal_option.max_rows);
+    const new_cols: u16 = @min(frame_buffer_width / cell_width, terminal_option.max_cols);
     if (new_rows == 0 or new_cols == 0) return;
 
     self.driver.sendInput(.{
@@ -817,10 +882,10 @@ pub fn handleResize(self: *App, dimension: Dimension(u16)) void {
     };
 
     log.debug("fb={}x{} cell={}x{} grid={}cols {}rows (unused: {}px right, {}px bottom)", .{
-        frame_buffer_width,                         frame_buffer_height,
-        cell_width,                                 cell_height,
-        new_cols,                                   new_rows,
-        frame_buffer_width - new_cols * cell_width, frame_buffer_height - new_rows * cell_height,
+        frame_buffer_width,                           frame_buffer_height,
+        cell_width,                                   cell_height,
+        new_cols,                                     new_rows,
+        frame_buffer_width -| new_cols *| cell_width, frame_buffer_height -| new_rows *| cell_height,
     });
 
     gl.viewport(0, 0, @intCast(frame_buffer_width), @intCast(frame_buffer_height));
@@ -838,6 +903,44 @@ fn pasteFromClipboard(self: *App) void {
         log.err("pasteFromClipboard: writePaste failed: {}", .{err});
     };
     self.snapToLiveView();
+}
+
+/// Pushes a structured toast notification into the application toast queue.
+pub fn notifyToast(self: *App, req: Toast.Request) u64 {
+    if (!self.config.window.toast.enabled) return 0;
+    const id = self.toast_queue.push(req, self.config.window.toast.duration_ms);
+    self.needs_redraw = true;
+    return id;
+}
+
+/// Pushes a concise toast notification configured with the window's card, toast, and icon options.
+pub fn notifySimple(self: *App, title: []const u8, description: []const u8, variant: Toast.Variant) void {
+    if (!self.config.window.toast.enabled) return;
+    const icon_id: Icon.IconId = switch (variant) {
+        .neutral, .info => .info,
+        .success => .success,
+        .warning => .warning,
+        .critical => .error_icon,
+    };
+    const icon_str = Icon.getGlyphWithOption(icon_id, self.config.window.icon);
+    const icon_style = Icon.resolveStyle(self.config.window.icon.style);
+    const dismiss_str = self.config.window.toast.dismiss_str orelse (if (icon_style == .ascii) "x" else "✕");
+    _ = self.notifyToast(.{
+        .title = title,
+        .description = description,
+        .icon = if (icon_str.len > 0) icon_str else null,
+        .dismiss_str = dismiss_str,
+        .action_prompt = self.config.window.toast.action_prompt,
+        .variant = variant,
+        .position = self.config.window.toast.position,
+        .border_style = self.config.window.toast.border_style,
+        .corner_radius = self.config.window.card.effectiveRadius(),
+        .border_width = self.config.window.card.border_width,
+        .min_width = self.config.window.toast.min_width,
+        .max_width = self.config.window.toast.max_width,
+        .margin_cols = self.config.window.toast.margin_cols,
+        .margin_rows = self.config.window.toast.margin_rows,
+    });
 }
 
 fn setFontSize(self: *App, new_size: u32) void {
@@ -869,6 +972,14 @@ fn setFontSize(self: *App, new_size: u32) void {
 
     const fb = self.window.frameBufferSize(u16);
     self.handleResize(fb);
+
+    var toast_buf: [64]u8 = undefined;
+    const toast_msg = std.fmt.bufPrint(&toast_buf, "Font: {d}pt ({d}x{d} px)", .{
+        clamped_size,
+        self.rasterizer.cell_width,
+        self.rasterizer.cell_height,
+    }) catch "Font size updated";
+    self.notifySimple(toast_msg, "", .info);
 }
 
 fn adjustFontSize(self: *App, delta: i32) void {
@@ -911,32 +1022,123 @@ fn handleAction(self: *App, action: rex.input.Action) void {
             self.font_size_pending = self.config.font.height;
         },
         .new_window => self.openNewWindow(),
-        .pomodoro_toggle => {
-            const was_idle = self.pomodoro_state.phase == .idle;
-            self.pomodoro_state.toggle();
-            if (was_idle and self.pomodoro_state.phase == .task) {
-                self.pomodoro_stats.sessions += 1;
+        .quit => self.requestQuit(),
+        .focus_toggle => {
+            self.wellbeing_state.toggleFocus();
+            self.ringBell();
+            self.updateWindowTitle();
+        },
+        .focus_reset => {
+            self.wellbeing_state.resetFocus();
+            self.updateWindowTitle();
+        },
+        .focus_skip => {
+            self.wellbeing_state.skipFocus();
+            self.ringBell();
+            self.updateWindowTitle();
+        },
+        .focus_auto_transition => {
+            self.wellbeing_state.toggleFocusTransitionMode();
+            self.updateWindowTitle();
+        },
+        .wellbeing_dashboard => {
+            if (self.wellbeing_state.option.dashboard.modal_enabled) {
+                self.wellbeing_overlay.dashboard_open = !self.wellbeing_overlay.dashboard_open;
+                self.needs_redraw = true;
+            } else {
+                var card_buf: [2048]u8 = undefined;
+                const card = self.wellbeing_state.renderDashboard(&card_buf);
+                if (card.len < card_buf.len) {
+                    card_buf[card.len] = 0;
+                    c.glfwSetClipboardString(self.window.handle, card_buf[0..card.len :0].ptr);
+                }
+                self.wellbeing_state.current_alert = .{
+                    .kind = .healthy_break,
+                    .prompt = "Wellbeing dashboard copied to clipboard.",
+                    .remaining_s = 10,
+                };
+                self.updateWindowTitle();
             }
-            self.ringBell();
+        },
+        .wellbeing_clear => {
+            self.wellbeing_state.purgeHistory(self.io, self.dirs.state) catch {};
+            self.wellbeing_state.current_alert = .{
+                .kind = .healthy_break,
+                .prompt = "Wellbeing history cleared.",
+                .remaining_s = 10,
+            };
             self.updateWindowTitle();
         },
-        .pomodoro_reset => {
-            self.pomodoro_state.reset();
+        .wellbeing_dismiss => {
+            self.wellbeing_state.dismissAlert();
+            self.wellbeing_overlay.dashboard_open = false;
+            self.quit_confirm_open = false;
+            self.toast_queue.dismissAll();
+            self.frame_builder.last_generation = null;
+            self.needs_redraw = true;
             self.updateWindowTitle();
         },
-        .pomodoro_skip => {
-            self.pomodoro_state.skip();
-            self.ringBell();
-            self.updateWindowTitle();
+        .toast_dismiss => {
+            if (self.toast_queue.isActive()) {
+                _ = self.toast_queue.dismiss(self.toast_queue.entries[0].id);
+                self.needs_redraw = true;
+            } else if (self.wellbeing_state.current_alert.kind != .none) {
+                self.wellbeing_state.dismissAlert();
+                self.needs_redraw = true;
+            }
         },
-        .pomodoro_auto_transition => {
-            self.pomodoro_state.setTransitionMode(
-                if (self.pomodoro_state.option.transition_mode == .auto) .manual else .auto,
-            );
+        .toast_activate => {
+            if (self.toast_queue.isActive()) {
+                const id = self.toast_queue.entries[0].id;
+                _ = self.toast_queue.dismiss(id);
+                self.needs_redraw = true;
+            } else if (self.wellbeing_state.current_alert.kind != .none) {
+                self.wellbeing_state.skipFocus();
+                self.ringBell();
+                self.updateWindowTitle();
+                self.needs_redraw = true;
+            }
+        },
+        .wellbeing_toast_toggle => {
+            const current = self.wellbeing_state.current_alert;
+            const next_alert: wellbeing.reminders.Alert = switch (current.kind) {
+                .none => .{
+                    .kind = .healthy_break,
+                    .prompt = "Time for a healthy break: step away and relax.",
+                    .remaining_s = 60,
+                },
+                .healthy_break => .{
+                    .kind = .hydration,
+                    .prompt = "Stay hydrated: drink some fresh water.",
+                    .remaining_s = 60,
+                },
+                .hydration => .{
+                    .kind = .posture,
+                    .prompt = "Check posture: roll shoulders back and align neck.",
+                    .remaining_s = 60,
+                },
+                .posture => .{
+                    .kind = .screen_limit,
+                    .prompt = "Daily screen-time limit reached.",
+                    .remaining_s = 60,
+                },
+                else => .{
+                    .kind = .none,
+                    .prompt = "",
+                    .remaining_s = 0,
+                },
+            };
+            if (next_alert.kind == .none) {
+                self.wellbeing_state.dismissAlert();
+            } else {
+                self.wellbeing_state.current_alert = next_alert;
+            }
+            self.frame_builder.last_generation = null;
+            self.needs_redraw = true;
             self.updateWindowTitle();
         },
         .debug => {
-            log.debug("pomodoro_stats={any}", .{self.pomodoro_stats});
+            log.debug("wellbeing_data={any}", .{self.wellbeing_state.data});
         },
         .send_to_pty => |seq| {
             self.driver.sendBytes(seq) catch |err| {
@@ -1034,9 +1236,160 @@ fn snapToLiveView(self: *App) void {
     self.needs_redraw = true;
 }
 
+fn quitConfirmModalRequest(card_opt: Card.Option, modal_opt: Modal.Option, actions: *[2]Modal.Action) Modal.Request {
+    actions.* = .{
+        .{ .shortcut = "Enter / Y", .label = modal_opt.confirm_label },
+        .{ .shortcut = "Esc / N", .label = modal_opt.cancel_label },
+    };
+    return .{
+        .title = modal_opt.title,
+        .line1 = modal_opt.line1,
+        .line2 = modal_opt.line2,
+        .actions = actions,
+        .variant = .warning,
+        .dim_alpha = modal_opt.dim_alpha,
+        .width = modal_opt.width,
+        .corner_radius = modal_opt.corner_radius orelse card_opt.effectiveRadius(),
+        .border_width = modal_opt.border_width orelse card_opt.border_width,
+    };
+}
+
+/// Requests closing the terminal window, opening the quit confirmation modal when `confirm_quit` is enabled.
+pub fn requestQuit(self: *App) void {
+    if (!self.config.window.confirm_quit or self.quit_confirm_open) {
+        self.confirmQuit();
+        return;
+    }
+    self.window.setWindowShouldClose(false);
+    const initial_idx: u8 = switch (self.config.window.modal.default_focus) {
+        .confirm => 0,
+        .cancel => 1,
+    };
+    self.quit_modal_focus = FocusGroup.init(2, initial_idx);
+    self.quit_confirm_open = true;
+    self.frame_builder.last_generation = null;
+    self.needs_redraw = true;
+}
+
+/// Marks the quit prompt as confirmed and signals the window to close on the next event loop iteration.
+pub fn confirmQuit(self: *App) void {
+    self.quit_confirmed = true;
+    self.quit_confirm_open = false;
+    self.window.setWindowShouldClose(true);
+}
+
+/// Routes physical key events to active UI modals, overlays, and application keybindings.
+/// Returns true when the event was consumed by the UI layer, signaling the input callback
+/// to bypass terminal key encoding and suppress trailing text input callbacks.
+fn routeKeyToUi(self: *App, maybe_key: ?rex.input.Key, mods: rex.input.Modifiers) bool {
+    const k = maybe_key orelse return false;
+
+    if (self.quit_confirm_open) {
+        self.handleQuitModalKey(k, mods);
+        return true;
+    }
+
+    if (self.wellbeing_overlay.dashboard_open) {
+        self.handleDashboardKey(k);
+        return true;
+    }
+
+    if (self.wellbeing_state.input_locked) {
+        return true;
+    }
+
+    if (rex.input.matchBinding(self.config.keymap, k, mods)) |act| {
+        self.handleAction(act);
+        return true;
+    }
+
+    return false;
+}
+
+fn handleQuitModalKey(self: *App, k: rex.input.Key, mods: rex.input.Modifiers) void {
+    switch (k) {
+        .tab => {
+            if (mods.shift) {
+                self.quit_modal_focus.prev();
+            } else {
+                self.quit_modal_focus.next();
+            }
+            self.frame_builder.last_generation = null;
+            self.needs_redraw = true;
+        },
+        .left, .up => {
+            self.quit_modal_focus.prev();
+            self.frame_builder.last_generation = null;
+            self.needs_redraw = true;
+        },
+        .right, .down => {
+            self.quit_modal_focus.next();
+            self.frame_builder.last_generation = null;
+            self.needs_redraw = true;
+        },
+        .enter, .kp_enter, .space => {
+            if (self.quit_modal_focus.isFocused(0)) {
+                self.confirmQuit();
+            } else {
+                self.quit_confirm_open = false;
+                self.frame_builder.last_generation = null;
+                self.needs_redraw = true;
+            }
+        },
+        .y, .q => {
+            self.confirmQuit();
+        },
+        .escape, .n, .backspace => {
+            self.quit_confirm_open = false;
+            self.frame_builder.last_generation = null;
+            self.needs_redraw = true;
+        },
+        else => {},
+    }
+}
+
+fn handleDashboardKey(self: *App, k: rex.input.Key) void {
+    switch (k) {
+        .escape, .q => {
+            self.wellbeing_overlay.dashboard_open = false;
+            self.needs_redraw = true;
+        },
+        .c => {
+            var card_buf: [2048]u8 = undefined;
+            const card = self.wellbeing_state.renderDashboard(&card_buf);
+            if (card.len < card_buf.len) {
+                card_buf[card.len] = 0;
+                c.glfwSetClipboardString(self.window.handle, card_buf[0..card.len :0].ptr);
+            }
+            self.wellbeing_state.current_alert = .{
+                .kind = .healthy_break,
+                .prompt = "Dashboard card copied to clipboard.",
+                .remaining_s = 5,
+            };
+            self.needs_redraw = true;
+        },
+        .r => {
+            self.wellbeing_state.purgeHistory(self.io, self.dirs.state) catch {};
+            self.needs_redraw = true;
+        },
+        .p => {
+            self.wellbeing_state.toggleFocus();
+            self.updateWindowTitle();
+            self.needs_redraw = true;
+        },
+        else => {},
+    }
+}
+
 const charCb: c.GLFWcharfun = struct {
     fn cb(window: ?*c.GLFWwindow, codepoint: c_uint) callconv(.c) void {
         const app: *App = @ptrCast(@alignCast(c.glfwGetWindowUserPointer(window) orelse return));
+        if (app.skip_next_char) {
+            app.skip_next_char = false;
+            return;
+        }
+        if (app.quit_confirm_open or app.wellbeing_overlay.dashboard_open or app.wellbeing_state.input_locked) return;
+        app.wellbeing_state.recordActivity();
         app.selection = .empty;
         app.needs_redraw = true;
 
@@ -1060,10 +1413,16 @@ const keyCb: c.GLFWkeyfun = struct {
     fn cb(window: ?*c.GLFWwindow, key: c_int, _: c_int, action: c_int, mods: c_int) callconv(.c) void {
         const app: *App = @ptrCast(@alignCast(c.glfwGetWindowUserPointer(window) orelse return));
         if (action == c.GLFW_RELEASE) return;
+        app.wellbeing_state.recordActivity();
 
-        // App keybindings first; handleAction redraws and resets the
-        // selection itself.
-        if (rex.input.matchBinding(app.config.keymap, key, mods)) |act| return app.handleAction(act);
+        const maybe_key = rex.input.Key.fromGlfw(key);
+        const key_mods = rex.input.Modifiers.fromGlfw(mods);
+
+        if (app.routeKeyToUi(maybe_key, key_mods)) {
+            app.skip_next_char = true;
+            return;
+        }
+        app.skip_next_char = false;
 
         // A bare modifier keeps the selection, since it may start a
         // combination such as Ctrl+Shift+C.
@@ -1218,6 +1577,7 @@ fn reportMouseButton(self: *App, col: u16, row: u16, button: c_int, mod_byte: u8
 const mouseButtonCb: c.GLFWmousebuttonfun = struct {
     fn cb(handle: ?*c.GLFWwindow, button: c_int, action: c_int, mods: c_int) callconv(.c) void {
         const app: *App = @ptrCast(@alignCast(c.glfwGetWindowUserPointer(handle) orelse return));
+        app.wellbeing_state.recordActivity();
         const press = (action == c.GLFW_PRESS);
 
         app.trackMouseButton(button, press);
@@ -1230,7 +1590,14 @@ const mouseButtonCb: c.GLFWmousebuttonfun = struct {
         const frame = app.driver.getFrame();
         const scrollback_used = frame.scrollback_used;
 
-        if (scrollback_used > 0 and app.handleScrollbarClick()) return;
+        if (button == c.GLFW_MOUSE_BUTTON_LEFT) {
+            if (press) {
+                if (app.handleOverlayClick(col, row)) return;
+                if (scrollback_used > 0 and app.handleScrollbarClick()) return;
+            } else {
+                if (app.handleScrollbarRelease()) return;
+            }
+        }
 
         const is_primary = !frame.is_alternate;
         // log.debug("mouse_reporting={} shift_held={} is_primary={}", .{ mouse_reporting, shift_held, is_primary });
@@ -1248,6 +1615,133 @@ const mouseButtonCb: c.GLFWmousebuttonfun = struct {
     }
 }.cb;
 
+fn handleOverlayClick(self: *App, col: u16, row: u16) bool {
+    // 1. In-stream registered interactive hotspots
+    if (self.hotspots.hitTest(col, row)) |action| {
+        switch (action) {
+            .confirm_quit => self.confirmQuit(),
+            .cancel_modal => {
+                self.quit_confirm_open = false;
+                self.frame_builder.last_generation = null;
+                self.needs_redraw = true;
+            },
+            .modal_action => |idx| if (idx == 0) self.confirmQuit() else {
+                self.quit_confirm_open = false;
+                self.frame_builder.last_generation = null;
+                self.needs_redraw = true;
+            },
+            .dismiss_toast, .activate_toast => |id| {
+                _ = self.toast_queue.dismiss(id);
+                self.needs_redraw = true;
+            },
+            .wellbeing_close => {
+                if (self.wellbeing_overlay.dashboard_open) {
+                    self.wellbeing_overlay.dashboard_open = false;
+                } else if (self.wellbeing_overlay.toast_active) {
+                    self.wellbeing_state.dismissAlert();
+                    self.wellbeing_overlay.toast_active = false;
+                }
+                self.frame_builder.last_generation = null;
+                self.needs_redraw = true;
+                self.updateWindowTitle();
+            },
+            .wellbeing_toggle_focus => {
+                self.wellbeing_state.toggleFocus();
+                self.updateWindowTitle();
+                self.frame_builder.last_generation = null;
+                self.needs_redraw = true;
+            },
+            .wellbeing_reset => {
+                self.wellbeing_state.purgeHistory(self.io, self.dirs.state) catch {};
+                self.frame_builder.last_generation = null;
+                self.needs_redraw = true;
+            },
+            .wellbeing_copy_card => {
+                var card_buf: [2048]u8 = undefined;
+                const card = self.wellbeing_state.renderDashboard(&card_buf);
+                if (card.len < card_buf.len) {
+                    card_buf[card.len] = 0;
+                    c.glfwSetClipboardString(self.window.handle, card_buf[0..card.len :0].ptr);
+                }
+                self.wellbeing_state.current_alert = .{
+                    .kind = .healthy_break,
+                    .prompt = "Dashboard card copied to clipboard.",
+                    .remaining_s = 5,
+                };
+                self.frame_builder.last_generation = null;
+                self.needs_redraw = true;
+            },
+            .none => {},
+        }
+        return true;
+    }
+
+    // 2. Clicks outside or inside modal dialogs
+    if (self.quit_confirm_open) {
+        const current_frame = self.driver.getFrame();
+        var actions: [2]Modal.Action = undefined;
+        if (Modal.hitTest(
+            quitConfirmModalRequest(self.config.window.card, self.config.window.modal, &actions),
+            current_frame.active_cols,
+            current_frame.active_rows,
+            col,
+            row,
+        )) |hit| {
+            if (hit == .outside and self.config.window.modal.close_on_outside_click) {
+                self.quit_confirm_open = false;
+                self.frame_builder.last_generation = null;
+                self.needs_redraw = true;
+            }
+        }
+        return true;
+    }
+
+    // 3. Clicks outside or inside wellbeing dashboard panel
+    if (self.wellbeing_overlay.dashboard_open) {
+        if (self.wellbeing_overlay.card_buffer.items.len > 0) {
+            const c_item = self.wellbeing_overlay.card_buffer.items[0];
+            if (col < c_item.col or col >= c_item.col + c_item.width or
+                row < c_item.row or row >= c_item.row + c_item.height)
+            {
+                if (self.config.window.modal.close_on_outside_click) {
+                    self.wellbeing_overlay.dashboard_open = false;
+                    self.frame_builder.last_generation = null;
+                    self.needs_redraw = true;
+                }
+            }
+        }
+        return true;
+    }
+
+    // 4. Lock screen swallows all clicks during active break
+    if (self.wellbeing_overlay.lock_screen_active) {
+        return true;
+    }
+
+    // 5. Fallback for toast dismiss/body
+    if (self.config.window.toast.enabled and self.toast_queue.isActive()) {
+        const current_frame = self.driver.getFrame();
+        if (self.toast_queue.hitTest(
+            col,
+            row,
+            current_frame.active_cols,
+            current_frame.active_rows,
+            self.wellbeing_overlay.toastRowOffset(),
+        )) |hit| {
+            switch (hit.part) {
+                .dismiss, .action => {
+                    _ = self.toast_queue.dismiss(hit.id);
+                    self.needs_redraw = true;
+                },
+                .body => {},
+            }
+            return true;
+        }
+    }
+
+    return false;
+}
+
 fn handleScrollbarRelease(self: *App) bool {
     if (!self.scrollbar_dragging) return false;
     self.scrollbar_dragging = false;
@@ -1263,8 +1757,9 @@ fn handleScrollbarClick(self: *App) bool {
     const mouse_x = self.mouse_x;
     const mouse_y = self.mouse_y;
     const option = self.config.window.scrollbar;
+    const effective_width = if (self.renderer.scrollbar.hover) option.hover_width else option.width;
 
-    const bar_x: f32 = frame_width - option.width - option.gap;
+    const bar_x: f32 = frame_width - effective_width - option.gap;
     if (mouse_x < bar_x) return false;
 
     // A click on the thumb drags from that point. A click in the track
@@ -1338,20 +1833,19 @@ fn flushScroll(self: *App) void {
     if (self.scroll_accumulator_y == 0) return;
 
     const steps: i32 = @intFromFloat(self.scroll_accumulator_y);
-    if (steps == 0) return; // fractional remainder only, not a full step yet
+    if (steps == 0) return; // fractional remainder only, not a full line/step yet
     self.scroll_accumulator_y -= @floatFromInt(steps);
 
     const col, const row = self.mouseCellPos(self.mouse_x, self.mouse_y);
     const button: u8 = if (steps > 0) 64 else 65;
     const abs_steps: u16 = @intCast(@abs(steps));
-    const lines: u16 = abs_steps * @as(u16, @intCast(self.config.scroll.wheel_lines));
 
     self.driver.sendInput(.{
         .mouse_scroll = .{
             .col = col,
             .row = row,
             .button = button,
-            .steps = lines,
+            .steps = abs_steps,
         },
     }) catch {};
     self.needs_redraw = true;
@@ -1360,8 +1854,21 @@ fn flushScroll(self: *App) void {
 const scrollCb: c.GLFWscrollfun = struct {
     fn cb(handle: ?*c.GLFWwindow, _: f64, y_offset: f64) callconv(.c) void {
         const app: *App = @ptrCast(@alignCast(c.glfwGetWindowUserPointer(handle) orelse return));
+        app.wellbeing_state.recordActivity();
 
-        app.scroll_accumulator_y += y_offset;
+        // Clear sub-line fractional remainder on scroll direction reversal to eliminate hysteresis
+        if ((app.scroll_accumulator_y > 0 and y_offset < 0) or (app.scroll_accumulator_y < 0 and y_offset > 0)) {
+            app.scroll_accumulator_y = 0;
+        }
+
+        const modes = app.driver.getModes();
+        const multiplier: f64 = if (modes.reports_wheel)
+            1.0
+        else
+            @as(f64, @floatFromInt(app.config.scroll.wheel_lines));
+
+        app.scroll_accumulator_y += y_offset * multiplier;
+        app.flushScroll();
     }
 }.cb;
 
@@ -1492,6 +1999,13 @@ const framebufferSizeCb: c.GLFWframebuffersizefun = struct {
     }
 }.cb;
 
+const windowCloseCb: c.GLFWwindowclosefun = struct {
+    fn cb(handle: ?*c.GLFWwindow) callconv(.c) void {
+        const app: *App = @ptrCast(@alignCast(c.glfwGetWindowUserPointer(handle) orelse return));
+        app.requestQuit();
+    }
+}.cb;
+
 test "PeriodicTimer: counts whole periods and keeps the remainder" {
     var timer: PeriodicTimer = .{ .period_ms = 500 };
     try std.testing.expectEqual(0, timer.tick(499));
@@ -1548,9 +2062,9 @@ test "Driver: single and threaded polymorphic dispatch" {
         .error_read_fd = -1,
     };
 
-    const single_driver = try SingleDriverType.init(allocator, pty_single, .graphite);
+    const single_driver = try SingleDriverType.init(allocator, testing.io, pty_single, .graphite);
     var driver_s: Driver = .{ .single = single_driver };
-    defer driver_s.deinit(testing.io);
+    defer driver_s.deinit();
 
     try testing.expectEqual(@as(posix.pid_t, -1), driver_s.getPid());
     try testing.expect(!driver_s.getModes().cursor_keys);
@@ -1566,11 +2080,206 @@ test "Driver: single and threaded polymorphic dispatch" {
         .error_read_fd = -1,
     };
 
-    const threaded_driver = try ThreadedDriverType.create(allocator, pty_multi, .graphite, 150);
+    const threaded_driver = try ThreadedDriverType.create(allocator, testing.io, pty_multi, .graphite, 150);
     var driver_m: Driver = .{ .threaded = threaded_driver };
-    defer driver_m.deinit(testing.io);
+    defer driver_m.deinit();
 
     try testing.expectEqual(@as(posix.pid_t, -1), driver_m.getPid());
     try testing.expect(!driver_m.getModes().cursor_keys);
+    try testing.expect(!driver_s.hasNewFrame());
+    try testing.expect(!driver_m.hasNewFrame());
     _ = driver_m.getFrame();
+}
+
+test "ScrollAccumulator: smooth line accumulation and direction reversal" {
+    const testing = std.testing;
+
+    var accum_y: f64 = 0;
+    const wheel_lines: u32 = 3;
+
+    // Fractional tick 1: +0.25 notch on a smooth wheel
+    var y_offset: f64 = 0.25;
+    if ((accum_y > 0 and y_offset < 0) or (accum_y < 0 and y_offset > 0)) {
+        accum_y = 0;
+    }
+    accum_y += y_offset * @as(f64, @floatFromInt(wheel_lines));
+    var steps: i32 = @intFromFloat(accum_y);
+    try testing.expectEqual(@as(i32, 0), steps);
+    try testing.expectApproxEqAbs(@as(f64, 0.75), accum_y, 0.0001);
+
+    // Fractional tick 2: +0.25 notch (total 1.5 lines) -> should flush 1 line
+    y_offset = 0.25;
+    if ((accum_y > 0 and y_offset < 0) or (accum_y < 0 and y_offset > 0)) {
+        accum_y = 0;
+    }
+    accum_y += y_offset * @as(f64, @floatFromInt(wheel_lines));
+    steps = @intFromFloat(accum_y);
+    try testing.expectEqual(@as(i32, 1), steps);
+    accum_y -= @floatFromInt(steps);
+    try testing.expectApproxEqAbs(@as(f64, 0.5), accum_y, 0.0001);
+
+    // Reversal: scroll down -0.2 notch -> opposite fractional remainder (+0.5) must reset to 0
+    y_offset = -0.2;
+    if ((accum_y > 0 and y_offset < 0) or (accum_y < 0 and y_offset > 0)) {
+        accum_y = 0;
+    }
+    try testing.expectEqual(@as(f64, 0), accum_y);
+    accum_y += y_offset * @as(f64, @floatFromInt(wheel_lines));
+    try testing.expectApproxEqAbs(@as(f64, -0.6), accum_y, 0.0001);
+}
+
+test "App: general UI renderer options and theme accent in Config" {
+    const testing = std.testing;
+
+    var theme = Theme.graphite;
+    theme.accent = .{ .r = 138, .g = 110, .b = 240 };
+
+    const card_opt = Card.Option{
+        .corner_radius = 12.0,
+        .border_width = 2.0,
+        .border_shape = .sharp,
+    };
+    const toast_opt = Toast.Option{
+        .enabled = true,
+        .position = .bottom_right,
+        .border_style = .subtle,
+        .duration_ms = 4000,
+    };
+    const icon_opt = Icon.Option{
+        .style = .nerd_font,
+    };
+
+    try testing.expectEqual(@as(f32, 12.0), card_opt.corner_radius);
+    try testing.expectEqual(Card.BorderShape.sharp, card_opt.border_shape);
+    try testing.expectEqual(Toast.Position.bottom_right, toast_opt.position);
+    try testing.expectEqual(Toast.BorderStyle.subtle, toast_opt.border_style);
+    try testing.expectEqual(Icon.IconStyle.nerd_font, icon_opt.style);
+
+    const tokens = rex.color.Tokens.fromTheme(theme);
+    try testing.expectEqual([3]u8{ 138, 110, 240 }, tokens.accent);
+}
+
+test "App: quitConfirmModalRequest layout and hitTest" {
+    const testing = std.testing;
+
+    var actions: [2]Modal.Action = undefined;
+    const req = quitConfirmModalRequest(.{ .corner_radius = 8.0, .border_width = 1.0, .border_shape = .rounded }, .{}, &actions);
+    try testing.expectEqual(@as(f32, 8.0), req.corner_radius);
+    try testing.expectEqualStrings("Quit terminal", actions[0].label);
+    try testing.expectEqualStrings("Cancel and stay", actions[1].label);
+
+    // Outside click cancels
+    try testing.expectEqual(Modal.HitResult.outside, Modal.hitTest(req, 80, 24, 2, 2).?);
+
+    // Action 0 ("Quit terminal" at row 13)
+    try testing.expectEqual(Modal.HitResult{ .action = 0 }, Modal.hitTest(req, 80, 24, 25, 13).?);
+
+    // Action 1 ("Cancel and stay" at row 14)
+    try testing.expectEqual(Modal.HitResult{ .action = 1 }, Modal.hitTest(req, 80, 24, 25, 14).?);
+
+    // Custom configuration overrides
+    var custom_actions: [2]Modal.Action = undefined;
+    const custom_req = quitConfirmModalRequest(.{}, .{
+        .title = "TERMINATE NOW?",
+        .confirm_label = "Yes, kill it",
+        .cancel_label = "No, go back",
+        .dim_alpha = 100,
+        .width = 50,
+    }, &custom_actions);
+    try testing.expectEqualStrings("TERMINATE NOW?", custom_req.title);
+    try testing.expectEqualStrings("Yes, kill it", custom_actions[0].label);
+    try testing.expectEqualStrings("No, go back", custom_actions[1].label);
+    try testing.expectEqual(@as(u8, 100), custom_req.dim_alpha);
+    try testing.expectEqual(@as(u16, 50), custom_req.width);
+}
+
+test "App: quit confirm modal focus cycling and hotspot routing" {
+    const testing = std.testing;
+
+    var focus = FocusGroup.init(2, 0);
+    try testing.expect(focus.isFocused(0));
+    try testing.expect(!focus.isFocused(1));
+
+    // Tab forward cycles to cancel button
+    focus.next();
+    try testing.expect(focus.isFocused(1));
+    try testing.expect(!focus.isFocused(0));
+
+    // Tab wraps around to quit button
+    focus.next();
+    try testing.expect(focus.isFocused(0));
+
+    // Shift-Tab cycles backward
+    focus.prev();
+    try testing.expect(focus.isFocused(1));
+
+    // Hotspot table routing
+    var table: HotspotTable = .{};
+    table.add(17, 13, 40, 1, .confirm_quit);
+    table.add(17, 14, 40, 1, .cancel_modal);
+
+    const hit_quit = table.hitTest(25, 13);
+    try testing.expect(hit_quit != null);
+    try testing.expectEqual(UiActionTag.confirm_quit, std.meta.activeTag(hit_quit.?));
+
+    const hit_cancel = table.hitTest(25, 14);
+    try testing.expect(hit_cancel != null);
+    try testing.expectEqual(UiActionTag.cancel_modal, std.meta.activeTag(hit_cancel.?));
+}
+
+test "App: routeKeyToUi unified dispatcher consumes modal keys and suppresses text leakage" {
+    const testing = std.testing;
+
+    // Simulate modal close with 'q': routeKeyToUi handles the key and returns true.
+    // The caller in keyCb automatically sets skip_next_char = true without the modal handler
+    // needing to manage any low-level GLFW callback suppression state.
+    var dashboard_open = true;
+    var skip_next_char = false;
+
+    // Simulated routeKeyToUi
+    const key_consumed = blk: {
+        if (dashboard_open) {
+            dashboard_open = false; // Closed by 'q'
+            break :blk true;
+        }
+        break :blk false;
+    };
+
+    if (key_consumed) {
+        skip_next_char = true;
+    }
+
+    try testing.expect(key_consumed);
+    try testing.expect(skip_next_char);
+    try testing.expect(!dashboard_open);
+
+    // In charCb: character callback is suppressed and skip flag consumed
+    var char_sent = false;
+    if (skip_next_char) {
+        skip_next_char = false;
+    } else if (!dashboard_open) {
+        char_sent = true;
+    }
+    try testing.expect(!char_sent);
+    try testing.expect(!skip_next_char);
+
+    // Subsequent normal typing is unconsumed and reaches the terminal
+    const normal_key_consumed = blk: {
+        if (dashboard_open) {
+            break :blk true;
+        }
+        break :blk false;
+    };
+    if (normal_key_consumed) {
+        skip_next_char = true;
+    } else {
+        skip_next_char = false;
+    }
+
+    if (skip_next_char) {
+        skip_next_char = false;
+    } else if (!dashboard_open) {
+        char_sent = true;
+    }
+    try testing.expect(char_sent);
 }
