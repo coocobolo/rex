@@ -280,3 +280,47 @@ test "config: dumpDefaultConfig produces valid configuration template" {
     try testing.expectEqual(@as(f32, 8.0), cfg.card_corner_radius.?);
     try testing.expectEqual(@as(u32, 5000), cfg.toast_duration_ms.?);
 }
+
+test "config: dot notation with snake_case properties" {
+    const text =
+        \\window.background_alpha = 0.88
+        \\window.confirm_quit = false
+        \\window.dim_alpha = 0.45
+        \\card.corner_radius = 12.0
+        \\card.border_width = 1.5
+        \\modal.dim_alpha = 140
+        \\modal.close_on_outside_click = false
+        \\toast.border_style = subtle
+        \\toast.position = top_right
+        \\toast.duration = 4s
+        \\wellbeing.daily_limit = 6h
+        \\wellbeing.focus_time = 30m
+        \\wellbeing.short_break = 7m
+        \\wellbeing.long_break = 20m
+        \\wellbeing.tasks_before_long_break = 5
+        \\wellbeing.lock_input_on_break = true
+    ;
+
+    var parser = Parser.init(text);
+    var cfg = FileConfig{};
+    var diags = Diagnostics{};
+    parser.parseInto(&cfg, &diags);
+
+    try testing.expect(!diags.hasErrors());
+    try testing.expectEqual(@as(f32, 0.88), cfg.window_background_alpha.?);
+    try testing.expectEqual(false, cfg.window_confirm_quit.?);
+    try testing.expectEqual(@as(f32, 0.45), cfg.window_dim_alpha.?);
+    try testing.expectEqual(@as(f32, 12.0), cfg.card_corner_radius.?);
+    try testing.expectEqual(@as(f32, 1.5), cfg.card_border_width.?);
+    try testing.expectEqual(@as(u8, 140), cfg.modal_dim_alpha.?);
+    try testing.expectEqual(false, cfg.modal_close_on_outside_click.?);
+    try testing.expectEqual(.subtle, cfg.toast_border_style.?);
+    try testing.expectEqual(.top_right, cfg.toast_position.?);
+    try testing.expectEqual(@as(u32, 4000), cfg.toast_duration_ms.?);
+    try testing.expectEqual(@as(u32, 6 * 60), cfg.wellbeing_daily_limit_minutes.?);
+    try testing.expectEqual(@as(u32, 30 * 60 * 1000), cfg.wellbeing_focus_task_ms.?);
+    try testing.expectEqual(@as(u32, 7 * 60 * 1000), cfg.wellbeing_focus_short_break_ms.?);
+    try testing.expectEqual(@as(u32, 20 * 60 * 1000), cfg.wellbeing_focus_long_break_ms.?);
+    try testing.expectEqual(@as(u32, 5), cfg.wellbeing_tasks_before_long_break.?);
+    try testing.expectEqual(true, cfg.wellbeing_lock_input_on_break.?);
+}
