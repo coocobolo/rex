@@ -265,7 +265,7 @@ test "config: merge and applyFileConfig overrides" {
 
 test "config: dumpDefaultConfig produces valid configuration template" {
     const merge_mod = @import("merge.zig");
-    var buf: [4096]u8 = undefined;
+    var buf: [16384]u8 = undefined;
     var w: std.Io.Writer = .fixed(&buf);
     try merge_mod.dumpDefaultConfig(&w);
 

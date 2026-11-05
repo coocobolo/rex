@@ -33,7 +33,7 @@ pub const graphite: Theme = .{
 };
 
 pub const graphite_ansi: [16]Rgb = .{
-    .{ .r = 0x26, .g = 0x26, .b = 0x26 }, // 0 black
+    .{ .r = 0x10, .g = 0x10, .b = 0x10 }, // 0 black
     .{ .r = 0x64, .g = 0x64, .b = 0x64 }, // 1 red
     .{ .r = 0x8E, .g = 0x8E, .b = 0x8E }, // 2 green
     .{ .r = 0xB9, .g = 0xB9, .b = 0xB9 }, // 3 yellow

@@ -344,6 +344,9 @@ pub fn main(init: std.process.Init) !void {
                 printStderr("Error: --config requires a file path argument\n");
                 std.process.exit(1);
             };
+        } else if (std.mem.eql(u8, arg, "--dump-default") or std.mem.eql(u8, arg, "dump-default")) {
+            try rex.config.dumpDefaultConfig(StdoutWriter{});
+            return;
         } else if (subcmd == null) {
             subcmd = arg;
             break;
@@ -398,6 +401,9 @@ pub fn main(init: std.process.Init) !void {
         } else if (std.mem.eql(u8, sc, "check-config")) {
             const target_path = args.next() orelse custom_config_path;
             try handleConfigValidate(allocator, &environ, target_path);
+            return;
+        } else if (std.mem.eql(u8, sc, "dump-default") or std.mem.eql(u8, sc, "--dump-default")) {
+            try rex.config.dumpDefaultConfig(StdoutWriter{});
             return;
         }
     }
@@ -458,6 +464,7 @@ fn printHelp() void {
         \\
         \\Options:
         \\  -c, --config <path>    Load configuration from custom path
+        \\  --dump-default         Print default configuration template to stdout and exit
         \\  -h, --help             Display this help message and exit
         \\
         \\Hotkeys:
