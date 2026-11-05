@@ -367,7 +367,7 @@ pub const canonical_default_config: []const u8 =
     \\
     \\# Border stroke color styling.
     \\# Supported values:
-    \\#   semantic  - Border tinted by diagnostic severity (error: red, warning: yellow, info: accent)
+    \\#   semantic  - Border tinted by diagnostic severity (error: red, warning: yellow, info: cyan)
     \\#   subtle    - Low-contrast neutral border
     \\# Default: semantic
     \\border_style = semantic
@@ -1050,7 +1050,7 @@ pub fn serializeConfig(config: *const FileConfig, writer: anytype) !void {
     try writer.writeAll(
         \\# Border stroke color styling.
         \\# Supported values:
-        \\#   semantic  - Border tinted by diagnostic severity (error: red, warning: yellow, info: accent)
+        \\#   semantic  - Border tinted by diagnostic severity (error: red, warning: yellow, info: cyan)
         \\#   subtle    - Low-contrast neutral border
         \\# Default: semantic
         \\
