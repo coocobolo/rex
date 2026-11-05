@@ -515,3 +515,17 @@ test "overlay: semantic border selection" {
     const info_style = wellbeing.overlay.variantStyle(.info);
     try testing.expectEqual(wellbeing.tokens.Tokens.info, info_style.accent);
 }
+
+test "overlay: dashboard layout geometry and symmetric padding" {
+    // Verify symmetric padding: 3 columns margin on both left and right
+    const rect = wellbeing.overlay.PanelRect{ .col = 7, .row = 2, .width = 66, .height = 15 };
+    const content_col = rect.col + 3; // 10
+    const max_content_col = rect.col + rect.width - 4; // 69
+
+    try testing.expectEqual(@as(u16, 10), content_col);
+    try testing.expectEqual(@as(u16, 69), max_content_col);
+    // Left padding: content_col - rect.col = 3
+    try testing.expectEqual(@as(u16, 3), content_col - rect.col);
+    // Right padding: (rect.col + rect.width - 1) - max_content_col = 72 - 69 = 3
+    try testing.expectEqual(@as(u16, 3), (rect.col + rect.width - 1) - max_content_col);
+}

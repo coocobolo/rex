@@ -573,9 +573,14 @@ pub const Overlay = struct {
         const icon_style = icons.resolveStyle(self.icon_opt.style);
 
         // 1. Unified Panel Geometry
+        var active_apps: u16 = 0;
+        for (&wellbeing.data.today.top_apps) |*app| {
+            if (app.seconds > 0 and app.name[0] != 0) active_apps += 1;
+        }
+        const needed_h: u16 = if (active_apps > 3) 16 else 15;
         const target_w: u16 = @max(self.modal_opt.width, 66);
         const modal_w: u16 = if (total_cols > 6) @min(total_cols - 2, target_w) else total_cols;
-        const modal_h: u16 = if (total_rows > 4) @min(total_rows - 2, 19) else total_rows;
+        const modal_h: u16 = if (total_rows > 4) @min(total_rows - 2, needed_h) else total_rows;
         const col: u16 = if (total_cols > modal_w) (total_cols - modal_w) / 2 else 0;
         const row: u16 = if (total_rows > modal_h) (total_rows - modal_h) / 2 else 0;
 
@@ -602,7 +607,7 @@ pub const Overlay = struct {
         }) catch {};
 
         const content_col = rect.col + 3;
-        const max_content_col = rect.innerMaxCol();
+        const max_content_col = if (rect.width > 6) rect.col + rect.width - 4 else rect.col + rect.width - 1;
 
         const drawer: Text.Drawer = .{
             .allocator = allocator,
@@ -720,7 +725,7 @@ pub const Overlay = struct {
             _ = Text.draw(drawer, content_col, r, "Top Foreground Tools:", self.tokens.muted, 255, max_content_col);
             r += 1;
 
-            const max_tools_row = @min(r + 2, rect.maxRow() - 3);
+            const max_tools_row = @min(r + 1, rect.maxRow() - 3);
             var flow = Text.Flow.init(content_col + 2, r, max_content_col, max_tools_row);
             for (&wellbeing.data.today.top_apps) |*app| {
                 if (app.seconds == 0 or app.name[0] == 0) continue;
@@ -752,10 +757,11 @@ pub const Overlay = struct {
         // Section 5: All-Time Lifetime Summary
         if (r < rect.maxRow() - 2) {
             const total_foc = wellbeing.data.total_focus_s + wellbeing.data.today.focus_s;
+            const total_screen = wellbeing.data.total_active_screen_s + wellbeing.data.today.active_screen_s;
             const life_line = std.fmt.bufPrint(
                 &fmt_buf,
-                "All-Time Focus: {d}h {d:0>2}m  |  Total Screen: {d}h",
-                .{ total_foc / 3600, (total_foc % 3600) / 60, (wellbeing.data.total_active_screen_s + wellbeing.data.today.active_screen_s) / 3600 },
+                "All-Time Focus: {d}h {d:0>2}m  |  Total Screen: {d}h {d:0>2}m",
+                .{ total_foc / 3600, (total_foc % 3600) / 60, total_screen / 3600, (total_screen % 3600) / 60 },
             ) catch "";
             _ = Text.drawEllipsis(drawer, content_col, r, life_line, self.tokens.muted, 255, max_content_col, "…");
             r += 1;
@@ -768,15 +774,15 @@ pub const Overlay = struct {
 
             // Action Bar
             var act_c = content_col;
-            const w_close = self.drawShortcut(allocator, atlas, rasterizer, act_c, footer_r, "[Esc/q]", " Close  ");
+            const w_close = self.drawShortcut(allocator, atlas, rasterizer, act_c, footer_r, "[Esc/q]", " Close   ");
             if (hotspots) |ht| ht.add(act_c, footer_r, w_close, 1, .wellbeing_close);
             act_c += w_close;
 
-            const w_focus = self.drawShortcut(allocator, atlas, rasterizer, act_c, footer_r, "[p]", " Focus  ");
+            const w_focus = self.drawShortcut(allocator, atlas, rasterizer, act_c, footer_r, "[p]", " Focus   ");
             if (hotspots) |ht| ht.add(act_c, footer_r, w_focus, 1, .wellbeing_toggle_focus);
             act_c += w_focus;
 
-            const w_reset = self.drawShortcut(allocator, atlas, rasterizer, act_c, footer_r, "[r]", " Reset  ");
+            const w_reset = self.drawShortcut(allocator, atlas, rasterizer, act_c, footer_r, "[r]", " Reset   ");
             if (hotspots) |ht| ht.add(act_c, footer_r, w_reset, 1, .wellbeing_reset);
             act_c += w_reset;
 
@@ -795,8 +801,8 @@ pub const Overlay = struct {
         key: []const u8,
         label: []const u8,
     ) u16 {
-        const k_len = self.drawString(allocator, atlas, rasterizer, col, row, key, self.tokens.secondary, 255, col + 30);
-        const l_len = self.drawString(allocator, atlas, rasterizer, col + k_len, row, label, self.tokens.muted, 255, col + 30);
+        const k_len = self.drawString(allocator, atlas, rasterizer, col, row, key, self.tokens.accent, 255, col + 30);
+        const l_len = self.drawString(allocator, atlas, rasterizer, col + k_len, row, label, self.tokens.secondary, 255, col + 30);
         return k_len + l_len;
     }
 
