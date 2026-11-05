@@ -243,6 +243,10 @@ overlay_background_instances: []const Background.Instance = &.{},
 overlay_card_instances: []const Card.Instance = &.{},
 overlay_gray_instances: []const Cell.Instance = &.{},
 overlay_color_instances: []const Cell.Instance = &.{},
+overlay_has_modal: bool = false,
+modal_blur: bool = false,
+modal_blur_radius: u8 = 12,
+modal_dim_alpha: u8 = 180,
 
 /// Set by FrameBuilder when instance data changed since the last build.
 /// Renderer skips VBO re-upload when false, but always issues draw calls.

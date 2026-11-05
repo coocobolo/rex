@@ -791,6 +791,11 @@ fn renderFrame(self: *App) !bool {
         frame.overlay_card_instances = self.wellbeing_overlay.card_buffer.items;
         frame.overlay_gray_instances = self.wellbeing_overlay.gray_buffer.items;
         frame.overlay_color_instances = self.wellbeing_overlay.color_buffer.items;
+        const has_modal = self.quit_confirm_open or self.wellbeing_overlay.dashboard_open;
+        frame.overlay_has_modal = has_modal;
+        frame.modal_blur = self.config.window.modal.blur;
+        frame.modal_blur_radius = self.config.window.modal.blur_radius;
+        frame.modal_dim_alpha = self.config.window.modal.dim_alpha;
         frame.dirty.overlay = true;
     } else if (overlay_changed) {
         frame.dirty.overlay = true;
