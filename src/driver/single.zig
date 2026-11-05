@@ -540,7 +540,6 @@ test "SingleDriver: mouse_scroll primary viewport vs alternate alt_scroll" {
     var driver = try DriverType.init(testing.allocator, testing.io, mock_pty, Theme.graphite);
     defer driver.deinit();
 
-    // 1. Fill primary buffer with 20 lines so scrollback is populated
     var i: usize = 0;
     while (i < 20) : (i += 1) {
         _ = system.write(sv[1], "line\r\n", 6);
@@ -571,7 +570,6 @@ test "SingleDriver: mouse_scroll primary viewport vs alternate alt_scroll" {
     });
     try testing.expectEqual(@as(u32, 1), driver.terminal.primary.viewport_offset);
 
-    // 2. Switch to alternate screen (\x1b[?1049h)
     _ = system.write(sv[1], "\x1b[?1049h", 8);
     _ = try driver.pollAndDrain();
     try testing.expect(driver.terminal.active_buffer == .alternate);

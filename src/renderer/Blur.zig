@@ -160,7 +160,6 @@ pub fn renderBlur(
     gl.bindVertexArray(self.dummy_vao);
     gl.activeTexture(gl.TEXTURE0);
 
-    // 1. Progressive Downsample Passes
     self.down_shader.use();
     self.down_shader.set1i("u_texture", 0);
     self.down_shader.set1f("u_offset", base_offset);
@@ -186,7 +185,6 @@ pub fn renderBlur(
         src_h = dst.height;
     }
 
-    // 2. Progressive Upsample Passes
     self.up_shader.use();
     self.up_shader.set1i("u_texture", 0);
     self.up_shader.set1f("u_offset", base_offset);

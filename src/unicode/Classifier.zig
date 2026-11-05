@@ -1,20 +1,14 @@
-//! Classifies decoded Unicode codepoints for terminal-style word
-//! selection.
+//! Classifies decoded Unicode codepoints for terminal-style word selection.
 //!
-//! The classifier intentionally uses a simple terminal-style policy
-//! rather than Unicode word-boundary rules:
-//! 1. ASCII alphanumerics and '_' are words.
-//! 2. Configured ASCII characters are words.
-//! 3. Space and tab are blank boundaries.
-//! 4. Newline and carriage return are line boundaries.
-//! 5. Other ASCII controls follow the `Option.control` policy.
-//! 6. Other ASCII characters are punctuation.
-//! 7. Non-ASCII codepoints follow the `Option.non_ascii` policy.
+//! The classifier applies a terminal word selection policy rather than Unicode
+//! word-boundary rules. ASCII alphanumerics, underscores, and configured extra
+//! characters are treated as words. Spaces and tabs act as blank boundaries,
+//! while newlines and carriage returns form line boundaries. Other ASCII controls
+//! follow the configured control policy, remaining ASCII characters are treated
+//! as punctuation, and non-ASCII codepoints follow the non-ASCII policy.
 //!
-//! `Option.extra_word_chars` only supports ASCII characters for now.
-//!
-//! The input must already be decoded from UTF-8: each `u21` must be a
-//! valid Unicode scalar value.
+//! Extra word characters currently support ASCII codepoints only. Input must be
+//! decoded from UTF-8 into valid Unicode scalar values before classification.
 
 const std = @import("std");
 
