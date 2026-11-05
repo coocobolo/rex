@@ -6,6 +6,7 @@ out vec4 frag_color;
 uniform sampler2D u_texture;
 uniform vec2 u_half_pixel;
 uniform float u_offset;
+uniform int u_is_final;
 uniform float u_dim_alpha;
 uniform vec3 u_scrim_color;
 
@@ -36,16 +37,18 @@ void main() {
     // Normalize: 4.0 + 4*2.0 + 4*1.0 = 16.0
     vec3 blurred = (sum * 0.0625).rgb;
 
-    // Vibrancy boost: boost color saturation slightly relative to luminance
-    // so syntax highlights retain warmth and luminosity under the frosted blur
-    float luma = dot(blurred, vec3(0.2126, 0.7152, 0.0722));
-    vec3 vibrant = mix(vec3(luma), blurred, 1.25);
+    if (u_is_final != 0) {
+        // Vibrancy preservation: subtle 15% saturation retention
+        float luma = dot(blurred, vec3(0.2126, 0.7152, 0.0722));
+        vec3 vibrant = mix(vec3(luma), blurred, 1.15);
 
-    // Blend blurred backdrop with dark scrim color according to dim_alpha
-    vec3 tinted = mix(vibrant, u_scrim_color, clamp(u_dim_alpha, 0.0, 1.0));
+        // Blend blurred backdrop with dark scrim color according to dim_alpha
+        vec3 tinted = mix(vibrant, u_scrim_color, clamp(u_dim_alpha, 0.0, 1.0));
 
-    // Screen-space triangular dither in [-0.5/255, +0.5/255] range to dissolve quantization banding
-    float noise = (dither(gl_FragCoord.xy) - 0.5) / 255.0;
-    frag_color = vec4(clamp(tinted + vec3(noise), 0.0, 1.0), 1.0);
+        // Screen-space triangular dither in [-0.5/255, +0.5/255] range to dissolve quantization banding
+        float noise = (dither(gl_FragCoord.xy) - 0.5) / 255.0;
+        frag_color = vec4(clamp(tinted + vec3(noise), 0.0, 1.0), 1.0);
+    } else {
+        frag_color = vec4(blurred, 1.0);
+    }
 }
-
