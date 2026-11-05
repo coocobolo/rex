@@ -318,8 +318,26 @@ pub fn main(init: std.process.Init) !void {
     var args = init.minimal.args.iterate();
     const argv0 = args.next() orelse "rex";
 
-    if (args.next()) |subcmd| {
-        if (std.mem.eql(u8, subcmd, "wellbeing")) {
+    var custom_config_path: ?[]const u8 = null;
+    var subcmd: ?[]const u8 = null;
+
+    while (args.next()) |arg| {
+        if (std.mem.eql(u8, arg, "-h") or std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "help")) {
+            printHelp();
+            return;
+        } else if (std.mem.eql(u8, arg, "-c") or std.mem.eql(u8, arg, "--config")) {
+            custom_config_path = args.next() orelse {
+                printStderr("Error: --config requires a file path argument\n");
+                std.process.exit(1);
+            };
+        } else if (subcmd == null) {
+            subcmd = arg;
+            break;
+        }
+    }
+
+    if (subcmd) |sc| {
+        if (std.mem.eql(u8, sc, "wellbeing")) {
             const home_dir = try environ.getAlloc(allocator, "HOME");
             defer allocator.free(home_dir);
             var envmap = try environ.createMap(allocator);
@@ -338,20 +356,172 @@ pub fn main(init: std.process.Init) !void {
             if (args.next()) |action| {
                 if (std.mem.eql(u8, action, "clear")) {
                     try wb.purgeHistory(init.io, dirs.state);
-                    _ = std.posix.system.write(std.posix.STDOUT_FILENO, "Wellbeing history purged.\n".ptr, "Wellbeing history purged.\n".len);
+                    printStdout("Wellbeing history purged.\n");
                     return;
                 }
             }
 
             var buf: [2048]u8 = undefined;
             const card = wb.renderDashboard(&buf);
-            _ = std.posix.system.write(std.posix.STDOUT_FILENO, card.ptr, card.len);
+            printStdout(card);
+            return;
+        } else if (std.mem.eql(u8, sc, "config")) {
+            const config_action = args.next() orelse "locate";
+            if (std.mem.eql(u8, config_action, "locate")) {
+                try handleConfigLocate(allocator, &environ);
+                return;
+            } else if (std.mem.eql(u8, config_action, "dump-default")) {
+                try rex.config.dumpDefaultConfig(StdoutWriter{});
+                return;
+            } else if (std.mem.eql(u8, config_action, "validate")) {
+                const target_path = args.next() orelse custom_config_path;
+                try handleConfigValidate(allocator, &environ, target_path);
+                return;
+            } else {
+                printStderr("Unknown config command. Available: locate, dump-default, validate\n");
+                std.process.exit(1);
+            }
+        } else if (std.mem.eql(u8, sc, "check-config")) {
+            const target_path = args.next() orelse custom_config_path;
+            try handleConfigValidate(allocator, &environ, target_path);
             return;
         }
     }
 
-    var app: rex.App = try .init(allocator, init.io, &environ, argv0, &config);
+    var app: rex.App = try .init(allocator, init.io, &environ, argv0, &config, custom_config_path);
     defer app.deinit(allocator);
 
     try app.run();
+}
+
+const StdoutWriter = struct {
+    pub fn writeAll(_: @This(), bytes: []const u8) !void {
+        var written: usize = 0;
+        while (written < bytes.len) {
+            const rc = std.posix.system.write(std.posix.STDOUT_FILENO, bytes[written..].ptr, bytes[written..].len);
+            if (rc <= 0) break;
+            written += @intCast(rc);
+        }
+    }
+
+    pub fn print(self: @This(), comptime fmt: []const u8, args: anytype) !void {
+        var buf: [1024]u8 = undefined;
+        const msg = try std.fmt.bufPrint(&buf, fmt, args);
+        try self.writeAll(msg);
+    }
+};
+
+fn printStdout(msg: []const u8) void {
+    const writer = StdoutWriter{};
+    writer.writeAll(msg) catch {};
+}
+
+fn printStderr(msg: []const u8) void {
+    _ = std.posix.system.write(std.posix.STDERR_FILENO, msg.ptr, msg.len);
+}
+
+fn fileExists(path: []const u8) bool {
+    var path_buf: [std.fs.max_path_bytes]u8 = undefined;
+    if (path.len >= path_buf.len) return false;
+    @memcpy(path_buf[0..path.len], path);
+    path_buf[path.len] = 0;
+    const fd = std.posix.openat(std.posix.AT.FDCWD, path_buf[0..path.len :0], .{ .ACCMODE = .RDONLY, .CLOEXEC = true }, 0) catch return false;
+    _ = std.posix.system.close(fd);
+    return true;
+}
+
+fn printHelp() void {
+    printStdout(
+        \\Rex - High-Performance GPU-Accelerated Terminal Emulator
+        \\
+        \\Usage:
+        \\  rex [options]
+        \\  rex wellbeing [clear]
+        \\  rex config locate
+        \\  rex config dump-default
+        \\  rex config validate [<path>]
+        \\  rex check-config [<path>]
+        \\
+        \\Options:
+        \\  -c, --config <path>    Load configuration from custom path
+        \\  -h, --help             Display this help message and exit
+        \\
+        \\Hotkeys:
+        \\  Ctrl+Shift+R           Live reload configuration without dropping terminal session
+        \\  Ctrl+Shift+W           Toggle Digital Wellbeing overlay dashboard
+        \\  Ctrl+Shift+D           Dismiss active wellbeing alert
+        \\  Ctrl+Shift+P           Toggle focus timer
+        \\
+    );
+}
+
+fn handleConfigLocate(allocator: std.mem.Allocator, environ: *const std.process.Environ) !void {
+    const home_dir = try environ.getAlloc(allocator, "HOME");
+    defer allocator.free(home_dir);
+    var envmap = try environ.createMap(allocator);
+    defer envmap.deinit();
+    var dirs = try rex.dirs.Application.resolve(allocator, rex_terminal_option.name, home_dir, &envmap);
+    defer dirs.deinit(allocator);
+
+    const user_path = try rex.config.resolveUserConfigPath(allocator, &dirs);
+    defer allocator.free(user_path);
+
+    const stdout = StdoutWriter{};
+    try stdout.print("System config: {s} [{s}]\n", .{
+        rex.config.system_config_path,
+        if (fileExists(rex.config.system_config_path)) "found" else "not found",
+    });
+    try stdout.print("User config:   {s} [{s}]\n", .{
+        user_path,
+        if (fileExists(user_path)) "found" else "not found",
+    });
+}
+
+fn handleConfigValidate(allocator: std.mem.Allocator, environ: *const std.process.Environ, explicit_path: ?[]const u8) !void {
+    const stdout = StdoutWriter{};
+    const resolved_path = blk: {
+        if (explicit_path) |p| break :blk try allocator.dupe(u8, p);
+        const home_dir = try environ.getAlloc(allocator, "HOME");
+        defer allocator.free(home_dir);
+        var envmap = try environ.createMap(allocator);
+        defer envmap.deinit();
+        var dirs = try rex.dirs.Application.resolve(allocator, rex_terminal_option.name, home_dir, &envmap);
+        defer dirs.deinit(allocator);
+        break :blk try rex.config.resolveUserConfigPath(allocator, &dirs);
+    };
+    defer allocator.free(resolved_path);
+
+    if (!fileExists(resolved_path)) {
+        try stdout.print("Configuration file not found: {s}\n(system will use built-in defaults)\n", .{resolved_path});
+        return;
+    }
+
+    var file_cfg = rex.config.FileConfig{};
+    var diags = rex.config.Diagnostics{};
+
+    const loaded = rex.config.loadFile(resolved_path, &file_cfg, &diags) catch |err| {
+        try stdout.print("Failed to read configuration file: {}\n", .{err});
+        std.process.exit(1);
+    };
+
+    if (!loaded) {
+        try stdout.print("Configuration file not found: {s}\n", .{resolved_path});
+        return;
+    }
+
+    if (diags.hasErrors()) {
+        try stdout.print("Validation failed for {s}:\n", .{resolved_path});
+        for (diags.items[0..diags.count]) |*diag| {
+            const prefix = if (diag.severity == .err) "ERROR" else "WARN";
+            try stdout.print("  [{s}] line {d}:{d}: {s}\n", .{ prefix, diag.line, diag.col, diag.message() });
+        }
+        std.process.exit(1);
+    } else if (diags.count > 0) {
+        try stdout.print("Configuration valid with warnings for {s}:\n", .{resolved_path});
+        for (diags.items[0..diags.count]) |*diag| {
+            try stdout.print("  [WARN] line {d}:{d}: {s}\n", .{ diag.line, diag.col, diag.message() });
+        }
+    } else {
+        try stdout.print("✓ Configuration is valid: {s}\n", .{resolved_path});
+    }
 }
