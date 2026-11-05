@@ -142,3 +142,124 @@ pub fn parseBinding(key_str: []const u8, action_str: []const u8) ?Binding {
         .action = action,
     };
 }
+
+/// Formats a canonical Key into its human-readable configuration string representation.
+pub fn formatKey(key: Key, buf: []u8) []const u8 {
+    const key_val = @intFromEnum(key);
+    if (key_val >= @intFromEnum(Key.a) and key_val <= @intFromEnum(Key.z)) {
+        if (buf.len >= 1) {
+            buf[0] = @as(u8, @intCast('a' + (key_val - @intFromEnum(Key.a))));
+            return buf[0..1];
+        }
+    }
+    if (key_val >= @intFromEnum(Key.num_0) and key_val <= @intFromEnum(Key.num_9)) {
+        if (buf.len >= 1) {
+            buf[0] = @as(u8, @intCast('0' + (key_val - @intFromEnum(Key.num_0))));
+            return buf[0..1];
+        }
+    }
+    if (key_val >= @intFromEnum(Key.f1) and key_val <= @intFromEnum(Key.f12)) {
+        const fn_num = 1 + (key_val - @intFromEnum(Key.f1));
+        return std.fmt.bufPrint(buf, "f{d}", .{fn_num}) catch "f1";
+    }
+
+    return switch (key) {
+        .space => "space",
+        .enter => "enter",
+        .tab => "tab",
+        .backspace => "backspace",
+        .escape => "escape",
+        .delete => "delete",
+        .insert => "insert",
+        .home => "home",
+        .end => "end",
+        .page_up => "page_up",
+        .page_down => "page_down",
+        .up => "up",
+        .down => "down",
+        .left => "left",
+        .right => "right",
+        .minus => "minus",
+        .equal => "plus",
+        .left_bracket => "left_bracket",
+        .right_bracket => "right_bracket",
+        .backslash => "backslash",
+        .semicolon => "semicolon",
+        .apostrophe => "apostrophe",
+        .comma => "comma",
+        .period => "period",
+        .slash => "slash",
+        .grave_accent => "grave",
+        else => "unknown",
+    };
+}
+
+/// Formats an Action into its human-readable configuration string representation.
+pub fn formatAction(action: Action) []const u8 {
+    return switch (action) {
+        .copy_selection => "copy_selection",
+        .paste_clipboard => "paste_clipboard",
+        .increase_font_size => "increase_font_size",
+        .decrease_font_size => "decrease_font_size",
+        .reset_font_size => "reset_font_size",
+        .new_window => "new_window",
+        .quit => "quit",
+        .focus_toggle => "focus_toggle",
+        .focus_reset => "focus_reset",
+        .focus_skip => "focus_skip",
+        .focus_auto_transition => "focus_auto_transition",
+        .wellbeing_dashboard => "wellbeing_dashboard",
+        .wellbeing_clear => "wellbeing_clear",
+        .wellbeing_dismiss => "wellbeing_dismiss",
+        .wellbeing_toast_toggle => "wellbeing_toast_toggle",
+        .toast_dismiss => "toast_dismiss",
+        .toast_activate => "toast_activate",
+        .scroll_up => "scroll_up",
+        .scroll_down => "scroll_down",
+        .debug => "debug",
+        .reload_config => "reload_config",
+        .send_to_pty => |s| if (s.len > 0) s else "send_to_pty",
+    };
+}
+
+/// Formats a complete keybinding into a canonical configuration line.
+pub fn formatBinding(binding: Binding, buf: []u8) []const u8 {
+    var pos: usize = 0;
+    if (binding.mods.ctrl and pos + 5 <= buf.len) {
+        @memcpy(buf[pos .. pos + 5], "ctrl+");
+        pos += 5;
+    }
+    if (binding.mods.alt and pos + 4 <= buf.len) {
+        @memcpy(buf[pos .. pos + 4], "alt+");
+        pos += 4;
+    }
+    if (binding.mods.shift and pos + 6 <= buf.len) {
+        @memcpy(buf[pos .. pos + 6], "shift+");
+        pos += 6;
+    }
+    if (binding.mods.super and pos + 6 <= buf.len) {
+        @memcpy(buf[pos .. pos + 6], "super+");
+        pos += 6;
+    }
+
+    var key_buf: [32]u8 = undefined;
+    const key_str = formatKey(binding.key, &key_buf);
+    if (pos + key_str.len <= buf.len) {
+        @memcpy(buf[pos .. pos + key_str.len], key_str);
+        pos += key_str.len;
+    }
+
+    const sep = " = ";
+    if (pos + sep.len <= buf.len) {
+        @memcpy(buf[pos .. pos + sep.len], sep);
+        pos += sep.len;
+    }
+
+    const action_str = formatAction(binding.action);
+    if (pos + action_str.len <= buf.len) {
+        @memcpy(buf[pos .. pos + action_str.len], action_str);
+        pos += action_str.len;
+    }
+
+    return buf[0..pos];
+}
