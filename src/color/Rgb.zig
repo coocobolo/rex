@@ -41,6 +41,17 @@ pub inline fn toNormalizedRgba(self: Rgb, a: f32) [4]f32 {
     };
 }
 
+/// Linear interpolation between two RGB colors.
+pub inline fn lerp(a: Rgb, b: Rgb, t: f32) Rgb {
+    const clamped = std.math.clamp(t, 0.0, 1.0);
+    const inv_t = 1.0 - clamped;
+    return .{
+        .r = @intFromFloat(@as(f32, @floatFromInt(a.r)) * inv_t + @as(f32, @floatFromInt(b.r)) * clamped),
+        .g = @intFromFloat(@as(f32, @floatFromInt(a.g)) * inv_t + @as(f32, @floatFromInt(b.g)) * clamped),
+        .b = @intFromFloat(@as(f32, @floatFromInt(a.b)) * inv_t + @as(f32, @floatFromInt(b.b)) * clamped),
+    };
+}
+
 /// Pack to the u32 key format used by Palette entries:
 /// 0xRRGGBB_FF (tag byte 0xFF in the low byte is not used here,
 /// the palette tag is in the high byte of the 32-bit key).
@@ -161,4 +172,20 @@ test "Rgb: parseSpec" {
     try std.testing.expectEqual(@as(?Rgb, null), Rgb.parseSpec("rgb:12/34"));
     try std.testing.expectEqual(@as(?Rgb, null), Rgb.parseSpec("rgb:12/34/56/78"));
     try std.testing.expectEqual(@as(?Rgb, null), Rgb.parseSpec("invalid_color_xyz"));
+}
+
+test "Rgb: lerp interpolation" {
+    const c1 = Rgb{ .r = 0, .g = 100, .b = 200 };
+    const c2 = Rgb{ .r = 100, .g = 200, .b = 0 };
+
+    const mid = Rgb.lerp(c1, c2, 0.5);
+    try std.testing.expectEqual(@as(u8, 50), mid.r);
+    try std.testing.expectEqual(@as(u8, 150), mid.g);
+    try std.testing.expectEqual(@as(u8, 100), mid.b);
+
+    const start = Rgb.lerp(c1, c2, 0.0);
+    try std.testing.expectEqual(c1, start);
+
+    const end = Rgb.lerp(c1, c2, 1.0);
+    try std.testing.expectEqual(c2, end);
 }
