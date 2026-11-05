@@ -21,6 +21,7 @@ pub const dirs = @import("dirs/root.zig");
 pub const env = @import("env/root.zig");
 pub const FreeType = @import("freetype/root.zig");
 pub const builtin = @import("builtin/root.zig");
+pub const config = @import("config/root.zig");
 
 test {
     _ = @import("color/root.zig");
@@ -28,5 +29,6 @@ test {
     _ = @import("fuzz/root.zig");
     _ = @import("input_test.zig");
     _ = @import("driver/root.zig");
+    _ = @import("config/root.zig");
     std.testing.refAllDecls(@This());
 }
