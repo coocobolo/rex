@@ -25,6 +25,9 @@ pub const Modal = modal.Modal;
 pub const toast = @import("Toast.zig");
 pub const Toast = toast.Toast;
 
+pub const banner = @import("Banner.zig");
+pub const Banner = banner.Banner;
+
 pub const icon = @import("Icon.zig");
 pub const Icon = icon;
 
@@ -38,6 +41,7 @@ test {
     _ = @import("Button.zig");
     _ = @import("Modal.zig");
     _ = @import("Toast.zig");
+    _ = @import("Banner.zig");
     _ = @import("Icon.zig");
     _ = @import("Text.zig");
     std.testing.refAllDecls(@This());

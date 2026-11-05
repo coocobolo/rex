@@ -52,6 +52,7 @@ const UiAction = ui_mod.UiAction;
 const UiActionTag = ui_mod.UiActionTag;
 const Text = ui_mod.Text;
 const Drawer = ui_mod.Drawer;
+const Banner = ui_mod.Banner;
 
 const Freetype = rex.FreeType;
 const Rasterizer = rex.FreeType.Rasterizer;
@@ -230,6 +231,7 @@ word_classifier: unicode.Classifier,
 wellbeing_state: wellbeing.Wellbeing,
 wellbeing_overlay: wellbeing.overlay.Overlay = .{},
 toast_queue: Toast.Queue = .{},
+config_banner: ?Banner = null,
 
 window: Window,
 
@@ -359,19 +361,19 @@ pub fn init(
     }
 
     // Layer 2: User config (~/.config/rex/config or custom path)
-    var startup_warning: ?[128]u8 = null;
-    var startup_warn_len: usize = 0;
+    var startup_banner: ?Banner = null;
     if (user_cfg_path) |p| {
         var user_diags = rex.config.Diagnostics{};
         var user_file_cfg = rex.config.FileConfig{};
         if (rex.config.loadFile(p, &user_file_cfg, &user_diags) catch false) {
             if (user_diags.hasErrors()) {
-                const first = user_diags.items[0];
-                var buf: [128]u8 = undefined;
-                if (std.fmt.bufPrint(&buf, "Line {d}: {s}", .{ first.line, first.message() })) |msg| {
-                    startup_warning = buf;
-                    startup_warn_len = msg.len;
-                } else |_| {}
+                const first = &user_diags.items[0];
+                startup_banner = Banner.init(
+                    if (first.level == .err) .err else .warn,
+                    first.message(),
+                    first.line,
+                    first.col,
+                );
             }
             rex.config.applyFileConfig(&active_config, &user_file_cfg, gpa) catch |err| {
                 log.warn("failed to apply user config: {}", .{err});
@@ -478,7 +480,7 @@ pub fn init(
     wellbeing_overlay.icon_opt = active_config.window.icon;
     wellbeing_overlay.tokens = rex.color.Tokens.fromThemeWithOverride(active_config.theme, active_config.tokens);
 
-    var app = App{
+    const app = App{
         .io = io,
         .driver = driver,
         .window = win,
@@ -499,15 +501,12 @@ pub fn init(
         .wellbeing_state = wellbeing_state,
         .wellbeing_overlay = wellbeing_overlay,
         .toast_queue = .{},
+        .config_banner = startup_banner,
         .frame_buffer_size = .empty,
         .last_frame = now,
         .last_title = now,
         .word_classifier = classifier,
     };
-
-    if (startup_warning) |warn_buf| {
-        app.notifySimple("Config Error", warn_buf[0..startup_warn_len], .warning);
-    }
 
     return app;
 }
@@ -763,8 +762,27 @@ fn renderFrame(self: *App) !bool {
         }
     }
 
+    if (self.config_banner) |*b| {
+        const drawer: Drawer = .{
+            .allocator = self.allocator,
+            .atlas = atlas,
+            .rasterizer = &self.rasterizer,
+            .gray_buffer = &self.wellbeing_overlay.gray_buffer,
+            .color_buffer = &self.wellbeing_overlay.color_buffer,
+        };
+        _ = b.render(
+            tokens,
+            total_cols,
+            total_rows,
+            &self.wellbeing_overlay.card_buffer,
+            drawer,
+            &self.hotspots,
+        );
+    }
+
+    const banner_active = self.config_banner != null;
     const app_toasts_active = !self.quit_confirm_open and self.config.window.toast.enabled and self.toast_queue.isActive();
-    const overlay_active = self.quit_confirm_open or self.wellbeing_overlay.isActive() or app_toasts_active;
+    const overlay_active = self.quit_confirm_open or self.wellbeing_overlay.isActive() or app_toasts_active or banner_active;
     const overlay_changed = overlay_active or self.wellbeing_overlay.was_active;
     self.wellbeing_overlay.was_active = overlay_active;
 
@@ -1108,18 +1126,30 @@ pub fn reloadConfig(self: *App) void {
     }
 
     if (diags.hasErrors()) {
-        const first_msg = diags.items[0].message();
-        self.notifySimple("Config Error", first_msg, .warning);
+        const first = &diags.items[0];
+        self.config_banner = Banner.init(
+            if (first.level == .err) .err else .warn,
+            first.message(),
+            first.line,
+            first.col,
+        );
+        self.frame_builder.last_generation = null;
+        self.needs_redraw = true;
         return;
     }
 
     // Apply file config onto active config
     rex.config.applyFileConfig(&self.config, &file_cfg, self.allocator) catch |err| {
-        var err_buf: [64]u8 = undefined;
+        var err_buf: [128]u8 = undefined;
         const err_msg = std.fmt.bufPrint(&err_buf, "Failed to apply: {}", .{err}) catch "Apply failed";
-        self.notifySimple("Config Error", err_msg, .warning);
+        self.config_banner = Banner.init(.err, err_msg, null, null);
+        self.frame_builder.last_generation = null;
+        self.needs_redraw = true;
         return;
     };
+
+    // Successfully applied: clear any previous configuration error banner
+    self.config_banner = null;
 
     // Live update renderer background color and alpha
     const bg = self.config.theme.background;
@@ -1440,6 +1470,13 @@ pub fn confirmQuit(self: *App) void {
 /// to bypass terminal key encoding and suppress trailing text input callbacks.
 fn routeKeyToUi(self: *App, maybe_key: ?rex.input.Key, mods: rex.input.Modifiers) bool {
     const k = maybe_key orelse return false;
+
+    if (self.config_banner != null and k == .escape) {
+        self.config_banner = null;
+        self.frame_builder.last_generation = null;
+        self.needs_redraw = true;
+        return true;
+    }
 
     if (self.quit_confirm_open) {
         self.handleQuitModalKey(k, mods);
@@ -1790,6 +1827,12 @@ fn handleOverlayClick(self: *App, col: u16, row: u16) bool {
             .dismiss_toast, .activate_toast => |id| {
                 _ = self.toast_queue.dismiss(id);
                 self.needs_redraw = true;
+            },
+            .dismiss_banner => {
+                self.config_banner = null;
+                self.frame_builder.last_generation = null;
+                self.needs_redraw = true;
+                return true;
             },
             .wellbeing_close => {
                 if (self.wellbeing_overlay.dashboard_open) {
