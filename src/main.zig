@@ -390,14 +390,26 @@ pub fn main(init: std.process.Init) !void {
             } else if (std.mem.eql(u8, config_action, "dump-default")) {
                 try rex.config.dumpDefaultConfig(StdoutWriter{});
                 return;
-            } else if (std.mem.eql(u8, config_action, "validate")) {
+            } else if (std.mem.eql(u8, config_action, "validate") or std.mem.eql(u8, config_action, "check")) {
                 const target_path = args.next() orelse custom_config_path;
                 try handleConfigValidate(allocator, &environ, target_path);
                 return;
+            } else if (std.mem.eql(u8, config_action, "merge")) {
+                try handleConfigMerge(allocator, &args);
+                return;
+            } else if (std.mem.eql(u8, config_action, "migrate")) {
+                try handleConfigMigrate(allocator, &environ, &args, custom_config_path);
+                return;
             } else {
-                printStderr("Unknown config command. Available: locate, dump-default, validate\n");
+                printStderr("Unknown config command. Available: locate, dump-default, validate, merge, migrate\n");
                 std.process.exit(1);
             }
+        } else if (std.mem.eql(u8, sc, "merge-config")) {
+            try handleConfigMerge(allocator, &args);
+            return;
+        } else if (std.mem.eql(u8, sc, "migrate-config")) {
+            try handleConfigMigrate(allocator, &environ, &args, custom_config_path);
+            return;
         } else if (std.mem.eql(u8, sc, "check-config")) {
             const target_path = args.next() orelse custom_config_path;
             try handleConfigValidate(allocator, &environ, target_path);
@@ -460,7 +472,11 @@ fn printHelp() void {
         \\  rex config locate
         \\  rex config dump-default
         \\  rex config validate [<path>]
+        \\  rex config merge <base_file> <override_file> [-o <out_path>]
+        \\  rex config migrate [<source_config>] [-o <out_path>] [-i|--in-place]
         \\  rex check-config [<path>]
+        \\  rex merge-config <base_file> <override_file> [-o <out_path>]
+        \\  rex migrate-config [<source_config>] [-o <out_path>] [-i|--in-place]
         \\
         \\Options:
         \\  -c, --config <path>    Load configuration from custom path
@@ -544,5 +560,96 @@ fn handleConfigValidate(allocator: std.mem.Allocator, environ: *const std.proces
         }
     } else {
         try stdout.print("✓ Configuration is valid: {s}\n", .{resolved_path});
+    }
+}
+
+fn handleConfigMerge(allocator: std.mem.Allocator, args: anytype) !void {
+    const base_path = args.next() orelse {
+        printStderr("Error: config merge requires <base_file> and <override_file>\nUsage: rex config merge <base_file> <override_file> [-o <out_path>]\n");
+        std.process.exit(1);
+    };
+    const override_path = args.next() orelse {
+        printStderr("Error: config merge requires <base_file> and <override_file>\nUsage: rex config merge <base_file> <override_file> [-o <out_path>]\n");
+        std.process.exit(1);
+    };
+
+    var out_path: ?[]const u8 = null;
+    while (args.next()) |arg| {
+        if (std.mem.eql(u8, arg, "-o") or std.mem.eql(u8, arg, "--output")) {
+            out_path = args.next() orelse {
+                printStderr("Error: -o/--output requires a file path\n");
+                std.process.exit(1);
+            };
+        } else {
+            printStderr("Error: unrecognized argument for config merge: ");
+            printStderr(arg);
+            printStderr("\n");
+            std.process.exit(1);
+        }
+    }
+
+    var diags = rex.config.Diagnostics{};
+    const stdout = StdoutWriter{};
+    const ok = rex.config.mergeFiles(allocator, base_path, override_path, out_path, stdout, &diags) catch |err| {
+        printStderr("Error: failed to merge configurations: ");
+        var err_buf: [64]u8 = undefined;
+        const err_str = std.fmt.bufPrint(&err_buf, "{}\n", .{err}) catch "unknown error\n";
+        printStderr(err_str);
+        std.process.exit(1);
+    };
+
+    if (!ok) {
+        printStderr("Error: could not read configuration files\n");
+        std.process.exit(1);
+    }
+}
+
+fn handleConfigMigrate(allocator: std.mem.Allocator, environ: *const std.process.Environ, args: anytype, custom_config_path: ?[]const u8) !void {
+    var src_path: ?[]const u8 = custom_config_path;
+    var out_path: ?[]const u8 = null;
+    var in_place: bool = false;
+
+    while (args.next()) |arg| {
+        if (std.mem.eql(u8, arg, "-i") or std.mem.eql(u8, arg, "--in-place")) {
+            in_place = true;
+        } else if (std.mem.eql(u8, arg, "-o") or std.mem.eql(u8, arg, "--output")) {
+            out_path = args.next() orelse {
+                printStderr("Error: -o/--output requires a file path\n");
+                std.process.exit(1);
+            };
+        } else if (!std.mem.startsWith(u8, arg, "-")) {
+            src_path = arg;
+        } else {
+            printStderr("Error: unrecognized argument for config migrate: ");
+            printStderr(arg);
+            printStderr("\n");
+            std.process.exit(1);
+        }
+    }
+
+    if (in_place and out_path != null) {
+        printStderr("Error: cannot combine --in-place (-i) and --output (-o)\n");
+        std.process.exit(1);
+    }
+
+    var diags = rex.config.Diagnostics{};
+    const stdout = StdoutWriter{};
+    const ok = rex.config.migrateConfigFile(allocator, src_path, out_path, in_place, environ, stdout, &diags) catch |err| {
+        printStderr("Error: configuration migration failed: ");
+        var err_buf: [64]u8 = undefined;
+        const err_str = std.fmt.bufPrint(&err_buf, "{}\n", .{err}) catch "unknown error\n";
+        printStderr(err_str);
+        std.process.exit(1);
+    };
+
+    if (!ok) {
+        if (src_path) |sp| {
+            printStderr("Error: configuration file not found: ");
+            printStderr(sp);
+            printStderr("\n");
+        } else {
+            printStderr("Error: configuration file not found in default user config path\n");
+        }
+        std.process.exit(1);
     }
 }

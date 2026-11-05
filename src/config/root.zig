@@ -26,6 +26,11 @@ pub const loadFile = merge.loadFile;
 pub const applyFileConfig = merge.applyFileConfig;
 pub const resolveUserConfigPath = merge.resolveUserConfigPath;
 pub const dumpDefaultConfig = merge.dumpDefaultConfig;
+pub const canonical_default_config = merge.canonical_default_config;
+pub const mergeFileConfigs = merge.mergeFileConfigs;
+pub const serializeConfig = merge.serializeConfig;
+pub const mergeFiles = merge.mergeFiles;
+pub const migrateConfigFile = merge.migrateConfigFile;
 pub const system_config_path = merge.system_config_path;
 
 pub const watcher = @import("watcher.zig");

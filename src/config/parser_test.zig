@@ -433,3 +433,122 @@ test "config: card border_style cascades and syncs across native UI elements" {
     try testing.expectEqual(tokens.warning, Toast.variantAccent(.warning, tokens));
     try testing.expectEqual(tokens.critical, Toast.variantAccent(.critical, tokens));
 }
+
+test "config: keybinding format and roundtrip" {
+    const bind = keymap_parser.parseBinding("ctrl+shift+w", "wellbeing_dashboard").?;
+    var buf: [64]u8 = undefined;
+    const formatted = keymap_parser.formatBinding(bind, &buf);
+    try testing.expectEqualStrings("ctrl+shift+w = wellbeing_dashboard", formatted);
+
+    const reparsed = keymap_parser.parseBinding("ctrl+shift+w", "wellbeing_dashboard").?;
+    try testing.expectEqual(bind.key, reparsed.key);
+    try testing.expectEqual(bind.mods.ctrl, reparsed.mods.ctrl);
+    try testing.expectEqual(bind.mods.shift, reparsed.mods.shift);
+    try testing.expectEqual(bind.action, reparsed.action);
+}
+
+test "config: mergeFileConfigs merges scalar options and keybindings" {
+    const merge_mod = @import("merge.zig");
+    var base = FileConfig{
+        .font_size = 14.0,
+        .card_corner_radius = 8.0,
+    };
+    base.keybindings[0] = keymap_parser.parseBinding("ctrl+shift+r", "reload_config").?;
+    base.keybindings_count = 1;
+    base.keybindings_specified = true;
+
+    var override = FileConfig{
+        .font_size = 18.0,
+        .window_dim_alpha = 0.35,
+    };
+    override.keybindings[0] = keymap_parser.parseBinding("ctrl+shift+r", "debug").?;
+    override.keybindings[1] = keymap_parser.parseBinding("ctrl+shift+c", "copy_selection").?;
+    override.keybindings_count = 2;
+    override.keybindings_specified = true;
+
+    merge_mod.mergeFileConfigs(&base, &override);
+
+    try testing.expectEqual(@as(f32, 18.0), base.font_size.?);
+    try testing.expectEqual(@as(f32, 8.0), base.card_corner_radius.?);
+    try testing.expectEqual(@as(f32, 0.35), base.window_dim_alpha.?);
+    try testing.expectEqual(@as(usize, 2), base.keybindings_count);
+    try testing.expectEqual(@import("../input.zig").Action.debug, base.keybindings[0].action);
+    try testing.expectEqual(@import("../input.zig").Action.copy_selection, base.keybindings[1].action);
+}
+
+test "config: canonical template parses with zero errors or diagnostics" {
+    const merge_mod = @import("merge.zig");
+    var cfg = FileConfig{};
+    var diags = Diagnostics{};
+    var p = Parser.init(merge_mod.canonical_default_config);
+    p.parseInto(&cfg, &diags);
+
+    try testing.expect(!diags.hasErrors());
+    try testing.expectEqual(@as(usize, 0), diags.count);
+    try testing.expectEqual(@as(f32, 14.0), cfg.font_size.?);
+    try testing.expectEqual(@as(f32, 8.0), cfg.card_corner_radius.?);
+    try testing.expectEqual(@as(u32, 5000), cfg.toast_duration_ms.?);
+    try testing.expectEqual(@as(u32, 480), cfg.wellbeing_daily_limit_minutes.?);
+    try testing.expect(cfg.keybindings_count >= 7);
+}
+
+test "config: serializeConfig produces valid re-parseable configuration" {
+    const merge_mod = @import("merge.zig");
+    var original = FileConfig{
+        .font_size = 16.5,
+        .font_weight = 500,
+        .font_weight_bold = 700,
+        .card_corner_radius = 12.0,
+        .card_border_width = 2.0,
+        .card_border_shape = .sharp,
+        .toast_enabled = false,
+        .toast_duration_ms = 4000,
+        .banner_style = .docked,
+        .banner_position = .top_right,
+        .modal_width = 52,
+        .modal_blur = true,
+        .modal_blur_radius = 8,
+        .wellbeing_enabled = true,
+        .wellbeing_daily_limit_minutes = 360,
+        .wellbeing_idle_threshold_s = 45,
+        .wellbeing_focus_task_ms = 30 * 60 * 1000,
+        .scroll_lines = 5,
+        .scroll_wheel_lines = 6,
+    };
+    original.keybindings[0] = keymap_parser.parseBinding("ctrl+shift+p", "focus_toggle").?;
+    original.keybindings[1] = keymap_parser.parseBinding("ctrl+q", "quit").?;
+    original.keybindings_count = 2;
+    original.keybindings_specified = true;
+
+    var out_buf: [16 * 1024]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&out_buf);
+    try merge_mod.serializeConfig(&original, &w);
+    const serialized = out_buf[0..w.end];
+
+    var reparsed = FileConfig{};
+    var diags = Diagnostics{};
+    var p = Parser.init(serialized);
+    p.parseInto(&reparsed, &diags);
+
+    try testing.expect(!diags.hasErrors());
+    try testing.expectEqual(@as(usize, 0), diags.count);
+    try testing.expectEqual(@as(f32, 16.5), reparsed.font_size.?);
+    try testing.expectEqual(@as(u16, 500), reparsed.font_weight.?);
+    try testing.expectEqual(@as(u16, 700), reparsed.font_weight_bold.?);
+    try testing.expectEqual(@as(f32, 12.0), reparsed.card_corner_radius.?);
+    try testing.expectEqual(@as(f32, 2.0), reparsed.card_border_width.?);
+    try testing.expectEqual(@import("../renderer/Card.zig").BorderShape.sharp, reparsed.card_border_shape.?);
+    try testing.expectEqual(false, reparsed.toast_enabled.?);
+    try testing.expectEqual(@as(u32, 4000), reparsed.toast_duration_ms.?);
+    try testing.expectEqual(Banner.Style.docked, reparsed.banner_style.?);
+    try testing.expectEqual(Banner.Position.top_right, reparsed.banner_position.?);
+    try testing.expectEqual(@as(u16, 52), reparsed.modal_width.?);
+    try testing.expectEqual(true, reparsed.modal_blur.?);
+    try testing.expectEqual(@as(u8, 8), reparsed.modal_blur_radius.?);
+    try testing.expectEqual(@as(u32, 360), reparsed.wellbeing_daily_limit_minutes.?);
+    try testing.expectEqual(@as(u32, 45), reparsed.wellbeing_idle_threshold_s.?);
+    try testing.expectEqual(@as(u32, 30 * 60 * 1000), reparsed.wellbeing_focus_task_ms.?);
+    try testing.expectEqual(@as(u32, 5), reparsed.scroll_lines.?);
+    try testing.expectEqual(@as(u32, 6), reparsed.scroll_wheel_lines.?);
+    try testing.expectEqual(@as(usize, 2), reparsed.keybindings_count);
+}
