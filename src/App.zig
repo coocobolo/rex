@@ -369,7 +369,7 @@ pub fn init(
             if (user_diags.hasErrors()) {
                 const first = &user_diags.items[0];
                 startup_banner = Banner.init(
-                    if (first.level == .err) .err else .warn,
+                    if (first.severity == .err) .err else .warn,
                     first.message(),
                     first.line,
                     first.col,
@@ -1133,7 +1133,7 @@ pub fn reloadConfig(self: *App) void {
     if (diags.hasErrors()) {
         const first = &diags.items[0];
         self.config_banner = Banner.init(
-            if (first.level == .err) .err else .warn,
+            if (first.severity == .err) .err else .warn,
             first.message(),
             first.line,
             first.col,
