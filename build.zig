@@ -205,7 +205,18 @@ pub fn build(b: *std.Build) !void {
         }),
     });
 
-    b.installArtifact(bench);
+    const bench_install = b.addInstallArtifact(bench, .{});
+    const bench_step = b.step("benchmark", "Build and install the benchmark executable");
+    bench_step.dependOn(&bench_install.step);
+
+    const install_bench = b.option(
+        bool,
+        "install-bench",
+        "Install the benchmark executable during default install",
+    ) orelse false;
+    if (install_bench) {
+        b.installArtifact(bench);
+    }
 
     const bench_suites = .{ "vt", "term" };
     const bench_all = b.step("bench", "Run every benchmark suite (flags after --)");
