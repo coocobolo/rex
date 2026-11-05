@@ -248,6 +248,14 @@ pub const Parser = struct {
                     } else {
                         diags.warn(line, col, "unknown card border shape '{s}' (expected 'rounded' or 'sharp')", .{val});
                     }
+                } else if (matchKey(key, "border-style") or matchKey(key, "style")) {
+                    if (std.ascii.eqlIgnoreCase(val, "semantic")) {
+                        config.card_border_style = .semantic;
+                    } else if (std.ascii.eqlIgnoreCase(val, "subtle")) {
+                        config.card_border_style = .subtle;
+                    } else {
+                        diags.warn(line, col, "unknown card border style '{s}' (expected 'semantic' or 'subtle')", .{val});
+                    }
                 } else {
                     diags.warn(line, col, "unknown card option '{s}'", .{key});
                 }
@@ -392,6 +400,14 @@ pub const Parser = struct {
                         config.modal_default_focus = .cancel;
                     } else {
                         diags.warn(line, col, "invalid default focus '{s}' (expected 'confirm' or 'cancel')", .{val});
+                    }
+                } else if (matchKey(key, "border-style") or matchKey(key, "style")) {
+                    if (std.ascii.eqlIgnoreCase(val, "semantic")) {
+                        config.modal_border_style = .semantic;
+                    } else if (std.ascii.eqlIgnoreCase(val, "subtle")) {
+                        config.modal_border_style = .subtle;
+                    } else {
+                        diags.warn(line, col, "unknown modal border style '{s}' (expected 'semantic' or 'subtle')", .{val});
                     }
                 } else {
                     diags.warn(line, col, "unknown modal option '{s}'", .{key});

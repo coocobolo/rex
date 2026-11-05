@@ -131,6 +131,7 @@ pub const FileConfig = struct {
     card_corner_radius: ?f32 = null,
     card_border_width: ?f32 = null,
     card_border_shape: ?Card.BorderShape = null,
+    card_border_style: ?Card.BorderStyle = null,
 
     toast_enabled: ?bool = null,
     toast_position: ?Toast.Position = null,
@@ -158,6 +159,7 @@ pub const FileConfig = struct {
     modal_blur_radius: ?u8 = null,
     modal_close_on_outside_click: ?bool = null,
     modal_default_focus: ?Modal.DefaultFocus = null,
+    modal_border_style: ?Card.BorderStyle = null,
 
     wellbeing_enabled: ?bool = null,
     wellbeing_daily_limit_minutes: ?u32 = null,

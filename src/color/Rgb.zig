@@ -21,6 +21,10 @@ pub inline fn toArray(self: Rgb) [3]u8 {
     return .{ self.r, self.g, self.b };
 }
 
+pub inline fn eql(self: Rgb, other: Rgb) bool {
+    return self.r == other.r and self.g == other.g and self.b == other.b;
+}
+
 pub inline fn toRgba(self: Rgb, a: u8) [4]f32 {
     return .{
         @floatFromInt(self.r),

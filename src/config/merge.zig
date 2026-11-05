@@ -86,6 +86,12 @@ pub fn applyFileConfig(target: *App.Config, file: *const FileConfig, allocator: 
     if (file.card_corner_radius) |r| target.window.card.corner_radius = r;
     if (file.card_border_width) |bw| target.window.card.border_width = bw;
     if (file.card_border_shape) |bs| target.window.card.border_shape = bs;
+    if (file.card_border_style) |bst| {
+        target.window.card.border_style = bst;
+        target.window.toast.border_style = bst;
+        target.window.banner.border_style = bst;
+        target.window.modal.border_style = bst;
+    }
 
     // Toast options
     if (file.toast_enabled) |en| target.window.toast.enabled = en;
@@ -116,6 +122,7 @@ pub fn applyFileConfig(target: *App.Config, file: *const FileConfig, allocator: 
     if (file.modal_blur_radius) |br| target.window.modal.blur_radius = br;
     if (file.modal_close_on_outside_click) |cl| target.window.modal.close_on_outside_click = cl;
     if (file.modal_default_focus) |df| target.window.modal.default_focus = df;
+    if (file.modal_border_style) |mbs| target.window.modal.border_style = mbs;
 
     // Wellbeing options
     if (file.wellbeing_enabled) |en| target.wellbeing.enabled = en;
@@ -276,6 +283,13 @@ pub fn dumpDefaultConfig(writer: anytype) !void {
         \\# Default: rounded
         \\border_shape = rounded
         \\
+        \\# Global card border styling cascaded across all native UI cards (modals, toasts, banners).
+        \\# Supported values:
+        \\#   semantic  - Border tinted by component status or severity
+        \\#   subtle    - Low-contrast neutral border from theme tokens
+        \\# Default: semantic
+        \\border_style = semantic
+        \\
         \\# ==============================================================================
         \\# Toast Notifications ([toast])
         \\# ==============================================================================
@@ -420,6 +434,11 @@ pub fn dumpDefaultConfig(writer: anytype) !void {
         \\#   cancel   - Secondary abort button (Esc or Enter aborts action)
         \\# Default: confirm
         \\default_focus = confirm
+        \\
+        \\# Modal dialog border color styling (inherits [card] border_style if omitted).
+        \\# Supported values: semantic, subtle
+        \\# Default: semantic
+        \\border_style = semantic
         \\
         \\# ==============================================================================
         \\# Digital Wellbeing & Ergonomics ([wellbeing])

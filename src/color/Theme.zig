@@ -16,7 +16,7 @@ accent: Rgb = default_accent,
 /// Reserved flags and attributes keeping Theme exactly 64 bytes (1 CPU cache line).
 flags: u8 = 0,
 
-pub const default_accent: Rgb = .{ .r = 138, .g = 110, .b = 240 };
+pub const default_accent: Rgb = .{ .r = 163, .g = 157, .b = 143 };
 
 comptime {
     std.debug.assert(@sizeOf(Theme) == 64);

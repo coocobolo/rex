@@ -57,7 +57,7 @@ pub fn render(
     else switch (req.style) {
         .danger => tokens.critical,
         .primary => tokens.accent,
-        else => tokens.border_subtle,
+        else => tokens.border,
     };
 
     const bg_color = tokens.card_opaque;

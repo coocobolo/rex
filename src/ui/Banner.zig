@@ -198,7 +198,7 @@ pub fn render(
     const accent_color: [3]u8 = switch (self.level) {
         .err => tokens.critical,
         .warn => tokens.warning,
-        .info => tokens.accent,
+        .info => tokens.info,
     };
 
     const border_color: [3]u8 = if (opt.border_style == .semantic) accent_color else tokens.border;

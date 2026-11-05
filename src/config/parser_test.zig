@@ -389,3 +389,47 @@ test "config: banner section and options parsing" {
     try testing.expectEqual(@as(u16, 3), app_cfg.window.banner.margin_cols);
     try testing.expectEqual(@as(u16, 2), app_cfg.window.banner.margin_rows);
 }
+
+test "config: card border_style cascades and syncs across native UI elements" {
+    const Card = @import("../renderer/Card.zig");
+    const text =
+        \\[card]
+        \\border_style = subtle
+        \\
+        \\[toast]
+        \\position = top_right
+    ;
+
+    var parser = Parser.init(text);
+    var cfg = FileConfig{};
+    var diags = Diagnostics{};
+    parser.parseInto(&cfg, &diags);
+
+    try testing.expect(!diags.hasErrors());
+    try testing.expectEqual(Card.BorderStyle.subtle, cfg.card_border_style.?);
+
+    const merge_mod = @import("merge.zig");
+    const App = @import("../App.zig");
+    var app_cfg: App.Config = undefined;
+    app_cfg.window.card = .{};
+    app_cfg.window.modal = .{};
+    app_cfg.window.toast = .{};
+    app_cfg.window.banner = .{};
+    app_cfg.keymap = &.{};
+    app_cfg.font.font.family = .{
+        .variable = .{ .upright = "default.ttf" },
+    };
+
+    try merge_mod.applyFileConfig(&app_cfg, &cfg, testing.allocator);
+    try testing.expectEqual(Card.BorderStyle.subtle, app_cfg.window.card.border_style);
+    try testing.expectEqual(Card.BorderStyle.subtle, app_cfg.window.modal.border_style.?);
+    try testing.expectEqual(Card.BorderStyle.subtle, app_cfg.window.toast.border_style);
+    try testing.expectEqual(Card.BorderStyle.subtle, app_cfg.window.banner.border_style);
+
+    // Verify token consistency between elements
+    const tokens = @import("../color/Tokens.zig").Tokens.dark;
+    try testing.expectEqual(tokens.border, Toast.variantAccent(.neutral, tokens));
+    try testing.expectEqual(tokens.info, Toast.variantAccent(.info, tokens));
+    try testing.expectEqual(tokens.warning, Toast.variantAccent(.warning, tokens));
+    try testing.expectEqual(tokens.critical, Toast.variantAccent(.critical, tokens));
+}
