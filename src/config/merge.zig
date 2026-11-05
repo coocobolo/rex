@@ -153,47 +153,47 @@ pub fn dumpDefaultConfig(writer: anytype) !void {
         \\
         \\# Theme & Appearance
         \\theme = graphite
-        \\# font-family = "GoogleSansCode-VariableFont_MONO,wght.ttf"
-        \\font-size = 14.0
-        \\font-weight = 400
-        \\font-weight-bold = 550
+        \\# font_family = "GoogleSansCode-VariableFont_MONO,wght.ttf"
+        \\font_size = 14.0
+        \\font_weight = 400
+        \\font_weight_bold = 550
         \\
         \\[window]
-        \\background-alpha = 0.95
-        \\confirm-quit = true
-        \\dim-alpha = 0.5
+        \\background_alpha = 0.95
+        \\confirm_quit = true
+        \\dim_alpha = 0.5
         \\bell = on
-        \\bell-volume = 100
+        \\bell_volume = 100
         \\
         \\[card]
-        \\corner-radius = 8.0
-        \\border-width = 1.0
-        \\border-shape = rounded
+        \\corner_radius = 8.0
+        \\border_width = 1.0
+        \\border_shape = rounded
         \\
         \\[toast]
         \\enabled = true
-        \\position = top-right
-        \\border-style = semantic
+        \\position = top_right
+        \\border_style = semantic
         \\duration = 5s
         \\
         \\[modal]
         \\width = 46
-        \\dim-alpha = 180
-        \\close-on-outside-click = true
-        \\default-focus = confirm
+        \\dim_alpha = 180
+        \\close_on_outside_click = true
+        \\default_focus = confirm
         \\
         \\[wellbeing]
         \\enabled = true
-        \\daily-limit = 8h
-        \\focus-time = 25m
-        \\short-break = 5m
-        \\long-break = 15m
-        \\tasks-before-long-break = 4
-        \\lock-input-on-break = false
+        \\daily_limit = 8h
+        \\focus_time = 25m
+        \\short_break = 5m
+        \\long_break = 15m
+        \\tasks_before_long_break = 4
+        \\lock_input_on_break = false
         \\
         \\[scroll]
         \\lines = 3
-        \\wheel-lines = 3
+        \\wheel_lines = 3
         \\
         \\[keybinds]
         \\ctrl+shift+w = wellbeing_dashboard
