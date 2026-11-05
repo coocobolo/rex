@@ -5,12 +5,14 @@ out vec4 frag_color;
 
 uniform sampler2D u_texture;
 uniform vec2 u_half_pixel;
+uniform float u_offset;
 
 void main() {
-    // 5-tap downsampling filter: center tap plus 4 bilinear corner taps
-    // Offset by 2x half-pixel so bilinear filtering reads a complete 6x6 texel neighborhood
-    vec2 d = u_half_pixel * 2.0;
+    vec2 d = u_half_pixel * u_offset;
 
+    // Dual Kawase 5-tap downsampling filter: center tap + 4 bilinear corner taps
+    // At u_offset = 1.0, corner taps sample at the junction of 4 source texels,
+    // gathering a full 4x4 texel area with hardware bilinear filtering.
     vec4 sum = texture(u_texture, v_uv) * 4.0;
     sum += texture(u_texture, v_uv - d);
     sum += texture(u_texture, v_uv + d);
@@ -19,4 +21,3 @@ void main() {
 
     frag_color = sum * 0.125;
 }
-
