@@ -1693,6 +1693,9 @@ pub fn Screen(comptime option: Option) type {
 
                 if (comptime is_scrollback_used) {
                     self.scrollback_used = @min(self.scrollback_used + count, max_scrollback);
+                    if (self.viewport_offset > 0) {
+                        self.viewport_offset = @min(self.viewport_offset + @as(u32, @intCast(count)), self.scrollback_used);
+                    }
                 }
 
                 self.setDirtyAll();
@@ -1736,12 +1739,12 @@ pub fn Screen(comptime option: Option) type {
         /// Scroll the scroll region up by `n` lines.
         ///
         /// Handles:
-        /// 1. Full-screen scroll (scroll_top=0, scroll_bottom=active_rows-1):
+        /// Full-screen scroll (scroll_top=0, scroll_bottom=active_rows-1):
         ///    O(count), advances the ring buffer head pointer once per line.
         ///    The row that falls off the top is preserved as scrollback history.
         ///    Clearing the newly exposed bottom row is unavoidable.
         ///
-        /// 2. Partial-region scroll:
+        /// Partial-region scroll:
         ///    O(region_height × active_cols), a single forward bulk-copy pass
         ///    shifts all rows up by `count` positions, then clears the vacated
         ///    bottom rows. This is optimal for a flat cell array; avoiding the
@@ -2200,7 +2203,7 @@ pub fn Screen(comptime option: Option) type {
                 // Bottom new_rows belong to active screen; excess goes into scrollback
                 const active_start_row = total_emitted_rows - new_rows;
                 const hist_count = active_start_row;
-                const kept_history = @min(hist_count, max_scrollback);
+                const kept_history: usize = @min(hist_count, max_scrollback);
                 self.scrollback_used = @intCast(kept_history);
                 self.scroll_offset = @intCast(active_start_row & ring_mask);
                 self.total_lines_scrolled = @intCast(kept_history);
@@ -2511,12 +2514,12 @@ pub fn Screen(comptime option: Option) type {
 
         /// Moves the cursor down one line within the scroll region (IND / ESC D).
         ///
-        /// [Case]
-        /// 1. Cursor at `scroll_bottom`, the scroll region scrolls up by one line
+        /// Cases:
+        /// Cursor at `scroll_bottom`, the scroll region scrolls up by one line
         ///    (top line discarded, blank line inserted at bottom). Cursor stays at
         ///    `scroll_bottom`. On the primary screen this adds one line of scrollback.
-        /// 2. Cursor below `scroll_bottom`, moves down, clamped to `active_rows - 1`.
-        /// 3. Otherwise, cursor moves down one row.
+        /// Cursor below `scroll_bottom`, moves down, clamped to `active_rows - 1`.
+        /// Otherwise, cursor moves down one row.
         ///
         /// This is the counterpart of `reverseIndex` (RI / ESC M).
         pub inline fn index(self: *Self) void {

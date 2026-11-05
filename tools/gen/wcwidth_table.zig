@@ -1,12 +1,12 @@
 //! `zig build gen-wcwidth-table`: src/unicode/wcwidth_table.zig from
-//! UnicodeData.txt and EastAsianWidth.txt.
+//! UnicodeData.txt, EastAsianWidth.txt, and emoji-data.txt.
 //!
 //! This generator uses data from the Unicode Character Database.
 //! See THIRD_PARTY_NOTICES/unicode.license.txt for the applicable Unicode license terms.
 //!
 //! Unicode version: 17.0.0
 //!
-//! Usage: wcwidth_table <out.zig> <EastAsianWidth.txt> <UnicodeData.txt>
+//! Usage: wcwidth_table <out.zig> <EastAsianWidth.txt> <UnicodeData.txt> <emoji-data.txt>
 //!
 //! Parses the Unicode Character Database files needed for a POSIX
 //! wcwidth(3) compatible width table and emits a single sorted, packed
@@ -18,6 +18,7 @@
 //!  General_Category Mn, Me, Cf            .zero
 //!  East_Asian_Width W or F                .wide
 //!  East_Asian_Width A                     .ambiguous
+//!  Emoji_Presentation (narrow/ambig only) .wide
 //!  any other assigned character           .narrow
 //!  unassigned, noncharacters, surrogates  .control
 //!
@@ -36,7 +37,7 @@ const std = @import("std");
 const ucd = @import("ucd.zig");
 
 const gen_name = "wcwidth-table";
-const usage_args = "<out.zig> <EastAsianWidth.txt> <UnicodeData.txt>";
+const usage_args = "<out.zig> <EastAsianWidth.txt> <UnicodeData.txt> <emoji-data.txt>";
 const mem = std.mem;
 const fmt = std.fmt;
 
@@ -97,12 +98,14 @@ pub fn main(init: std.process.Init) !void {
     const out_path = args_it.next() orelse ucd.usage(gen_name, usage_args);
     const eaw_path = args_it.next() orelse ucd.usage(gen_name, usage_args);
     const udata_path = args_it.next() orelse ucd.usage(gen_name, usage_args);
+    const emoji_path = args_it.next() orelse ucd.usage(gen_name, usage_args);
 
     const working = try arena.alloc(Working, table_len);
     @memset(working, .unclassified);
 
     try applyUnicodeData(io, arena, working, udata_path);
     try applyEastAsianWidth(io, arena, working, eaw_path);
+    try applyEmojiData(io, arena, working, emoji_path);
 
     applyDefaultDoubleRangeOverrides(working);
     applyTerminalPolicyOverrides(working);
@@ -179,6 +182,27 @@ fn applyEastAsianWidth(io: std.Io, gpa: mem.Allocator, dest: []Working, path: []
         var cp = start;
         while (cp <= end) : (cp += 1) {
             if (dest[cp] == .narrow) dest[cp] = prop;
+        }
+    }
+}
+
+fn applyEmojiData(io: std.Io, gpa: mem.Allocator, dest: []Working, path: []const u8) !void {
+    const content = try ucd.readFile(io, gpa, gen_name, path);
+    defer gpa.free(content);
+
+    var it = mem.splitScalar(u8, content, '\n');
+    while (it.next()) |raw| {
+        const l = (try ucd.parseLine(raw)) orelse continue;
+        if (!mem.eql(u8, l.value, "Emoji_Presentation")) continue;
+
+        // Regional Indicators (U+1F1E6..U+1F1FF) are Emoji_Presentation
+        // but have East_Asian_Width N. In POSIX single-codepoint wcwidth,
+        // lone regional indicators stay narrow (1 col); flag pairs are sized
+        // as 2-column grapheme clusters at the input/screen layer.
+        var cp = l.first;
+        while (cp <= l.last) : (cp += 1) {
+            if (cp >= 0x1F1E6 and cp <= 0x1F1FF) continue;
+            if (dest[cp] == .narrow or dest[cp] == .ambiguous) dest[cp] = .wide;
         }
     }
 }

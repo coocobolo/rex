@@ -130,3 +130,50 @@ pub fn stringWidth(cps: []const u21, ambiguous: AmbiguousWidth) usize {
     }
     return total;
 }
+
+/// Returns the terminal cell column width (0, 1, or 2) of a single grapheme cluster.
+/// Correctly promotes:
+///   - Flag pairs (2 Regional Indicators) -> 2 columns
+///   - VS16 (U+FE0F) emoji presentation selector -> 2 columns
+///   - Enclosing keycaps (U+20E3) -> 2 columns
+/// And demotes:
+///   - VS15 (U+FE0E) text presentation selector -> 1 column
+pub fn clusterWidth(slice: []const u21, ambiguous: AmbiguousWidth) u16 {
+    if (slice.len == 0) return 0;
+    if (slice.len == 1) {
+        return switch (wcwidth(slice[0], ambiguous)) {
+            .wide => 2,
+            .narrow => 1,
+            .zero, .control => 0,
+        };
+    }
+
+    // Regional Indicator flag pairs (e.g. 🇦🇺 U+1F1E6 U+1F1FA)
+    if (slice.len == 2 and
+        slice[0] >= 0x1F1E6 and slice[0] <= 0x1F1FF and
+        slice[1] >= 0x1F1E6 and slice[1] <= 0x1F1FF)
+    {
+        return 2;
+    }
+
+    // VS15 (Text Presentation Selector U+FE0E) demotion
+    for (slice[1..]) |cp| {
+        if (cp == 0xFE0E) return 1;
+    }
+
+    // VS16 (Emoji Presentation Selector U+FE0F) promotion
+    for (slice[1..]) |cp| {
+        if (cp == 0xFE0F) return 2;
+    }
+
+    // Enclosing Keycap (U+20E3)
+    for (slice[1..]) |cp| {
+        if (cp == 0x20E3) return 2;
+    }
+
+    return switch (wcwidth(slice[0], ambiguous)) {
+        .wide => 2,
+        .narrow => 1,
+        .zero, .control => 0,
+    };
+}

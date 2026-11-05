@@ -183,3 +183,47 @@ test "combining mark attaches to latin fast-path base" {
     try testing.expectEqual(@as(usize, 1), sink.len);
     try testing.expectEqual(FakeSink.Put{ .cp = 0xE9, .kind = .narrow, .len = 2 }, sink.puts()[0]);
 }
+
+test "grapheme: regional indicator flag pair promotes to wide" {
+    // 🇦🇺 U+1F1E6 U+1F1FA
+    const sink = feedChunks(&.{"\xF0\x9F\x87\xA6\xF0\x9F\x87\xBA"});
+    try testing.expectEqual(@as(usize, 1), sink.len);
+    try testing.expectEqual(FakeSink.Put{ .cp = 0x1F1E6, .kind = .wide_left, .len = 2 }, sink.puts()[0]);
+}
+
+test "grapheme: VS16 promotes text emoji to wide" {
+    // ⚠️ U+26A0 U+FE0F
+    const sink_warn = feedChunks(&.{"\xE2\x9A\xA0\xEF\xB8\x8F"});
+    try testing.expectEqual(@as(usize, 1), sink_warn.len);
+    try testing.expectEqual(FakeSink.Put{ .cp = 0x26A0, .kind = .wide_left, .len = 2 }, sink_warn.puts()[0]);
+
+    // ℹ️ U+2139 U+FE0F
+    const sink_info = feedChunks(&.{"\xE2\x84\xB9\xEF\xB8\x8F"});
+    try testing.expectEqual(@as(usize, 1), sink_info.len);
+    try testing.expectEqual(FakeSink.Put{ .cp = 0x2139, .kind = .wide_left, .len = 2 }, sink_info.puts()[0]);
+}
+
+test "grapheme: keycap sequences promote to wide" {
+    // 1️⃣ U+0031 U+FE0F U+20E3
+    // Note: ASCII base followed by non-ASCII combiner sequence
+    var engine: InputEngine = .init(.narrow);
+    var sink: FakeSink = .{};
+    // Feed '1', then VS16, then enclosing keycap
+    feedText(&engine, &sink, "1\xEF\xB8\x8F\xE2\x83\xA3");
+    engine.flush(&sink);
+    try testing.expectEqual(@as(usize, 1), sink.len);
+}
+
+test "grapheme: VS15 demotes wide emoji to narrow" {
+    // ☕︎ U+2615 U+FE0E
+    const sink = feedChunks(&.{"\xE2\x98\x95\xEF\xB8\x8E"});
+    try testing.expectEqual(@as(usize, 1), sink.len);
+    try testing.expectEqual(FakeSink.Put{ .cp = 0x2615, .kind = .narrow, .len = 2 }, sink.puts()[0]);
+}
+
+test "grapheme: emoji ZWJ sequence is wide" {
+    // 👨‍👩‍👧 U+1F468 U+200D U+1F469 U+200D U+1F467
+    const sink = feedChunks(&.{"\xF0\x9F\x91\xA8\xE2\x80\x8D\xF0\x9F\x91\xA9\xE2\x80\x8D\xF0\x9F\x91\xA7"});
+    try testing.expectEqual(@as(usize, 1), sink.len);
+    try testing.expectEqual(FakeSink.Put{ .cp = 0x1F468, .kind = .wide_left, .len = 5 }, sink.puts()[0]);
+}

@@ -2720,6 +2720,53 @@ test "viewport round-trip: back then reset" {
     try testing.expectEqual(0, s.viewport_offset);
 }
 
+test "scrollUp: anchors viewport_offset when viewing scrollback" {
+    const alloc = testing.allocator;
+    var s = try primaryScreen(alloc);
+    defer s.destroy(alloc);
+
+    s.setActive(4, 10);
+    // Write distinct characters into row 0
+    for ("row0", 0..) |ch, c| {
+        s.setCell(0, c, .{ .codepoint = @intCast(ch), .kind = .narrow });
+    }
+
+    // Scroll row 0 into scrollback
+    s.scrollUp(1);
+    try testing.expectEqual(1, s.scrollback_used);
+    try testing.expectEqual(0, s.viewport_offset);
+
+    // User scrolls viewport back by 1 line to view the history row
+    s.scrollViewportBack(1);
+    try testing.expectEqual(1, s.viewport_offset);
+
+    // Verify row 0 in viewport shows "row0"
+    const row0_phys_before = s.viewRow(0);
+    try testing.expectEqual(@as(u21, 'r'), s.cells[row0_phys_before * 10 + 0].codepoint);
+
+    // Active output arrives: terminal performs full-screen scrollUp(2)
+    s.scrollUp(2);
+
+    // Viewport offset should automatically increment by 2 to stay anchored to the same history
+    try testing.expectEqual(3, s.scrollback_used);
+    try testing.expectEqual(3, s.viewport_offset);
+
+    // The physical row displayed at viewport row 0 must remain identical
+    const row0_phys_after = s.viewRow(0);
+    try testing.expectEqual(row0_phys_before, row0_phys_after);
+    try testing.expectEqual(@as(u21, 'r'), s.cells[row0_phys_after * 10 + 0].codepoint);
+}
+
+test "scrollUp: does not change viewport_offset when at live view" {
+    const alloc = testing.allocator;
+    var s = try primaryScreen(alloc);
+    defer s.destroy(alloc);
+
+    s.setActive(4, 10);
+    s.scrollUp(2);
+    try testing.expectEqual(0, s.viewport_offset);
+}
+
 test "cursorPos: basic absolute move" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);

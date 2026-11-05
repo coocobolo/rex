@@ -222,3 +222,31 @@ test "lookup(exhaustive): every code point matches the UCD oracle" {
     }
     if (failed) return error.TestExpectedEqual;
 }
+
+test "clusterWidth: flags, variation selectors, keycaps, and combiners" {
+    // Lone Regional Indicator vs Flag Pair
+    try testing.expectEqual(@as(u16, 1), wc.clusterWidth(&.{0x1F1E6}, .narrow));
+    try testing.expectEqual(@as(u16, 2), wc.clusterWidth(&.{ 0x1F1E6, 0x1F1FA }, .narrow)); // 🇦🇺
+
+    // VS16 emoji promotion
+    try testing.expectEqual(@as(u16, 1), wc.clusterWidth(&.{0x26A0}, .narrow)); // ⚠️ base without VS16
+    try testing.expectEqual(@as(u16, 2), wc.clusterWidth(&.{ 0x26A0, 0xFE0F }, .narrow)); // ⚠️ with VS16
+    try testing.expectEqual(@as(u16, 2), wc.clusterWidth(&.{ 0x2139, 0xFE0F }, .narrow)); // ℹ️ with VS16
+
+    // VS15 text demotion
+    try testing.expectEqual(@as(u16, 2), wc.clusterWidth(&.{0x2615}, .narrow)); // ☕ base is wide
+    try testing.expectEqual(@as(u16, 1), wc.clusterWidth(&.{ 0x2615, 0xFE0E }, .narrow)); // ☕︎ with VS15 demoted to text
+
+    // Keycaps
+    try testing.expectEqual(@as(u16, 2), wc.clusterWidth(&.{ '1', 0xFE0F, 0x20E3 }, .narrow)); // 1️⃣
+    try testing.expectEqual(@as(u16, 2), wc.clusterWidth(&.{ '#', 0x20E3 }, .narrow)); // #️⃣
+
+    // Standard combining mark on narrow character
+    try testing.expectEqual(@as(u16, 1), wc.clusterWidth(&.{ 'e', 0x0301 }, .narrow)); // é
+
+    // Combining mark on wide character
+    try testing.expectEqual(@as(u16, 2), wc.clusterWidth(&.{ 0x4E00, 0x0301 }, .narrow)); // 中 + mark
+
+    // Empty cluster
+    try testing.expectEqual(@as(u16, 0), wc.clusterWidth(&.{}, .narrow));
+}
