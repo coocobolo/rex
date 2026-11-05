@@ -33,6 +33,7 @@ pub const UNSIGNED_BYTE = c.GL_UNSIGNED_BYTE;
 pub const FALSE = c.GL_FALSE;
 pub const TRUE = c.GL_TRUE;
 pub const ONE = c.GL_ONE;
+pub const TRIANGLES = c.GL_TRIANGLES;
 pub const TRIANGLE_STRIP = c.GL_TRIANGLE_STRIP;
 pub const TRIANGLE_FAN = c.GL_TRIANGLE_FAN;
 pub const TEXTURE_2D = c.GL_TEXTURE_2D;
