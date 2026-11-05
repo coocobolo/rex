@@ -59,3 +59,37 @@ test "encodeKey: modifyOtherKeys still wins for ctrl+digit" {
     try expectKey("\x1b[27;5;56~", c.GLFW_KEY_8, ctrl, .{ .modify_other_keys = 2 });
     try expectKey("\x1b[27;7;51~", c.GLFW_KEY_3, ctrl | alt, .{ .modify_other_keys = 1 });
 }
+
+test "canonical Key and Modifiers: GLFW round-trip and binding matching" {
+    // Round-trip Key conversions
+    try testing.expectEqual(input.Key.escape, input.Key.fromGlfw(c.GLFW_KEY_ESCAPE).?);
+    try testing.expectEqual(input.Key.enter, input.Key.fromGlfw(c.GLFW_KEY_ENTER).?);
+    try testing.expectEqual(input.Key.tab, input.Key.fromGlfw(c.GLFW_KEY_TAB).?);
+    try testing.expectEqual(input.Key.a, input.Key.fromGlfw(c.GLFW_KEY_A).?);
+    try testing.expectEqual(input.Key.q, input.Key.fromGlfw(c.GLFW_KEY_Q).?);
+    try testing.expectEqual(input.Key.num_0, input.Key.fromGlfw(c.GLFW_KEY_0).?);
+    try testing.expectEqual(@as(c_int, c.GLFW_KEY_Q), input.Key.q.toGlfw());
+
+    // Modifier packing and detection
+    const mods = input.Modifiers.fromGlfw(c.GLFW_MOD_CONTROL | c.GLFW_MOD_SHIFT);
+    try testing.expect(mods.ctrl);
+    try testing.expect(mods.shift);
+    try testing.expect(!mods.alt);
+    try testing.expect(!mods.super);
+    try testing.expect(mods.hasAny());
+    try testing.expectEqual(@as(c_int, c.GLFW_MOD_CONTROL | c.GLFW_MOD_SHIFT), mods.toGlfw());
+
+    // Canonical key binding lookup
+    const bindings: []const input.Binding = &.{
+        .{ .key = .q, .mods = .{ .ctrl = true, .shift = true }, .action = .quit },
+        .{ .key = .c, .mods = .{ .ctrl = true, .shift = true }, .action = .copy_selection },
+    };
+
+    try testing.expectEqual(input.Action.quit, input.matchBinding(bindings, .q, mods).?);
+    try testing.expectEqual(input.Action.copy_selection, input.matchBinding(bindings, .c, mods).?);
+    try testing.expectEqual(@as(?input.Action, null), input.matchBinding(bindings, .q, .{}));
+
+    // Glfw bridge matching
+    try testing.expectEqual(input.Action.quit, input.matchGlfwBinding(bindings, c.GLFW_KEY_Q, c.GLFW_MOD_CONTROL | c.GLFW_MOD_SHIFT).?);
+    try testing.expectEqual(@as(?input.Action, null), input.matchGlfwBinding(bindings, c.GLFW_KEY_Q, 0));
+}
