@@ -257,14 +257,42 @@ fn flushGraphemeImpl(self: *InputEngine, sink: anytype) void {
     }
 
     const slice = self.grapheme_buf[0..self.grapheme_len];
-    const base_kind: CellKind = switch (self.wcwidthCached(slice[0])) {
-        .wide => .wide_left,
-        .narrow => .narrow,
-        // FIXME! pick an explicit fallback policy, don't let it fall through implicitly
-        .zero, .control => .narrow,
-    };
-    sink.putGrapheme(slice, base_kind) catch |err| {
+    const kind = self.classifyGraphemeKind(slice);
+    sink.putGrapheme(slice, kind) catch |err| {
         log.warn("putGrapheme failed: {}", .{err});
         sink.putChar(cp);
+    };
+}
+
+fn classifyGraphemeKind(self: *InputEngine, slice: []const u21) CellKind {
+    std.debug.assert(slice.len > 1);
+
+    // 1. Regional Indicator flag pairs (e.g. 🇦🇺 U+1F1E6 U+1F1FA)
+    if (slice.len == 2 and
+        slice[0] >= 0x1F1E6 and slice[0] <= 0x1F1FF and
+        slice[1] >= 0x1F1E6 and slice[1] <= 0x1F1FF)
+    {
+        return .wide_left;
+    }
+
+    // 2. VS15 (Text Presentation Selector U+FE0E) demotion
+    for (slice[1..]) |c| {
+        if (c == 0xFE0E) return .narrow;
+    }
+
+    // 3. VS16 (Emoji Presentation Selector U+FE0F) promotion
+    for (slice[1..]) |c| {
+        if (c == 0xFE0F) return .wide_left;
+    }
+
+    // 4. Enclosing Keycap (U+20E3)
+    for (slice[1..]) |c| {
+        if (c == 0x20E3) return .wide_left;
+    }
+
+    // 5. Default to the base character's width
+    return switch (self.wcwidthCached(slice[0])) {
+        .wide => .wide_left,
+        .narrow, .zero, .control => .narrow,
     };
 }
