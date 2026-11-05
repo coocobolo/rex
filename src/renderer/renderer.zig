@@ -6,6 +6,7 @@ const gl = @import("gl.zig");
 
 const Atlas = @import("Atlas.zig");
 const Background = @import("Background.zig");
+const Blur = @import("Blur.zig");
 const Card = @import("Card.zig");
 const buffer = @import("buffer.zig");
 const Cell = @import("Cell.zig");
@@ -38,6 +39,7 @@ pub fn Renderer(comptime option: TerminalOption) type {
         const Self = @This();
 
         background: Background,
+        blur: Blur,
         card: Card,
         cell: Cell,
         cell_ascender: i16,
@@ -87,8 +89,12 @@ pub fn Renderer(comptime option: TerminalOption) type {
             var card = try Card.init();
             errdefer card.deinit();
 
+            var blur = try Blur.init();
+            errdefer blur.deinit();
+
             var self: Self = .{
                 .background = background,
+                .blur = blur,
                 .card = card,
                 .cell = cell,
                 .cell_ascender = undefined,
@@ -121,6 +127,7 @@ pub fn Renderer(comptime option: TerminalOption) type {
 
         pub fn deinit(self: *Self) void {
             self.card.deinit();
+            self.blur.deinit();
             self.overlay_bg_buffer.deinit();
             self.overlay_gray_buffer.deinit();
             self.overlay_color_buffer.deinit();
@@ -147,6 +154,14 @@ pub fn Renderer(comptime option: TerminalOption) type {
                 blink_rapid_on: bool,
             },
         ) void {
+            const blur_active = frame.overlay_has_modal and frame.modal_blur;
+            if (blur_active) {
+                self.blur.beginScene(
+                    @intFromFloat(frame_dimension.width),
+                    @intFromFloat(frame_dimension.height),
+                );
+            }
+
             gl.enable(gl.BLEND);
             const r_in = background_color[0] * self.color_tint[0];
             const g_in = background_color[1] * self.color_tint[1];
@@ -247,13 +262,28 @@ pub fn Renderer(comptime option: TerminalOption) type {
                 self.scrollbar.draw();
             }
 
-            // Pass 6: In-terminal visual overlay (dimming backdrop, rounded SDF cards, text/icons)
+            // Pass 6: In-terminal visual overlay (frosted blur backdrop, rounded SDF cards, text/icons)
+            if (blur_active) {
+                const scrim_color = [3]u8{
+                    @intFromFloat(@min(255.0, @max(0.0, background_color[0] * 255.0))),
+                    @intFromFloat(@min(255.0, @max(0.0, background_color[1] * 255.0))),
+                    @intFromFloat(@min(255.0, @max(0.0, background_color[2] * 255.0))),
+                };
+                self.blur.renderBlur(
+                    @intFromFloat(frame_dimension.width),
+                    @intFromFloat(frame_dimension.height),
+                    frame.modal_blur_radius,
+                    frame.modal_dim_alpha,
+                    scrim_color,
+                );
+            }
+
             if (frame.overlay_background_instances.len > 0 or
                 frame.overlay_card_instances.len > 0 or
                 frame.overlay_gray_instances.len > 0 or
                 frame.overlay_color_instances.len > 0)
             {
-                if (frame.overlay_background_instances.len > 0) {
+                if (frame.overlay_background_instances.len > 0 and !blur_active) {
                     self.overlay_bg_buffer.resize(frame.overlay_background_instances.len);
                     self.overlay_bg_buffer.upload(frame.overlay_background_instances);
                     self.background.shader.use();
