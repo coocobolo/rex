@@ -11,6 +11,7 @@ const Tokens = @import("../color/Tokens.zig").Tokens;
 const Card = @import("../renderer/Card.zig");
 const Background = @import("../renderer/Background.zig");
 const Toast = @import("../ui/Toast.zig");
+const Banner = @import("../ui/Banner.zig");
 const Icon = @import("../ui/Icon.zig");
 const Modal = @import("../ui/Modal.zig");
 const Button = @import("../ui/Button.zig");
@@ -82,6 +83,7 @@ pub const Section = enum {
     font,
     card,
     toast,
+    banner,
     modal,
     wellbeing,
     scroll,
@@ -92,6 +94,7 @@ pub const Section = enum {
         if (std.ascii.eqlIgnoreCase(str, "font")) return .font;
         if (std.ascii.eqlIgnoreCase(str, "card")) return .card;
         if (std.ascii.eqlIgnoreCase(str, "toast")) return .toast;
+        if (std.ascii.eqlIgnoreCase(str, "banner")) return .banner;
         if (std.ascii.eqlIgnoreCase(str, "modal")) return .modal;
         if (std.ascii.eqlIgnoreCase(str, "wellbeing")) return .wellbeing;
         if (std.ascii.eqlIgnoreCase(str, "scroll")) return .scroll;
@@ -137,6 +140,17 @@ pub const FileConfig = struct {
     toast_max_width: ?u16 = null,
     toast_margin_cols: ?u16 = null,
     toast_margin_rows: ?u16 = null,
+
+    banner_enabled: ?bool = null,
+    banner_style: ?Banner.Style = null,
+    banner_position: ?Banner.Position = null,
+    banner_border_style: ?Toast.BorderStyle = null,
+    banner_corner_radius: ?f32 = null,
+    banner_border_width: ?f32 = null,
+    banner_min_width: ?u16 = null,
+    banner_max_width: ?u16 = null,
+    banner_margin_cols: ?u16 = null,
+    banner_margin_rows: ?u16 = null,
 
     modal_width: ?u16 = null,
     modal_dim_alpha: ?u8 = null,

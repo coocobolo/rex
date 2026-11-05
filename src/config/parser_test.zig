@@ -12,6 +12,8 @@ const parser_mod = @import("parser.zig");
 const Parser = parser_mod.Parser;
 const keymap_parser = @import("keymap_parser.zig");
 const Theme = @import("../color/Theme.zig");
+const Banner = @import("../ui/Banner.zig");
+const Toast = @import("../ui/Toast.zig");
 
 test "config: boolean parsing" {
     try testing.expectEqual(@as(?bool, true), parser_mod.parseBool("true"));
@@ -279,6 +281,8 @@ test "config: dumpDefaultConfig produces valid configuration template" {
     try testing.expect(!diags.hasErrors());
     try testing.expectEqual(@as(f32, 8.0), cfg.card_corner_radius.?);
     try testing.expectEqual(@as(u32, 5000), cfg.toast_duration_ms.?);
+    try testing.expectEqual(Banner.Style.floating, cfg.banner_style.?);
+    try testing.expectEqual(Banner.Position.top_center, cfg.banner_position.?);
 }
 
 test "config: dot notation with snake_case properties" {
@@ -301,6 +305,8 @@ test "config: dot notation with snake_case properties" {
         \\wellbeing.long_break = 20m
         \\wellbeing.tasks_before_long_break = 5
         \\wellbeing.lock_input_on_break = true
+        \\banner.style = docked
+        \\banner.position = top_right
     ;
 
     var parser = Parser.init(text);
@@ -327,4 +333,59 @@ test "config: dot notation with snake_case properties" {
     try testing.expectEqual(@as(u32, 20 * 60 * 1000), cfg.wellbeing_focus_long_break_ms.?);
     try testing.expectEqual(@as(u32, 5), cfg.wellbeing_tasks_before_long_break.?);
     try testing.expectEqual(true, cfg.wellbeing_lock_input_on_break.?);
+    try testing.expectEqual(Banner.Style.docked, cfg.banner_style.?);
+    try testing.expectEqual(Banner.Position.top_right, cfg.banner_position.?);
+}
+
+test "config: banner section and options parsing" {
+    const text =
+        \\[banner]
+        \\enabled = true
+        \\style = floating
+        \\position = top_center
+        \\border_style = semantic
+        \\corner_radius = 6.0
+        \\border_width = 1.5
+        \\min_width = 40
+        \\max_width = 80
+        \\margin_cols = 3
+        \\margin_rows = 2
+    ;
+
+    var parser = Parser.init(text);
+    var cfg = FileConfig{};
+    var diags = Diagnostics{};
+    parser.parseInto(&cfg, &diags);
+
+    try testing.expect(!diags.hasErrors());
+    try testing.expectEqual(true, cfg.banner_enabled.?);
+    try testing.expectEqual(Banner.Style.floating, cfg.banner_style.?);
+    try testing.expectEqual(Banner.Position.top_center, cfg.banner_position.?);
+    try testing.expectEqual(Toast.BorderStyle.semantic, cfg.banner_border_style.?);
+    try testing.expectEqual(@as(f32, 6.0), cfg.banner_corner_radius.?);
+    try testing.expectEqual(@as(f32, 1.5), cfg.banner_border_width.?);
+    try testing.expectEqual(@as(u16, 40), cfg.banner_min_width.?);
+    try testing.expectEqual(@as(u16, 80), cfg.banner_max_width.?);
+    try testing.expectEqual(@as(u16, 3), cfg.banner_margin_cols.?);
+    try testing.expectEqual(@as(u16, 2), cfg.banner_margin_rows.?);
+
+    const merge_mod = @import("merge.zig");
+    const App = @import("../App.zig");
+    var app_cfg: App.Config = undefined;
+    app_cfg.window.banner = .{};
+    app_cfg.keymap = &.{};
+    app_cfg.font.font.family = .{
+        .variable = .{ .upright = "default.ttf" },
+    };
+
+    try merge_mod.applyFileConfig(&app_cfg, &cfg, testing.allocator);
+    try testing.expectEqual(true, app_cfg.window.banner.enabled);
+    try testing.expectEqual(Banner.Style.floating, app_cfg.window.banner.style);
+    try testing.expectEqual(Banner.Position.top_center, app_cfg.window.banner.position);
+    try testing.expectEqual(@as(f32, 6.0), app_cfg.window.banner.corner_radius);
+    try testing.expectEqual(@as(f32, 1.5), app_cfg.window.banner.border_width);
+    try testing.expectEqual(@as(u16, 40), app_cfg.window.banner.min_width);
+    try testing.expectEqual(@as(u16, 80), app_cfg.window.banner.max_width);
+    try testing.expectEqual(@as(u16, 3), app_cfg.window.banner.margin_cols);
+    try testing.expectEqual(@as(u16, 2), app_cfg.window.banner.margin_rows);
 }

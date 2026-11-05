@@ -246,6 +246,19 @@ const toast_option = rex.ui.Toast.Option{
     .margin_rows = 1,
 };
 
+const banner_option = rex.ui.Banner.Option{
+    .enabled = true,
+    .style = .floating,
+    .position = .top_center,
+    .border_style = .semantic,
+    .corner_radius = 8.0,
+    .border_width = 1.0,
+    .min_width = 36,
+    .max_width = 72,
+    .margin_cols = 2,
+    .margin_rows = 1,
+};
+
 const icon_option = rex.ui.Icon.Option{
     .style = .auto,
 };
@@ -292,6 +305,7 @@ const config: rex.App.Config = .{
         .selection = selection_option,
         .card = card_option,
         .toast = toast_option,
+        .banner = banner_option,
         .icon = icon_option,
         .modal = modal_option,
         .confirm_quit = true,

@@ -289,6 +289,72 @@ pub const Parser = struct {
                     diags.warn(line, col, "unknown toast option '{s}'", .{key});
                 }
             },
+            .banner => {
+                if (matchKey(key, "enabled")) {
+                    config.banner_enabled = parseBool(val) orelse {
+                        diags.warn(line, col, "invalid boolean '{s}' for banner.enabled", .{val});
+                        return;
+                    };
+                } else if (matchKey(key, "style")) {
+                    if (std.ascii.eqlIgnoreCase(val, "floating")) {
+                        config.banner_style = .floating;
+                    } else if (std.ascii.eqlIgnoreCase(val, "docked")) {
+                        config.banner_style = .docked;
+                    } else {
+                        diags.warn(line, col, "unknown banner style '{s}' (expected 'floating' or 'docked')", .{val});
+                    }
+                } else if (matchKey(key, "position")) {
+                    if (std.ascii.eqlIgnoreCase(val, "top-center") or std.ascii.eqlIgnoreCase(val, "top_center")) {
+                        config.banner_position = .top_center;
+                    } else if (std.ascii.eqlIgnoreCase(val, "top-right") or std.ascii.eqlIgnoreCase(val, "top_right")) {
+                        config.banner_position = .top_right;
+                    } else if (std.ascii.eqlIgnoreCase(val, "top-left") or std.ascii.eqlIgnoreCase(val, "top_left")) {
+                        config.banner_position = .top_left;
+                    } else {
+                        diags.warn(line, col, "unknown banner position '{s}'", .{val});
+                    }
+                } else if (matchKey(key, "border-style")) {
+                    if (std.ascii.eqlIgnoreCase(val, "semantic")) {
+                        config.banner_border_style = .semantic;
+                    } else if (std.ascii.eqlIgnoreCase(val, "subtle")) {
+                        config.banner_border_style = .subtle;
+                    } else {
+                        diags.warn(line, col, "unknown banner border style '{s}'", .{val});
+                    }
+                } else if (matchKey(key, "corner-radius") or matchKey(key, "radius")) {
+                    config.banner_corner_radius = std.fmt.parseFloat(f32, val) catch {
+                        diags.warn(line, col, "invalid banner corner radius '{s}'", .{val});
+                        return;
+                    };
+                } else if (matchKey(key, "border-width")) {
+                    config.banner_border_width = std.fmt.parseFloat(f32, val) catch {
+                        diags.warn(line, col, "invalid banner border width '{s}'", .{val});
+                        return;
+                    };
+                } else if (matchKey(key, "min-width")) {
+                    config.banner_min_width = std.fmt.parseInt(u16, val, 10) catch {
+                        diags.warn(line, col, "invalid banner min width '{s}'", .{val});
+                        return;
+                    };
+                } else if (matchKey(key, "max-width")) {
+                    config.banner_max_width = std.fmt.parseInt(u16, val, 10) catch {
+                        diags.warn(line, col, "invalid banner max width '{s}'", .{val});
+                        return;
+                    };
+                } else if (matchKey(key, "margin-cols")) {
+                    config.banner_margin_cols = std.fmt.parseInt(u16, val, 10) catch {
+                        diags.warn(line, col, "invalid banner margin cols '{s}'", .{val});
+                        return;
+                    };
+                } else if (matchKey(key, "margin-rows")) {
+                    config.banner_margin_rows = std.fmt.parseInt(u16, val, 10) catch {
+                        diags.warn(line, col, "invalid banner margin rows '{s}'", .{val});
+                        return;
+                    };
+                } else {
+                    diags.warn(line, col, "unknown banner option '{s}'", .{key});
+                }
+            },
             .modal => {
                 if (matchKey(key, "width")) {
                     config.modal_width = std.fmt.parseInt(u16, val, 10) catch {

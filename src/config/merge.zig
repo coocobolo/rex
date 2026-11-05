@@ -95,6 +95,18 @@ pub fn applyFileConfig(target: *App.Config, file: *const FileConfig, allocator: 
     if (file.toast_min_width) |mw| target.window.toast.min_width = mw;
     if (file.toast_max_width) |mw| target.window.toast.max_width = mw;
 
+    // Banner options
+    if (file.banner_enabled) |en| target.window.banner.enabled = en;
+    if (file.banner_style) |st| target.window.banner.style = st;
+    if (file.banner_position) |pos| target.window.banner.position = pos;
+    if (file.banner_border_style) |bs| target.window.banner.border_style = bs;
+    if (file.banner_corner_radius) |cr| target.window.banner.corner_radius = cr;
+    if (file.banner_border_width) |bw| target.window.banner.border_width = bw;
+    if (file.banner_min_width) |mw| target.window.banner.min_width = mw;
+    if (file.banner_max_width) |mw| target.window.banner.max_width = mw;
+    if (file.banner_margin_cols) |mc| target.window.banner.margin_cols = mc;
+    if (file.banner_margin_rows) |mr| target.window.banner.margin_rows = mr;
+
     // Modal options
     if (file.modal_width) |w| target.window.modal.width = w;
     if (file.modal_dim_alpha) |da| target.window.modal.dim_alpha = da;
@@ -177,6 +189,18 @@ pub fn dumpDefaultConfig(writer: anytype) !void {
         \\position = top_right
         \\border_style = semantic
         \\duration = 5s
+        \\
+        \\[banner]
+        \\enabled = true
+        \\style = floating
+        \\position = top_center
+        \\border_style = semantic
+        \\corner_radius = 8.0
+        \\border_width = 1.0
+        \\min_width = 36
+        \\max_width = 72
+        \\margin_cols = 2
+        \\margin_rows = 1
         \\
         \\[modal]
         \\width = 46
