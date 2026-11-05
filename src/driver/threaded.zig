@@ -1,13 +1,17 @@
 //! ThreadedDriver: dedicated multi-threaded terminal driver.
 //!
-//! Spawns a dedicated background OS worker thread that owns the Terminal emulator
-//! and POSIX PTY. The worker thread runs a poll() loop monitoring the PTY fd and
-//! the InputQueue wakeup channel.
+//! Spawns a dedicated background OS worker thread that owns the terminal emulator
+//! and POSIX PTY. The worker runs an event-driven `poll()` loop monitoring the PTY
+//! master fd and the SPSC `InputQueue` wakeup channel.
 //!
-//! Communication topology:
-//! - GUI -> Driver: lock-free SPSC InputQueue backed by an eventfd/pipe2 OS wakeup channel.
-//! - Driver -> GUI: wait-free TripleBuffer publishing term.Frame snapshots with Release/Acquire semantics.
-//! - Mode 2026: Synchronized Output hold with 150ms timeout.
+//! Viewport frames are published to the GUI thread via a wait-free `TripleBuffer`
+//! with Acquire/Release synchronization. Synchronized output (Mode 2026) is held
+//! with bounded latency measured via `std.Io.Clock.Timestamp`.
+//!
+//! Memory layout keeps the triple buffer embedded inline to eliminate pointer indirection,
+//! isolates atomic indices on 64-byte cache lines to prevent false sharing, batches
+//! input queue wakeups to reduce syscall overhead, and guards cross-thread selection
+//! text extraction with an uncontented futex mutex.
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -29,44 +33,19 @@ const HeldButtons = term.term.HeldButtons;
 const termio = @import("../termio/root.zig");
 const Pty = termio.pty.Posix;
 
-const InputQueueMod = @import("InputQueue.zig");
-pub const InputQueue = InputQueueMod.InputQueue;
-pub const InputEvent = InputQueueMod.InputEvent;
+pub const InputQueue = @import("InputQueue.zig");
+pub const InputEvent = InputQueue.InputEvent;
 
-const TripleBufferMod = @import("TripleBuffer.zig");
-pub const TripleBuffer = TripleBufferMod.TripleBuffer;
+const triple_buffer = @import("triple_buffer.zig");
+pub const TripleBuffer = triple_buffer.Buffer;
 
-const SingleDriverMod = @import("SingleDriver.zig");
-pub const DriverEvents = SingleDriverMod.DriverEvents;
-pub const SharedModes = SingleDriverMod.SharedModes;
-
-// Bitmasks for shared_events atomic word
-const EVENT_BELL: u32 = 1 << 0;
-const EVENT_TITLE: u32 = 1 << 1;
-const EVENT_ICON_NAME: u32 = 1 << 2;
-const EVENT_CURSOR_COLOR: u32 = 1 << 3;
-const EVENT_SELECTION_RESET: u32 = 1 << 4;
-const EVENT_HARD_RESET: u32 = 1 << 5;
-const EVENT_CHILD_CLOSED: u32 = 1 << 6;
-const EVENT_HAD_DATA: u32 = 1 << 7;
-
-/// Low-overhead spinlock using atomic CAS and PAUSE hints.
-const SpinLock = struct {
-    state: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
-
-    pub inline fn lock(self: *SpinLock) void {
-        while (self.state.cmpxchgWeak(false, true, .acquire, .monotonic) != null) {
-            std.atomic.spinLoopHint();
-        }
-    }
-
-    pub inline fn unlock(self: *SpinLock) void {
-        self.state.store(false, .release);
-    }
-};
+const root = @import("root.zig");
+pub const DriverEvents = root.DriverEvents;
+pub const SharedModes = root.SharedModes;
+pub const EventBits = root.EventBits;
 
 /// Multi-threaded terminal driver parameterized by terminal capacity `Option`.
-pub fn ThreadedDriver(comptime option: Option) type {
+pub fn Driver(comptime option: Option) type {
     const TerminalType = Terminal(option);
     const FrameType = Frame(option);
     const TripleBufferType = TripleBuffer(option);
@@ -75,33 +54,35 @@ pub fn ThreadedDriver(comptime option: Option) type {
         const Self = @This();
 
         allocator: Allocator,
+        io: std.Io,
         pty_pid: posix.pid_t,
         pty: Pty,
-        triple_buffer: *TripleBufferType,
+        /// Triple buffer embedded directly into driver struct to eliminate extra heap allocation.
+        triple_buffer: TripleBufferType,
         input_queue: InputQueue,
         thread: ?std.Thread = null,
         should_exit: std.atomic.Value(bool) align(64),
         shared_modes: std.atomic.Value(u32) align(64),
         shared_events: std.atomic.Value(u32) align(64),
+        shared_resize: std.atomic.Value(u32) align(64),
         shared_title: [2][term.max_title_len]u8 = undefined,
         shared_title_len: [2]u16 = .{ 0, 0 },
         shared_title_idx: std.atomic.Value(u8) align(64),
         sync_output_timeout_ms: u32,
         last_frame: ?*const FrameType = null,
         terminal: ?*TerminalType = null,
-        terminal_lock: SpinLock = .{},
+        terminal_mutex: std.Io.Mutex = .init,
+        wakeup_fn: ?*const fn () void = null,
 
         pub const Events = DriverEvents;
         pub const Modes = SharedModes;
 
         /// Creates and starts the ThreadedDriver and its background worker thread.
-        pub fn create(allocator: Allocator, pty: Pty, theme: Theme, sync_output_timeout_ms: u32) !*Self {
+        pub fn create(allocator: Allocator, io: std.Io, pty: Pty, theme: Theme, sync_output_timeout_ms: u32) !*Self {
             const self = try allocator.create(Self);
             errdefer allocator.destroy(self);
 
-            const tb = try allocator.create(TripleBufferType);
-            errdefer allocator.destroy(tb);
-            tb.* = try TripleBufferType.init(allocator);
+            var tb = try TripleBufferType.init(allocator);
             errdefer tb.deinit(allocator);
 
             // Publish an initial blank frame so acquireLatest never fails on start
@@ -111,6 +92,7 @@ pub fn ThreadedDriver(comptime option: Option) type {
 
             self.* = .{
                 .allocator = allocator,
+                .io = io,
                 .pty_pid = pty.pid,
                 .pty = pty,
                 .triple_buffer = tb,
@@ -118,11 +100,13 @@ pub fn ThreadedDriver(comptime option: Option) type {
                 .should_exit = std.atomic.Value(bool).init(false),
                 .shared_modes = std.atomic.Value(u32).init(0),
                 .shared_events = std.atomic.Value(u32).init(0),
+                .shared_resize = std.atomic.Value(u32).init(0),
                 .shared_title_idx = std.atomic.Value(u8).init(0),
                 .sync_output_timeout_ms = sync_output_timeout_ms,
-                .last_frame = tb.acquireLatest(),
+                .last_frame = self.triple_buffer.acquireLatest(),
                 .terminal = null,
-                .terminal_lock = .{},
+                .terminal_mutex = .init,
+                .wakeup_fn = null,
             };
 
             const thread = try std.Thread.spawn(.{}, workerThreadMain, .{ self, theme });
@@ -132,7 +116,7 @@ pub fn ThreadedDriver(comptime option: Option) type {
         }
 
         /// Signals the worker thread to exit, waits for join, and frees all resources.
-        pub fn destroy(self: *Self, io: std.Io) void {
+        pub fn destroy(self: *Self) void {
             self.should_exit.store(true, .release);
             self.input_queue.wake();
 
@@ -141,18 +125,16 @@ pub fn ThreadedDriver(comptime option: Option) type {
                 self.thread = null;
             }
 
-            self.pty.close(io);
+            self.pty.close(self.io);
             self.input_queue.deinit();
             self.triple_buffer.deinit(self.allocator);
-            self.allocator.destroy(self.triple_buffer);
             self.allocator.destroy(self);
         }
 
-        /// Returns monotonic time in milliseconds using CLOCK_MONOTONIC.
-        fn getMonotonicMs() i64 {
-            var ts: posix.timespec = undefined;
-            _ = system.clock_gettime(posix.CLOCK.MONOTONIC, &ts);
-            return @as(i64, ts.sec) * 1000 + @divTrunc(ts.nsec, 1_000_000);
+        /// Backward-compatible overload accepting io explicitly.
+        pub fn destroyIo(self: *Self, io: std.Io) void {
+            _ = io;
+            self.destroy();
         }
 
         /// Background worker thread routine.
@@ -164,14 +146,14 @@ pub fn ThreadedDriver(comptime option: Option) type {
             defer terminal.destroy(self.allocator);
 
             {
-                self.terminal_lock.lock();
+                self.terminal_mutex.lockUncancelable(self.io);
                 self.terminal = &terminal;
-                self.terminal_lock.unlock();
+                self.terminal_mutex.unlock(self.io);
             }
             defer {
-                self.terminal_lock.lock();
+                self.terminal_mutex.lockUncancelable(self.io);
                 self.terminal = null;
-                self.terminal_lock.unlock();
+                self.terminal_mutex.unlock(self.io);
             }
 
             terminal.setTheme(theme);
@@ -189,24 +171,24 @@ pub fn ThreadedDriver(comptime option: Option) type {
 
             var read_buffer: [64 * 1024]u8 align(64) = undefined;
             var reply_buffer: [1024]u8 = undefined;
-            var sync_start_ms: i64 = 0;
+            var sync_start: ?std.Io.Clock.Timestamp = null;
             var child_closed = false;
 
             while (!self.should_exit.load(.acquire)) {
                 var timeout_ms: c_int = -1;
-                const now_ms = getMonotonicMs();
 
                 if (terminal.mode.synchronized_output) {
-                    if (sync_start_ms == 0) sync_start_ms = now_ms;
-                    const elapsed = now_ms - sync_start_ms;
-                    if (elapsed >= self.sync_output_timeout_ms) {
+                    const now = std.Io.Clock.Timestamp.now(self.io, .awake);
+                    if (sync_start == null) sync_start = now;
+                    const elapsed_ms = sync_start.?.durationTo(now).raw.toMilliseconds();
+                    if (elapsed_ms >= self.sync_output_timeout_ms) {
                         timeout_ms = 0; // expired, force publish
                     } else {
-                        const remaining = @as(i64, self.sync_output_timeout_ms) - elapsed;
+                        const remaining = @as(i64, self.sync_output_timeout_ms) - @as(i64, @intCast(elapsed_ms));
                         timeout_ms = @intCast(std.math.clamp(remaining, 1, 50));
                     }
                 } else {
-                    sync_start_ms = 0;
+                    sync_start = null;
                 }
 
                 pollfds[0].revents = 0;
@@ -219,7 +201,7 @@ pub fn ThreadedDriver(comptime option: Option) type {
                 var had_input = false;
                 var total_read: usize = 0;
 
-                self.terminal_lock.lock();
+                self.terminal_mutex.lockUncancelable(self.io);
 
                 // 1. Drain input events from GUI
                 if (self.input_queue.hasPending() or (pollfds[1].revents & system.POLL.IN) != 0) {
@@ -231,7 +213,7 @@ pub fn ThreadedDriver(comptime option: Option) type {
                 }
 
                 // 2. Read from PTY
-                if (!child_closed and ((pollfds[0].revents & (system.POLL.IN | system.POLL.HUP | system.POLL.ERR)) != 0 or pollfds[0].revents == 0)) {
+                if (!child_closed and pollfds[0].fd >= 0 and ((pollfds[0].revents & (system.POLL.IN | system.POLL.HUP | system.POLL.ERR)) != 0 or pollfds[0].revents == 0)) {
                     drain: while (true) {
                         const n = self.pty.readRaw(&read_buffer) catch |err| switch (err) {
                             error.WouldBlock => break :drain,
@@ -255,7 +237,7 @@ pub fn ThreadedDriver(comptime option: Option) type {
                     }
 
                     if (total_read > 0) {
-                        _ = self.shared_events.fetchOr(EVENT_HAD_DATA, .release);
+                        _ = self.shared_events.fetchOr(EventBits.had_data_mask, .release);
 
                         // Drain replies to PTY once per batch
                         self.drainRepliesToPty(&terminal, &reply_buffer);
@@ -266,6 +248,8 @@ pub fn ThreadedDriver(comptime option: Option) type {
                     }
 
                     if (child_closed) {
+                        // Invalidate PTY fd so poll() ignores it, completely eliminating 100% CPU busy-spin
+                        pollfds[0].fd = -1;
                         terminal.end();
                         if (terminal.events.any()) {
                             self.accumulateEvents(&terminal);
@@ -279,16 +263,17 @@ pub fn ThreadedDriver(comptime option: Option) type {
                 // 4. Publish frame if changed and not held by synchronized output
                 var should_publish = false;
                 const in_timeout_flush = terminal.mode.synchronized_output and
-                    (sync_start_ms != 0 and (getMonotonicMs() - sync_start_ms >= self.sync_output_timeout_ms));
+                    (sync_start != null and (sync_start.?.durationTo(std.Io.Clock.Timestamp.now(self.io, .awake)).raw.toMilliseconds() >= self.sync_output_timeout_ms));
 
                 if (total_read > 0 or had_input or child_closed or in_timeout_flush) {
                     var in_sync_hold = false;
                     if (terminal.mode.synchronized_output) {
-                        if (sync_start_ms == 0) sync_start_ms = getMonotonicMs();
-                        const elapsed = getMonotonicMs() - sync_start_ms;
-                        in_sync_hold = elapsed < self.sync_output_timeout_ms;
+                        const now = std.Io.Clock.Timestamp.now(self.io, .awake);
+                        if (sync_start == null) sync_start = now;
+                        const elapsed_ms = sync_start.?.durationTo(now).raw.toMilliseconds();
+                        in_sync_hold = elapsed_ms < self.sync_output_timeout_ms;
                     } else {
-                        sync_start_ms = 0;
+                        sync_start = null;
                     }
 
                     if (!in_sync_hold) {
@@ -296,15 +281,18 @@ pub fn ThreadedDriver(comptime option: Option) type {
                     }
                 }
 
-                self.terminal_lock.unlock();
+                self.terminal_mutex.unlock(self.io);
 
                 if (child_closed) {
-                    _ = self.shared_events.fetchOr(EVENT_CHILD_CLOSED, .release);
+                    _ = self.shared_events.fetchOr(EventBits.child_closed_mask, .release);
                 }
 
                 if (should_publish) {
                     self.triple_buffer.getFillFrame().copyFrom(&local_frame);
                     self.triple_buffer.publish();
+                    if (self.wakeup_fn) |wake| wake();
+                } else if (child_closed or (terminal.events.any())) {
+                    if (self.wakeup_fn) |wake| wake();
                 }
             }
         }
@@ -357,13 +345,20 @@ pub fn ThreadedDriver(comptime option: Option) type {
                             terminal.sendMouse(mev.col, mev.row, mev.button, 0, true);
                             self.drainRepliesToPty(terminal, reply_buf);
                         }
+                    } else if (terminal.active_buffer == .alternate) {
+                        const seq = if (terminal.mode.cursor_keys)
+                            (if (mev.button == 64) "\x1bOA" else "\x1bOB")
+                        else
+                            (if (mev.button == 64) "\x1b[A" else "\x1b[B");
+                        var i: u16 = 0;
+                        while (i < mev.steps) : (i += 1) {
+                            _ = self.pty.writeAll(seq) catch break;
+                        }
                     } else {
-                        if (terminal.active_buffer != .alternate) {
-                            if (mev.button == 64) {
-                                terminal.active().scrollViewportBack(mev.steps);
-                            } else {
-                                terminal.active().scrollViewportForward(mev.steps);
-                            }
+                        if (mev.button == 64) {
+                            terminal.active().scrollViewportBack(mev.steps);
+                        } else {
+                            terminal.active().scrollViewportForward(mev.steps);
                         }
                     }
                 },
@@ -396,7 +391,9 @@ pub fn ThreadedDriver(comptime option: Option) type {
                 .focus => |focused| {
                     if (terminal.mode.focus_events) {
                         const seq = if (focused) "\x1b[I" else "\x1b[O";
-                        _ = self.pty.writeAll(seq) catch {};
+                        _ = self.pty.writeAll(seq) catch |err| {
+                            log.err("failed to write focus event: {}", .{err});
+                        };
                     }
                 },
                 .hard_reset => {
@@ -423,21 +420,27 @@ pub fn ThreadedDriver(comptime option: Option) type {
         fn accumulateEvents(self: *Self, terminal: *TerminalType) void {
             const term_ev = terminal.takeEvents();
             var mask: u32 = 0;
-            if (term_ev.bell) mask |= EVENT_BELL;
-            if (term_ev.icon_name) mask |= EVENT_ICON_NAME;
-            if (term_ev.cursor_color) mask |= EVENT_CURSOR_COLOR;
-            if (term_ev.selection_reset) mask |= EVENT_SELECTION_RESET;
-            if (term_ev.hard_reset) mask |= EVENT_HARD_RESET;
+            if (term_ev.bell) mask |= EventBits.bell_mask;
+            if (term_ev.icon_name) mask |= EventBits.icon_name_mask;
+            if (term_ev.cursor_color) mask |= EventBits.cursor_color_mask;
+            if (term_ev.selection_reset) mask |= EventBits.selection_reset_mask;
+            if (term_ev.hard_reset) mask |= EventBits.hard_reset_mask;
 
             if (term_ev.title) {
-                mask |= EVENT_TITLE;
+                mask |= EventBits.title_mask;
                 const cur_idx = self.shared_title_idx.load(.monotonic);
                 const next_idx = 1 - cur_idx;
                 const title = terminal.getTitle();
-                const len = @min(title.len, term.max_title_len);
+                const len: usize = @min(title.len, term.max_title_len);
                 @memcpy(self.shared_title[next_idx][0..len], title[0..len]);
                 self.shared_title_len[next_idx] = @intCast(len);
                 self.shared_title_idx.store(next_idx, .release);
+            }
+
+            if (term_ev.resize) |r| {
+                const packed_res: u32 = (@as(u32, r.rows) << 16) | @as(u32, r.cols);
+                self.shared_resize.store(packed_res, .release);
+                mask |= EventBits.resize_mask;
             }
 
             if (mask != 0) {
@@ -452,7 +455,7 @@ pub fn ThreadedDriver(comptime option: Option) type {
             if (self.triple_buffer.acquireLatest()) |f| {
                 self.last_frame = f;
             }
-            return self.last_frame orelse &self.triple_buffer.frames[0];
+            return self.last_frame orelse &self.triple_buffer.frames[self.triple_buffer.read_idx];
         }
 
         /// Returns true if a fresh frame is ready in the TripleBuffer.
@@ -469,38 +472,36 @@ pub fn ThreadedDriver(comptime option: Option) type {
             return events;
         }
 
-        /// Atomically retrieves and resets driver events (bell, title, child_closed).
+        /// Atomically retrieves and resets driver events (bell, title, resize, child_closed).
         pub fn takeEvents(self: *Self) DriverEvents {
             const bits = self.shared_events.swap(0, .acq_rel);
+            const resize_val = if ((bits & EventBits.resize_mask) != 0) self.shared_resize.swap(0, .acq_rel) else 0;
+            const resize_ev: ?term.Events.Resize = if (resize_val != 0) .{
+                .rows = @intCast(resize_val >> 16),
+                .cols = @intCast(resize_val & 0xFFFF),
+            } else null;
+
             return .{
-                .bell = (bits & EVENT_BELL) != 0,
-                .title = (bits & EVENT_TITLE) != 0,
-                .icon_name = (bits & EVENT_ICON_NAME) != 0,
-                .cursor_color = (bits & EVENT_CURSOR_COLOR) != 0,
-                .selection_reset = (bits & EVENT_SELECTION_RESET) != 0,
-                .hard_reset = (bits & EVENT_HARD_RESET) != 0,
-                .child_closed = (bits & EVENT_CHILD_CLOSED) != 0,
-                .had_data = (bits & EVENT_HAD_DATA) != 0,
+                .bell = (bits & EventBits.bell_mask) != 0,
+                .title = (bits & EventBits.title_mask) != 0,
+                .icon_name = (bits & EventBits.icon_name_mask) != 0,
+                .cursor_color = (bits & EventBits.cursor_color_mask) != 0,
+                .selection_reset = (bits & EventBits.selection_reset_mask) != 0,
+                .hard_reset = (bits & EventBits.hard_reset_mask) != 0,
+                .child_closed = (bits & EventBits.child_closed_mask) != 0,
+                .had_data = (bits & EventBits.had_data_mask) != 0,
+                .resize = resize_ev,
             };
         }
 
         /// Sends an input event to the driver worker thread.
         pub fn sendInput(self: *Self, event: InputEvent) bool {
-            const pushed = self.input_queue.push(event);
-            if (pushed) self.input_queue.wake();
-            return pushed;
+            return self.input_queue.push(event);
         }
 
-        /// Sends raw bytes to the driver worker thread.
+        /// Sends raw bytes to the driver worker thread with batched wakeups.
         pub fn sendBytes(self: *Self, slice: []const u8) void {
-            if (slice.len == 0) return;
-            var offset: usize = 0;
-            while (offset < slice.len) {
-                const chunk_len = @min(slice.len - offset, InputQueueMod.max_bytes_payload);
-                _ = self.input_queue.push(InputEvent.makeBytes(slice[offset..][0..chunk_len]));
-                offset += chunk_len;
-            }
-            self.input_queue.wake();
+            _ = self.input_queue.pushBytes(slice);
         }
 
         /// Pastes clipboard text via the input queue.
@@ -510,7 +511,6 @@ pub fn ThreadedDriver(comptime option: Option) type {
                 self.allocator.free(duped);
                 return error.InputQueueFull;
             }
-            self.input_queue.wake();
         }
 
         /// Returns the current terminal modes snapshot.
@@ -531,13 +531,15 @@ pub fn ThreadedDriver(comptime option: Option) type {
 
         /// Copies selected text into `buf` without allocating. Returns bytes written.
         pub fn copySelectionText(self: *Self, selection: anytype, buf: []u8) usize {
-            self.terminal_lock.lock();
-            defer self.terminal_lock.unlock();
+            self.terminal_mutex.lockUncancelable(self.io);
+            defer self.terminal_mutex.unlock(self.io);
             const term_ptr = self.terminal orelse return 0;
-            return SingleDriverMod.extractSelectionText(term_ptr.active(), selection, buf);
+            return root.extractSelectionText(term_ptr.active(), selection, buf);
         }
     };
 }
+
+pub const ThreadedDriver = Driver;
 
 fn sleepNs(ns: u64) void {
     const req = posix.timespec{
@@ -555,7 +557,7 @@ test "ThreadedDriver: create, destroy and basic frame acquisition" {
         .max_cols = 80,
         .max_scrollback = 100,
     };
-    const Driver = ThreadedDriver(test_option);
+    const DriverType = Driver(test_option);
 
     var sv: [2]posix.fd_t = undefined;
     const rc = system.socketpair(posix.AF.UNIX, posix.SOCK.STREAM | posix.SOCK.NONBLOCK, 0, &sv);
@@ -566,17 +568,20 @@ test "ThreadedDriver: create, destroy and basic frame acquisition" {
 
     const mock_pty: Pty = .{
         .master = sv[0],
-        .pid = -1,
+        .pid = 1234,
         .stdout_read_fd = -1,
         .error_read_fd = -1,
     };
 
-    var driver = try Driver.create(testing.allocator, mock_pty, Theme.graphite, 150);
-    defer driver.destroy(testing.io);
+    var driver = try DriverType.create(testing.allocator, testing.io, mock_pty, Theme.graphite, 150);
+    defer driver.destroy();
 
-    const initial_frame = driver.getFrame();
-    try testing.expectEqual(@as(u16, 24), initial_frame.active_rows);
-    try testing.expectEqual(@as(u16, 80), initial_frame.active_cols);
+    try testing.expectEqual(@as(posix.pid_t, 1234), driver.getPid());
+    try testing.expect(!driver.hasNewFrame());
+
+    const frame = driver.getFrame();
+    try testing.expectEqual(@as(u16, 24), frame.active_rows);
+    try testing.expectEqual(@as(u16, 80), frame.active_cols);
 }
 
 test "ThreadedDriver: async PTY input, frame update, and GUI reply" {
@@ -586,7 +591,7 @@ test "ThreadedDriver: async PTY input, frame update, and GUI reply" {
         .max_cols = 80,
         .max_scrollback = 100,
     };
-    const Driver = ThreadedDriver(test_option);
+    const DriverType = Driver(test_option);
 
     var sv: [2]posix.fd_t = undefined;
     const rc = system.socketpair(posix.AF.UNIX, posix.SOCK.STREAM | posix.SOCK.NONBLOCK, 0, &sv);
@@ -602,10 +607,10 @@ test "ThreadedDriver: async PTY input, frame update, and GUI reply" {
         .error_read_fd = -1,
     };
 
-    var driver = try Driver.create(testing.allocator, mock_pty, Theme.graphite, 150);
-    defer driver.destroy(testing.io);
+    var driver = try DriverType.create(testing.allocator, testing.io, mock_pty, Theme.graphite, 150);
+    defer driver.destroy();
 
-    // 1. Simulate child outputting characters
+    // Simulate child outputting characters
     _ = system.write(sv[1], "AsyncRex\r\n", 10);
 
     // Wait briefly for worker thread to process and publish
@@ -623,7 +628,7 @@ test "ThreadedDriver: async PTY input, frame update, and GUI reply" {
     try testing.expectEqual(@as(u21, 's'), row0[1].codepoint);
     try testing.expectEqual(@as(u21, 'y'), row0[2].codepoint);
 
-    // 2. GUI sends keystroke to PTY
+    // GUI sends keystroke to PTY
     driver.sendBytes("input_test");
 
     var read_buf: [64]u8 = undefined;
@@ -647,7 +652,7 @@ test "ThreadedDriver: Mode 2026 synchronized output hold and release" {
         .max_cols = 80,
         .max_scrollback = 100,
     };
-    const Driver = ThreadedDriver(test_option);
+    const DriverType = Driver(test_option);
 
     var sv: [2]posix.fd_t = undefined;
     const rc = system.socketpair(posix.AF.UNIX, posix.SOCK.STREAM | posix.SOCK.NONBLOCK, 0, &sv);
@@ -663,10 +668,10 @@ test "ThreadedDriver: Mode 2026 synchronized output hold and release" {
         .error_read_fd = -1,
     };
 
-    var driver = try Driver.create(testing.allocator, mock_pty, Theme.graphite, 150);
-    defer driver.destroy(testing.io);
+    var driver = try DriverType.create(testing.allocator, testing.io, mock_pty, Theme.graphite, 150);
+    defer driver.destroy();
 
-    // 1. Begin synchronized output: \x1b[?2026h, write text
+    // Begin synchronized output: \x1b[?2026h, write text
     _ = system.write(sv[1], "\x1b[?2026hSyncText", 16);
 
     // Sleep 15ms (well within 150ms timeout)
@@ -693,4 +698,84 @@ test "ThreadedDriver: Mode 2026 synchronized output hold and release" {
     try testing.expectEqual(@as(u21, 'y'), row0[1].codepoint);
     try testing.expectEqual(@as(u21, 'n'), row0[2].codepoint);
     try testing.expectEqual(@as(u21, 'c'), row0[3].codepoint);
+}
+
+var test_wake_count = std.atomic.Value(u32).init(0);
+fn testWakeup() void {
+    _ = test_wake_count.fetchAdd(1, .release);
+}
+
+test "ThreadedDriver: wakeup_fn callback and alternate screen alt_scroll" {
+    const testing = std.testing;
+    const test_option: Option = .{
+        .max_rows = 24,
+        .max_cols = 80,
+        .max_scrollback = 100,
+    };
+    const DriverType = Driver(test_option);
+
+    var sv: [2]posix.fd_t = undefined;
+    const rc = system.socketpair(posix.AF.UNIX, posix.SOCK.STREAM | posix.SOCK.NONBLOCK, 0, &sv);
+    try testing.expectEqual(@as(c_int, 0), rc);
+    defer {
+        _ = system.close(sv[1]);
+    }
+
+    const mock_pty: Pty = .{
+        .master = sv[0],
+        .pid = -1,
+        .stdout_read_fd = -1,
+        .error_read_fd = -1,
+    };
+
+    var driver = try DriverType.create(testing.allocator, testing.io, mock_pty, Theme.graphite, 150);
+    defer driver.destroy();
+
+    test_wake_count.store(0, .release);
+    driver.wakeup_fn = testWakeup;
+
+    // Output text from child: should trigger publish and invoke wakeup_fn
+    _ = system.write(sv[1], "WakeupTest\r\n", 12);
+
+    var retries: usize = 100;
+    while (retries > 0) : (retries -= 1) {
+        if (test_wake_count.load(.acquire) > 0) break;
+        std.Thread.yield() catch {};
+        sleepNs(1_000_000);
+    }
+    try testing.expect(test_wake_count.load(.acquire) > 0);
+
+    // Switch to alternate screen (\x1b[?1049h)
+    _ = system.write(sv[1], "\x1b[?1049h", 8);
+
+    retries = 100;
+    while (retries > 0) : (retries -= 1) {
+        const f = driver.getFrame();
+        if (f.is_alternate) break;
+        std.Thread.yield() catch {};
+        sleepNs(1_000_000);
+    }
+
+    // Scroll up in alternate screen should emit cursor up keys (\x1b[A)
+    _ = driver.sendInput(.{
+        .mouse_scroll = .{
+            .col = 5,
+            .row = 5,
+            .button = 64, // Wheel up
+            .steps = 1,
+        },
+    });
+
+    var read_buf: [32]u8 = undefined;
+    retries = 100;
+    var n_read: isize = -1;
+    while (retries > 0) : (retries -= 1) {
+        n_read = system.read(sv[1], &read_buf, read_buf.len);
+        if (n_read > 0) break;
+        std.Thread.yield() catch {};
+        sleepNs(1_000_000);
+    }
+    try testing.expect(n_read > 0);
+    const n_u: usize = @intCast(n_read);
+    try testing.expectEqualStrings("\x1b[A", read_buf[0..n_u]);
 }
