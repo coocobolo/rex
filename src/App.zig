@@ -119,6 +119,8 @@ pub const Config = struct {
         card: Card.Option = .{},
         /// In-terminal toast notification options.
         toast: Toast.Option = .{},
+        /// Configuration diagnostic notification banner options.
+        banner: Banner.Option = .{},
         /// Semantic icon rendering options.
         icon: Icon.Option = .{},
         /// Modal dialog options including dimensions, dimming, and default focus.
@@ -763,24 +765,27 @@ fn renderFrame(self: *App) !bool {
     }
 
     if (self.config_banner) |*b| {
-        const drawer: Drawer = .{
-            .allocator = self.allocator,
-            .atlas = atlas,
-            .rasterizer = &self.rasterizer,
-            .gray_buffer = &self.wellbeing_overlay.gray_buffer,
-            .color_buffer = &self.wellbeing_overlay.color_buffer,
-        };
-        _ = b.render(
-            tokens,
-            total_cols,
-            total_rows,
-            &self.wellbeing_overlay.card_buffer,
-            drawer,
-            &self.hotspots,
-        );
+        if (self.config.window.banner.enabled) {
+            const drawer: Drawer = .{
+                .allocator = self.allocator,
+                .atlas = atlas,
+                .rasterizer = &self.rasterizer,
+                .gray_buffer = &self.wellbeing_overlay.gray_buffer,
+                .color_buffer = &self.wellbeing_overlay.color_buffer,
+            };
+            _ = b.render(
+                tokens,
+                total_cols,
+                total_rows,
+                self.config.window.banner,
+                &self.wellbeing_overlay.card_buffer,
+                drawer,
+                &self.hotspots,
+            );
+        }
     }
 
-    const banner_active = self.config_banner != null;
+    const banner_active = self.config_banner != null and self.config.window.banner.enabled;
     const app_toasts_active = !self.quit_confirm_open and self.config.window.toast.enabled and self.toast_queue.isActive();
     const overlay_active = self.quit_confirm_open or self.wellbeing_overlay.isActive() or app_toasts_active or banner_active;
     const overlay_changed = overlay_active or self.wellbeing_overlay.was_active;
