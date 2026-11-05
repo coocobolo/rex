@@ -14,6 +14,7 @@ pub const Scrollbar = @import("Scrollbar.zig");
 pub const Cursor = @import("Cursor.zig");
 pub const Background = @import("Background.zig");
 pub const Card = @import("Card.zig");
+pub const Blur = @import("Blur.zig");
 pub const Modal = @import("../ui/Modal.zig");
 pub const Toast = @import("../ui/Toast.zig");
 pub const Icon = @import("../ui/Icon.zig");
