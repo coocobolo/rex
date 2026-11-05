@@ -75,11 +75,15 @@ pub fn draw(
         frame: Dimension(f32),
     },
     background_alpha: ?f32,
+    grayscale: f32,
+    color_tint: [3]f32,
 ) void {
     if (instance_length == 0) return;
     self.shader.use();
     self.shader.set2f("u_cell_size", dimension.cell.width, dimension.cell.height);
     self.shader.set2f("u_screen_size", dimension.frame.width, dimension.frame.height);
     self.shader.set1f("u_bg_alpha", background_alpha orelse self.option.alpha);
+    self.shader.set1f("u_grayscale", grayscale);
+    self.shader.set3f("u_color_tint", color_tint[0], color_tint[1], color_tint[2]);
     self.buffer.draw(instance_length);
 }

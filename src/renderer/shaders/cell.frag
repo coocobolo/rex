@@ -10,6 +10,8 @@ uniform int u_is_color;          // 0 = gray pass, 1 = color emoji pass
 uniform int u_blink_on;          // 0 = slow blink phase off
 uniform int u_blink_rapid_on;    // 0 = rapid blink phase off
 uniform int u_mask_mode;         // 1 = write glyph coverage for the ink mask
+uniform float u_grayscale;
+uniform vec3 u_color_tint;
 
 out vec4 frag_color;
 
@@ -37,10 +39,16 @@ void main() {
     // Color emoji: premultiplied RGBA, use ONE, ONE_MINUS_SRC_ALPHA blend
     frag_color = texture(u_atlas_color, v_uv);
     if (frag_color.a < 0.01) discard;
+    vec3 rgb = frag_color.rgb * u_color_tint;
+    float luma = dot(rgb, vec3(0.2126, 0.7152, 0.0722));
+    frag_color.rgb = mix(rgb, vec3(luma), u_grayscale);
   } else {
     // Gray glyph: red channel = coverage, use SRC_ALPHA, ONE_MINUS_SRC_ALPHA
     float alpha = texture(u_atlas_gray, v_uv).a;
     if (alpha < 0.01) discard;
-    frag_color = vec4(v_fg.rgb, v_fg.a * alpha);
+    vec3 rgb = v_fg.rgb * u_color_tint;
+    float luma = dot(rgb, vec3(0.2126, 0.7152, 0.0722));
+    rgb = mix(rgb, vec3(luma), u_grayscale);
+    frag_color = vec4(rgb, v_fg.a * alpha);
   }
 }

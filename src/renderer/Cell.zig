@@ -88,6 +88,8 @@ pub const DrawArgs = struct {
     frame: Dimension(f32),
     gray_len: usize,
     color_len: usize,
+    grayscale: f32 = 0.0,
+    color_tint: [3]f32 = .{ 1.0, 1.0, 1.0 },
 };
 
 pub fn draw(self: *Cell, args: DrawArgs) void {
@@ -110,6 +112,30 @@ pub fn draw(self: *Cell, args: DrawArgs) void {
         gl.ONE,
         gl.ONE_MINUS_SRC_ALPHA,
     );
+}
+
+pub fn drawExternal(self: *Cell, gray_buffer: *Buffer, color_buffer: *Buffer, args: DrawArgs) void {
+    self.setup(args, false);
+    if (args.gray_len > 0) {
+        self.shader.set1i("u_is_color", 0);
+        gray_buffer.draw(args.gray_len);
+    }
+    if (args.color_len > 0) {
+        gl.blendFuncSeparate(
+            gl.ONE,
+            gl.ONE_MINUS_SRC_ALPHA,
+            gl.ONE,
+            gl.ONE_MINUS_SRC_ALPHA,
+        );
+        self.shader.set1i("u_is_color", 1);
+        color_buffer.draw(args.color_len);
+        gl.blendFuncSeparate(
+            gl.SRC_ALPHA,
+            gl.ONE_MINUS_SRC_ALPHA,
+            gl.ONE,
+            gl.ONE_MINUS_SRC_ALPHA,
+        );
+    }
 }
 
 /// Draws the coverage of every glyph, gray and color, into the bound
@@ -147,4 +173,6 @@ fn setup(self: *Cell, args: DrawArgs, mask: bool) void {
     self.shader.set1i("u_blink_on", @intFromBool(args.blink_on));
     self.shader.set1i("u_blink_rapid_on", @intFromBool(args.blink_rapid_on));
     self.shader.set1i("u_mask_mode", @intFromBool(mask));
+    self.shader.set1f("u_grayscale", args.grayscale);
+    self.shader.set3f("u_color_tint", args.color_tint[0], args.color_tint[1], args.color_tint[2]);
 }

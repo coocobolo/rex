@@ -413,16 +413,16 @@ pub fn rasterize(self: *Rasterizer, gpa: Allocator, codepoint: u21, kind: FaceKi
 
         const scale = @min(scale_by_w, scale_by_h);
 
-        const dst_w: u16 = @max(1, @as(u16, @intFromFloat(@round(@as(f32, @floatFromInt(bmp_width)) * scale))));
-        const dst_h: u16 = @max(1, @as(u16, @intFromFloat(@round(@as(f32, @floatFromInt(bmp_rows)) * scale))));
+        const dst_w: u16 = std.math.clamp(@as(u16, @intFromFloat(@round(@as(f32, @floatFromInt(bmp_width)) * scale))), 1, @max(max_w, 1));
+        const dst_h: u16 = std.math.clamp(@as(u16, @intFromFloat(@round(@as(f32, @floatFromInt(bmp_rows)) * scale))), 1, @max(max_h, 1));
 
         try self.scratch.resize(
             gpa,
             @as(usize, dst_w) * @as(usize, dst_h) * 4,
         );
 
-        const x_pad: i16 = @intCast((max_w - dst_w) / 2);
-        const y_pad: i16 = @intCast((max_h - dst_h) / 2);
+        const x_pad: i16 = @intCast((max_w -| dst_w) / 2);
+        const y_pad: i16 = @intCast((max_h -| dst_h) / 2);
 
         scaleDownBgraArea(
             @ptrCast(bmp.buffer),

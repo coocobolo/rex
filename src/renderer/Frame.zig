@@ -11,6 +11,7 @@ const Atlas = renderer.Atlas;
 
 const Cell = renderer.Cell;
 const Background = renderer.Background;
+const Card = renderer.Card;
 const Decoration = renderer.Decoration;
 const Selection = renderer.Selection;
 const Scrollbar = renderer.Scrollbar;
@@ -237,6 +238,12 @@ cursor_state: Cursor.State,
 /// Spliced sub-buffer range for background quad updates, or null if full upload needed.
 bg_spliced_range: ?SplicedRange = null,
 
+/// Visual overlay instances (for toasts, break lock screen, and dashboard modal)
+overlay_background_instances: []const Background.Instance = &.{},
+overlay_card_instances: []const Card.Instance = &.{},
+overlay_gray_instances: []const Cell.Instance = &.{},
+overlay_color_instances: []const Cell.Instance = &.{},
+
 /// Set by FrameBuilder when instance data changed since the last build.
 /// Renderer skips VBO re-upload when false, but always issues draw calls.
 // dirty: bool,
@@ -317,6 +324,10 @@ pub fn Builder(comptime option: Option) type {
             const bot_row = @max(sel.start_row, sel.end_row);
             const cols_limit: u16 = @min(active_cols, max_cols);
 
+            const is_block = sel.kind == .block;
+            const block_left: u16 = @min(sel.start_col, sel.end_col);
+            const block_right: u16 = @min(@max(sel.start_col, sel.end_col) + 1, cols_limit);
+
             // Normalize: anchor vs active end
             const top_col: u16 = if (sel.start_row < sel.end_row) sel.start_col else if (sel.start_row > sel.end_row) sel.end_col else @min(sel.start_col, sel.end_col); // same row: normalize
             const bot_col: u16 = if (sel.start_row < sel.end_row) sel.end_col else if (sel.start_row > sel.end_row) sel.start_col else @max(sel.start_col, sel.end_col); // same row: normalize
@@ -326,8 +337,8 @@ pub fn Builder(comptime option: Option) type {
             var pending: ?Selection.Instance = null;
             for (top_row..bot_row + 1) |r_idx| {
                 const r: u16 = @intCast(r_idx);
-                const span_start: u16 = if (r == top_row) top_col else 0;
-                const span_end: u16 = if (r == bot_row) bot_col + 1 else cols_limit;
+                const span_start: u16 = if (is_block) block_left else (if (r == top_row) top_col else 0);
+                const span_end: u16 = if (is_block) block_right else (if (r == bot_row) bot_col + 1 else cols_limit);
                 if (span_end <= span_start) continue;
 
                 const cur_span = span_end - span_start;
@@ -669,7 +680,7 @@ pub fn Builder(comptime option: Option) type {
 
         fn buildScrollbar(frame: *const FrameType) Scrollbar.State {
             if (comptime option.max_scrollback == 0) return .{ .visibility = false, .thumb_top_frac = 0, .thumb_height_frac = 1 };
-            if (frame.scrollback_used == 0) return .{
+            if (frame.scrollback_used == 0 or frame.is_alternate) return .{
                 .visibility = false,
                 .at_live_view = true,
                 .thumb_top_frac = 0,

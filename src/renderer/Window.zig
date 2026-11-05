@@ -179,8 +179,8 @@ pub fn windowShouldClose(self: *const Window) bool {
     return c.glfwWindowShouldClose(self.handle) != 0;
 }
 
-pub fn setWindowShouldClose(self: *const Window, set: bool) bool {
-    return c.glfwSetWindowShouldClose(self.handle, set) != 0;
+pub fn setWindowShouldClose(self: *const Window, set: bool) void {
+    c.glfwSetWindowShouldClose(self.handle, if (set) c.GLFW_TRUE else c.GLFW_FALSE);
 }
 
 pub fn swapBuffers(self: *const Window) void {
@@ -189,6 +189,10 @@ pub fn swapBuffers(self: *const Window) void {
 
 pub fn glfwPollEvents() void {
     c.glfwPollEvents();
+}
+
+pub fn glfwPostEmptyEvent() void {
+    c.glfwPostEmptyEvent();
 }
 
 pub fn setCharCallback(self: *Window, cb: c.GLFWcharfun) void {
@@ -217,6 +221,10 @@ pub fn setScrollCallback(self: *Window, cb: c.GLFWscrollfun) void {
 
 pub fn setWindowFocusCallback(self: *Window, cb: c.GLFWwindowfocusfun) void {
     _ = c.glfwSetWindowFocusCallback(self.handle, cb);
+}
+
+pub fn setWindowCloseCallback(self: *Window, cb: c.GLFWwindowclosefun) void {
+    _ = c.glfwSetWindowCloseCallback(self.handle, cb);
 }
 
 pub fn frameBufferSize(self: *const Window, comptime T: type) Dimension(T) {
