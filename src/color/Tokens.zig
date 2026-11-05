@@ -76,8 +76,8 @@ pub const Tokens = struct {
     /// Dark theme Obsidian (warm charcoal, restrained contrast)
     pub const dark: Tokens = .{
         .bg = .{ 18, 18, 19, 245 }, // #121213
-        .card = .{ 30, 30, 32, 255 }, // #1E1E20
-        .card_opaque = .{ 30, 30, 32 },
+        .card = .{ 10, 10, 10, 255 }, // #1E1E20
+        .card_opaque = .{ 10, 10, 10 },
         .border = .{ 65, 65, 67 }, // #414143
         .border_subtle = .{ 45, 45, 47 }, // #2D2D2F
 
@@ -172,7 +172,7 @@ test "Tokens: dark and light presets sanity" {
     const dark = Tokens.dark;
     const light = Tokens.light;
 
-    try std.testing.expectEqual(@as(u8, 30), dark.card[0]);
+    try std.testing.expectEqual(@as(u8, 10), dark.card[0]);
     try std.testing.expectEqual(@as(u8, 255), light.card[0]);
 
     // Rec. 601 luma tests

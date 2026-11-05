@@ -94,6 +94,8 @@ pub fn applyFileConfig(target: *App.Config, file: *const FileConfig, allocator: 
     if (file.toast_duration_ms) |dur| target.window.toast.duration_ms = dur;
     if (file.toast_min_width) |mw| target.window.toast.min_width = mw;
     if (file.toast_max_width) |mw| target.window.toast.max_width = mw;
+    if (file.toast_margin_cols) |mc| target.window.toast.margin_cols = mc;
+    if (file.toast_margin_rows) |mr| target.window.toast.margin_rows = mr;
 
     // Banner options
     if (file.banner_enabled) |en| target.window.banner.enabled = en;
@@ -163,66 +165,412 @@ pub fn applyFileConfig(target: *App.Config, file: *const FileConfig, allocator: 
 pub fn dumpDefaultConfig(writer: anytype) !void {
     try writer.writeAll(
         \\# ~/.config/rex/config
-        \\# Rex Terminal Emulator Configuration
+        \\# Canonical Configuration Template for Rex Terminal Emulator
+        \\#
+        \\# Syntax rules:
+        \\#   - Key-value assignments: key = value
+        \\#   - Section headers: [section]
+        \\#   - Dot notation is also supported: section.key = value (e.g., card.corner_radius = 8.0)
+        \\#   - Comments start with '#'
+        \\#   - Keys can use snake_case (dim_alpha) or kebab-case (dim-alpha)
+        \\#   - Hot reload active config at runtime with: Ctrl+Shift+R
         \\
-        \\# Theme & Appearance
+        \\# ==============================================================================
+        \\# Theme & Typography
+        \\# ==============================================================================
+        \\
+        \\# Built-in terminal color palette preset.
+        \\# Supported values: graphite
+        \\# Default: graphite
         \\theme = graphite
+        \\
+        \\# Monospace font family or variable font file.
+        \\# Supported values: any font family name or TTF/OTF path
+        \\# Default: GoogleSansCode-VariableFont_MONO,wght.ttf
         \\# font_family = "GoogleSansCode-VariableFont_MONO,wght.ttf"
+        \\
+        \\# Font size in points.
+        \\# Supported values: positive float (e.g. 10.0, 14.0, 18.0)
+        \\# Default: 14.0
         \\font_size = 14.0
+        \\
+        \\# Regular font weight for variable fonts.
+        \\# Supported values: integer from 100 to 900 (100: Thin, 400: Regular, 500: Medium, 700: Bold)
+        \\# Default: 400
         \\font_weight = 400
+        \\
+        \\# Bold font weight for variable fonts when bold text (SGR 1) is rendered.
+        \\# Supported values: integer from 100 to 900 (must be >= font_weight)
+        \\# Default: 550
         \\font_weight_bold = 550
         \\
+        \\# ==============================================================================
+        \\# Window & Rendering ([window])
+        \\# ==============================================================================
         \\[window]
+        \\
+        \\# Window background opacity multiplier.
+        \\# Supported values: float from 0.0 (completely transparent) to 1.0 (fully opaque)
+        \\# Default: 0.95
         \\background_alpha = 0.95
+        \\
+        \\# Background blur radius when compositor or blur pipeline is active.
+        \\# Supported values: integer >= 0 (0 disables background blur)
+        \\# Default: 0
+        \\background_blur = 0
+        \\
+        \\# Ask for interactive confirmation before closing window when terminal sessions are active.
+        \\# Supported values: true, false, yes, no, on, off, 1, 0
+        \\# Default: true
         \\confirm_quit = true
+        \\
+        \\# Opacity factor for SGR 2 (dim / faint) terminal text.
+        \\# Supported values: float from 0.0 to 1.0
+        \\# Default: 0.5
         \\dim_alpha = 0.5
+        \\
+        \\# Audible / visual bell toggle on BEL control character.
+        \\# Supported values: on, off, true, false
+        \\# Default: on
         \\bell = on
+        \\
+        \\# Terminal bell volume as a percentage of system alert volume.
+        \\# Supported values: integer from 0 to 100
+        \\# Default: 100
         \\bell_volume = 100
         \\
+        \\# Initial window title (appended with Wellbeing focus session if active).
+        \\# Supported values: string up to 127 characters
+        \\# Default: rex
+        \\title = "rex"
+        \\
+        \\# Initial window width in screen pixels.
+        \\# Supported values: positive integer
+        \\# Default: 1920
+        \\# width = 1920
+        \\
+        \\# Initial window height in screen pixels.
+        \\# Supported values: positive integer
+        \\# Default: 1080
+        \\# height = 1080
+        \\
+        \\# ==============================================================================
+        \\# UI Cards & Analytic Surfaces ([card])
+        \\# ==============================================================================
+        \\# Shared analytic Signed Distance Field (SDF) rounded rectangle geometry
+        \\# used for modals, dialogs, toasts, banners, and wellbeing overlay cards.
         \\[card]
+        \\
+        \\# Corner rounding radius in screen pixels.
+        \\# Supported values: float >= 0.0 (0.0 creates sharp corners)
+        \\# Default: 8.0
         \\corner_radius = 8.0
+        \\
+        \\# Outer border stroke thickness in screen pixels.
+        \\# Supported values: float >= 0.0 (0.0 disables border stroke)
+        \\# Default: 1.0
         \\border_width = 1.0
+        \\
+        \\# Outer border shape geometry.
+        \\# Supported values: rounded, sharp
+        \\# Default: rounded
         \\border_shape = rounded
         \\
+        \\# ==============================================================================
+        \\# Toast Notifications ([toast])
+        \\# ==============================================================================
         \\[toast]
+        \\
+        \\# Enable or disable in-terminal floating toast notifications.
+        \\# Supported values: true, false, on, off
+        \\# Default: true
         \\enabled = true
+        \\
+        \\# Screen anchor position for toast popups.
+        \\# Supported values: top_right, top_center, bottom_right
+        \\# Default: top_right
         \\position = top_right
+        \\
+        \\# Toast card border styling.
+        \\# Supported values:
+        \\#   semantic  - Border tinted by notification type (info: cyan, success: green, warning: yellow, critical: red)
+        \\#   subtle    - Low-contrast neutral border from theme tokens
+        \\# Default: semantic
         \\border_style = semantic
+        \\
+        \\# Display duration before automatic fade-out and dismissal.
+        \\# Supported units: ms (milliseconds), s (seconds), m (minutes), h (hours)
+        \\# Supported values: e.g. 3000ms, 5s, 10s
+        \\# Default: 5s
         \\duration = 5s
         \\
-        \\[banner]
-        \\enabled = true
-        \\style = floating
-        \\position = top_center
-        \\border_style = semantic
-        \\corner_radius = 8.0
-        \\border_width = 1.0
-        \\min_width = 36
-        \\max_width = 72
+        \\# Minimum width in character columns.
+        \\# Supported values: positive integer
+        \\# Default: 32
+        \\min_width = 32
+        \\
+        \\# Maximum width in character columns (longer text is wrapped across lines or truncated).
+        \\# Supported values: positive integer
+        \\# Default: 64
+        \\max_width = 64
+        \\
+        \\# Horizontal margin in columns from the screen edge.
+        \\# Supported values: integer >= 0
+        \\# Default: 2
         \\margin_cols = 2
+        \\
+        \\# Vertical margin in rows from the screen edge.
+        \\# Supported values: integer >= 0
+        \\# Default: 1
         \\margin_rows = 1
         \\
+        \\# ==============================================================================
+        \\# Diagnostic Banner ([banner])
+        \\# ==============================================================================
+        \\# Configuration diagnostic and status notice banner displayed on hot reload or errors.
+        \\[banner]
+        \\
+        \\# Enable or disable diagnostic and status banners.
+        \\# Supported values: true, false, on, off
+        \\# Default: true
+        \\enabled = true
+        \\
+        \\# Visual presentation style of the banner.
+        \\# Supported values:
+        \\#   floating  - Compact 3-row floating card with rounded corners
+        \\#   docked    - Spans the viewport top or bottom edge with configurable margins
+        \\# Default: floating
+        \\style = floating
+        \\
+        \\# Screen anchor position for the banner.
+        \\# Supported values: top_center, top_right, top_left
+        \\# Default: top_center
+        \\position = top_center
+        \\
+        \\# Border stroke color styling.
+        \\# Supported values:
+        \\#   semantic  - Border tinted by diagnostic severity (error: red, warning: yellow, info: accent)
+        \\#   subtle    - Low-contrast neutral border
+        \\# Default: semantic
+        \\border_style = semantic
+        \\
+        \\# Corner rounding radius for the banner card in pixels (applied to both floating and docked).
+        \\# Supported values: float >= 0.0 (0.0 for square corners)
+        \\# Default: 8.0
+        \\corner_radius = 8.0
+        \\
+        \\# Border stroke thickness in screen pixels.
+        \\# Supported values: float >= 0.0
+        \\# Default: 1.0
+        \\border_width = 1.0
+        \\
+        \\# Minimum banner width in character columns.
+        \\# Supported values: positive integer
+        \\# Default: 36
+        \\min_width = 36
+        \\
+        \\# Maximum banner width in character columns (text auto-ellipsizes to fit).
+        \\# Supported values: positive integer
+        \\# Default: 72
+        \\max_width = 72
+        \\
+        \\# Horizontal margin in columns from screen boundaries.
+        \\# Supported values: integer >= 0
+        \\# Default: 2
+        \\margin_cols = 2
+        \\
+        \\# Vertical margin in rows from screen boundaries (in docked style, 0 aligns flush against the edge).
+        \\# Supported values: integer >= 0
+        \\# Default: 1
+        \\margin_rows = 1
+        \\
+        \\# ==============================================================================
+        \\# Modal Dialogs ([modal])
+        \\# ==============================================================================
         \\[modal]
+        \\
+        \\# Width of centered modal dialogs (e.g. quit confirmation) in character columns.
+        \\# Supported values: integer >= 20
+        \\# Default: 46
         \\width = 46
+        \\
+        \\# Opacity of the background dimming veil behind modal dialogs.
+        \\# Supported values: integer from 0 (completely clear) to 255 (solid black overlay)
+        \\# Default: 180
         \\dim_alpha = 180
+        \\
+        \\# Progressive multi-scale Dual Kawase blur pass behind active modal dialogs.
+        \\# Supported values: true, false, on, off
+        \\# Default: false
         \\blur = false
+        \\
+        \\# Blur radius offset applied to the multi-scale downsampling and upsampling pyramid.
+        \\# Supported values: integer from 0 (finest smooth blur) to 16
+        \\# Default: 12
         \\blur_radius = 12
+        \\
+        \\# Dismiss the modal and cancel the prompt when clicking outside the dialog card.
+        \\# Supported values: true, false, on, off
+        \\# Default: true
         \\close_on_outside_click = true
+        \\
+        \\# Initial button focus when the modal dialog is opened.
+        \\# Supported values:
+        \\#   confirm  - Primary confirm button (Enter triggers action)
+        \\#   cancel   - Secondary abort button (Esc or Enter aborts action)
+        \\# Default: confirm
         \\default_focus = confirm
         \\
+        \\# ==============================================================================
+        \\# Digital Wellbeing & Ergonomics ([wellbeing])
+        \\# ==============================================================================
+        \\# Tracks active typing and terminal engagement, manages Pomodoro focus sessions,
+        \\# and surfaces health/ergonomic reminders (20-20-20 eyesight rule, posture, movement).
         \\[wellbeing]
+        \\
+        \\# Enable or disable the Digital Wellbeing subsystem.
+        \\# Supported values: true, false, on, off
+        \\# Default: true
         \\enabled = true
+        \\
+        \\# Cumulative daily active screen-time threshold before notifications suggest rest.
+        \\# Supported units: m (minutes), h (hours)
+        \\# Supported values: e.g. 8h, 480m
+        \\# Default: 8h
         \\daily_limit = 8h
+        \\
+        \\# Inactivity timeout before terminal pauses screen-time accumulation.
+        \\# Supported units: s (seconds), m (minutes)
+        \\# Supported values: e.g. 60s, 2m
+        \\# Default: 60s
+        \\idle_threshold = 60s
+        \\
+        \\# Pomodoro active focus interval duration.
+        \\# Supported units: ms, s, m, h
+        \\# Supported values: e.g. 25m, 1500s
+        \\# Default: 25m
         \\focus_time = 25m
+        \\
+        \\# Short rest break duration between focus tasks.
+        \\# Supported units: ms, s, m, h
+        \\# Supported values: e.g. 5m, 300s
+        \\# Default: 5m
         \\short_break = 5m
+        \\
+        \\# Extended long rest break duration after completing a set of focus tasks.
+        \\# Supported units: ms, s, m, h
+        \\# Supported values: e.g. 15m, 900s
+        \\# Default: 15m
         \\long_break = 15m
+        \\
+        \\# Number of completed focus tasks required before triggering a long break.
+        \\# Supported values: positive integer (1 to 255)
+        \\# Default: 4
         \\tasks_before_long_break = 4
+        \\
+        \\# Temporarily lock terminal input during active break countdowns to encourage stepping away.
+        \\# Supported values: true, false
+        \\# Default: false
         \\lock_input_on_break = false
         \\
+        \\# Display relaxing breathing / break wave animation during rest intervals.
+        \\# Supported values: true, false
+        \\# Default: true
+        \\show_break_animation = true
+        \\
+        \\# Suppress non-critical notifications while a focus sprint is running.
+        \\# Supported values: true, false
+        \\# Default: false
+        \\mute_notifications_in_task = false
+        \\
+        \\# 20-20-20 rule eye rest reminder interval (look 20 feet away for 20 seconds).
+        \\# Supported units: m, h (e.g. 20m)
+        \\# Default: 20m
+        \\eyesight_interval = 20m
+        \\
+        \\# Movement / stand-up reminder interval.
+        \\# Supported units: m, h (e.g. 60m, 1h)
+        \\# Default: 60m
+        \\movement_interval = 60m
+        \\
+        \\# Water / hydration reminder interval.
+        \\# Supported units: m, h (e.g. 45m)
+        \\# Default: 45m
+        \\hydration_interval = 45m
+        \\
+        \\# Ergonomic posture check reminder interval.
+        \\# Supported units: m, h (e.g. 30m)
+        \\# Default: 30m
+        \\posture_interval = 30m
+        \\
+        \\# ==============================================================================
+        \\# Scrolling ([scroll])
+        \\# ==============================================================================
         \\[scroll]
+        \\
+        \\# Lines to scroll per scroll_up or scroll_down keybinding invocation.
+        \\# Supported values: positive integer
+        \\# Default: 3
         \\lines = 3
+        \\
+        \\# Lines to scroll per mouse scroll wheel notch / event.
+        \\# Supported values: positive integer
+        \\# Default: 3
         \\wheel_lines = 3
         \\
+        \\# ==============================================================================
+        \\# Keybindings ([keybinds])
+        \\# ==============================================================================
+        \\# Syntax: <modifiers>+<key> = <action>
+        \\#
+        \\# Supported Modifiers:
+        \\#   ctrl (control), shift, alt (opt, option), super (cmd, command, win, windows)
+        \\#
+        \\# Supported Keys:
+        \\#   Letters: a..z
+        \\#   Numbers: 0..9
+        \\#   Function keys: f1..f25
+        \\#   Punctuation / Symbols: minus (-), plus / equal (=, +), left_bracket ([), right_bracket (]),
+        \\#                          backslash (\), semicolon (;), apostrophe ('), comma (,), period (.),
+        \\#                          slash (/), grave (`)
+        \\#   Navigation & Editing: space, enter (return), tab, backspace, escape (esc), delete (del),
+        \\#                         insert (ins), home, end, page_up (pgup), page_down (pgdown),
+        \\#                         up, down, left, right
+        \\#
+        \\# Supported Actions:
+        \\#   Window & Clipboard:
+        \\#     copy_selection          - Copy active visual selection to system clipboard
+        \\#     paste_clipboard         - Paste system clipboard contents into terminal stdin
+        \\#     new_window              - Open a new terminal window
+        \\#     quit                    - Terminate Rex window session (prompts if confirm_quit = true)
+        \\#
+        \\#   Font Zoom:
+        \\#     increase_font_size      - Increase font size by 1 point
+        \\#     decrease_font_size      - Decrease font size by 1 point
+        \\#     reset_font_size         - Reset font size to default configured size
+        \\#
+        \\#   Viewport Scrolling:
+        \\#     scroll_up               - Scroll viewport upward by scroll.lines
+        \\#     scroll_down             - Scroll viewport downward by scroll.lines
+        \\#
+        \\#   Configuration & System:
+        \\#     reload_config           - Hot-reload configuration from disk without dropping session
+        \\#     debug                   - Toggle diagnostic HUD overlay
+        \\#
+        \\#   Digital Wellbeing & Focus:
+        \\#     wellbeing_dashboard     - Toggle interactive wellbeing dashboard overlay
+        \\#     wellbeing_dismiss       - Dismiss active wellbeing reminder notification
+        \\#     wellbeing_clear         - Purge recorded wellbeing daily activity history
+        \\#     wellbeing_toast_toggle  - Toggle wellbeing toast reminders on/off
+        \\#     focus_toggle            - Start or pause the current Pomodoro focus timer
+        \\#     focus_reset             - Reset current Pomodoro interval to start
+        \\#     focus_skip              - Advance to the next task or break immediately
+        \\#     focus_auto_transition   - Toggle automatic cycling between tasks and breaks
+        \\#
+        \\#   Toast Notifications:
+        \\#     toast_dismiss           - Dismiss topmost toast notification
+        \\#     toast_activate          - Trigger primary action on the active toast
+        \\#
         \\[keybinds]
         \\ctrl+shift+w = wellbeing_dashboard
         \\ctrl+shift+d = wellbeing_dismiss

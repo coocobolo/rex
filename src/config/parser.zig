@@ -285,6 +285,10 @@ pub const Parser = struct {
                     config.toast_min_width = std.fmt.parseInt(u16, val, 10) catch null;
                 } else if (matchKey(key, "max-width")) {
                     config.toast_max_width = std.fmt.parseInt(u16, val, 10) catch null;
+                } else if (matchKey(key, "margin-cols")) {
+                    config.toast_margin_cols = std.fmt.parseInt(u16, val, 10) catch null;
+                } else if (matchKey(key, "margin-rows")) {
+                    config.toast_margin_rows = std.fmt.parseInt(u16, val, 10) catch null;
                 } else {
                     diags.warn(line, col, "unknown toast option '{s}'", .{key});
                 }
