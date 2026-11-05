@@ -1,16 +1,14 @@
 //! Wait-free triple buffer for publishing `term.Frame` snapshots from the Driver
 //! to the GUI thread.
 //!
-//! Architecture:
-//! - Three pre-allocated `term.Frame` instances.
-//! - At all times, the three buffers are partitioned into:
-//!     1. `fill_idx`: owned exclusively by the producer (Driver thread).
-//!     2. `read_idx`: owned exclusively by the consumer (GUI thread).
-//!     3. `ready_idx`: shared mailbox slot holding the latest published frame.
-//! - Neither thread ever locks, waits, or blocks.
-//! - Publishing is a single atomic exchange instruction (Release ordering).
-//! - Consuming is an atomic cmpxchg (Acquire ordering) returning the latest
-//!   freshest frame and discarding intermediate obsolete frames (Mailbox semantics).
+//! Three pre-allocated frame buffers are partitioned among a private fill buffer owned
+//! by the producer, a private read buffer owned by the consumer, and a shared atomic
+//! mailbox slot (`ready_idx`). Publishing swaps the fill buffer into the mailbox slot
+//! using atomic exchange with Release ordering. Consuming retrieves the latest published
+//! frame via atomic compare-exchange with Acquire ordering, dropping stale intermediate frames.
+//!
+//! Neither thread ever blocks or waits. Reader and writer state indices are aligned to
+//! 64-byte boundaries to prevent CPU cache-line ping-ponging across cores.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -18,7 +16,7 @@ const Frame = @import("../term/root.zig").Frame;
 const Option = @import("../term/root.zig").Option;
 
 /// Wait-free triple buffer parameterized by terminal capacity `Option`.
-pub fn TripleBuffer(comptime option: Option) type {
+pub fn Buffer(comptime option: Option) type {
     const FrameType = Frame(option);
 
     return struct {
@@ -28,10 +26,12 @@ pub fn TripleBuffer(comptime option: Option) type {
         frames: [3]FrameType,
 
         /// Private buffer index currently owned by producer (Driver thread).
-        fill_idx: u8 = 0,
+        /// Aligned to 64 bytes to eliminate false sharing with consumer thread.
+        fill_idx: u8 align(64) = 0,
 
         /// Private buffer index currently owned by consumer (GUI thread).
-        read_idx: u8 = 1,
+        /// Aligned to 64 bytes to eliminate false sharing with producer thread.
+        read_idx: u8 align(64) = 1,
 
         /// Shared atomic status word packing ready_idx (bits 0..1) and has_new flag (bit 2).
         /// Aligned to 64 bytes to eliminate false sharing between producer and consumer cores.
@@ -114,6 +114,8 @@ pub fn TripleBuffer(comptime option: Option) type {
         }
     };
 }
+
+pub const TripleBuffer = Buffer;
 
 test "TripleBuffer: initialization and distinct buffer ownership" {
     const testing = std.testing;

@@ -24,44 +24,17 @@ const HeldButtons = term.term.HeldButtons;
 const termio = @import("../termio/root.zig");
 const Pty = termio.pty.Posix;
 
-const InputQueueMod = @import("InputQueue.zig");
-pub const InputEvent = InputQueueMod.InputEvent;
-const getMonotonicMs = @import("root.zig").getMonotonicMs;
+const InputQueue = @import("InputQueue.zig");
+pub const InputEvent = InputQueue.InputEvent;
 
-/// Aggregated driver events returned from `pollAndDrain`.
-pub const DriverEvents = struct {
-    bell: bool = false,
-    title: bool = false,
-    icon_name: bool = false,
-    cursor_color: bool = false,
-    selection_reset: bool = false,
-    hard_reset: bool = false,
-    resize: ?term.Events.Resize = null,
-    child_closed: bool = false,
-    had_data: bool = false,
-
-    pub inline fn any(self: DriverEvents) bool {
-        return self.bell or self.title or self.icon_name or
-            self.cursor_color or self.selection_reset or
-            self.hard_reset or self.resize != null or
-            self.child_closed or self.had_data;
-    }
-};
-
-/// Terminal modes shared between driver and GUI thread.
-pub const SharedModes = packed struct(u32) {
-    cursor_keys: bool = false,
-    keypad_app: bool = false,
-    modify_other_keys: u2 = 0,
-    mouse_reporting: bool = false,
-    bracketed_paste: bool = false,
-    focus_events: bool = false,
-    reports_wheel: bool = false,
-    _pad: u24 = 0,
-};
+const root = @import("root.zig");
+pub const DriverEvents = root.DriverEvents;
+pub const SharedModes = root.SharedModes;
+pub const resolveAnchor = root.resolveAnchor;
+pub const extractSelectionText = root.extractSelectionText;
 
 /// Synchronous terminal driver parameterized by terminal capacity `Option`.
-pub fn SingleDriver(comptime option: Option) type {
+pub fn Driver(comptime option: Option) type {
     const TerminalType = Terminal(option);
     const FrameType = Frame(option);
 
@@ -69,22 +42,23 @@ pub fn SingleDriver(comptime option: Option) type {
         const Self = @This();
 
         allocator: Allocator,
+        io: std.Io,
         pty: Pty,
         terminal: TerminalType,
         frame_snapshot: FrameType,
-        sync_start_ms: i64 = 0,
+        sync_start: ?std.Io.Clock.Timestamp = null,
         sync_output_timeout_ms: u32 = 150,
 
         pub const Events = DriverEvents;
         pub const Modes = SharedModes;
 
         /// Initializes the SingleDriver with default 150ms synchronized output timeout.
-        pub fn init(allocator: Allocator, pty: Pty, theme: Theme) !Self {
-            return initWithTimeout(allocator, pty, theme, 150);
+        pub fn init(allocator: Allocator, io: std.Io, pty: Pty, theme: Theme) !Self {
+            return initWithTimeout(allocator, io, pty, theme, 150);
         }
 
         /// Initializes the SingleDriver with a custom synchronized output timeout.
-        pub fn initWithTimeout(allocator: Allocator, pty: Pty, theme: Theme, sync_output_timeout_ms: u32) !Self {
+        pub fn initWithTimeout(allocator: Allocator, io: std.Io, pty: Pty, theme: Theme, sync_output_timeout_ms: u32) !Self {
             var terminal = try TerminalType.create(allocator);
             errdefer terminal.destroy(allocator);
 
@@ -95,6 +69,7 @@ pub fn SingleDriver(comptime option: Option) type {
 
             return .{
                 .allocator = allocator,
+                .io = io,
                 .pty = pty,
                 .terminal = terminal,
                 .frame_snapshot = frame_snapshot,
@@ -104,10 +79,16 @@ pub fn SingleDriver(comptime option: Option) type {
 
         /// Releases resources owned by the driver, destroying the terminal,
         /// freeing the frame snapshot buffer, and closing the PTY.
-        pub fn deinit(self: *Self, io: std.Io) void {
+        pub fn deinit(self: *Self) void {
             self.frame_snapshot.deinit(self.allocator);
             self.terminal.destroy(self.allocator);
-            self.pty.close(io);
+            self.pty.close(self.io);
+        }
+
+        /// Backward-compatible deinit accepting explicit io parameter.
+        pub fn deinitIo(self: *Self, io: std.Io) void {
+            _ = io;
+            self.deinit();
         }
 
         /// Non-blocking drain of all pending PTY output into the terminal parser,
@@ -140,7 +121,7 @@ pub fn SingleDriver(comptime option: Option) type {
             if (total_read > 0) {
                 events.had_data = true;
 
-                // Drain replies once per batch
+                // Drain replies to PTY once per batch
                 self.drainAndWriteReplies();
 
                 if (self.terminal.events.any()) {
@@ -157,14 +138,15 @@ pub fn SingleDriver(comptime option: Option) type {
 
             var in_sync_hold = false;
             if (self.terminal.mode.synchronized_output) {
-                if (self.sync_start_ms == 0) self.sync_start_ms = getMonotonicMs();
-                const elapsed = getMonotonicMs() - self.sync_start_ms;
-                in_sync_hold = elapsed < self.sync_output_timeout_ms;
+                const now = std.Io.Clock.Timestamp.now(self.io, .awake);
+                if (self.sync_start == null) self.sync_start = now;
+                const elapsed_ms = self.sync_start.?.durationTo(now).raw.toMilliseconds();
+                in_sync_hold = elapsed_ms < self.sync_output_timeout_ms;
             } else {
-                self.sync_start_ms = 0;
+                self.sync_start = null;
             }
 
-            if (events.had_data and !in_sync_hold) {
+            if (!in_sync_hold and (events.had_data or self.terminal.active().dirty_rows.count() > 0 or self.terminal.active().generation != self.frame_snapshot.generation)) {
                 _ = self.terminal.snapshot(&self.frame_snapshot);
             }
 
@@ -226,15 +208,23 @@ pub fn SingleDriver(comptime option: Option) type {
                             self.terminal.sendMouse(ev.col, ev.row, ev.button, 0, true);
                             self.drainAndWriteReplies();
                         }
-                    } else {
-                        if (self.terminal.active_buffer != .alternate) {
-                            // Wheel up is button 64, wheel down is button 65
-                            if (ev.button == 64) {
-                                self.terminal.active().scrollViewportBack(ev.steps);
-                            } else {
-                                self.terminal.active().scrollViewportForward(ev.steps);
-                            }
+                    } else if (self.terminal.active_buffer == .alternate) {
+                        const seq = if (self.terminal.mode.cursor_keys)
+                            (if (ev.button == 64) "\x1bOA" else "\x1bOB")
+                        else
+                            (if (ev.button == 64) "\x1b[A" else "\x1b[B");
+                        var i: u16 = 0;
+                        while (i < ev.steps) : (i += 1) {
+                            _ = self.pty.writeAll(seq) catch break;
                         }
+                    } else {
+                        // Wheel up is button 64, wheel down is button 65
+                        if (ev.button == 64) {
+                            self.terminal.active().scrollViewportBack(ev.steps);
+                        } else {
+                            self.terminal.active().scrollViewportForward(ev.steps);
+                        }
+                        _ = self.terminal.snapshot(&self.frame_snapshot);
                     }
                 },
                 .viewport_scroll => |ev| {
@@ -243,12 +233,14 @@ pub fn SingleDriver(comptime option: Option) type {
                     } else if (ev.lines < 0) {
                         self.terminal.active().scrollViewportBack(@intCast(-ev.lines));
                     }
+                    _ = self.terminal.snapshot(&self.frame_snapshot);
                 },
                 .set_viewport_offset => |offset| {
                     if (self.terminal.active_buffer == .primary) {
                         self.terminal.primary.viewport_offset = @min(offset, @as(u32, @intCast(self.terminal.primary.scrollback_used)));
                         self.terminal.primary.dirty_rows = .full;
                         self.terminal.primary.bump();
+                        _ = self.terminal.snapshot(&self.frame_snapshot);
                     }
                 },
                 .resize => |ev| {
@@ -262,6 +254,7 @@ pub fn SingleDriver(comptime option: Option) type {
                     }
                     self.terminal.active().dirty_rows = .full;
                     self.terminal.active().bump();
+                    _ = self.terminal.snapshot(&self.frame_snapshot);
                 },
                 .focus => |focused| {
                     if (self.terminal.mode.focus_events) {
@@ -300,7 +293,7 @@ pub fn SingleDriver(comptime option: Option) type {
             }
         }
 
-        /// Raw unformatted write to PTY.
+        /// Writes raw bytes directly to the PTY.
         pub fn writeRaw(self: *Self, bytes: []const u8) !usize {
             try self.pty.writeAll(bytes);
             return bytes.len;
@@ -352,92 +345,12 @@ pub fn SingleDriver(comptime option: Option) type {
 
         /// Copies selected text into `buf` without allocating. Returns bytes written.
         pub fn copySelectionText(self: *Self, selection: anytype, buf: []u8) usize {
-            return extractSelectionText(self.terminal.active(), selection, buf);
+            return root.extractSelectionText(self.terminal.active(), selection, buf);
         }
     };
 }
 
-/// Resolves an anchor row in scrollback history space, returning null if evicted.
-pub fn resolveAnchor(position: anytype, total_lines_scrolled: i64, scrollback_used: i64) ?i64 {
-    const delta: i64 = total_lines_scrolled - position.captured_scroll_gen;
-    const anchor_now: i64 = @as(i64, position.row) - delta;
-    if (anchor_now < -scrollback_used) return null;
-    return anchor_now;
-}
-
-/// Extracts UTF-8 text within `selection` from `screen` into `buf`.
-pub fn extractSelectionText(screen: anytype, selection: anytype, buf: []u8) usize {
-    const total_lines_scrolled = screen.total_lines_scrolled;
-    const scrollback_used = screen.scrollbackUsedAs(i64);
-
-    const start_anchor = resolveAnchor(selection.range.start, total_lines_scrolled, scrollback_used) orelse return 0;
-    const end_anchor = resolveAnchor(selection.range.end, total_lines_scrolled, scrollback_used) orelse return 0;
-
-    const start_col = selection.range.start.col;
-    const end_col = selection.range.end.col;
-
-    const lo_anchor, const lo_col, const hi_anchor, const hi_col = blk: {
-        if (start_anchor < end_anchor or (start_anchor == end_anchor and start_col <= end_col)) {
-            break :blk .{ start_anchor, start_col, end_anchor, end_col };
-        } else {
-            break :blk .{ end_anchor, end_col, start_anchor, start_col };
-        }
-    };
-
-    const active_rows: i64 = @intCast(screen.active_rows);
-    const clamped_lo: i64 = std.math.clamp(lo_anchor, -scrollback_used, active_rows - 1);
-    const clamped_hi: i64 = std.math.clamp(hi_anchor, -scrollback_used, active_rows - 1);
-    if (clamped_hi < clamped_lo) return 0;
-
-    var pos: usize = 0;
-    var anchor_row: i64 = clamped_lo;
-    while (anchor_row <= clamped_hi) : (anchor_row += 1) {
-        var col_start: usize = if (anchor_row == clamped_lo) lo_col else 0;
-        const col_end: usize = if (anchor_row == clamped_hi) hi_col else @max(screen.active_cols, 1) - 1;
-
-        if (col_start > 0) {
-            const maybe_placeholder = screen.cellAtAnchor(anchor_row, col_start);
-            if (maybe_placeholder.kind == .wide_right) col_start -= 1;
-        }
-
-        const row_start = pos;
-
-        for (col_start..col_end + 1) |col| {
-            const cell = screen.cellAtAnchor(anchor_row, col);
-            if (pos + 4 > buf.len) break;
-
-            switch (cell.kind) {
-                .wide_right => continue,
-                .empty => {
-                    buf[pos] = ' ';
-                    pos += 1;
-                },
-                .narrow, .wide_left => {
-                    const cp: u21 = std.math.cast(u21, cell.codepoint) orelse ' ';
-                    const len = std.unicode.utf8Encode(cp, buf[pos..][0..4]) catch continue;
-                    pos += len;
-                },
-                .grapheme, .grapheme_wide => {
-                    const cps = screen.getGrapheme(cell.codepoint) orelse continue;
-                    for (cps) |cp| {
-                        const len = std.unicode.utf8Encode(cp, buf[pos..][0..4]) catch continue;
-                        pos += len;
-                    }
-                },
-                .shaped => {},
-            }
-        }
-
-        while (pos > row_start and buf[pos - 1] == ' ') pos -= 1;
-
-        if (anchor_row < clamped_hi and pos < buf.len - 1) {
-            buf[pos] = '\n';
-            pos += 1;
-        }
-    }
-
-    return pos;
-}
+pub const SingleDriver = Driver;
 
 test "SingleDriver: init, deinit, and snapshot" {
     const testing = std.testing;
@@ -446,10 +359,10 @@ test "SingleDriver: init, deinit, and snapshot" {
         .max_cols = 80,
         .max_scrollback = 100,
     };
-    const Driver = SingleDriver(test_option);
+    const DriverType = Driver(test_option);
 
-    var driver = try Driver.init(testing.allocator, Pty.inactive, Theme.graphite);
-    defer driver.deinit(testing.io);
+    var driver = try DriverType.init(testing.allocator, testing.io, Pty.inactive, Theme.graphite);
+    defer driver.deinit();
 
     const frame = driver.snapshot();
     try testing.expectEqual(@as(u16, 24), frame.active_rows);
@@ -464,7 +377,7 @@ test "SingleDriver: mock socketpair PTY input and pollAndDrain" {
         .max_cols = 80,
         .max_scrollback = 100,
     };
-    const Driver = SingleDriver(test_option);
+    const DriverType = Driver(test_option);
 
     var sv: [2]posix.fd_t = undefined;
     const rc = system.socketpair(posix.AF.UNIX, posix.SOCK.STREAM | posix.SOCK.NONBLOCK, 0, &sv);
@@ -480,10 +393,10 @@ test "SingleDriver: mock socketpair PTY input and pollAndDrain" {
         .error_read_fd = -1,
     };
 
-    var driver = try Driver.init(testing.allocator, mock_pty, Theme.graphite);
-    defer driver.deinit(testing.io);
+    var driver = try DriverType.init(testing.allocator, testing.io, mock_pty, Theme.graphite);
+    defer driver.deinit();
 
-    // 1. Send input from GUI to PTY
+    // Send input from GUI to PTY
     try driver.sendInput(InputEvent.makeBytes("hello"));
 
     // Verify it arrived at the other end of the socketpair
@@ -492,7 +405,7 @@ test "SingleDriver: mock socketpair PTY input and pollAndDrain" {
     try testing.expectEqual(@as(isize, 5), n_read);
     try testing.expectEqualStrings("hello", read_buf[0..5]);
 
-    // 2. Write data from simulated child into socketpair
+    // Write data from simulated child into socketpair
     _ = system.write(sv[1], "RexTerm\r\n", 9);
 
     // Poll and drain through driver
@@ -515,7 +428,7 @@ test "SingleDriver: DA1 reply drained back to mock PTY" {
         .max_cols = 80,
         .max_scrollback = 100,
     };
-    const Driver = SingleDriver(test_option);
+    const DriverType = Driver(test_option);
 
     var sv: [2]posix.fd_t = undefined;
     const rc = system.socketpair(posix.AF.UNIX, posix.SOCK.STREAM | posix.SOCK.NONBLOCK, 0, &sv);
@@ -531,8 +444,8 @@ test "SingleDriver: DA1 reply drained back to mock PTY" {
         .error_read_fd = -1,
     };
 
-    var driver = try Driver.init(testing.allocator, mock_pty, Theme.graphite);
-    defer driver.deinit(testing.io);
+    var driver = try DriverType.init(testing.allocator, testing.io, mock_pty, Theme.graphite);
+    defer driver.deinit();
 
     // Child sends CSI c (DA1 query)
     _ = system.write(sv[1], "\x1b[c", 3);
@@ -546,4 +459,148 @@ test "SingleDriver: DA1 reply drained back to mock PTY" {
     try testing.expect(n > 0);
     const n_u: usize = @intCast(n);
     try testing.expectEqualStrings("\x1b[?62;22;52c", reply_buf[0..n_u]);
+}
+
+test "SingleDriver: extractSelectionText for stream and block selections" {
+    const testing = std.testing;
+    const test_option: Option = .{
+        .max_rows = 24,
+        .max_cols = 80,
+        .max_scrollback = 100,
+    };
+    const DriverType = Driver(test_option);
+
+    var sv: [2]posix.fd_t = undefined;
+    const rc = system.socketpair(posix.AF.UNIX, posix.SOCK.STREAM | posix.SOCK.NONBLOCK, 0, &sv);
+    try testing.expectEqual(@as(c_int, 0), rc);
+    defer _ = system.close(sv[1]);
+
+    const mock_pty: Pty = .{
+        .master = sv[0],
+        .pid = -1,
+        .stdout_read_fd = -1,
+        .error_read_fd = -1,
+    };
+
+    var driver = try DriverType.init(testing.allocator, testing.io, mock_pty, Theme.graphite);
+    defer driver.deinit();
+
+    // Write text to terminal
+    _ = system.write(sv[1], "ABCDEF\r\n123456\r\n", 16);
+    _ = try driver.pollAndDrain();
+
+    var copy_buf: [128]u8 = undefined;
+
+    // Character stream selection across row 0 col 1 ('B') to row 1 col 3 ('4')
+    const char_sel = .{
+        .kind = @import("../Selection.zig").Kind.character,
+        .range = .{
+            .start = .{ .row = 0, .col = 1, .captured_scroll_gen = 0 },
+            .end = .{ .row = 1, .col = 3, .captured_scroll_gen = 0 },
+        },
+    };
+    const len1 = driver.copySelectionText(char_sel, &copy_buf);
+    try testing.expectEqualStrings("BCDEF\n1234", copy_buf[0..len1]);
+
+    // Block rectangular selection spanning cols 1..3 on rows 0 and 1
+    const block_sel = .{
+        .kind = @import("../Selection.zig").Kind.block,
+        .range = .{
+            .start = .{ .row = 0, .col = 1, .captured_scroll_gen = 0 },
+            .end = .{ .row = 1, .col = 3, .captured_scroll_gen = 0 },
+        },
+    };
+    const len2 = driver.copySelectionText(block_sel, &copy_buf);
+    try testing.expectEqualStrings("BCD\n234", copy_buf[0..len2]);
+}
+
+test "SingleDriver: mouse_scroll primary viewport vs alternate alt_scroll" {
+    const testing = std.testing;
+    const test_option: Option = .{
+        .max_rows = 10,
+        .max_cols = 40,
+        .max_scrollback = 50,
+    };
+    const DriverType = Driver(test_option);
+
+    var sv: [2]posix.fd_t = undefined;
+    const rc = system.socketpair(posix.AF.UNIX, posix.SOCK.STREAM | posix.SOCK.NONBLOCK, 0, &sv);
+    try testing.expectEqual(@as(c_int, 0), rc);
+    defer {
+        _ = system.close(sv[1]);
+    }
+
+    const mock_pty: Pty = .{
+        .master = sv[0],
+        .pid = -1,
+        .stdout_read_fd = -1,
+        .error_read_fd = -1,
+    };
+
+    var driver = try DriverType.init(testing.allocator, testing.io, mock_pty, Theme.graphite);
+    defer driver.deinit();
+
+    // 1. Fill primary buffer with 20 lines so scrollback is populated
+    var i: usize = 0;
+    while (i < 20) : (i += 1) {
+        _ = system.write(sv[1], "line\r\n", 6);
+    }
+    _ = try driver.pollAndDrain();
+    try testing.expect(driver.terminal.primary.scrollback_used > 0);
+    try testing.expectEqual(@as(u32, 0), driver.terminal.primary.viewport_offset);
+
+    // Scroll up 3 lines in primary buffer
+    try driver.sendInput(.{
+        .mouse_scroll = .{
+            .col = 5,
+            .row = 5,
+            .button = 64, // Wheel up
+            .steps = 3,
+        },
+    });
+    try testing.expectEqual(@as(u32, 3), driver.terminal.primary.viewport_offset);
+
+    // Scroll down 2 lines in primary buffer
+    try driver.sendInput(.{
+        .mouse_scroll = .{
+            .col = 5,
+            .row = 5,
+            .button = 65, // Wheel down
+            .steps = 2,
+        },
+    });
+    try testing.expectEqual(@as(u32, 1), driver.terminal.primary.viewport_offset);
+
+    // 2. Switch to alternate screen (\x1b[?1049h)
+    _ = system.write(sv[1], "\x1b[?1049h", 8);
+    _ = try driver.pollAndDrain();
+    try testing.expect(driver.terminal.active_buffer == .alternate);
+
+    // Scroll up in alternate screen should emit cursor up keys (\x1b[A)
+    try driver.sendInput(.{
+        .mouse_scroll = .{
+            .col = 5,
+            .row = 5,
+            .button = 64, // Wheel up
+            .steps = 2,
+        },
+    });
+
+    var read_buf: [32]u8 = undefined;
+    var n_read = system.read(sv[1], &read_buf, read_buf.len);
+    try testing.expectEqual(@as(isize, 6), n_read);
+    try testing.expectEqualStrings("\x1b[A\x1b[A", read_buf[0..6]);
+
+    // Scroll down in alternate screen should emit cursor down keys (\x1b[B)
+    try driver.sendInput(.{
+        .mouse_scroll = .{
+            .col = 5,
+            .row = 5,
+            .button = 65, // Wheel down
+            .steps = 1,
+        },
+    });
+    n_read = system.read(sv[1], &read_buf, read_buf.len);
+    try testing.expectEqual(@as(isize, 3), n_read);
+    try testing.expectEqualStrings("\x1b[B", read_buf[0..3]);
 }

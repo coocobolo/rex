@@ -147,105 +147,120 @@ pub const WakeupChannel = struct {
     }
 };
 
-/// Bounded SPSC ring buffer for input events.
-pub const InputQueue = struct {
-    pub const capacity = 256;
-    comptime {
-        std.debug.assert(std.math.isPowerOfTwo(capacity));
-    }
+const InputQueue = @This();
+pub const Event = InputEvent;
 
-    /// Producer index written only by GUI thread. Aligned to 64B to prevent false sharing.
-    head: std.atomic.Value(usize) align(64),
+pub const capacity = 256;
+comptime {
+    std.debug.assert(std.math.isPowerOfTwo(capacity));
+}
 
-    /// Consumer index written only by Driver thread. Aligned to 64B to prevent false sharing.
-    tail: std.atomic.Value(usize) align(64),
+/// Producer index written only by GUI thread. Aligned to 64B to prevent false sharing.
+head: std.atomic.Value(usize) align(64),
 
-    /// Flat contiguous event buffer.
-    buffer: [capacity]InputEvent,
+/// Consumer index written only by Driver thread. Aligned to 64B to prevent false sharing.
+tail: std.atomic.Value(usize) align(64),
 
-    /// OS wakeup channel for waking poll() when items are pushed.
-    wakeup: WakeupChannel,
+/// Flat contiguous event buffer aligned to CPU cache lines (64 bytes).
+buffer: [capacity]InputEvent align(64),
 
-    pub fn init() !InputQueue {
-        return .{
-            .head = std.atomic.Value(usize).init(0),
-            .tail = std.atomic.Value(usize).init(0),
-            .buffer = undefined,
-            .wakeup = try WakeupChannel.init(),
+/// OS wakeup channel for waking poll() when items are pushed.
+wakeup: WakeupChannel,
+
+pub fn init() !InputQueue {
+    return .{
+        .head = std.atomic.Value(usize).init(0),
+        .tail = std.atomic.Value(usize).init(0),
+        .buffer = undefined,
+        .wakeup = try WakeupChannel.init(),
+    };
+}
+
+pub fn deinit(self: *InputQueue) void {
+    self.wakeup.deinit();
+    self.* = undefined;
+}
+
+/// Pushes an event into the queue without triggering an OS wakeup syscall.
+/// Use when enqueueing multiple events in a batch, followed by an explicit `wake()`.
+/// Returns false if the queue is full.
+pub fn pushNoNotify(self: *InputQueue, event: InputEvent) bool {
+    const h = self.head.load(.monotonic);
+    const t = self.tail.load(.acquire);
+
+    if (h -% t >= capacity) return false;
+
+    self.buffer[h & (capacity - 1)] = event;
+    self.head.store(h +% 1, .release);
+    return true;
+}
+
+/// Pushes an event into the queue and notifies the wakeup channel.
+/// Returns false if the queue is full.
+pub fn push(self: *InputQueue, event: InputEvent) bool {
+    if (!self.pushNoNotify(event)) return false;
+    self.wakeup.notify();
+    return true;
+}
+
+/// Pushes an arbitrary slice of bytes into the queue, splitting into chunks if needed.
+/// Uses batching with a single wakeup syscall at the end to minimize kernel transitions.
+/// Returns false if the queue ran out of capacity before pushing all bytes.
+pub fn pushBytes(self: *InputQueue, bytes: []const u8) bool {
+    var rest = bytes;
+    var any_pushed = false;
+    while (rest.len > 0) {
+        const chunk_len: u8 = @intCast(@min(rest.len, max_bytes_payload));
+        var ev: InputEvent = .{
+            .bytes = .{
+                .data = undefined,
+                .len = chunk_len,
+            },
         };
-    }
-
-    pub fn deinit(self: *InputQueue) void {
-        self.wakeup.deinit();
-        self.* = undefined;
-    }
-
-    /// Pushes an event into the queue and notifies the wakeup channel.
-    /// Returns false if the queue is full.
-    pub fn push(self: *InputQueue, event: InputEvent) bool {
-        const h = self.head.load(.monotonic);
-        const t = self.tail.load(.acquire);
-
-        if (h -% t >= capacity) return false;
-
-        self.buffer[h & (capacity - 1)] = event;
-        self.head.store(h +% 1, .release);
-        self.wakeup.notify();
-        return true;
-    }
-
-    /// Pushes an arbitrary slice of bytes into the queue, splitting into chunks if needed.
-    /// Returns false if the queue ran out of capacity before pushing all bytes.
-    pub fn pushBytes(self: *InputQueue, bytes: []const u8) bool {
-        var rest = bytes;
-        while (rest.len > 0) {
-            const chunk_len: u8 = @intCast(@min(rest.len, max_bytes_payload));
-            var ev: InputEvent = .{
-                .bytes = .{
-                    .data = undefined,
-                    .len = chunk_len,
-                },
-            };
-            @memcpy(ev.bytes.data[0..chunk_len], rest[0..chunk_len]);
-            if (!self.push(ev)) return false;
-            rest = rest[chunk_len..];
+        @memcpy(ev.bytes.data[0..chunk_len], rest[0..chunk_len]);
+        if (!self.pushNoNotify(ev)) {
+            if (any_pushed) self.wake();
+            return false;
         }
-        return true;
+        any_pushed = true;
+        rest = rest[chunk_len..];
     }
+    if (any_pushed) self.wake();
+    return true;
+}
 
-    /// Pops the next pending event from the queue.
-    /// Returns null if the queue is empty.
-    pub fn pop(self: *InputQueue) ?InputEvent {
-        const t = self.tail.load(.monotonic);
-        const h = self.head.load(.acquire);
+/// Pops the next pending event from the queue.
+/// Returns null if the queue is empty.
+pub fn pop(self: *InputQueue) ?InputEvent {
+    const t = self.tail.load(.monotonic);
+    const h = self.head.load(.acquire);
 
-        if (t == h) return null;
+    if (t == h) return null;
 
-        const event = self.buffer[t & (capacity - 1)];
-        self.tail.store(t +% 1, .release);
-        return event;
-    }
+    const event = self.buffer[t & (capacity - 1)];
+    self.tail.store(t +% 1, .release);
+    return event;
+}
 
-    /// Explicitly signals the OS wakeup channel (e.g. on shutdown).
-    pub inline fn wake(self: *InputQueue) void {
-        self.wakeup.notify();
-    }
+/// Explicitly signals the OS wakeup channel (e.g. on shutdown).
+pub inline fn wake(self: *InputQueue) void {
+    self.wakeup.notify();
+}
 
-    /// Drains any pending wakeup signal from the OS wakeup channel.
-    pub inline fn drainWakeup(self: *InputQueue) void {
-        self.wakeup.drain();
-    }
+/// Drains any pending wakeup signal from the OS wakeup channel.
+pub inline fn drainWakeup(self: *InputQueue) void {
+    self.wakeup.drain();
+}
 
-    /// Returns the file descriptor to include in `poll()` fd sets.
-    pub inline fn pollFd(self: *const InputQueue) posix.fd_t {
-        return self.wakeup.read_fd;
-    }
+/// Returns the file descriptor to include in `poll()` fd sets.
+pub inline fn pollFd(self: *const InputQueue) posix.fd_t {
+    return self.wakeup.read_fd;
+}
 
-    /// Returns true if the queue currently has pending events.
-    pub inline fn hasPending(self: *const InputQueue) bool {
-        return self.head.load(.monotonic) != self.tail.load(.monotonic);
-    }
-};
+/// Returns true if the queue currently has pending events.
+pub inline fn hasPending(self: *const InputQueue) bool {
+    return self.head.load(.monotonic) != self.tail.load(.monotonic);
+}
 
 test "InputQueue: init and push pop single event" {
     const testing = std.testing;
