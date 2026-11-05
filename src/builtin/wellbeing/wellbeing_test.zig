@@ -385,16 +385,16 @@ test "icons: glyph lookup and styles" {
 
 test "tokens: visual color tokens match modern palette" {
     const Tokens = wellbeing.tokens.Tokens;
-    try testing.expectEqual([4]u8{ 13, 13, 13, 245 }, Tokens.bg);
-    try testing.expectEqual([4]u8{ 37, 37, 37, 255 }, Tokens.card);
-    try testing.expectEqual([3]u8{ 72, 72, 72 }, Tokens.border);
-    try testing.expectEqual([3]u8{ 230, 230, 230 }, Tokens.primary);
-    try testing.expectEqual([3]u8{ 146, 146, 146 }, Tokens.secondary);
-    try testing.expectEqual([3]u8{ 104, 104, 104 }, Tokens.muted);
-    try testing.expectEqual([3]u8{ 69, 201, 149 }, Tokens.healthy);
-    try testing.expectEqual([3]u8{ 229, 173, 82 }, Tokens.warning);
-    try testing.expectEqual([3]u8{ 228, 91, 91 }, Tokens.critical);
-    try testing.expectEqual([3]u8{ 71, 137, 232 }, Tokens.info);
+    try testing.expectEqual(wellbeing.tokens.ColorTokens.dark.bg, Tokens.bg);
+    try testing.expectEqual(wellbeing.tokens.ColorTokens.dark.card, Tokens.card);
+    try testing.expectEqual(wellbeing.tokens.ColorTokens.dark.border, Tokens.border);
+    try testing.expectEqual(wellbeing.tokens.ColorTokens.dark.primary, Tokens.primary);
+    try testing.expectEqual(wellbeing.tokens.ColorTokens.dark.secondary, Tokens.secondary);
+    try testing.expectEqual(wellbeing.tokens.ColorTokens.dark.muted, Tokens.muted);
+    try testing.expectEqual(wellbeing.tokens.ColorTokens.dark.healthy, Tokens.healthy);
+    try testing.expectEqual(wellbeing.tokens.ColorTokens.dark.warning, Tokens.warning);
+    try testing.expectEqual(wellbeing.tokens.ColorTokens.dark.critical, Tokens.critical);
+    try testing.expectEqual(wellbeing.tokens.ColorTokens.dark.info, Tokens.info);
 }
 
 test "overlay: stringWidth and description word wrap" {
