@@ -85,7 +85,7 @@ pub const Tokens = struct {
         .secondary = .{ 157, 155, 150 }, // #9D9B96
         .muted = .{ 112, 110, 106 }, // #706E6A
 
-        .accent = .{ 163, 157, 143 }, // #A39D8F (Warm stone)
+        .accent = .{ 138, 110, 240 }, // #8A6EF0 (Vibrant indigo/violet prompt accent)
 
         .healthy = .{ 123, 165, 139 }, // #7BA58B
         .warning = .{ 190, 158, 111 }, // #BE9E6F
