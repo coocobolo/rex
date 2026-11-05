@@ -371,7 +371,7 @@ test "driver.root: resolveAnchor coordinate calculations" {
     const norm = resolveAnchor(
         .{ .row = 5, .captured_scroll_gen = 100 },
         100, // total_lines_scrolled
-        50,  // scrollback_used
+        50, // scrollback_used
     );
     try testing.expect(norm != null);
     try testing.expectEqual(@as(i64, 5), norm.?);
@@ -380,7 +380,7 @@ test "driver.root: resolveAnchor coordinate calculations" {
     const scrolled = resolveAnchor(
         .{ .row = 5, .captured_scroll_gen = 100 },
         110, // total_lines_scrolled
-        50,  // scrollback_used
+        50, // scrollback_used
     );
     try testing.expect(scrolled != null);
     try testing.expectEqual(@as(i64, -5), scrolled.?);
@@ -389,7 +389,7 @@ test "driver.root: resolveAnchor coordinate calculations" {
     const evicted = resolveAnchor(
         .{ .row = 0, .captured_scroll_gen = 0 },
         100, // total_lines_scrolled
-        50,  // scrollback_used (evicted since -100 < -50)
+        50, // scrollback_used (evicted since -100 < -50)
     );
     try testing.expect(evicted == null);
 }
