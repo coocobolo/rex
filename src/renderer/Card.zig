@@ -1,4 +1,8 @@
-//! Instanced GPU renderer for analytic Signed Distance Field (SDF) rounded rectangles and UI cards.
+//! Instanced GPU renderer for analytic Signed Distance Field (SDF) UI primitives.
+//!
+//! Renders cache-line-aligned 64-byte instances supporting rounded rectangle cards,
+//! sub-pixel horizontal progress pills, sub-pixel vertical chart columns, circular
+//! countdown rings, and step indicator pips in a single instanced draw call.
 
 const Card = @This();
 
@@ -18,6 +22,15 @@ pub const BorderShape = enum {
 pub const BorderStyle = enum {
     semantic,
     subtle,
+};
+
+/// Analytic SDF shape primitive selector encoded in `Instance.kind`.
+pub const Kind = enum(u32) {
+    box = 0,
+    bar_h = 1,
+    bar_v = 2,
+    ring = 3,
+    pip = 4,
 };
 
 pub const Option = struct {
@@ -46,7 +59,8 @@ pub const Instance = extern struct {
     border_color: [4]f32,
     radius: f32 = 8.0,
     border_width: f32 = 1.0,
-    _pad: [2]f32 = .{ 0.0, 0.0 },
+    progress: f32 = 1.0,
+    kind: Kind = .box,
 };
 
 comptime {
@@ -109,6 +123,8 @@ test "Card: Instance layout is 64-byte cache-line sized and Option resolves shar
     try std.testing.expectEqual(@as(usize, 16), @offsetOf(Instance, "bg_color"));
     try std.testing.expectEqual(@as(usize, 32), @offsetOf(Instance, "border_color"));
     try std.testing.expectEqual(@as(usize, 48), @offsetOf(Instance, "radius"));
+    try std.testing.expectEqual(@as(usize, 56), @offsetOf(Instance, "progress"));
+    try std.testing.expectEqual(@as(usize, 60), @offsetOf(Instance, "kind"));
 
     const rounded_opt: Option = .{ .corner_radius = 10.0, .border_shape = .rounded };
     const sharp_opt: Option = .{ .corner_radius = 10.0, .border_shape = .sharp };

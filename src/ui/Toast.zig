@@ -14,7 +14,19 @@ const Cell = @import("../renderer/Cell.zig");
 const Atlas = @import("../renderer/Atlas.zig");
 const Freetype = @import("../freetype/root.zig");
 const Rasterizer = Freetype.Rasterizer;
-const HotspotTable = @import("hotspot.zig").HotspotTable;
+const Rect = @import("Rect.zig").Rect;
+const Border = @import("Border.zig");
+const Box = @import("Box.zig");
+const Label = @import("Label.zig");
+const Kbd = @import("Kbd.zig");
+const Icon = @import("Icon.zig");
+const Table = @import("hotspot.zig").Table;
+
+/// Keycap styling shared by toast action rendering and layout measurement so
+/// that hit regions always match the drawn width.
+inline fn actionKbdOption(icon_style: Icon.IconStyle, margin: u16) Kbd.Option {
+    return .{ .style = .keycap, .connector_pad = 0, .icon_style = icon_style, .margin = margin };
+}
 
 pub const Toast = @This();
 
@@ -38,6 +50,7 @@ pub const Option = struct {
     enabled: bool = true,
     position: Position = .top_right,
     border_style: BorderStyle = .semantic,
+    icon_style: Icon.IconStyle = .auto,
     duration_ms: u32 = 5000,
     min_width: u16 = 32,
     max_width: u16 = 48,
@@ -45,6 +58,7 @@ pub const Option = struct {
     margin_rows: u16 = 1,
     dismiss_str: ?[]const u8 = null,
     action_prompt: []const u8 = ">",
+    action_margin: u16 = 1,
 };
 
 pub const Request = struct {
@@ -52,11 +66,13 @@ pub const Request = struct {
     description: []const u8 = "",
     icon: ?[]const u8 = null,
     icon_color: ?[3]u8 = null,
+    icon_style: Icon.IconStyle = .auto,
     countdown_s: ?u32 = null,
     dismiss_str: []const u8 = "✕",
     action_prompt: ?[]const u8 = ">",
     action_shortcut: ?[]const u8 = null,
     action_label: ?[]const u8 = null,
+    action_margin: u16 = 1,
     variant: Variant = .info,
     position: Position = .top_right,
     border_style: BorderStyle = .semantic,
@@ -111,31 +127,7 @@ pub fn variantAccent(variant: Variant, tokens: Tokens) [3]u8 {
     };
 }
 
-pub fn splitDescription(text: []const u8, max_w: u16) struct { line1: []const u8, line2: []const u8 } {
-    if (stringWidth(text) <= max_w) return .{ .line1 = text, .line2 = "" };
-
-    var last_space: ?usize = null;
-    var iter = (std.unicode.Utf8View.init(text) catch return .{ .line1 = text, .line2 = "" }).iterator();
-    var cur_w: u16 = 0;
-    var byte_idx: usize = 0;
-    while (iter.nextCodepoint()) |cp| {
-        const cw = wc.wcwidth(cp, .narrow);
-        const w: u16 = if (cw == .wide) 2 else if (cw == .zero) 0 else 1;
-        if (cur_w + w > max_w) break;
-        cur_w += w;
-        const cp_len = std.unicode.utf8CodepointSequenceLength(cp) catch 1;
-        if (cp == ' ') last_space = byte_idx;
-        byte_idx += cp_len;
-    }
-
-    if (last_space) |sp| {
-        const l1 = std.mem.trimEnd(u8, text[0..sp], " ");
-        const l2 = std.mem.trimStart(u8, text[sp..], " ");
-        return .{ .line1 = l1, .line2 = l2 };
-    }
-
-    return .{ .line1 = text[0..byte_idx], .line2 = text[byte_idx..] };
-}
+pub const splitDescription = Label.splitDescription;
 
 /// Computes the deterministic cell-grid geometry and interactive hit regions for a toast card.
 pub fn computeLayout(
@@ -149,7 +141,11 @@ pub fn computeLayout(
 
     const title_w = stringWidth(req.title);
     const desc_w = stringWidth(req.description);
-    const action_req_w: u16 = if (req.action_shortcut) |s| stringWidth(s) + 10 else 0;
+    const kbd_opt = actionKbdOption(req.icon_style, req.action_margin);
+    const action_req_w: u16 = if (req.action_shortcut) |s|
+        Kbd.measureHint(req.action_prompt, s, req.action_label orelse "", kbd_opt)
+    else
+        0;
     const countdown_w: u16 = if (req.countdown_s != null) 5 else 0;
     const icon_spacing: u16 = if (icon_w > 0) icon_w + 1 else 0;
 
@@ -204,9 +200,7 @@ pub fn computeLayout(
 
     var action_w: u16 = 0;
     if (req.action_shortcut) |shortcut| {
-        if (req.action_prompt) |p| action_w += stringWidth(p) + 1;
-        action_w += stringWidth(shortcut);
-        if (req.action_label) |l| action_w += 2 + stringWidth(l);
+        action_w = Kbd.measureHint(req.action_prompt, shortcut, req.action_label orelse "", kbd_opt);
         if (text_col + action_w > max_content_col + 1) {
             action_w = if (max_content_col + 1 > text_col) max_content_col + 1 - text_col else 0;
         }
@@ -272,17 +266,27 @@ pub fn renderAt(
     const desc_split = splitDescription(req.description, layout.inner_text_w);
     const has_two_lines = desc_split.line2.len > 0;
 
-    const border_color: [3]u8 = if (req.border_style == .semantic) accent else tokens.border;
-    card_buffer.append(drawer.allocator, .{
-        .col = layout.col,
-        .row = layout.row,
-        .width = layout.width,
-        .height = layout.height,
-        .bg_color = Tokens.toF32Rgba(tokens.card_opaque, 255),
-        .border_color = Tokens.toF32Rgba(border_color, 255),
-        .radius = req.corner_radius,
-        .border_width = req.border_width,
-    }) catch {};
+    _ = Box.render(
+        .{
+            .rect = .{ .col = layout.col, .row = layout.row, .width = layout.width, .height = layout.height },
+            .option = .{
+                .surface = .card,
+                .border = .{
+                    .shape = .rounded,
+                    .radius = req.corner_radius,
+                    .width = req.border_width,
+                    .style = if (req.border_style == .semantic) .semantic else .normal,
+                },
+            },
+            .semantic_accent = accent,
+        },
+        tokens,
+        null,
+        card_buffer,
+        drawer.allocator,
+        drawer,
+        null,
+    );
 
     if (icon_w > 0) {
         _ = drawer.drawString(layout.content_col, layout.row + 1, icon_str, accent, 255, layout.max_content_col);
@@ -320,15 +324,20 @@ pub fn renderAt(
 
     if (req.action_shortcut) |shortcut| {
         if (layout.action_row < layout.row + layout.height) {
-            var cur_c = layout.text_col;
-            if (req.action_prompt) |prompt_marker| {
-                const p_len = drawer.drawString(cur_c, layout.action_row, prompt_marker, tokens.accent, 255, layout.max_content_col);
-                cur_c += p_len + 1;
-            }
-            const key_drawn = drawer.drawString(cur_c, layout.action_row, shortcut, tokens.primary, 255, layout.max_content_col);
-            if (req.action_label) |label| {
-                _ = drawer.drawString(cur_c + key_drawn + 2, layout.action_row, label, tokens.muted, 255, layout.max_content_col);
-            }
+            _ = Kbd.renderHint(
+                layout.text_col,
+                layout.action_row,
+                layout.max_content_col,
+                req.action_prompt,
+                shortcut,
+                req.action_label orelse "",
+                actionKbdOption(req.icon_style, req.action_margin),
+                tokens,
+                card_buffer,
+                drawer,
+                null,
+                null,
+            );
         }
     }
 
@@ -568,7 +577,7 @@ pub const Queue = struct {
         initial_row_offset: u16,
         card_buffer: *std.ArrayListUnmanaged(Card.Instance),
         drawer: Drawer,
-        hotspots: ?*HotspotTable,
+        hotspots: ?*Table,
     ) void {
         var row_offset = initial_row_offset;
         for (self.entries[0..self.count]) |*entry| {
@@ -576,10 +585,10 @@ pub const Queue = struct {
             const layout = renderAt(req, tokens, total_cols, total_rows, row_offset, card_buffer, drawer);
             if (hotspots) |ht| {
                 if (layout.dismiss_w > 0) {
-                    ht.add(layout.dismiss_col, layout.dismiss_row, layout.dismiss_w, 1, .{ .dismiss_toast = entry.id });
+                    ht.add(layout.dismiss_col, layout.dismiss_row, layout.dismiss_w, 1, .{ .toast_dismiss = entry.id });
                 }
                 if (layout.action_w > 0) {
-                    ht.add(layout.action_col, layout.action_row, layout.action_w, 1, .{ .activate_toast = entry.id });
+                    ht.add(layout.action_col, layout.action_row, layout.action_w, 1, .{ .toast_action = entry.id });
                 }
             }
             row_offset +|= layout.height + 1;

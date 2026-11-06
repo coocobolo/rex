@@ -7,6 +7,7 @@ zig-pkg
 *.md
 !/CONTRIBUTING.md
 !scripts/README.md
+!src/driver/README.md
 
 # bench
 .bench/

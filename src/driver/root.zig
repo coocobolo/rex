@@ -13,12 +13,17 @@ const term = @import("../term/root.zig");
 const Option = term.Option;
 const termio = @import("../termio/root.zig");
 const Pty = termio.pty.Posix;
-const Theme = @import("../color/root.zig").Theme;
+const Theme = @import("../color/Theme.zig");
+const Selection = @import("../Selection.zig");
 
 pub const single = @import("single.zig");
 pub const threaded = @import("threaded.zig");
 pub const triple_buffer = @import("triple_buffer.zig");
 pub const InputQueue = @import("InputQueue.zig");
+
+pub const Events = @import("Events.zig");
+pub const EventBits = Events.Bits;
+pub const EventSet = Events.Set;
 
 pub const Single = single.Driver;
 pub const Threaded = threaded.Driver;
@@ -29,6 +34,15 @@ pub const ThreadedDriver = Threaded;
 pub const InputEvent = InputQueue.InputEvent;
 pub const WakeupChannel = InputQueue.WakeupChannel;
 
+test {
+    _ = @import("Events.zig");
+    _ = @import("InputQueue.zig");
+    _ = @import("triple_buffer.zig");
+    _ = @import("single.zig");
+    _ = @import("threaded.zig");
+    std.testing.refAllDecls(@This());
+}
+
 /// Terminal modes shared atomically between driver and GUI thread.
 pub const SharedModes = packed struct(u32) {
     cursor_keys: bool = false,
@@ -38,7 +52,8 @@ pub const SharedModes = packed struct(u32) {
     bracketed_paste: bool = false,
     focus_events: bool = false,
     reports_wheel: bool = false,
-    _pad: u24 = 0,
+    reports_motion: bool = false,
+    _pad: u23 = 0,
 
     /// Bitcast helper to u32 for atomic storage.
     pub inline fn toU32(self: SharedModes) u32 {
@@ -51,146 +66,8 @@ pub const SharedModes = packed struct(u32) {
     }
 };
 
-/// High-level events accumulated by the driver to notify the GUI thread.
-pub const DriverEvents = struct {
-    bell: bool = false,
-    title: bool = false,
-    icon_name: bool = false,
-    cursor_color: bool = false,
-    selection_reset: bool = false,
-    hard_reset: bool = false,
-    resize: ?term.Events.Resize = null,
-    child_closed: bool = false,
-    had_data: bool = false,
-
-    pub inline fn any(self: DriverEvents) bool {
-        return self.bell or self.title or self.icon_name or
-            self.cursor_color or self.selection_reset or
-            self.hard_reset or self.resize != null or
-            self.child_closed or self.had_data;
-    }
-};
-
-/// Strongly typed bit flags for atomic cross-thread driver event signaling.
-pub const EventBits = packed struct(u32) {
-    bell: bool = false,
-    title: bool = false,
-    icon_name: bool = false,
-    cursor_color: bool = false,
-    selection_reset: bool = false,
-    hard_reset: bool = false,
-    child_closed: bool = false,
-    had_data: bool = false,
-    resize: bool = false,
-    _pad: u23 = 0,
-
-    pub const bell_mask: u32 = 1 << 0;
-    pub const title_mask: u32 = 1 << 1;
-    pub const icon_name_mask: u32 = 1 << 2;
-    pub const cursor_color_mask: u32 = 1 << 3;
-    pub const selection_reset_mask: u32 = 1 << 4;
-    pub const hard_reset_mask: u32 = 1 << 5;
-    pub const child_closed_mask: u32 = 1 << 6;
-    pub const had_data_mask: u32 = 1 << 7;
-    pub const resize_mask: u32 = 1 << 8;
-
-    /// Bitcast helper to u32 for atomic storage.
-    pub inline fn toU32(self: EventBits) u32 {
-        return @bitCast(self);
-    }
-
-    /// Bitcast helper from u32 from atomic storage.
-    pub inline fn fromU32(val: u32) EventBits {
-        return @bitCast(val);
-    }
-};
-
-/// Resolves an anchor row in scrollback history space, returning null if evicted.
-pub fn resolveAnchor(position: anytype, total_lines_scrolled: i64, scrollback_used: i64) ?i64 {
-    const delta: i64 = total_lines_scrolled - position.captured_scroll_gen;
-    const anchor_now: i64 = @as(i64, position.row) - delta;
-    if (anchor_now < -scrollback_used) return null;
-    return anchor_now;
-}
-
-/// Extracts UTF-8 text within `selection` from `screen` into `buf`.
-/// Performs zero dynamic allocations; returns number of bytes written.
-pub fn extractSelectionText(screen: anytype, selection: anytype, buf: []u8) usize {
-    const total_lines_scrolled = screen.total_lines_scrolled;
-    const scrollback_used = screen.scrollbackUsedAs(i64);
-
-    const start_anchor = resolveAnchor(selection.range.start, total_lines_scrolled, scrollback_used) orelse return 0;
-    const end_anchor = resolveAnchor(selection.range.end, total_lines_scrolled, scrollback_used) orelse return 0;
-
-    const start_col: u16 = @intCast(selection.range.start.col);
-    const end_col: u16 = @intCast(selection.range.end.col);
-
-    const lo_anchor, const lo_col, const hi_anchor, const hi_col = blk: {
-        if (start_anchor < end_anchor or (start_anchor == end_anchor and start_col <= end_col)) {
-            break :blk .{ start_anchor, start_col, end_anchor, end_col };
-        } else {
-            break :blk .{ end_anchor, end_col, start_anchor, start_col };
-        }
-    };
-
-    const active_rows: i64 = @intCast(screen.active_rows);
-    const clamped_lo: i64 = std.math.clamp(lo_anchor, -scrollback_used, active_rows - 1);
-    const clamped_hi: i64 = std.math.clamp(hi_anchor, -scrollback_used, active_rows - 1);
-    if (clamped_hi < clamped_lo) return 0;
-
-    const is_block = selection.kind == .block;
-    const block_left = @min(start_col, end_col);
-    const block_right = @min(@max(start_col, end_col), @max(screen.active_cols, 1) - 1);
-
-    var pos: usize = 0;
-    var anchor_row: i64 = clamped_lo;
-    while (anchor_row <= clamped_hi) : (anchor_row += 1) {
-        var col_start: usize = if (is_block) block_left else (if (anchor_row == clamped_lo) lo_col else 0);
-        const col_end: usize = if (is_block) block_right else (if (anchor_row == clamped_hi) hi_col else @max(screen.active_cols, 1) - 1);
-
-        if (col_start > 0) {
-            const maybe_placeholder = screen.cellAtAnchor(anchor_row, col_start);
-            if (maybe_placeholder.kind == .wide_right) col_start -= 1;
-        }
-
-        const row_start = pos;
-
-        for (col_start..col_end + 1) |col| {
-            const cell = screen.cellAtAnchor(anchor_row, col);
-            if (pos + 4 > buf.len) break;
-
-            switch (cell.kind) {
-                .wide_right => continue,
-                .empty => {
-                    buf[pos] = ' ';
-                    pos += 1;
-                },
-                .narrow, .wide_left => {
-                    const cp: u21 = std.math.cast(u21, cell.codepoint) orelse ' ';
-                    const len = std.unicode.utf8Encode(cp, buf[pos..][0..4]) catch continue;
-                    pos += len;
-                },
-                .grapheme, .grapheme_wide => {
-                    const cps = screen.getGrapheme(cell.codepoint) orelse continue;
-                    for (cps) |cp| {
-                        const len = std.unicode.utf8Encode(cp, buf[pos..][0..4]) catch continue;
-                        pos += len;
-                    }
-                },
-                .shaped => {},
-            }
-        }
-
-        while (pos > row_start and buf[pos - 1] == ' ') pos -= 1;
-
-        if (anchor_row < clamped_hi and pos < buf.len - 1) {
-            buf[pos] = '\n';
-            pos += 1;
-        }
-    }
-
-    return pos;
-}
+pub const resolveAnchor = Selection.resolveAnchor;
+pub const extractSelectionText = Selection.extractText;
 
 /// Unified polymorphic driver interface dispatching between Single and Threaded drivers.
 pub fn Driver(comptime option: Option) type {
@@ -213,14 +90,24 @@ pub fn Driver(comptime option: Option) type {
             }
         }
 
-        /// Backward-compatible deinit accepting io parameter.
-        pub fn deinitIo(self: *Self, io: std.Io) void {
-            _ = io;
-            self.deinit();
+        /// Sets the callback invoked to wake the GUI event loop on new frames or events.
+        pub fn setWakeupFn(self: *Self, wake: ?*const fn () void) void {
+            switch (self.*) {
+                .single => {},
+                .threaded => |d| d.setWakeupFn(wake),
+            }
+        }
+
+        /// Updates the active terminal color theme dynamically.
+        pub fn setTheme(self: *Self, theme: Theme) void {
+            switch (self.*) {
+                .single => |*d| d.setTheme(theme),
+                .threaded => |d| _ = d.sendInput(.{ .set_theme = theme }),
+            }
         }
 
         /// Drains accumulated driver events and checks if a fresh frame is ready.
-        pub fn pollAndDrain(self: *Self) !DriverEvents {
+        pub fn pollAndDrain(self: *Self) !Events {
             return switch (self.*) {
                 .single => |*d| d.pollAndDrain(),
                 .threaded => |d| d.pollAndDrain(),
@@ -247,7 +134,9 @@ pub fn Driver(comptime option: Option) type {
         pub fn sendInput(self: *Self, event: InputEvent) !void {
             switch (self.*) {
                 .single => |*d| try d.sendInput(event),
-                .threaded => |d| _ = d.sendInput(event),
+                .threaded => |d| {
+                    if (!d.sendInput(event)) return error.InputQueueFull;
+                },
             }
         }
 
@@ -309,17 +198,8 @@ pub fn Driver(comptime option: Option) type {
     };
 }
 
-test {
-    _ = @import("InputQueue.zig");
-    _ = @import("triple_buffer.zig");
-    _ = @import("single.zig");
-    _ = @import("threaded.zig");
-    std.testing.refAllDecls(@This());
-}
-
-test "driver.root: SharedModes packing and bit conversion" {
+test "driver: SharedModes packing and bit conversion" {
     const testing = std.testing;
-
     var modes = SharedModes{
         .cursor_keys = true,
         .keypad_app = true,
@@ -328,6 +208,7 @@ test "driver.root: SharedModes packing and bit conversion" {
         .bracketed_paste = true,
         .focus_events = true,
         .reports_wheel = true,
+        .reports_motion = true,
     };
 
     const raw = modes.toU32();
@@ -340,31 +221,10 @@ test "driver.root: SharedModes packing and bit conversion" {
     try testing.expect(unpacked.bracketed_paste);
     try testing.expect(unpacked.focus_events);
     try testing.expect(unpacked.reports_wheel);
+    try testing.expect(unpacked.reports_motion);
 }
 
-test "driver.root: DriverEvents bit flags and any()" {
-    const testing = std.testing;
-
-    var events = DriverEvents{};
-    try testing.expect(!events.any());
-
-    events.bell = true;
-    try testing.expect(events.any());
-
-    const bits = EventBits{
-        .bell = true,
-        .title = true,
-        .child_closed = true,
-    };
-    const raw = bits.toU32();
-    const unpacked = EventBits.fromU32(raw);
-    try testing.expect(unpacked.bell);
-    try testing.expect(unpacked.title);
-    try testing.expect(!unpacked.icon_name);
-    try testing.expect(unpacked.child_closed);
-}
-
-test "driver.root: resolveAnchor coordinate calculations" {
+test "driver: resolveAnchor coordinate calculations" {
     const testing = std.testing;
 
     // Normal anchor within viewport (captured_scroll_gen == total_lines_scrolled -> delta = 0)
@@ -394,20 +254,17 @@ test "driver.root: resolveAnchor coordinate calculations" {
     try testing.expect(evicted == null);
 }
 
-test "driver.root: Driver polymorphic union dispatch" {
+test "driver: Driver polymorphic union dispatch" {
     const testing = std.testing;
-    const test_option: Option = .{
+    const opt: Option = .{
         .max_rows = 24,
         .max_cols = 80,
         .max_scrollback = 100,
     };
-    const DriverUnion = Driver(test_option);
-    const SingleType = Single(test_option);
-    const ThreadedType = Threaded(test_option);
 
     {
-        const s = try SingleType.init(testing.allocator, testing.io, Pty.inactive, Theme.graphite);
-        var driver = DriverUnion{ .single = s };
+        const s: Single(opt) = try .init(testing.allocator, testing.io, Pty.inactive, Theme.graphite);
+        var driver: Driver(opt) = .{ .single = s };
         defer driver.deinit();
 
         try testing.expect(!driver.hasNewFrame());
@@ -421,8 +278,8 @@ test "driver.root: Driver polymorphic union dispatch" {
     }
 
     {
-        const th = try ThreadedType.create(testing.allocator, testing.io, Pty.inactive, Theme.graphite, 200);
-        var driver = DriverUnion{ .threaded = th };
+        const th: *Threaded(opt) = try .create(testing.allocator, testing.io, Pty.inactive, Theme.graphite, 200);
+        var driver: Driver(opt) = .{ .threaded = th };
         defer driver.deinit();
 
         const frame = driver.getFrame();
@@ -431,6 +288,53 @@ test "driver.root: Driver polymorphic union dispatch" {
 
         const modes = driver.getModes();
         try testing.expect(!modes.mouse_reporting);
+        try testing.expect(!modes.reports_motion);
         try testing.expectEqual(Pty.inactive.master, driver.getMasterFd());
+
+        driver.setWakeupFn(null);
+        driver.setTheme(Theme.graphite);
     }
+}
+
+test "driver: extractSelectionText omits newline on soft-wrapped rows" {
+    const testing = std.testing;
+    const opt: Option = .{
+        .max_rows = 10,
+        .max_cols = 5,
+        .max_scrollback = 10,
+    };
+
+    var t = try term.Terminal(opt).create(testing.allocator);
+    defer t.destroy(testing.allocator);
+
+    // "HELLO" soft-wraps into "WORLD", followed by hard newline and "DONE"
+    t.feed("HELLOWORLDDONE");
+
+    var buf: [64]u8 = undefined;
+    const n = extractSelectionText(
+        t.active(),
+        .{
+            .kind = .character,
+            .range = .{
+                .start = .{ .row = 0, .col = 0, .captured_scroll_gen = 0 },
+                .end = .{ .row = 2, .col = 4, .captured_scroll_gen = 0 },
+            },
+        },
+        &buf,
+    );
+    try testing.expectEqualStrings("HELLOWORLDDONE", buf[0..n]);
+
+    // Block selection still preserves newline breaks per visual row
+    const n_block = extractSelectionText(
+        t.active(),
+        .{
+            .kind = .block,
+            .range = .{
+                .start = .{ .row = 0, .col = 0, .captured_scroll_gen = 0 },
+                .end = .{ .row = 1, .col = 4, .captured_scroll_gen = 0 },
+            },
+        },
+        &buf,
+    );
+    try testing.expectEqualStrings("HELLO\nWORLD", buf[0..n_block]);
 }

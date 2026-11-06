@@ -30,5 +30,6 @@ test {
     _ = @import("input_test.zig");
     _ = @import("driver/root.zig");
     _ = @import("config/root.zig");
+    _ = @import("flag_set.zig");
     std.testing.refAllDecls(@This());
 }

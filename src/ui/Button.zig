@@ -1,4 +1,4 @@
-//! Immediate-mode interactive button primitive for emulator GUI overlays.
+//! Immediate-mode interactive button primitive for GPU-accelerated UI overlays.
 //!
 //! Emits cache-line-aligned card quads and typography into caller-provided
 //! frame buffers, applies focus rings using active theme semantic tokens,
@@ -7,9 +7,16 @@
 const std = @import("std");
 const Tokens = @import("../color/Tokens.zig").Tokens;
 const Card = @import("../renderer/Card.zig");
-const HotspotTable = @import("hotspot.zig").HotspotTable;
-const UiAction = @import("hotspot.zig").UiAction;
+const Table = @import("hotspot.zig").Table;
+const Action = @import("hotspot.zig").Action;
+const Rect = @import("Rect.zig").Rect;
+const Padding = @import("Rect.zig").Padding;
+const Border = @import("Border.zig");
+const Box = @import("Box.zig");
 const Text = @import("Text.zig");
+const Label = @import("Label.zig");
+const Kbd = @import("Kbd.zig");
+const Icon = @import("Icon.zig");
 
 pub const Button = @This();
 
@@ -22,6 +29,7 @@ pub const Style = enum {
 
 pub const Option = struct {
     focus_indicator: []const u8 = ">",
+    icon_style: Icon.IconStyle = .auto,
     corner_radius: f32 = 4.0,
     border_width: f32 = 1.0,
     focus_border_width: f32 = 1.5,
@@ -36,7 +44,8 @@ pub const Request = struct {
     shortcut: ?[]const u8 = null,
     style: Style = .default,
     focused: bool = false,
-    action: UiAction,
+    action: Action,
+    icon_style: Icon.IconStyle = .auto,
     corner_radius: f32 = 4.0,
     border_width: f32 = 1.0,
     focus_border_width: f32 = 1.5,
@@ -47,56 +56,72 @@ pub fn render(
     req: Request,
     tokens: Tokens,
     card_buffer: *std.ArrayListUnmanaged(Card.Instance),
-    hotspots: *HotspotTable,
+    hotspots: *Table,
     drawer: Text.Drawer,
 ) void {
-    hotspots.add(req.col, req.row, req.width, req.height, req.action);
-
-    const border_color = if (req.focused)
-        tokens.accent
-    else switch (req.style) {
+    const semantic_accent: ?[3]u8 = switch (req.style) {
         .danger => tokens.critical,
         .primary => tokens.accent,
-        else => tokens.border,
+        else => null,
     };
 
-    const bg_color = tokens.card_opaque;
-    const effective_border_w = if (req.focused) req.focus_border_width else req.border_width;
+    const surface: Box.Surface = if (req.style == .ghost) .none else .card;
+    const inner = Box.render(
+        .{
+            .rect = .{ .col = req.col, .row = req.row, .width = req.width, .height = req.height },
+            .option = .{
+                .surface = surface,
+                .border = .{
+                    .shape = .rounded,
+                    .radius = req.corner_radius,
+                    .width = req.border_width,
+                    .focus_width = req.focus_border_width,
+                    .style = if (req.style == .ghost and !req.focused) .none else .semantic,
+                },
+                .padding = Padding.horizontal(1),
+            },
+            .semantic_accent = semantic_accent,
+            .focused = req.focused,
+            .action = req.action,
+        },
+        tokens,
+        null,
+        card_buffer,
+        drawer.allocator,
+        drawer,
+        hotspots,
+    );
 
-    card_buffer.append(drawer.allocator, .{
-        .col = req.col,
-        .row = req.row,
-        .width = req.width,
-        .height = req.height,
-        .bg_color = Tokens.toF32Rgba(bg_color, 255),
-        .border_color = Tokens.toF32Rgba(border_color, 255),
-        .radius = req.corner_radius,
-        .border_width = effective_border_w,
-    }) catch {};
+    if (inner.width == 0) return;
+    const max_c = inner.maxCol();
+    var text_col = inner.col;
 
-    const max_col = req.col + req.width;
-    var text_col = req.col + 1;
     if (req.focused and req.focus_indicator.len > 0) {
-        _ = drawer.drawString(text_col, req.row, req.focus_indicator, tokens.accent, 255, max_col);
-        text_col += Text.measure(req.focus_indicator) + 1;
+        text_col += Label.renderAt(text_col, inner.row, max_c, req.focus_indicator, .{ .role = .accent }, tokens, drawer);
+        if (text_col <= max_c) {
+            _ = drawer.drawChar(text_col, inner.row, ' ', tokens.muted, 255);
+            text_col += 1;
+        }
     }
 
-    const fg_color = if (req.focused)
-        tokens.primary
+    const label_role: Label.Role = if (req.focused)
+        .primary
     else switch (req.style) {
-        .danger => tokens.critical,
-        .primary => tokens.accent,
-        else => tokens.secondary,
+        .danger => .critical,
+        .primary => .accent,
+        else => .secondary,
     };
 
-    _ = drawer.drawString(text_col, req.row, req.label, fg_color, 255, max_col);
+    const label_w = Label.renderAt(text_col, inner.row, max_c, req.label, .{ .role = label_role }, tokens, drawer);
 
     if (req.shortcut) |sc| {
-        const sc_len: u16 = Text.measure(sc);
-        if (req.width > sc_len + 3) {
-            const sc_col = req.col + req.width - sc_len - 1;
-            if (sc_col > text_col + Text.measure(req.label)) {
-                _ = drawer.drawString(sc_col, req.row, sc, tokens.muted, 255, max_col);
+        // Borderless pill so the keycap does not stack a second stroke on the button's own border.
+        const kbd_opt: Kbd.Option = .{ .style = .pill, .focused = req.focused, .connector_pad = 0, .icon_style = req.icon_style };
+        const sc_len = Kbd.measureChord(sc, kbd_opt);
+        if (inner.width > sc_len + 1) {
+            const sc_col = inner.rightEdge() - sc_len;
+            if (sc_col > text_col + label_w) {
+                _ = Kbd.renderChord(.{ .col = sc_col, .row = inner.row, .max_col = max_c, .chord = sc, .option = kbd_opt }, tokens, card_buffer, drawer, null);
             }
         }
     }
@@ -108,11 +133,11 @@ test "Button: request initialization" {
         .col = 5,
         .row = 10,
         .width = 20,
-        .label = "Quit",
-        .shortcut = "Ctrl+Q",
+        .label = "Confirm",
+        .shortcut = "Enter",
         .style = .danger,
         .focused = true,
-        .action = .confirm_quit,
+        .action = .{ .button = 1 },
     };
     try testing.expectEqual(@as(u16, 5), req.col);
     try testing.expectEqual(@as(u16, 10), req.row);

@@ -75,7 +75,7 @@ test "c0: BEL sets events.bell" {
 
     t.feed("\x07");
 
-    try testing.expect(t.events.bell);
+    try testing.expect(t.events.has(.bell));
 }
 
 test "c0: BEL is deduplicated (multiple BELs : one flag)" {
@@ -84,7 +84,7 @@ test "c0: BEL is deduplicated (multiple BELs : one flag)" {
 
     t.feed("\x07\x07\x07");
 
-    try testing.expect(t.events.bell);
+    try testing.expect(t.events.has(.bell));
     // still just a bool; no count, no overflow
 }
 
@@ -338,13 +338,13 @@ test "c0: events.clear resets bell and response" {
     t.setAnswerback("hi");
     t.feed("\x07\x05");
 
-    try testing.expect(t.events.bell);
+    try testing.expect(t.events.has(.bell));
     try testing.expectEqualStrings("hi", t.response.slice());
 
     t.events.clear();
     t.response.clear();
 
-    try testing.expect(!t.events.bell);
+    try testing.expect(!t.events.has(.bell));
     try testing.expectEqual(@as(usize, 0), t.response.len);
     try testing.expect(!t.events.any());
 }

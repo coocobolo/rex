@@ -24,7 +24,7 @@ pub const FocusGroup = struct {
             0;
     }
 
-    pub fn prev(self: *FocusGroup) void {
+    pub fn previous(self: *FocusGroup) void {
         if (self.total_elements == 0) return;
         self.focused_index = if (self.focused_index) |idx|
             (idx + self.total_elements - 1) % self.total_elements
@@ -64,10 +64,10 @@ test "FocusGroup: forward cycling, reverse cycling, and clamping" {
     try testing.expect(group.isFocused(0));
 
     // Prev wraps backward to 2
-    group.prev();
+    group.previous();
     try testing.expect(group.isFocused(2));
 
-    group.prev();
+    group.previous();
     try testing.expect(group.isFocused(1));
 
     // Explicit set

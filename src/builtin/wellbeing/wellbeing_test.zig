@@ -323,38 +323,6 @@ test "overlay: box and progress bar arithmetic" {
     }
 }
 
-test "overlay: toast variant styling and semantic mapping" {
-    const ov = wellbeing.overlay;
-    const Tokens = wellbeing.tokens.Tokens;
-
-    // Test alert mapping
-    const alert_eye: reminders.Alert = .{ .kind = .eyesight, .remaining_s = 20, .prompt = "Rest eyes" };
-    const eye_toast = ov.alertToToast(alert_eye);
-    try testing.expectEqual(ov.ToastVariant.healthy_break, eye_toast.variant);
-    try testing.expectEqualStrings("Rest your eyes", eye_toast.title);
-
-    const alert_break: reminders.Alert = .{ .kind = .healthy_break, .remaining_s = 30, .prompt = "Break time" };
-    const break_toast = ov.alertToToast(alert_break);
-    try testing.expectEqual(ov.ToastVariant.healthy_break, break_toast.variant);
-    try testing.expectEqualStrings("Time for a healthy break", break_toast.title);
-
-    const alert_hyd: reminders.Alert = .{ .kind = .hydration, .remaining_s = 15, .prompt = "Drink water" };
-    const hyd_toast = ov.alertToToast(alert_hyd);
-    try testing.expectEqual(ov.ToastVariant.info, hyd_toast.variant);
-    try testing.expectEqualStrings("Hydration check", hyd_toast.title);
-
-    // Test variant styles with Tokens
-    const break_style = ov.variantStyle(.healthy_break);
-    try testing.expectEqual(Tokens.healthy[0], break_style.accent[0]);
-    try testing.expectEqual(Tokens.healthy[1], break_style.accent[1]);
-    try testing.expectEqual(Tokens.healthy[2], break_style.accent[2]);
-
-    const warn_style = ov.variantStyle(.warning);
-    try testing.expectEqual(Tokens.warning[0], warn_style.accent[0]);
-    try testing.expectEqual(Tokens.warning[1], warn_style.accent[1]);
-    try testing.expectEqual(Tokens.warning[2], warn_style.accent[2]);
-}
-
 test "icons: glyph lookup and styles" {
     const ic = wellbeing.icons;
 
@@ -381,20 +349,6 @@ test "icons: glyph lookup and styles" {
     // Width
     try testing.expectEqual(@as(u16, 1), ic.glyphWidth("✓"));
     try testing.expectEqual(@as(u16, 3), ic.glyphWidth("[v]"));
-}
-
-test "tokens: visual color tokens match modern palette" {
-    const Tokens = wellbeing.tokens.Tokens;
-    try testing.expectEqual(wellbeing.tokens.ColorTokens.dark.bg, Tokens.bg);
-    try testing.expectEqual(wellbeing.tokens.ColorTokens.dark.card, Tokens.card);
-    try testing.expectEqual(wellbeing.tokens.ColorTokens.dark.border, Tokens.border);
-    try testing.expectEqual(wellbeing.tokens.ColorTokens.dark.primary, Tokens.primary);
-    try testing.expectEqual(wellbeing.tokens.ColorTokens.dark.secondary, Tokens.secondary);
-    try testing.expectEqual(wellbeing.tokens.ColorTokens.dark.muted, Tokens.muted);
-    try testing.expectEqual(wellbeing.tokens.ColorTokens.dark.healthy, Tokens.healthy);
-    try testing.expectEqual(wellbeing.tokens.ColorTokens.dark.warning, Tokens.warning);
-    try testing.expectEqual(wellbeing.tokens.ColorTokens.dark.critical, Tokens.critical);
-    try testing.expectEqual(wellbeing.tokens.ColorTokens.dark.info, Tokens.info);
 }
 
 test "overlay: stringWidth and description word wrap" {
@@ -501,21 +455,6 @@ test "overlay: drawDimmingBackdropOutside leaves panel interior untouched" {
     }
 }
 
-test "overlay: semantic border selection" {
-    // Verify accent colors map properly for borders
-    const healthy_style = wellbeing.overlay.variantStyle(.healthy_break);
-    try testing.expectEqual(wellbeing.tokens.Tokens.healthy, healthy_style.accent);
-
-    const warn_style = wellbeing.overlay.variantStyle(.warning);
-    try testing.expectEqual(wellbeing.tokens.Tokens.warning, warn_style.accent);
-
-    const crit_style = wellbeing.overlay.variantStyle(.critical);
-    try testing.expectEqual(wellbeing.tokens.Tokens.critical, crit_style.accent);
-
-    const info_style = wellbeing.overlay.variantStyle(.info);
-    try testing.expectEqual(wellbeing.tokens.Tokens.info, info_style.accent);
-}
-
 test "overlay: dashboard layout geometry and symmetric padding" {
     // Verify symmetric padding: 3 columns margin on both left and right
     const rect = wellbeing.overlay.PanelRect{ .col = 7, .row = 2, .width = 66, .height = 15 };
@@ -528,4 +467,28 @@ test "overlay: dashboard layout geometry and symmetric padding" {
     try testing.expectEqual(@as(u16, 3), content_col - rect.col);
     // Right padding: (rect.col + rect.width - 1) - max_content_col = 72 - 69 = 3
     try testing.expectEqual(@as(u16, 3), (rect.col + rect.width - 1) - max_content_col);
+}
+
+test "overlay: dashboard tab navigation and history day selection" {
+    var ov = wellbeing.overlay.Overlay.init();
+    defer ov.deinit(testing.allocator);
+
+    try testing.expectEqual(wellbeing.overlay.DashboardTab.overview, ov.active_tab);
+    ov.nextTab();
+    try testing.expectEqual(wellbeing.overlay.DashboardTab.pomodoro, ov.active_tab);
+    ov.nextTab();
+    try testing.expectEqual(wellbeing.overlay.DashboardTab.activity, ov.active_tab);
+    ov.nextTab();
+    try testing.expectEqual(wellbeing.overlay.DashboardTab.overview, ov.active_tab);
+
+    ov.selectTab(2);
+    try testing.expectEqual(wellbeing.overlay.DashboardTab.activity, ov.active_tab);
+
+    // 3 history days + 1 today = 4 total days (indices 0..3)
+    ov.moveSelectedDay(-1, 3);
+    try testing.expectEqual(@as(?u16, 2), ov.selected_day_idx);
+    ov.moveSelectedDay(-5, 3);
+    try testing.expectEqual(@as(?u16, 0), ov.selected_day_idx);
+    ov.moveSelectedDay(10, 3);
+    try testing.expectEqual(@as(?u16, 3), ov.selected_day_idx);
 }

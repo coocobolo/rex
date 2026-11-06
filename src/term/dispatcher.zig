@@ -107,7 +107,7 @@ pub const C0 = struct {
             0x00 => {}, // NUL
             0x05 => term.reply(.{ .answerback = term.getAnswerback() }), // ENQ
             0x07 => { // BEL
-                if (!term.events.bell) term.events.bell = true;
+                term.events.set(.bell);
             },
             0x08 => term.active().cursorLeft(1), // BS
             0x09 => term.active().tabForward(1), // HT

@@ -40,9 +40,10 @@ const triple_buffer = @import("triple_buffer.zig");
 pub const TripleBuffer = triple_buffer.Buffer;
 
 const root = @import("root.zig");
-pub const DriverEvents = root.DriverEvents;
+pub const Events = root.Events;
 pub const SharedModes = root.SharedModes;
-pub const EventBits = root.EventBits;
+pub const EventBits = root.Events.Bits;
+pub const EventSet = root.Events.Set;
 
 /// Multi-threaded terminal driver parameterized by terminal capacity `Option`.
 pub fn Driver(comptime option: Option) type {
@@ -58,23 +59,31 @@ pub fn Driver(comptime option: Option) type {
         pty_pid: posix.pid_t,
         pty: Pty,
         /// Triple buffer embedded directly into driver struct to eliminate extra heap allocation.
-        triple_buffer: TripleBufferType,
-        input_queue: InputQueue,
+        triple_buffer: TripleBufferType align(64),
+        input_queue: InputQueue align(64),
         thread: ?std.Thread = null,
         should_exit: std.atomic.Value(bool) align(64),
         shared_modes: std.atomic.Value(u32) align(64),
-        shared_events: std.atomic.Value(u32) align(64),
+        shared_events: EventSet.Atomic align(64),
         shared_resize: std.atomic.Value(u32) align(64),
-        shared_title: [2][term.max_title_len]u8 = undefined,
+        shared_title: [2][term.max_title_len]u8 align(64) = undefined,
         shared_title_len: [2]u16 = .{ 0, 0 },
         shared_title_idx: std.atomic.Value(u8) align(64),
         sync_output_timeout_ms: u32,
-        last_frame: ?*const FrameType = null,
+        /// Consumer-local cached frame pointer updated on GUI thread; aligned to 64B to prevent false sharing with worker atomics.
+        last_frame: ?*const FrameType align(64) = null,
         terminal: ?*TerminalType = null,
-        terminal_mutex: std.Io.Mutex = .init,
+        terminal_mutex: std.Io.Mutex align(64) = .init,
         wakeup_fn: ?*const fn () void = null,
 
-        pub const Events = DriverEvents;
+        comptime {
+            std.debug.assert(@offsetOf(Self, "last_frame") / 64 != @offsetOf(Self, "shared_modes") / 64);
+            std.debug.assert(@offsetOf(Self, "last_frame") / 64 != @offsetOf(Self, "shared_events") / 64);
+            std.debug.assert(@offsetOf(Self, "last_frame") / 64 != @offsetOf(Self, "shared_resize") / 64);
+            std.debug.assert(@offsetOf(Self, "last_frame") / 64 != @offsetOf(Self, "shared_title_idx") / 64);
+            std.debug.assert(@offsetOf(Self, "shared_modes") / 64 != @offsetOf(Self, "shared_events") / 64);
+        }
+
         pub const Modes = SharedModes;
 
         /// Creates and starts the ThreadedDriver and its background worker thread.
@@ -99,7 +108,7 @@ pub fn Driver(comptime option: Option) type {
                 .input_queue = iq,
                 .should_exit = std.atomic.Value(bool).init(false),
                 .shared_modes = std.atomic.Value(u32).init(0),
-                .shared_events = std.atomic.Value(u32).init(0),
+                .shared_events = .{},
                 .shared_resize = std.atomic.Value(u32).init(0),
                 .shared_title_idx = std.atomic.Value(u8).init(0),
                 .sync_output_timeout_ms = sync_output_timeout_ms,
@@ -131,10 +140,9 @@ pub fn Driver(comptime option: Option) type {
             self.allocator.destroy(self);
         }
 
-        /// Backward-compatible overload accepting io explicitly.
-        pub fn destroyIo(self: *Self, io: std.Io) void {
-            _ = io;
-            self.destroy();
+        /// Sets the callback invoked to wake the GUI event loop on new frames or events.
+        pub fn setWakeupFn(self: *Self, wake: ?*const fn () void) void {
+            self.wakeup_fn = wake;
         }
 
         /// Background worker thread routine.
@@ -211,7 +219,7 @@ pub fn Driver(comptime option: Option) type {
                     }
                 }
 
-                if (!child_closed and pollfds[0].fd >= 0 and ((pollfds[0].revents & (system.POLL.IN | system.POLL.HUP | system.POLL.ERR)) != 0 or pollfds[0].revents == 0)) {
+                if (!child_closed and pollfds[0].fd >= 0 and (pollfds[0].revents & (system.POLL.IN | system.POLL.HUP | system.POLL.ERR)) != 0) {
                     drain: while (true) {
                         const n = self.pty.readRaw(&read_buffer) catch |err| switch (err) {
                             error.WouldBlock => break :drain,
@@ -235,7 +243,7 @@ pub fn Driver(comptime option: Option) type {
                     }
 
                     if (total_read > 0) {
-                        _ = self.shared_events.fetchOr(EventBits.had_data_mask, .release);
+                        self.shared_events.set(EventSet.of(.had_data));
 
                         // Drain replies to PTY once per batch
                         self.drainRepliesToPty(&terminal, &reply_buffer);
@@ -258,29 +266,27 @@ pub fn Driver(comptime option: Option) type {
                 self.updateSharedModes(&terminal);
 
                 var should_publish = false;
-                const in_timeout_flush = terminal.mode.synchronized_output and
-                    (sync_start != null and (sync_start.?.durationTo(std.Io.Clock.Timestamp.now(self.io, .awake)).raw.toMilliseconds() >= self.sync_output_timeout_ms));
+                var in_sync_hold = false;
+                var in_timeout_flush = false;
 
-                if (total_read > 0 or had_input or child_closed or in_timeout_flush) {
-                    var in_sync_hold = false;
-                    if (terminal.mode.synchronized_output) {
-                        const now = std.Io.Clock.Timestamp.now(self.io, .awake);
-                        if (sync_start == null) sync_start = now;
-                        const elapsed_ms = sync_start.?.durationTo(now).raw.toMilliseconds();
-                        in_sync_hold = elapsed_ms < self.sync_output_timeout_ms;
-                    } else {
-                        sync_start = null;
-                    }
+                if (terminal.mode.synchronized_output) {
+                    const now = std.Io.Clock.Timestamp.now(self.io, .awake);
+                    if (sync_start == null) sync_start = now;
+                    const elapsed_ms = sync_start.?.durationTo(now).raw.toMilliseconds();
+                    in_sync_hold = elapsed_ms < self.sync_output_timeout_ms;
+                    in_timeout_flush = !in_sync_hold;
+                } else {
+                    sync_start = null;
+                }
 
-                    if (!in_sync_hold) {
-                        should_publish = terminal.snapshot(&local_frame);
-                    }
+                if (!in_sync_hold and (total_read > 0 or had_input or child_closed or in_timeout_flush)) {
+                    should_publish = terminal.snapshot(&local_frame);
                 }
 
                 self.terminal_mutex.unlock(self.io);
 
                 if (child_closed) {
-                    _ = self.shared_events.fetchOr(EventBits.child_closed_mask, .release);
+                    self.shared_events.set(EventSet.of(.child_closed));
                 }
 
                 if (should_publish) {
@@ -294,6 +300,7 @@ pub fn Driver(comptime option: Option) type {
         }
 
         fn drainRepliesToPty(self: *Self, terminal: *TerminalType, buf: *[1024]u8) void {
+            if (!terminal.hasReplies()) return;
             while (true) {
                 const n = terminal.drainReplies(buf);
                 if (n == 0) break;
@@ -397,6 +404,11 @@ pub fn Driver(comptime option: Option) type {
                     terminal.active().dirty_rows = .full;
                     terminal.active().bump();
                 },
+                .set_theme => |theme| {
+                    terminal.setTheme(theme);
+                    terminal.active().dirty_rows = .full;
+                    terminal.active().bump();
+                },
             }
         }
 
@@ -409,21 +421,16 @@ pub fn Driver(comptime option: Option) type {
                 .bracketed_paste = terminal.mode.bracketed_paste,
                 .focus_events = terminal.mode.focus_events,
                 .reports_wheel = terminal.mode.mouse_tracking.reportsWheel(),
+                .reports_motion = terminal.mode.mouse_tracking.reportsMotion(),
             };
             self.shared_modes.store(@bitCast(modes), .release);
         }
 
         fn accumulateEvents(self: *Self, terminal: *TerminalType) void {
             const term_ev = terminal.takeEvents();
-            var mask: u32 = 0;
-            if (term_ev.bell) mask |= EventBits.bell_mask;
-            if (term_ev.icon_name) mask |= EventBits.icon_name_mask;
-            if (term_ev.cursor_color) mask |= EventBits.cursor_color_mask;
-            if (term_ev.selection_reset) mask |= EventBits.selection_reset_mask;
-            if (term_ev.hard_reset) mask |= EventBits.hard_reset_mask;
+            var ev = EventSet.fromInt(term_ev.flags.toInt());
 
-            if (term_ev.title) {
-                mask |= EventBits.title_mask;
+            if (term_ev.has(.title)) {
                 const cur_idx = self.shared_title_idx.load(.monotonic);
                 const next_idx = 1 - cur_idx;
                 const title = terminal.getTitle();
@@ -433,14 +440,13 @@ pub fn Driver(comptime option: Option) type {
                 self.shared_title_idx.store(next_idx, .release);
             }
 
-            if (term_ev.resize) |r| {
-                const packed_res: u32 = (@as(u32, r.rows) << 16) | @as(u32, r.cols);
+            if (term_ev.has(.resize)) {
+                const packed_res: u32 = (@as(u32, term_ev.resize.rows) << 16) | @as(u32, term_ev.resize.cols);
                 self.shared_resize.store(packed_res, .release);
-                mask |= EventBits.resize_mask;
             }
 
-            if (mask != 0) {
-                _ = self.shared_events.fetchOr(mask, .release);
+            if (ev.any()) {
+                self.shared_events.set(ev);
             }
         }
 
@@ -460,33 +466,25 @@ pub fn Driver(comptime option: Option) type {
         }
 
         /// Drains accumulated driver events and checks if a new frame is ready.
-        pub fn pollAndDrain(self: *Self) !DriverEvents {
+        pub fn pollAndDrain(self: *Self) !Events {
             var events = self.takeEvents();
             if (self.hasNewFrame()) {
-                events.had_data = true;
+                events.set(.had_data);
             }
             return events;
         }
 
         /// Atomically retrieves and resets driver events (bell, title, resize, child_closed).
-        pub fn takeEvents(self: *Self) DriverEvents {
-            const bits = self.shared_events.swap(0, .acq_rel);
-            const resize_val = if ((bits & EventBits.resize_mask) != 0) self.shared_resize.swap(0, .acq_rel) else 0;
-            const resize_ev: ?term.Events.Resize = if (resize_val != 0) .{
-                .rows = @intCast(resize_val >> 16),
-                .cols = @intCast(resize_val & 0xFFFF),
-            } else null;
+        pub fn takeEvents(self: *Self) Events {
+            const bits = self.shared_events.take();
+            const resize_val = if (bits.has(.resize)) self.shared_resize.swap(0, .acq_rel) else 0;
 
             return .{
-                .bell = (bits & EventBits.bell_mask) != 0,
-                .title = (bits & EventBits.title_mask) != 0,
-                .icon_name = (bits & EventBits.icon_name_mask) != 0,
-                .cursor_color = (bits & EventBits.cursor_color_mask) != 0,
-                .selection_reset = (bits & EventBits.selection_reset_mask) != 0,
-                .hard_reset = (bits & EventBits.hard_reset_mask) != 0,
-                .child_closed = (bits & EventBits.child_closed_mask) != 0,
-                .had_data = (bits & EventBits.had_data_mask) != 0,
-                .resize = resize_ev,
+                .flags = bits,
+                .resize = .{
+                    .rows = @intCast(resize_val >> 16),
+                    .cols = @intCast(resize_val & 0xFFFF),
+                },
             };
         }
 
@@ -570,7 +568,10 @@ test "ThreadedDriver: create, destroy and basic frame acquisition" {
     };
 
     var driver = try DriverType.create(testing.allocator, testing.io, mock_pty, Theme.graphite, 150);
-    defer driver.destroy();
+    defer {
+        driver.pty.pid = -1;
+        driver.destroy();
+    }
 
     try testing.expectEqual(@as(posix.pid_t, 1234), driver.getPid());
     try testing.expect(!driver.hasNewFrame());
@@ -613,7 +614,7 @@ test "ThreadedDriver: async PTY input, frame update, and GUI reply" {
     var retries: usize = 100;
     while (retries > 0) : (retries -= 1) {
         const events = try driver.pollAndDrain();
-        if (events.had_data or driver.hasNewFrame()) break;
+        if (events.has(.had_data) or driver.hasNewFrame()) break;
         std.Thread.yield() catch {};
         sleepNs(1_000_000); // 1ms
     }

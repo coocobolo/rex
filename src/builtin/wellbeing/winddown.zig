@@ -1,5 +1,7 @@
 const std = @import("std");
 
+pub const Flags = packed struct(u8) {};
+
 pub const WinddownOption = struct {
     enabled: bool = true,
     start_hour: u8 = 21,
