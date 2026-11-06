@@ -225,7 +225,15 @@ pub const resolveAnchor = rex.driver.resolveAnchor;
 allocator: std.mem.Allocator,
 atlas: Atlas,
 
+/// The active config: `base_config` with the system and user config files
+/// applied. Everything applying the files allocates (the font path, the
+/// merged keymap) lives in `config_arena`; a reload builds a new config in
+/// a new arena and frees the old one as a whole.
 config: Config,
+config_arena: std.heap.ArenaAllocator,
+/// The built-in defaults every config is built from. Static, owned by the
+/// caller of `init`.
+base_config: *const Config,
 config_watcher: ?rex.config.Watcher = null,
 config_path: ?[]const u8 = null,
 background_color: [4]f32,
@@ -353,6 +361,10 @@ pub fn init(
     log.debug("dirs: {f}", .{dirs});
 
     var active_config: Config = config.*;
+    // Owns what applying the config files allocates; moved into the App
+    // below, so take a fresh `allocator()` from the field after that.
+    var config_arena: std.heap.ArenaAllocator = .init(gpa);
+    errdefer config_arena.deinit();
 
     // Resolve user configuration path or use custom CLI path
     var user_cfg_path: ?[]const u8 = null;
@@ -367,7 +379,7 @@ pub fn init(
     var sys_diags = rex.config.Diagnostics{};
     var sys_file_cfg = rex.config.FileConfig{};
     if (rex.config.loadFile(rex.config.system_config_path, &sys_file_cfg, &sys_diags) catch false) {
-        rex.config.applyFileConfig(&active_config, &sys_file_cfg, gpa) catch |err| {
+        rex.config.applyFileConfig(&active_config, &sys_file_cfg, config_arena.allocator()) catch |err| {
             log.warn("failed to apply system config: {}", .{err});
         };
     }
@@ -381,7 +393,7 @@ pub fn init(
             if (user_diags.hasErrors()) {
                 startup_banner = formatDiagnosticBanner(&user_diags.items[0]);
             }
-            rex.config.applyFileConfig(&active_config, &user_file_cfg, gpa) catch |err| {
+            rex.config.applyFileConfig(&active_config, &user_file_cfg, config_arena.allocator()) catch |err| {
                 log.warn("failed to apply user config: {}", .{err});
             };
         }
@@ -499,6 +511,8 @@ pub fn init(
         .atlas = atlas,
         .frame_builder = frame_builder,
         .config = active_config,
+        .config_arena = config_arena,
+        .base_config = config,
         .config_watcher = watcher,
         .config_path = user_cfg_path,
         .font_size = active_config.font.height,
@@ -531,6 +545,9 @@ pub fn deinit(self: *App, gpa: std.mem.Allocator) void {
         log.err("failed to save wellbeing stats: {any}", .{err});
     };
     self.dirs.deinit(gpa);
+    // Last: the window, rasterizer and driver above were set up from config
+    // values that live here.
+    self.config_arena.deinit();
 }
 
 pub fn tick(self: *App, dt_ms: u64) bool {
@@ -1149,8 +1166,13 @@ pub fn reloadConfig(self: *App) void {
         return;
     }
 
-    // Apply file config onto active config
-    rex.config.applyFileConfig(&self.config, &file_cfg, self.allocator) catch |err| {
+    // Build the new config from the defaults, not on top of the current one,
+    // so a setting removed from the file falls back to its default. It goes
+    // into a new arena; the current config stays valid until the swap.
+    var new_arena: std.heap.ArenaAllocator = .init(self.allocator);
+    var new_config: Config = self.base_config.*;
+    rex.config.applyFileConfig(&new_config, &file_cfg, new_arena.allocator()) catch |err| {
+        new_arena.deinit();
         var err_buf: [128]u8 = undefined;
         const err_msg = std.fmt.bufPrint(&err_buf, "Failed to apply: {}", .{err}) catch "Apply failed";
         self.config_banner = Banner.init(.err, "Config error", err_msg);
@@ -1158,6 +1180,14 @@ pub fn reloadConfig(self: *App) void {
         self.needs_redraw = true;
         return;
     };
+
+    // Freeing the old arena leaves the rasterizer with a dangling font path:
+    // FreeType keeps the path pointer in its stream (src/base/ftsystem.c:252)
+    // but never reads it after opening the file, so this is safe. A new
+    // rasterizer (font size change below) gets the new path.
+    self.config_arena.deinit();
+    self.config_arena = new_arena;
+    self.config = new_config;
 
     // Successfully applied: clear any previous configuration error banner
     self.config_banner = null;
@@ -2586,4 +2616,62 @@ test "App: routeKeyToUi unified dispatcher consumes modal keys and suppresses te
         char_sent = true;
     }
     try testing.expect(char_sent);
+}
+
+test "App: a config reload starts from the defaults, in its own arena" {
+    // reloadConfig builds every config as: base defaults + file, all
+    // allocations in a fresh arena. Check both properties on that recipe:
+    // the file's allocations are owned by the arena (testing.allocator
+    // reports any leak), and a setting removed from the file falls back
+    // to the default instead of keeping the previous value.
+    const testing = std.testing;
+    const gpa = testing.allocator;
+
+    const base: Config = .{
+        .blink = .{},
+        .font = .{
+            .font = .{ .family = .{ .variable = .{ .upright = "/base/upright.ttf" } } },
+            .height = 20,
+            .max_size = 96,
+            .min_size = 6,
+        },
+        .keymap = rex.input.default_keymap,
+        .termio = .{},
+        .theme = Theme.graphite,
+        .window = .{ .background = .{}, .scrollbar = .{}, .cursor = .{}, .selection = .{} },
+        .scroll = .{},
+        .selection = .{ .classifier = .{} },
+        .environments = &.{},
+    };
+
+    // First load: the file sets font_family and rebinds Ctrl+= to quit.
+    var with_settings: rex.config.FileConfig = .{};
+    const family = "/user/font.ttf";
+    with_settings.font_family = @splat(0);
+    @memcpy(with_settings.font_family.?[0..family.len], family);
+    with_settings.font_family_len = family.len;
+    with_settings.keybindings[0] = .{ .key = .equal, .mods = .{ .ctrl = true }, .action = .quit };
+    with_settings.keybindings_count = 1;
+    with_settings.keybindings_specified = true;
+
+    var first_arena: std.heap.ArenaAllocator = .init(gpa);
+    defer first_arena.deinit();
+    var first: Config = base;
+    try rex.config.applyFileConfig(&first, &with_settings, first_arena.allocator());
+    try testing.expectEqualStrings(family, std.mem.span(first.font.font.family.variable.upright));
+    var ctrl_equal_quits = false;
+    for (first.keymap) |b| {
+        if (b.key == .equal and b.mods.ctrl and !b.mods.shift) ctrl_equal_quits = b.action == .quit;
+    }
+    try testing.expect(ctrl_equal_quits);
+
+    // Reload: the settings were removed from the file. Built from the base
+    // again, the config is back to the defaults.
+    const without_settings: rex.config.FileConfig = .{};
+    var second_arena: std.heap.ArenaAllocator = .init(gpa);
+    defer second_arena.deinit();
+    var second: Config = base;
+    try rex.config.applyFileConfig(&second, &without_settings, second_arena.allocator());
+    try testing.expectEqualStrings("/base/upright.ttf", std.mem.span(second.font.font.family.variable.upright));
+    try testing.expectEqual(base.keymap.ptr, second.keymap.ptr);
 }
