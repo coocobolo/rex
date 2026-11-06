@@ -123,6 +123,47 @@ test "upload: color glyph goes into color atlas" {
     try testing.expectEqual(0, m.atlas_y);
 }
 
+/// Reads back every byte of `texture` in `format` into `out`.
+fn readTexture(texture: gl.GLuint, format: gl.GLenum, out: []u8) void {
+    gl.pixelStorei(gl.PACK_ALIGNMENT, 1);
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.getTexImage(gl.TEXTURE_2D, 0, format, gl.UNSIGNED_BYTE, out.ptr);
+    gl.bindTexture(gl.TEXTURE_2D, 0);
+    gl.pixelStorei(gl.PACK_ALIGNMENT, 4);
+}
+
+test "invalidate: clears both textures to zero, partial tiles included" {
+    try testGlContext();
+
+    // Not a multiple of the clear tile in either direction, so the edge
+    // tiles are partial.
+    const width = 100;
+    const height = 70;
+    var atlas = try Atlas.create(alloc, .{ .width = width, .height = height });
+    defer atlas.destroy();
+
+    var gray_glyph: [8 * 16]u8 = undefined;
+    _ = try atlas.upload(fakeGrayGlyph(&gray_glyph, 8, 16));
+    var color_glyph: [8 * 8 * 4]u8 = undefined;
+    _ = try atlas.upload(fakeColorGlyph(&color_glyph, 8, 8));
+
+    var gray: [width * height]u8 = undefined;
+    var color: [width * height * 4]u8 = undefined;
+
+    // The uploads must be visible first, or the check below proves nothing.
+    readTexture(atlas.gray_texture, gl.RED, &gray);
+    readTexture(atlas.color_texture, gl.RGBA, &color);
+    try testing.expect(!std.mem.allEqual(u8, &gray, 0));
+    try testing.expect(!std.mem.allEqual(u8, &color, 0));
+
+    atlas.invalidate();
+
+    readTexture(atlas.gray_texture, gl.RED, &gray);
+    readTexture(atlas.color_texture, gl.RGBA, &color);
+    try testing.expect(std.mem.allEqual(u8, &gray, 0));
+    try testing.expect(std.mem.allEqual(u8, &color, 0));
+}
+
 test "upload: zero-size glyph (space) returns zero metrics without GL Upload" {
     try testGlContext();
 

@@ -372,6 +372,46 @@ pub fn invalidate(self: *Atlas) void {
     self.ascii_lut = initAsciiLut();
     self.state.gray = PackingState.init;
     self.state.color = PackingState.init;
-    gl.clearTexImage(self.gray_texture, 0, gl.RED, gl.UNSIGNED_BYTE, null);
-    gl.clearTexImage(self.color_texture, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    clearTexture(self.gray_texture, gl.RED, self.width, self.height);
+    clearTexture(self.color_texture, gl.RGBA, self.width, self.height);
+}
+
+/// Side, in pixels, of the square tiles `clearTexture` uploads.
+const clear_tile_side = 64;
+
+/// Zero source for `clearTexture`, large enough for one tile at four
+/// bytes per pixel.
+const clear_tile: [clear_tile_side * clear_tile_side * 4]u8 = @splat(0);
+
+/// Sets every pixel of the `width` by `height` `texture` to zero by
+/// uploading zero tiles, which stays within GL 3.3 core (glClearTexImage
+/// needs 4.4). `format` is the upload format: RED for the gray texture,
+/// RGBA for the color one. Leaves texture 0 bound, like `upload`.
+fn clearTexture(texture: gl.GLuint, format: gl.GLenum, width: u16, height: u16) void {
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    gl.pixelStorei(gl.UNPACK_ROW_LENGTH, 0);
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+
+    var y: u32 = 0;
+    while (y < height) : (y += clear_tile_side) {
+        const tile_h = @min(clear_tile_side, height - y);
+        var x: u32 = 0;
+        while (x < width) : (x += clear_tile_side) {
+            const tile_w = @min(clear_tile_side, width - x);
+            gl.texSubImage2D(
+                gl.TEXTURE_2D,
+                0,
+                @intCast(x),
+                @intCast(y),
+                @intCast(tile_w),
+                @intCast(tile_h),
+                format,
+                gl.UNSIGNED_BYTE,
+                &clear_tile,
+            );
+        }
+    }
+
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
+    gl.bindTexture(gl.TEXTURE_2D, 0);
 }
