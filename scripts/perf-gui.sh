@@ -161,6 +161,11 @@ launch() {
     done
     assert_sink
     sink=$child
+    # Descriptors the child got beyond stdin, stdout and stderr: anything
+    # here leaked from Rex (or from whatever started Rex).
+    local extra
+    extra=$(find "/proc/$child/fd" -mindepth 1 -maxdepth 1 ! -name 0 ! -name 1 ! -name 2 -printf '%l ' 2>/dev/null || true)
+    say "sink_extra_fds=$(wc -w <<< "$extra")${extra:+ ($extra)}"
     win=$(timeout 10 xdotool search --sync --pid "$rex" | head -1) || die "rex $rex has no window"
     sleep 2 # startup settles: glyph warmup, first frames
 }
@@ -183,6 +188,14 @@ stop() {
     else
         kill "$rex"
         wait "$rex" 2>/dev/null || true
+        # Rex is gone, so its pty should hang up and the child exit by
+        # itself. A child that still holds the pty master never sees that.
+        local survived=yes
+        for i in $(seq 20); do # up to 2 s
+            kill -0 "$sink" 2>/dev/null || { survived=no; break; }
+            sleep 0.1
+        done
+        say "sink_survived_rex=$survived"
     fi
     kill "$sink" 2>/dev/null || true
     say "rex_exit=$status"
