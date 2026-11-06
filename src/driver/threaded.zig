@@ -35,6 +35,7 @@ const Pty = termio.pty.Posix;
 
 pub const InputQueue = @import("InputQueue.zig");
 pub const InputEvent = InputQueue.InputEvent;
+const OutboundQueue = @import("OutboundQueue.zig");
 
 const triple_buffer = @import("triple_buffer.zig");
 pub const TripleBuffer = triple_buffer.Buffer;
@@ -182,6 +183,15 @@ pub fn Driver(comptime option: Option) type {
             var sync_start: ?std.Io.Clock.Timestamp = null;
             var child_closed = false;
 
+            // Bytes for the pty that the kernel hasn't accepted yet. Owned by
+            // this thread; POLLOUT is watched only while it isn't empty.
+            var outbound: OutboundQueue = .init(OutboundQueue.default_limit);
+            defer {
+                const dropped = outbound.discard(self.allocator);
+                if (dropped > 0) log.warn("closing with {d} bytes never written to the pty", .{dropped});
+                outbound.deinit(self.allocator);
+            }
+
             while (!self.should_exit.load(.acquire)) {
                 var timeout_ms: c_int = -1;
 
@@ -199,6 +209,7 @@ pub fn Driver(comptime option: Option) type {
                     sync_start = null;
                 }
 
+                pollfds[0].events = if (outbound.isEmpty()) system.POLL.IN else system.POLL.IN | system.POLL.OUT;
                 pollfds[0].revents = 0;
                 pollfds[1].revents = 0;
 
@@ -214,7 +225,7 @@ pub fn Driver(comptime option: Option) type {
                 if (self.input_queue.hasPending() or (pollfds[1].revents & system.POLL.IN) != 0) {
                     self.input_queue.drainWakeup();
                     while (self.input_queue.pop()) |ev| {
-                        self.processInputEvent(&terminal, &reply_buffer, ev);
+                        self.processInputEvent(&terminal, &reply_buffer, &outbound, ev);
                         had_input = true;
                     }
                 }
@@ -246,7 +257,7 @@ pub fn Driver(comptime option: Option) type {
                         self.shared_events.set(EventSet.of(.had_data));
 
                         // Drain replies to PTY once per batch
-                        self.drainRepliesToPty(&terminal, &reply_buffer);
+                        self.drainRepliesToPty(&terminal, &reply_buffer, &outbound);
 
                         if (terminal.events.any()) {
                             self.accumulateEvents(&terminal);
@@ -254,6 +265,8 @@ pub fn Driver(comptime option: Option) type {
                     }
 
                     if (child_closed) {
+                        const dropped = outbound.discard(self.allocator);
+                        if (dropped > 0) log.warn("child exited with {d} bytes never written to the pty", .{dropped});
                         // Invalidate PTY fd so poll() ignores it, completely eliminating 100% CPU busy-spin
                         pollfds[0].fd = -1;
                         terminal.end();
@@ -262,6 +275,10 @@ pub fn Driver(comptime option: Option) type {
                         }
                     }
                 }
+
+                // Write what the kernel accepts now: input queued this round, or
+                // older bytes once POLLOUT says there's room again.
+                if (!child_closed) self.flushOutbound(&outbound);
 
                 self.updateSharedModes(&terminal);
 
@@ -299,54 +316,66 @@ pub fn Driver(comptime option: Option) type {
             }
         }
 
-        fn drainRepliesToPty(self: *Self, terminal: *TerminalType, buf: *[1024]u8) void {
+        fn drainRepliesToPty(self: *Self, terminal: *TerminalType, buf: *[1024]u8, out: *OutboundQueue) void {
             if (!terminal.hasReplies()) return;
             while (true) {
                 const n = terminal.drainReplies(buf);
                 if (n == 0) break;
-                _ = self.pty.writeAll(buf[0..n]) catch break;
+                self.queue(out, &.{buf[0..n]}) catch break;
             }
         }
 
-        fn processInputEvent(self: *Self, terminal: *TerminalType, reply_buf: *[1024]u8, ev: InputEvent) void {
+        /// Queues `parts` for the pty as one unit, all or nothing. A refusal
+        /// (queue full, out of memory) is logged here and returned, so the
+        /// caller can stop; nothing is ever written partially.
+        fn queue(self: *Self, out: *OutboundQueue, parts: []const []const u8) OutboundQueue.AppendError!void {
+            var total: usize = 0;
+            for (parts) |part| total += part.len;
+            out.append(self.allocator, parts) catch |err| {
+                log.err("dropping {d} bytes of pty input ({d} already pending): {}", .{ total, out.pending(), err });
+                return err;
+            };
+        }
+
+        /// Writes queued bytes until the kernel buffer is full. A child that
+        /// has exited (EIO) is reported by the read side, which discards the
+        /// queue; other errors are logged and the bytes stay queued.
+        fn flushOutbound(self: *Self, out: *OutboundQueue) void {
+            if (out.isEmpty()) return;
+            _ = out.flush(self.allocator, self.pty.master) catch |err| switch (err) {
+                error.InputOutput => {},
+                else => log.err("pty write failed: {}", .{err}),
+            };
+        }
+
+        fn processInputEvent(self: *Self, terminal: *TerminalType, reply_buf: *[1024]u8, out: *OutboundQueue, ev: InputEvent) void {
             switch (ev) {
-                .bytes => |b| {
-                    _ = self.pty.writeAll(b.data[0..b.len]) catch |err| {
-                        log.err("failed to write bytes to pty: {}", .{err});
-                    };
-                },
+                .bytes => |b| self.queue(out, &.{b.data[0..b.len]}) catch {},
                 .paste => |slice| {
                     defer self.allocator.free(slice);
+                    // The markers stay in one queued unit with the text, so they
+                    // can't be separated or interleaved with other input.
                     if (terminal.mode.bracketed_paste) {
-                        var iovecs = [_]posix.iovec_const{
-                            .{ .base = "\x1b[200~", .len = 6 },
-                            .{ .base = slice.ptr, .len = slice.len },
-                            .{ .base = "\x1b[201~", .len = 6 },
-                        };
-                        self.pty.writevAll(&iovecs) catch |err| {
-                            log.err("failed to write bracketed paste: {}", .{err});
-                        };
+                        self.queue(out, &.{ "\x1b[200~", slice, "\x1b[201~" }) catch {};
                     } else {
-                        _ = self.pty.writeAll(slice) catch |err| {
-                            log.err("failed to write paste: {}", .{err});
-                        };
+                        self.queue(out, &.{slice}) catch {};
                     }
                 },
                 .mouse_button => |mev| {
                     terminal.sendMouse(mev.col, mev.row, mev.button, mev.mods, mev.press);
-                    self.drainRepliesToPty(terminal, reply_buf);
+                    self.drainRepliesToPty(terminal, reply_buf, out);
                 },
                 .mouse_motion => |mev| {
                     const held_button: ?MouseButton = if (mev.button) |b| @enumFromInt(b) else null;
                     terminal.sendMouseMotion(mev.col, mev.row, held_button, mev.mods);
-                    self.drainRepliesToPty(terminal, reply_buf);
+                    self.drainRepliesToPty(terminal, reply_buf, out);
                 },
                 .mouse_scroll => |mev| {
                     if (terminal.mode.mouse_tracking.reportsWheel()) {
                         var i: u16 = 0;
                         while (i < mev.steps) : (i += 1) {
                             terminal.sendMouse(mev.col, mev.row, mev.button, 0, true);
-                            self.drainRepliesToPty(terminal, reply_buf);
+                            self.drainRepliesToPty(terminal, reply_buf, out);
                         }
                     } else if (terminal.active_buffer == .alternate) {
                         const seq = if (terminal.mode.cursor_keys)
@@ -355,7 +384,7 @@ pub fn Driver(comptime option: Option) type {
                             (if (mev.button == 64) "\x1b[A" else "\x1b[B");
                         var i: u16 = 0;
                         while (i < mev.steps) : (i += 1) {
-                            _ = self.pty.writeAll(seq) catch break;
+                            self.queue(out, &.{seq}) catch break;
                         }
                     } else {
                         if (mev.button == 64) {
@@ -394,9 +423,7 @@ pub fn Driver(comptime option: Option) type {
                 .focus => |focused| {
                     if (terminal.mode.focus_events) {
                         const seq = if (focused) "\x1b[I" else "\x1b[O";
-                        _ = self.pty.writeAll(seq) catch |err| {
-                            log.err("failed to write focus event: {}", .{err});
-                        };
+                        self.queue(out, &.{seq}) catch {};
                     }
                 },
                 .hard_reset => {
@@ -494,8 +521,10 @@ pub fn Driver(comptime option: Option) type {
         }
 
         /// Sends raw bytes to the driver worker thread with batched wakeups.
-        pub fn sendBytes(self: *Self, slice: []const u8) void {
-            _ = self.input_queue.pushBytes(slice);
+        /// All or nothing: fails with error.InputQueueFull, sending nothing,
+        /// when the worker is too far behind.
+        pub fn sendBytes(self: *Self, slice: []const u8) error{InputQueueFull}!void {
+            if (!self.input_queue.pushBytes(slice)) return error.InputQueueFull;
         }
 
         /// Pastes clipboard text via the input queue.
@@ -626,7 +655,7 @@ test "ThreadedDriver: async PTY input, frame update, and GUI reply" {
     try testing.expectEqual(@as(u21, 'y'), row0[2].codepoint);
 
     // GUI sends keystroke to PTY
-    driver.sendBytes("input_test");
+    try driver.sendBytes("input_test");
 
     var read_buf: [64]u8 = undefined;
     retries = 100;
@@ -775,4 +804,57 @@ test "ThreadedDriver: wakeup_fn callback and alternate screen alt_scroll" {
     try testing.expect(n_read > 0);
     const n_u: usize = @intCast(n_read);
     try testing.expectEqualStrings("\x1b[A", read_buf[0..n_u]);
+}
+
+test "ThreadedDriver: a 1 MiB paste reaches a child that echoes it back" {
+    // The deadlock case: the child echoes everything it reads, so its output
+    // fills up unless the worker keeps reading while it waits to write.
+    const testing = std.testing;
+    const gpa = testing.allocator;
+    const test_option: Option = .{ .max_rows = 24, .max_cols = 80, .max_scrollback = 100 };
+    const DriverType = Driver(test_option);
+
+    var sv: [2]posix.fd_t = undefined;
+    const rc = system.socketpair(posix.AF.UNIX, posix.SOCK.STREAM | posix.SOCK.NONBLOCK, 0, &sv);
+    try testing.expectEqual(@as(c_int, 0), rc);
+    defer _ = system.close(sv[1]);
+
+    const mock_pty: Pty = .{ .master = sv[0], .pid = -1, .stdout_read_fd = -1, .error_read_fd = -1 };
+    var driver = try DriverType.create(gpa, testing.io, mock_pty, Theme.graphite, 150);
+    defer driver.destroy();
+
+    // Printable lines, so the echoed bytes are ordinary terminal output.
+    const payload = try gpa.alloc(u8, 1024 * 1024);
+    defer gpa.free(payload);
+    for (payload, 0..) |*b, i| b.* = if (i % 80 == 79) '\n' else 'a' + @as(u8, @intCast(i % 26));
+
+    try driver.writePaste(payload);
+
+    var received: std.ArrayList(u8) = .empty;
+    defer received.deinit(gpa);
+    var echo: std.ArrayList(u8) = .empty;
+    defer echo.deinit(gpa);
+    var chunk: [4096]u8 = undefined;
+
+    var rounds: usize = 0;
+    while (received.items.len < payload.len) : (rounds += 1) {
+        if (rounds > 200_000) return error.TestPasteNotDelivered;
+        // A slow child: one chunk per round, echoed back.
+        const n = system.read(sv[1], &chunk, chunk.len);
+        if (posix.errno(n) == .SUCCESS and n > 0) {
+            const got = chunk[0..@intCast(n)];
+            try received.appendSlice(gpa, got);
+            try echo.appendSlice(gpa, got);
+        }
+        if (echo.items.len > 0) {
+            const w = system.write(sv[1], echo.items.ptr, echo.items.len);
+            if (posix.errno(w) == .SUCCESS) {
+                const written: usize = @intCast(w);
+                echo.replaceRangeAssumeCapacity(0, written, &.{});
+            }
+        }
+        _ = driver.pollAndDrain() catch {};
+        std.Thread.yield() catch {};
+    }
+    try testing.expectEqualSlices(u8, payload, received.items);
 }

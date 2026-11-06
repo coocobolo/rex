@@ -208,8 +208,14 @@ pub fn push(self: *InputQueue, event: InputEvent) bool {
 
 /// Pushes an arbitrary slice of bytes into the queue, splitting into chunks if needed.
 /// Uses batching with a single wakeup syscall at the end to minimize kernel transitions.
-/// Returns false if the queue ran out of capacity before pushing all bytes.
+/// All or nothing: returns false, pushing nothing, if the chunks don't all fit.
 pub fn pushBytes(self: *InputQueue, bytes: []const u8) bool {
+    // Only this (producer) thread advances head, and the consumer only frees
+    // slots, so room checked here can't shrink before the pushes below.
+    const chunks = std.math.divCeil(usize, bytes.len, max_bytes_payload) catch unreachable;
+    const used = self.head.load(.monotonic) -% self.tail.load(.acquire);
+    if (chunks > capacity - used) return false;
+
     var rest = bytes;
     var any_pushed = false;
     while (rest.len > 0) {
@@ -392,4 +398,24 @@ test "InputQueue: multi-threaded producer consumer stress test" {
     cons_thread.join();
 
     try testing.expectEqual(iterations, ctx.received);
+}
+
+test "InputQueue: pushBytes is all or nothing" {
+    const testing = std.testing;
+    var queue = try InputQueue.init();
+    defer queue.deinit();
+
+    // Leave room for exactly two chunks.
+    var i: usize = 0;
+    while (i < capacity - 2) : (i += 1) try testing.expect(queue.pushNoNotify(.{ .focus = true }));
+
+    var three_chunks: [2 * max_bytes_payload + 1]u8 = @splat('x');
+    try testing.expect(!queue.pushBytes(&three_chunks));
+    try testing.expect(queue.pushBytes(three_chunks[0 .. 2 * max_bytes_payload]));
+
+    var bytes_events: usize = 0;
+    while (queue.pop()) |ev| {
+        if (ev == .bytes) bytes_events += 1;
+    }
+    try testing.expectEqual(2, bytes_events); // only the push that fit
 }
