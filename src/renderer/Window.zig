@@ -24,10 +24,10 @@ else
 
 handle: *c.GLFWwindow,
 
-/// The OpenGL core version the renderer needs. The shaders are GLSL
-/// 330, but Atlas.invalidate calls glClearTexImage, which is core only
-/// from 4.4.
-pub const gl_version: struct { major: c_int, minor: c_int } = .{ .major = 4, .minor = 4 };
+/// The OpenGL core version the renderer needs: the shaders are GLSL 330
+/// and every GL call is core in 3.3. Keep it there so the renderer runs
+/// on macOS, whose core profile stops at 4.1.
+pub const gl_version: struct { major: c_int, minor: c_int } = .{ .major = 3, .minor = 3 };
 
 /// Asks GLFW for a core `gl_version` context in the next window.
 fn hintContext() void {
@@ -54,6 +54,8 @@ pub fn init(width: u16, height: u16, title: [:0]const u8) !Window {
         null,
         null,
     ) orelse {
+        // GLFW's error callback has already logged its reason.
+        log.err("cannot create a window with an OpenGL {d}.{d} core context", .{ gl_version.major, gl_version.minor });
         return error.WindowCreatedFailed;
     };
 
