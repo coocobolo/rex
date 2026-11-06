@@ -40,55 +40,68 @@ the benchmark binary. This run built it first with `zig build benchmark
 
 ## 2. Running application (native GL driver)
 
-Method: launch Rex, wait 2 s, measure while idle, then write 100 MiB test
-files to Rex's pty slave (`cat file > /dev/pts/N`). The bytes arrive exactly
-like program output, and `cat` finishes once Rex has consumed all but the
-kernel's pty buffer, so the time is end-to-end throughput (parse plus
-render). Data: `plain` is base64 text in 76-column lines; `escapes` is the
-`vt` bench corpora (recorded `htop`, `ls --color`, `man bash` and others),
-repeated to 100 MiB.
+Measured with `scripts/perf-gui.sh` at `cc4c6b2` (ReleaseSafe and
+ReleaseFast, 2026-11-06 22:08-22:13). Each Rex runs in a sandbox: its own
+temporary `HOME`, so **Rex uses its default config** and none of the user's
+files are read or written, and its shell is replaced by `cat > /dev/null`.
 
-| Metric | ReleaseFast | ReleaseSafe |
+- **Idle:** `pidstat` over 60 s, window open, nothing changing.
+- **Pastes:** 20 pastes of 1 MiB (`Ctrl+Shift+V`, clipboard set with
+  `xclip`); RSS before and after; paste write errors counted in Rex's log.
+- **Font changes:** 10 cycles of 5 steps up and 5 down (`Ctrl+=`, `Ctrl+-`),
+  100 changes in all; RSS before and after.
+- **Throughput:** a fresh instance; 100 MiB test files written to Rex's pty
+  slave (`cat file > /dev/pts/N`), so the bytes arrive exactly like program
+  output, and `cat` finishes once Rex has consumed all but the kernel's pty
+  buffer: end-to-end parse plus render. `plain` is base64 text in
+  76-column lines; `escapes` is the `vt` bench corpora (recorded `htop`,
+  `ls --color`, `man bash` and others) repeated to 100 MiB. 3 runs each.
+
+| Metric | ReleaseSafe | ReleaseFast |
 |---|---|---|
-| RSS at start | 103 MiB | 106 MiB |
-| Idle CPU (60 s average) | 0.05% | 0.05% |
-| Idle voluntary context switches | 11.2/s | 11.0/s |
-| Throughput, plain (3 runs) | 75.3-78.0 MiB/s | 73.2-75.1 MiB/s |
-| Throughput, escapes (3 runs) | 67.0-67.7 MiB/s | 64.8-65.9 MiB/s |
-| RSS after 600 MiB of output | 142 MiB | 126 MiB |
+| RSS at start | 168 MiB | 163 MiB |
+| Idle CPU (60 s average) | 0.07% | 0.05% |
+| Idle voluntary context switches | 10.9/s | 11.0/s |
+| 20 pastes of 1 MiB | **20 of 20 truncated** (`WouldBlock`); RSS +1.1 MiB | **20 of 20 truncated**; RSS +3.0 MiB |
+| 100 font changes | RSS +12.5 MiB (~128 KiB each) | RSS +13.4 MiB (~137 KiB each) |
+| Throughput, plain | 86.4-87.5 MiB/s | 82.2-85.6 MiB/s |
+| Throughput, escapes | 74.2-76.3 MiB/s | 73.2-75.5 MiB/s |
 
 Notes:
 
-- Idle CPU is low, but at about 11 wakeups per second Rex is not idle. That
-  is consistent with the blink timers (500 ms and 250 ms) and the
-  once-a-second title update found during code review.
-- ReleaseSafe costs only 2-3% throughput compared with ReleaseFast here.
-- RSS rises during heavy output and stays up (scrollback, grapheme tables,
-  and frees that never return memory, since the app allocates from the
-  process arena). It is flat across repeat runs with the same data.
-- GPU: whole-GPU utilisation was 33-35% during 30 s of idle. That includes
-  the desktop and other windows on a 165 Hz display, and there was no
-  control run without Rex, so the number **can't be attributed to Rex** and
-  isn't a baseline.
+- **Pastes larger than the pty buffer are cut off.** Every 1 MiB paste failed
+  with `failed to write paste: error.WouldBlock`: the pty master is
+  non-blocking, and the rest of the paste is dropped instead of queued.
+- **Font changes leave memory behind** (about 130 KiB each), consistent with
+  the app allocating from the process arena, whose `free` only reclaims the
+  most recent allocation.
+- **Idle is not idle:** about 11 wakeups per second, consistent with the
+  blink timers (500 ms and 250 ms) and the once-a-second title update found
+  in code review.
+- **Default vs personal config:** the same commit started at about 105 MiB
+  with the maintainer's personal config (an earlier, non-sandboxed run), 60
+  MiB less than with the default config. Not investigated.
+- **Variance between sessions:** throughput for the same commit measured
+  75-78 MiB/s (plain) in an earlier session and 86-87 MiB/s here. Compare
+  throughput only within one session.
+- GPU utilisation is not part of the baseline: the whole-GPU figure (33-35%
+  while idle) includes the desktop on a 165 Hz display and can't be
+  attributed to Rex.
 
 ## 3. Not measured yet
 
-- **Memory growth from pastes and font changes.** These need keyboard and
-  clipboard automation (`xdotool`, `xclip`); planned as a separate
-  harness.
-- **Input latency.** This needs per-stage timestamps in the code (an
-  optional build flag) for the internal breakdown, plus an end-to-end
+- **Input latency.** Needs per-stage timestamps in the code (an optional
+  build flag) for the internal breakdown, plus an end-to-end
   keystroke-to-pixel tool (e.g. Typometer) to compare with other terminals.
-- **Font-change time** (including the zero-tile atlas clear from the
-  OpenGL 3.3 change).
+- **Font-change time.**
 
 ## Reproducing
 
 ```sh
-git worktree add /tmp/rex-baseline cc4c6b2 && cd /tmp/rex-baseline
-zig build benchmark -Doptimize=ReleaseFast -Dcpu=native
-scripts/perf-bench.sh
-# GUI part: the measurement script used for section 2 is kept locally
-# (perf-results/runs/gui-cc4c6b2/measure.sh) and still has to be added to
-# scripts/ in a follow-up.
+git worktree add --detach /path/to/rex-baseline cc4c6b2 && cd /path/to/rex-baseline
+scripts/perf-bench.sh                 # section 1 (needs the perf-bench.sh fix, or
+                                      # `zig build benchmark -Doptimize=ReleaseFast -Dcpu=native` first)
+# section 2: copy scripts/perf-gui.sh from a newer checkout, then
+scripts/perf-gui.sh ReleaseSafe       # X11 only; takes the keyboard focus for ~3 minutes
+scripts/perf-gui.sh ReleaseFast
 ```
