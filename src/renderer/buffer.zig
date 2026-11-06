@@ -547,6 +547,16 @@ pub const CardBuffer = struct {
         gl.vertexAttribPointer(4, 2, gl.FLOAT, gl.FALSE, stride, cardOff("radius"));
         gl.vertexAttribDivisor(4, 1);
 
+        // loc 5: float a_progress
+        gl.enableVertexAttribArray(5);
+        gl.vertexAttribPointer(5, 1, gl.FLOAT, gl.FALSE, stride, cardOff("progress"));
+        gl.vertexAttribDivisor(5, 1);
+
+        // loc 6: uint a_kind
+        gl.enableVertexAttribArray(6);
+        gl.vertexAttribIPointer(6, 1, gl.UNSIGNED_INT, stride, cardOff("kind"));
+        gl.vertexAttribDivisor(6, 1);
+
         gl.bindVertexArray(0);
         gl.bindBuffer(gl.ARRAY_BUFFER, 0);
 

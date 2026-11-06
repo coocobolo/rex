@@ -9,11 +9,17 @@ const Allocator = std.mem.Allocator;
 const Tokens = @import("../color/Tokens.zig").Tokens;
 const Background = @import("../renderer/Background.zig");
 const Card = @import("../renderer/Card.zig");
+const Rect = @import("Rect.zig").Rect;
+const Padding = @import("Rect.zig").Padding;
+const Border = @import("Border.zig");
+const Box = @import("Box.zig");
+const Label = @import("Label.zig");
+const Kbd = @import("Kbd.zig");
+const Icon = @import("Icon.zig");
 const Text = @import("Text.zig");
 const Toast = @import("Toast.zig");
 const Button = @import("Button.zig");
-const HotspotTable = @import("hotspot.zig").HotspotTable;
-const UiAction = @import("hotspot.zig").UiAction;
+const Table = @import("hotspot.zig").Table;
 const FocusGroup = @import("focus.zig").FocusGroup;
 
 pub const Modal = @This();
@@ -32,12 +38,8 @@ pub const Option = struct {
     corner_radius: ?f32 = null,
     border_width: ?f32 = null,
     border_style: ?Card.BorderStyle = null,
+    icon_style: Icon.IconStyle = .auto,
     default_focus: DefaultFocus = .confirm,
-    title: []const u8 = "QUIT TERMINAL?",
-    line1: []const u8 = "Active terminal session is still running.",
-    line2: []const u8 = "Close this window and terminate the session?",
-    confirm_label: []const u8 = "Quit terminal",
-    cancel_label: []const u8 = "Cancel and stay",
 };
 
 pub const Action = struct {
@@ -54,6 +56,7 @@ pub const Request = struct {
     actions: []const Action = &.{},
     variant: Toast.Variant = .warning,
     border_style: Card.BorderStyle = .semantic,
+    icon_style: Icon.IconStyle = .auto,
     dim_alpha: u8 = 180,
     corner_radius: f32 = 8.0,
     border_width: f32 = 1.0,
@@ -95,25 +98,25 @@ pub fn computeLayout(req: Request, total_cols: u16, total_rows: u16) ?Layout {
 
     const modal_w: u16 = if (total_cols > 6) @min(total_cols - 4, req.width) else total_cols;
     const modal_h: u16 = if (total_rows > desired_h + 2) desired_h else @min(total_rows, desired_h);
-    const col: u16 = if (total_cols > modal_w) (total_cols - modal_w) / 2 else 0;
-    const row: u16 = if (total_rows > modal_h) (total_rows - modal_h) / 2 else 0;
+    const center_rect = Rect.center(total_cols, total_rows, modal_w, modal_h);
 
-    const content_col: u16 = if (modal_w > 34) col + 3 else col + 2;
-    const max_content_col: u16 = if (modal_w > 2) col + modal_w - 2 else col;
+    const content_col: u16 = if (modal_w > 34) center_rect.col + 3 else center_rect.col + 2;
+    const max_content_col: u16 = if (modal_w > 2) center_rect.col + modal_w - 2 else center_rect.col;
 
-    var cur_r: u16 = row + 2;
+    var cur_r: u16 = center_rect.row + 2;
     if (req.line1.len > 0 or req.line2.len > 0) {
         cur_r += 1;
         if (req.line1.len > 0) cur_r += 1;
         if (req.line2.len > 0) cur_r += 1;
     }
-    const actions_start_row: u16 = if (action_count > 0) cur_r + 1 else cur_r;
+
+    const actions_start_row = cur_r + (if (action_count > 0) @as(u16, 1) else 0);
 
     return .{
-        .col = col,
-        .row = row,
-        .width = modal_w,
-        .height = modal_h,
+        .col = center_rect.col,
+        .row = center_rect.row,
+        .width = center_rect.width,
+        .height = center_rect.height,
         .content_col = content_col,
         .max_content_col = max_content_col,
         .actions_start_row = actions_start_row,
@@ -121,83 +124,34 @@ pub fn computeLayout(req: Request, total_cols: u16, total_rows: u16) ?Layout {
     };
 }
 
-/// Tests a mouse cell coordinate against a precomputed modal layout.
-pub fn hitTestLayout(layout: Layout, mouse_col: u16, mouse_row: u16) HitResult {
-    if (mouse_col < layout.col or mouse_col >= layout.col + layout.width or
-        mouse_row < layout.row or mouse_row >= layout.row + layout.height)
+/// Hit-tests a mouse coordinate `(col, row)` against the computed modal layout.
+pub fn hitTestLayout(layout: Layout, col: u16, row: u16) HitResult {
+    if (col < layout.col or col >= layout.col + layout.width or
+        row < layout.row or row >= layout.row + layout.height)
     {
         return .outside;
     }
+
     if (layout.action_count > 0 and
-        mouse_row >= layout.actions_start_row and
-        mouse_row < layout.actions_start_row + @as(u16, layout.action_count))
+        row >= layout.actions_start_row and
+        row < layout.actions_start_row + layout.action_count and
+        col >= layout.content_col and col <= layout.max_content_col)
     {
-        return .{ .action = @intCast(mouse_row - layout.actions_start_row) };
+        const act_idx: u8 = @intCast(row - layout.actions_start_row);
+        return .{ .action = act_idx };
     }
+
     return .body;
 }
 
-/// Tests a mouse cell coordinate against the modal request geometry.
-pub fn hitTest(req: Request, total_cols: u16, total_rows: u16, mouse_col: u16, mouse_row: u16) ?HitResult {
+/// Hit-tests a mouse coordinate `(col, row)` against the modal request bounds and action rows.
+pub fn hitTest(req: Request, total_cols: u16, total_rows: u16, col: u16, row: u16) ?HitResult {
     const layout = computeLayout(req, total_cols, total_rows) orelse return null;
-    return hitTestLayout(layout, mouse_col, mouse_row);
+    return hitTestLayout(layout, col, row);
 }
 
-fn drawBox(
-    allocator: Allocator,
-    bg_buffer: *std.ArrayListUnmanaged(Background.Instance),
-    col: u16,
-    row: u16,
-    width: u16,
-    height: u16,
-    color: [4]u8,
-) void {
-    for (0..height) |i| {
-        bg_buffer.append(allocator, .{
-            .col = col,
-            .row = @intCast(row + i),
-            .span = width,
-            .r = color[0],
-            .g = color[1],
-            .b = color[2],
-            .a = color[3],
-        }) catch {};
-    }
-}
-
-/// Emits background dimming spans strictly outside the given panel bounds so the SDF card corners blend cleanly.
-pub fn drawDimmingBackdropOutside(
-    allocator: Allocator,
-    bg_buffer: *std.ArrayListUnmanaged(Background.Instance),
-    total_cols: u16,
-    total_rows: u16,
-    col: u16,
-    row: u16,
-    width: u16,
-    height: u16,
-    dim_color: [4]u8,
-) void {
-    const max_col = col + width;
-    const max_row = row + height;
-
-    if (row > 0) {
-        drawBox(allocator, bg_buffer, 0, 0, total_cols, row, dim_color);
-    }
-    const mid_start = row;
-    const mid_end = @min(total_rows, max_row);
-    if (mid_end > mid_start) {
-        const mid_h = mid_end - mid_start;
-        if (col > 0) {
-            drawBox(allocator, bg_buffer, 0, mid_start, col, mid_h, dim_color);
-        }
-        if (total_cols > max_col) {
-            drawBox(allocator, bg_buffer, max_col, mid_start, total_cols - max_col, mid_h, dim_color);
-        }
-    }
-    if (total_rows > max_row) {
-        drawBox(allocator, bg_buffer, 0, max_row, total_cols, total_rows - max_row, dim_color);
-    }
-}
+pub const drawBox = Box.fillCells;
+pub const drawDimmingBackdropOutside = Box.dimOutside;
 
 /// Renders a centered modal card and its backdrop dimming into the provided overlay buffers.
 pub fn render(
@@ -209,7 +163,7 @@ pub fn render(
     card_buffer: *std.ArrayListUnmanaged(Card.Instance),
     drawer: Text.Drawer,
     focus: ?*const FocusGroup,
-    hotspots: ?*HotspotTable,
+    hotspots: ?*Table,
 ) ?Layout {
     const layout = computeLayout(req, total_cols, total_rows) orelse return null;
 
@@ -221,57 +175,57 @@ pub fn render(
         .critical => tokens.critical,
     };
 
-    const border_color: [3]u8 = if (req.border_style == .semantic) accent else tokens.border;
-
-    if (req.dim_alpha > 0) {
-        drawDimmingBackdropOutside(
-            drawer.allocator,
-            bg_buffer,
-            total_cols,
-            total_rows,
-            layout.col,
-            layout.row,
-            layout.width,
-            layout.height,
-            .{ tokens.bg[0], tokens.bg[1], tokens.bg[2], req.dim_alpha },
-        );
-    }
-
-    card_buffer.append(drawer.allocator, .{
-        .col = layout.col,
-        .row = layout.row,
-        .width = layout.width,
-        .height = layout.height,
-        .bg_color = Tokens.toF32Rgba(tokens.card_opaque, 255),
-        .border_color = Tokens.toF32Rgba(border_color, 255),
-        .radius = req.corner_radius,
-        .border_width = req.border_width,
-    }) catch {};
+    _ = Box.render(
+        .{
+            .rect = .{ .col = layout.col, .row = layout.row, .width = layout.width, .height = layout.height },
+            .option = .{
+                .surface = .card,
+                .border = .{
+                    .shape = .rounded,
+                    .radius = req.corner_radius,
+                    .width = req.border_width,
+                    .style = if (req.border_style == .semantic) .semantic else .normal,
+                },
+                .backdrop_dim_alpha = req.dim_alpha,
+                .padding = Padding.all(0),
+            },
+            .semantic_accent = accent,
+            .viewport_cols = total_cols,
+            .viewport_rows = total_rows,
+        },
+        tokens,
+        bg_buffer,
+        card_buffer,
+        drawer.allocator,
+        drawer,
+        null,
+    );
 
     const max_r = layout.row + layout.height - 1;
     var cur_r = layout.row + 1;
 
     if (cur_r < max_r) {
-        _ = drawer.drawString(layout.content_col, cur_r, req.title, accent, 255, layout.max_content_col);
+        _ = Label.renderAt(layout.content_col, cur_r, layout.max_content_col, req.title, .{ .color = accent }, tokens, drawer);
     }
     cur_r += 1;
 
     if (req.line1.len > 0 or req.line2.len > 0) {
         cur_r += 1;
         if (req.line1.len > 0 and cur_r < max_r) {
-            _ = drawer.drawString(layout.content_col, cur_r, req.line1, tokens.primary, 255, layout.max_content_col);
+            _ = Label.renderAt(layout.content_col, cur_r, layout.max_content_col, req.line1, .{ .role = .primary }, tokens, drawer);
             cur_r += 1;
         }
         if (req.line2.len > 0 and cur_r < max_r) {
-            _ = drawer.drawString(layout.content_col, cur_r, req.line2, tokens.secondary, 255, layout.max_content_col);
+            _ = Label.renderAt(layout.content_col, cur_r, layout.max_content_col, req.line2, .{ .role = .secondary }, tokens, drawer);
             cur_r += 1;
         }
     }
 
     if (layout.action_count > 0) {
+        const kbd_opt: Kbd.Option = .{ .icon_style = req.icon_style };
         var max_shortcut_w: u16 = 0;
         for (req.actions[0..layout.action_count]) |act| {
-            const w = Text.measure(act.shortcut);
+            const w = Kbd.measureChord(act.shortcut, kbd_opt);
             if (w > max_shortcut_w) max_shortcut_w = w;
         }
 
@@ -282,22 +236,27 @@ pub fn render(
             const is_focused = if (focus) |f| f.isFocused(idx) else false;
 
             if (hotspots) |ht| {
-                const action_kind: UiAction = if (idx == 0) .confirm_quit else if (idx == 1) .cancel_modal else .{ .modal_action = idx };
-                ht.add(layout.content_col, act_r, layout.max_content_col - layout.content_col, 1, action_kind);
+                ht.add(layout.content_col, act_r, layout.max_content_col - layout.content_col, 1, .{ .modal_action = idx });
             }
 
             var col = layout.content_col;
             if (act.prompt.len > 0) {
-                const prompt_color = if (is_focused) tokens.accent else tokens.muted;
-                col += drawer.drawString(col, act_r, act.prompt, prompt_color, 255, layout.max_content_col) + 1;
+                const prompt_role: Label.Role = if (is_focused) .accent else .muted;
+                col += Label.renderAt(col, act_r, layout.max_content_col, act.prompt, .{ .role = prompt_role }, tokens, drawer);
+                col += 1;
             }
-            const shortcut_color = if (is_focused) tokens.accent else tokens.primary;
-            _ = drawer.drawString(col, act_r, act.shortcut, shortcut_color, 255, layout.max_content_col);
+            _ = Kbd.renderChord(.{
+                .col = col,
+                .row = act_r,
+                .max_col = layout.max_content_col,
+                .chord = act.shortcut,
+                .option = .{ .focused = is_focused, .icon_style = req.icon_style },
+            }, tokens, card_buffer, drawer, null);
 
-            const label_col = col + max_shortcut_w + 3;
+            const label_col = col + max_shortcut_w + 2;
             if (label_col <= layout.max_content_col) {
-                const label_color = if (is_focused) tokens.primary else tokens.muted;
-                _ = drawer.drawString(label_col, act_r, act.label, label_color, 255, layout.max_content_col);
+                const label_role: Label.Role = if (is_focused) .primary else .muted;
+                _ = Label.renderAt(label_col, act_r, layout.max_content_col, act.label, .{ .role = label_role }, tokens, drawer);
             }
             act_r += 1;
         }

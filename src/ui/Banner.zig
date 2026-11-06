@@ -1,20 +1,21 @@
-//! Persistent notification banner for actionable alerts and diagnostics.
+//! Persistent notification banner for actionable status messages and alerts.
 //!
-//! Provides a configurable status banner supporting both floating toast-style cards
+//! Provides a domain-agnostic status banner supporting both floating toast-style cards
 //! and edge-to-edge docked bars. Floating cards render elevated rounded surfaces with
-//! semantic colored borders, leading status icons, formatted diagnostic messages with
-//! source coordinates, and interactive dismiss buttons with hotspot hit-testing.
+//! semantic colored borders, leading status icons, optional title prefixes, and
+//! interactive dismiss buttons with hotspot hit-testing.
 
 const std = @import("std");
-const Allocator = std.mem.Allocator;
 const Tokens = @import("../color/Tokens.zig").Tokens;
 const Card = @import("../renderer/Card.zig");
-const Cell = @import("../renderer/Cell.zig");
+const Rect = @import("Rect.zig").Rect;
+const Border = @import("Border.zig");
+const Box = @import("Box.zig");
+const Label = @import("Label.zig");
 const Text = @import("Text.zig");
 const Drawer = Text.Drawer;
 const Toast = @import("Toast.zig");
-const HotspotTable = @import("hotspot.zig").HotspotTable;
-const UiAction = @import("hotspot.zig").UiAction;
+const Table = @import("hotspot.zig").Table;
 
 pub const Banner = @This();
 
@@ -63,45 +64,46 @@ pub const Layout = struct {
     max_msg_col: u16 = 0,
 };
 
+id: u64 = 0,
 level: Level = .err,
+title: [64]u8 = undefined,
+title_len: usize = 0,
 message: [256]u8 = undefined,
 message_len: usize = 0,
-line: ?usize = null,
-col: ?usize = null,
 
-/// Constructs a new persistent banner with a diagnostic message and optional source coordinates.
-pub fn init(level: Level, msg: []const u8, line: ?usize, col: ?usize) Banner {
+/// Constructs a new persistent banner with a severity level, optional title prefix, and message.
+pub fn init(level: Level, title: []const u8, msg: []const u8) Banner {
     var b = Banner{
         .level = level,
-        .line = line,
-        .col = col,
     };
+    const t_len = @min(title.len, b.title.len);
+    if (t_len > 0) @memcpy(b.title[0..t_len], title[0..t_len]);
+    b.title_len = t_len;
+
     const copy_len = @min(msg.len, b.message.len);
-    @memcpy(b.message[0..copy_len], msg[0..copy_len]);
+    if (copy_len > 0) @memcpy(b.message[0..copy_len], msg[0..copy_len]);
     b.message_len = copy_len;
     return b;
 }
 
-/// Returns the formatted message slice stored in the banner buffer.
+/// Returns the title prefix slice stored in the banner buffer.
+pub fn getTitle(self: *const Banner) []const u8 {
+    return self.title[0..self.title_len];
+}
+
+/// Returns the message slice stored in the banner buffer.
 pub fn getMessage(self: *const Banner) []const u8 {
     return self.message[0..self.message_len];
 }
 
-/// Formats the diagnostic message with optional severity prefix and source coordinates.
-pub fn formatDiagnostic(self: *const Banner, buf: []u8) []const u8 {
-    const prefix: []const u8 = switch (self.level) {
-        .err => "Config error",
-        .warn => "Config warning",
-        .info => "Config note",
-    };
-    if (self.line) |l| {
-        if (self.col) |c| {
-            return std.fmt.bufPrint(buf, "{s} (line {d}, col {d}): {s}", .{ prefix, l, c, self.getMessage() }) catch self.getMessage();
-        } else {
-            return std.fmt.bufPrint(buf, "{s} (line {d}): {s}", .{ prefix, l, self.getMessage() }) catch self.getMessage();
-        }
+/// Formats the banner text combining the optional title prefix and message.
+pub fn formatText(self: *const Banner, buf: []u8) []const u8 {
+    const title_str = self.getTitle();
+    const msg_str = self.getMessage();
+    if (title_str.len > 0) {
+        return std.fmt.bufPrint(buf, "{s}: {s}", .{ title_str, msg_str }) catch msg_str;
     }
-    return self.getMessage();
+    return msg_str;
 }
 
 /// Returns the leading icon string corresponding to the banner severity level.
@@ -141,7 +143,7 @@ pub fn computeLayout(self: *const Banner, total_cols: u16, total_rows: u16, opt:
         },
         .floating => {
             var msg_buf: [320]u8 = undefined;
-            const full_text = self.formatDiagnostic(&msg_buf);
+            const full_text = self.formatText(&msg_buf);
             const text_w = Text.measure(full_text);
 
             const content_req = icon_w + 1 + text_w + 2 + dismiss_w;
@@ -191,7 +193,7 @@ pub fn render(
     opt: Option,
     card_buffer: *std.ArrayListUnmanaged(Card.Instance),
     drawer: Drawer,
-    hotspots: ?*HotspotTable,
+    hotspots: ?*Table,
 ) Layout {
     const layout = self.computeLayout(total_cols, total_rows, opt);
 
@@ -201,21 +203,27 @@ pub fn render(
         .info => tokens.info,
     };
 
-    const border_color: [3]u8 = if (opt.border_style == .semantic) accent_color else tokens.border;
-    const bg_color = Tokens.toF32Rgba(tokens.card_opaque, 255);
-    const radius: f32 = opt.corner_radius;
-    const border_width: f32 = opt.border_width;
-
-    card_buffer.append(drawer.allocator, .{
-        .col = layout.col,
-        .row = layout.row,
-        .width = layout.width,
-        .height = layout.height,
-        .bg_color = bg_color,
-        .border_color = Tokens.toF32Rgba(border_color, 255),
-        .radius = radius,
-        .border_width = border_width,
-    }) catch {};
+    _ = Box.render(
+        .{
+            .rect = .{ .col = layout.col, .row = layout.row, .width = layout.width, .height = layout.height },
+            .option = .{
+                .surface = .card,
+                .border = .{
+                    .shape = .rounded,
+                    .radius = opt.corner_radius,
+                    .width = opt.border_width,
+                    .style = if (opt.border_style == .semantic) .semantic else .normal,
+                },
+            },
+            .semantic_accent = accent_color,
+        },
+        tokens,
+        null,
+        card_buffer,
+        drawer.allocator,
+        drawer,
+        null,
+    );
 
     const icon_str = self.iconString();
 
@@ -224,17 +232,17 @@ pub fn render(
     }
 
     var formatted_buf: [320]u8 = undefined;
-    const full_text = self.formatDiagnostic(&formatted_buf);
+    const full_text = self.formatText(&formatted_buf);
 
     if (layout.text_col <= layout.max_msg_col) {
-        _ = Text.drawEllipsis(drawer, layout.text_col, layout.text_row, full_text, tokens.primary, 255, layout.max_msg_col, "...");
+        _ = Label.renderAt(layout.text_col, layout.text_row, layout.max_msg_col, full_text, .{ .role = .primary, .ellipsis = "..." }, tokens, drawer);
     }
 
     if (layout.dismiss_w > 0 and layout.dismiss_col + layout.dismiss_w <= total_cols) {
-        _ = drawer.drawString(layout.dismiss_col, layout.text_row, opt.dismiss_str, tokens.muted, 255, total_cols);
+        _ = Label.renderAt(layout.dismiss_col, layout.text_row, total_cols, opt.dismiss_str, .{ .role = .muted }, tokens, drawer);
 
         if (hotspots) |hs| {
-            hs.add(layout.dismiss_col, layout.dismiss_row, layout.dismiss_w, 1, .dismiss_banner);
+            hs.add(layout.dismiss_col, layout.dismiss_row, layout.dismiss_w, 1, .{ .banner_dismiss = self.id });
         }
     }
 
@@ -244,11 +252,10 @@ pub fn render(
 test "Banner: init, layout computation, and message formatting" {
     const testing = std.testing;
 
-    const banner = Banner.init(.err, "unknown key 'foo'", 14, 5);
+    const banner = Banner.init(.err, "Syntax error (line 14, col 5)", "unknown key 'foo'");
     try testing.expectEqual(Level.err, banner.level);
+    try testing.expectEqualStrings("Syntax error (line 14, col 5)", banner.getTitle());
     try testing.expectEqualStrings("unknown key 'foo'", banner.getMessage());
-    try testing.expectEqual(@as(?usize, 14), banner.line);
-    try testing.expectEqual(@as(?usize, 5), banner.col);
 
     // Test docked style
     const docked_opt = Option{ .style = .docked, .dismiss_str = "Dismiss [×]" };
@@ -262,11 +269,11 @@ test "Banner: init, layout computation, and message formatting" {
     try testing.expect(docked_layout.dismiss_col > 60);
     try testing.expect(docked_layout.dismiss_w > 0);
 
-    var hs_docked = HotspotTable{};
-    hs_docked.add(docked_layout.dismiss_col, docked_layout.dismiss_row, docked_layout.dismiss_w, 1, .dismiss_banner);
+    var hs_docked = Table{};
+    hs_docked.add(docked_layout.dismiss_col, docked_layout.dismiss_row, docked_layout.dismiss_w, 1, .{ .banner_dismiss = 0 });
     const hit_docked = hs_docked.hitTest(docked_layout.dismiss_col + 1, docked_layout.dismiss_row);
     try testing.expect(hit_docked != null);
-    try testing.expectEqual(@import("hotspot.zig").UiActionTag.dismiss_banner, std.meta.activeTag(hit_docked.?));
+    try testing.expectEqual(@import("hotspot.zig").Tag.banner_dismiss, std.meta.activeTag(hit_docked.?));
 
     // Test floating toast style
     const float_opt = Option{ .style = .floating, .position = .top_center, .margin_rows = 1 };
@@ -280,9 +287,9 @@ test "Banner: init, layout computation, and message formatting" {
     try testing.expectEqual((80 - float_layout.width) / 2, float_layout.col);
     try testing.expect(float_layout.dismiss_col > float_layout.text_col);
 
-    var hs_float = HotspotTable{};
-    hs_float.add(float_layout.dismiss_col, float_layout.dismiss_row, float_layout.dismiss_w, 1, .dismiss_banner);
+    var hs_float = Table{};
+    hs_float.add(float_layout.dismiss_col, float_layout.dismiss_row, float_layout.dismiss_w, 1, .{ .banner_dismiss = 0 });
     const hit_float = hs_float.hitTest(float_layout.dismiss_col, float_layout.dismiss_row);
     try testing.expect(hit_float != null);
-    try testing.expectEqual(@import("hotspot.zig").UiActionTag.dismiss_banner, std.meta.activeTag(hit_float.?));
+    try testing.expectEqual(@import("hotspot.zig").Tag.banner_dismiss, std.meta.activeTag(hit_float.?));
 }

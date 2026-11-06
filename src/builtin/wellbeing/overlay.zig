@@ -9,6 +9,21 @@ const Toast = @import("../../ui/Toast.zig");
 const Icon = @import("../../ui/Icon.zig");
 const Modal = @import("../../ui/Modal.zig");
 const Text = @import("../../ui/Text.zig");
+const Button = @import("../../ui/Button.zig");
+const ProgressBar = @import("../../ui/ProgressBar.zig");
+const RingGauge = @import("../../ui/RingGauge.zig");
+const Rect = @import("../../ui/Rect.zig").Rect;
+const Padding = @import("../../ui/Rect.zig").Padding;
+const Border = @import("../../ui/Border.zig");
+const Box = @import("../../ui/Box.zig");
+const Label = @import("../../ui/Label.zig");
+const Divider = @import("../../ui/Divider.zig");
+const Badge = @import("../../ui/Badge.zig");
+const Kbd = @import("../../ui/Kbd.zig");
+const StepIndicator = @import("../../ui/StepIndicator.zig");
+const BarChart = @import("../../ui/BarChart.zig");
+const StatCard = @import("../../ui/StatCard.zig");
+const TabBar = @import("../../ui/TabBar.zig");
 const Rasterizer = @import("../../freetype/root.zig").Rasterizer;
 const wc = @import("../../unicode/wcwidth.zig");
 
@@ -17,16 +32,28 @@ const Wellbeing = root.Wellbeing;
 const storage = @import("storage.zig");
 const reminders = @import("reminders.zig");
 const focus = @import("focus.zig");
-const tokens = @import("tokens.zig");
-pub const Tokens = tokens.Tokens;
 const ColorTokens = @import("../../color/Tokens.zig").Tokens;
-const Theme = @import("../../color/Theme.zig");
 const icons = @import("icons.zig");
-const HotspotTable = @import("../../ui/hotspot.zig").HotspotTable;
+const Table = @import("../../ui/hotspot.zig").Table;
 pub const IconStyle = icons.IconStyle;
 pub const IconId = icons.IconId;
 
-pub const BorderShape = enum { rounded, sharp };
+pub const BorderShape = Border.Shape;
+
+pub const DashboardTab = enum(u8) {
+    overview = 0,
+    pomodoro = 1,
+    activity = 2,
+};
+
+pub const ButtonId = enum(u64) {
+    close = 1,
+    toggle_focus = 2,
+    skip_focus = 3,
+    reset_focus = 4,
+    purge_history = 5,
+    copy_card = 6,
+};
 
 pub const ToastVariant = enum {
     info,
@@ -41,36 +68,6 @@ pub const ToastStyle = struct {
     accent: [3]u8,
     title: []const u8,
 };
-
-pub fn variantStyle(variant: ToastVariant) ToastStyle {
-    return switch (variant) {
-        .info => .{
-            .icon_id = .info,
-            .accent = Tokens.info,
-            .title = "Information",
-        },
-        .success => .{
-            .icon_id = .success,
-            .accent = Tokens.healthy,
-            .title = "Success",
-        },
-        .warning => .{
-            .icon_id = .warning,
-            .accent = Tokens.warning,
-            .title = "Warning",
-        },
-        .critical => .{
-            .icon_id = .error_icon,
-            .accent = Tokens.critical,
-            .title = "Attention",
-        },
-        .healthy_break => .{
-            .icon_id = .coffee,
-            .accent = Tokens.healthy,
-            .title = "Time for a healthy break",
-        },
-    };
-}
 
 pub fn alertToToast(alert: reminders.Alert) struct { variant: ToastVariant, icon_id: IconId, title: []const u8 } {
     return switch (alert.kind) {
@@ -117,74 +114,10 @@ pub fn alertToToast(alert: reminders.Alert) struct { variant: ToastVariant, icon
     };
 }
 
-pub fn stringWidth(str: []const u8) u16 {
-    var iter = (std.unicode.Utf8View.init(str) catch return @intCast(str.len)).iterator();
-    var w: u16 = 0;
-    while (iter.nextCodepoint()) |cp| {
-        const cw = wc.wcwidth(cp, .narrow);
-        w += if (cw == .wide) 2 else if (cw == .zero) 0 else 1;
-    }
-    return w;
-}
-
-pub fn splitDescription(text: []const u8, max_w: u16) struct { line1: []const u8, line2: []const u8 } {
-    if (stringWidth(text) <= max_w) return .{ .line1 = text, .line2 = "" };
-
-    var last_space: ?usize = null;
-    var iter = (std.unicode.Utf8View.init(text) catch return .{ .line1 = text, .line2 = "" }).iterator();
-    var cur_w: u16 = 0;
-    var byte_idx: usize = 0;
-    while (iter.nextCodepoint()) |cp| {
-        const cw = wc.wcwidth(cp, .narrow);
-        const w: u16 = if (cw == .wide) 2 else if (cw == .zero) 0 else 1;
-        if (cur_w + w > max_w) break;
-        cur_w += w;
-        const cp_len = std.unicode.utf8CodepointSequenceLength(cp) catch 1;
-        if (cp == ' ') last_space = byte_idx;
-        byte_idx += cp_len;
-    }
-
-    if (last_space) |sp| {
-        const l1 = std.mem.trimEnd(u8, text[0..sp], " ");
-        const l2 = std.mem.trimStart(u8, text[sp..], " ");
-        return .{ .line1 = l1, .line2 = l2 };
-    }
-
-    return .{ .line1 = text[0..byte_idx], .line2 = text[byte_idx..] };
-}
-
-pub fn isEmojiOrTrailingSymbol(cp: u21) bool {
-    if (cp >= 0x1F300 and cp <= 0x1FAFF) return true;
-    if (cp >= 0x2600 and cp <= 0x27BF) return true;
-    if (cp >= 0xFE00 and cp <= 0xFE0F) return true;
-    return false;
-}
-
-pub fn cleanPromptText(text: []const u8) []const u8 {
-    var trimmed = std.mem.trimEnd(u8, text, " \t\r\n");
-    while (trimmed.len > 0) {
-        var iter = (std.unicode.Utf8View.init(trimmed) catch return trimmed).iterator();
-        var last_cp: u21 = 0;
-        var last_len: usize = 0;
-        var prev_cp: u21 = 0;
-        var prev_len: usize = 0;
-        while (iter.nextCodepoint()) |cp| {
-            prev_cp = last_cp;
-            prev_len = last_len;
-            last_cp = cp;
-            last_len = std.unicode.utf8CodepointSequenceLength(cp) catch 1;
-        }
-
-        if (isEmojiOrTrailingSymbol(last_cp)) {
-            trimmed = std.mem.trimEnd(u8, trimmed[0 .. trimmed.len - last_len], " \t\r\n.");
-        } else if ((last_cp == '.' or last_cp == '!') and isEmojiOrTrailingSymbol(prev_cp)) {
-            trimmed = std.mem.trimEnd(u8, trimmed[0 .. trimmed.len - last_len - prev_len], " \t\r\n.");
-        } else {
-            break;
-        }
-    }
-    return trimmed;
-}
+pub const stringWidth = Text.measure;
+pub const splitDescription = Label.splitDescription;
+pub const isEmojiOrTrailingSymbol = Label.isEmojiOrTrailingSymbol;
+pub const cleanPromptText = Label.cleanPromptText;
 
 pub const PanelRect = struct {
     col: u16,
@@ -227,6 +160,8 @@ pub const PanelRect = struct {
 
 pub const Overlay = struct {
     dashboard_open: bool = false,
+    active_tab: DashboardTab = .overview,
+    selected_day_idx: ?u16 = null,
     toast_active: bool = false,
     lock_screen_active: bool = false,
     was_active: bool = false,
@@ -257,6 +192,27 @@ pub const Overlay = struct {
 
     pub fn isActive(self: *const Overlay) bool {
         return self.dashboard_open or self.toast_active or self.lock_screen_active;
+    }
+
+    pub fn nextTab(self: *Overlay) void {
+        self.active_tab = switch (self.active_tab) {
+            .overview => .pomodoro,
+            .pomodoro => .activity,
+            .activity => .overview,
+        };
+    }
+
+    pub fn selectTab(self: *Overlay, idx: u8) void {
+        if (idx <= 2) {
+            self.active_tab = @enumFromInt(idx);
+        }
+    }
+
+    pub fn moveSelectedDay(self: *Overlay, delta: i16, history_count: u32) void {
+        const total_days: u16 = @intCast(@min(history_count, storage.max_history_days) + 1);
+        const cur: i32 = @intCast(self.selected_day_idx orelse (total_days - 1));
+        const next_idx = std.math.clamp(cur + delta, 0, @as(i32, total_days) - 1);
+        self.selected_day_idx = @intCast(next_idx);
     }
 
     pub fn toastRowOffset(self: *const Overlay) u16 {
@@ -310,7 +266,7 @@ pub const Overlay = struct {
         modal_opt: Modal.Option,
         total_cols: u16,
         total_rows: u16,
-        hotspots: ?*HotspotTable,
+        hotspots: ?*Table,
     ) void {
         self.tokens = color_tokens;
 
@@ -365,7 +321,7 @@ pub const Overlay = struct {
         wellbeing: *const Wellbeing,
         total_cols: u16,
         total_rows: u16,
-        hotspots: ?*HotspotTable,
+        hotspots: ?*Table,
     ) void {
         const alert = wellbeing.current_alert;
         const toast_info = alertToToast(alert);
@@ -406,16 +362,17 @@ pub const Overlay = struct {
             .max_width = self.toast_opt.max_width,
             .margin_cols = self.toast_opt.margin_cols,
             .margin_rows = self.toast_opt.margin_rows,
+            .icon_style = self.icon_opt.style,
         };
 
         self.last_toast_layout = Toast.renderAt(toast_req, self.tokens, total_cols, total_rows, 0, &self.card_buffer, drawer);
         if (hotspots) |ht| {
             if (self.last_toast_layout) |layout| {
                 if (layout.dismiss_w > 0) {
-                    ht.add(layout.dismiss_col, layout.dismiss_row, layout.dismiss_w, 1, .wellbeing_close);
+                    ht.add(layout.dismiss_col, layout.dismiss_row, layout.dismiss_w, 1, .{ .button = @intFromEnum(ButtonId.close) });
                 }
                 if (layout.action_w > 0) {
-                    ht.add(layout.action_col, layout.action_row, layout.action_w, 1, .wellbeing_close);
+                    ht.add(layout.action_col, layout.action_row, layout.action_w, 1, .{ .button = @intFromEnum(ButtonId.close) });
                 }
             }
         }
@@ -430,9 +387,6 @@ pub const Overlay = struct {
         total_cols: u16,
         total_rows: u16,
     ) void {
-        const icon_style = icons.resolveStyle(self.icon_opt.style);
-
-        // Determine state & semantic styling
         const is_paused = wellbeing.isFocusPausedByAlert() or
             wellbeing.focus_state.phase == .task or
             (wellbeing.focus_state.phase != .short_break and wellbeing.focus_state.phase != .long_break) or
@@ -448,8 +402,7 @@ pub const Overlay = struct {
             else => "Rest & Recharge",
         };
 
-        // Unified Panel Geometry calculation
-        const modal_w: u16 = if (total_cols > 6) @min(total_cols - 4, 46) else total_cols;
+        const modal_w: u16 = if (total_cols > 6) @min(total_cols - 4, 48) else total_cols;
         const inner_content_w: u16 = if (modal_w > 6) modal_w - 6 else modal_w;
 
         const raw_prompt = if (wellbeing.current_alert.remaining_s > 0)
@@ -462,41 +415,62 @@ pub const Overlay = struct {
 
         const desired_h: u16 = if (has_two_lines) 13 else 12;
         const modal_h: u16 = if (total_rows > desired_h + 2) desired_h else @min(total_rows, desired_h);
-        const col: u16 = if (total_cols > modal_w) (total_cols - modal_w) / 2 else 0;
-        const row: u16 = if (total_rows > modal_h) (total_rows - modal_h) / 2 else 0;
+        const center_rect = Rect.center(total_cols, total_rows, modal_w, modal_h);
+        const rect = PanelRect{ .col = center_rect.col, .row = center_rect.row, .width = center_rect.width, .height = center_rect.height };
 
-        const rect = PanelRect{ .col = col, .row = row, .width = modal_w, .height = modal_h };
-
-        // Step 1: Apply background dimming OUTSIDE the panel only
         const dim_byte = @as(u8, @intFromFloat(std.math.clamp(wellbeing.option.lock_screen.dim_strength, 0.0, 1.0) * 255.0));
-        if (dim_byte > 0) {
-            self.drawDimmingBackdropOutside(allocator, total_cols, total_rows, rect, .{ self.tokens.bg[0], self.tokens.bg[1], self.tokens.bg[2], dim_byte });
-        }
+        _ = Box.render(
+            .{
+                .rect = center_rect,
+                .option = .{
+                    .surface = .card,
+                    .border = .{
+                        .shape = if (self.card_opt.border_shape == .sharp) .sharp else .rounded,
+                        .radius = self.card_opt.effectiveRadius(),
+                        .width = self.card_opt.border_width,
+                        .style = if (self.card_opt.border_style == .semantic) .semantic else .normal,
+                    },
+                    .backdrop_dim_alpha = dim_byte,
+                },
+                .semantic_accent = accent_color,
+                .viewport_cols = total_cols,
+                .viewport_rows = total_rows,
+            },
+            self.tokens,
+            &self.bg_buffer,
+            &self.card_buffer,
+            allocator,
+            null,
+            null,
+        );
 
-        // Step 2: Emit shader-based rounded rectangle card with SDF anti-aliased border and transparent corners
-        const border_color: [3]u8 = if (self.card_opt.border_style == .semantic) accent_color else self.tokens.border;
-        self.card_buffer.append(allocator, .{
-            .col = rect.col,
-            .row = rect.row,
-            .width = rect.width,
-            .height = rect.height,
-            .bg_color = tokens.toF32Rgba(self.tokens.card_opaque, 255),
-            .border_color = tokens.toF32Rgba(border_color, 255),
-            .radius = self.card_opt.effectiveRadius(),
-            .border_width = self.card_opt.border_width,
-        }) catch {};
+        const drawer: Text.Drawer = .{
+            .allocator = allocator,
+            .atlas = atlas,
+            .rasterizer = rasterizer,
+            .gray_buffer = &self.gray_buffer,
+            .color_buffer = &self.color_buffer,
+        };
 
-        // Step 4: Draw content strictly inside panel
         const content_col = if (rect.width > 34) rect.col + 3 else rect.col + 2;
         const max_content_col = rect.innerMaxCol();
 
-        // Line 1: Header (inside box, clean unbroken top border, typography first)
         _ = self.drawString(allocator, atlas, rasterizer, content_col, rect.row + 1, header_text, accent_color, 255, max_content_col);
 
-        // Line 2: Subtitle
+        const total_steps = wellbeing.focus_state.option.tasks_before_long_break;
+        const pips_w = StepIndicator.measureWidth(total_steps, 2, 1);
+        if (max_content_col > content_col + pips_w + 18) {
+            _ = StepIndicator.render(.{
+                .col = max_content_col - pips_w,
+                .row = rect.row + 1,
+                .max_col = max_content_col,
+                .total_steps = total_steps,
+                .completed_steps = wellbeing.focus_state.tasks_in_cycle,
+            }, self.tokens, &self.card_buffer, allocator);
+        }
+
         _ = self.drawString(allocator, atlas, rasterizer, content_col, rect.row + 2, subtitle_text, self.tokens.secondary, 255, max_content_col);
 
-        // Line 4: Activity section or text
         var cur_r = rect.row + 4;
         if (is_paused) {
             _ = self.drawString(allocator, atlas, rasterizer, content_col, cur_r, "Activity", self.tokens.muted, 255, max_content_col);
@@ -510,7 +484,6 @@ pub const Overlay = struct {
             cur_r += 1;
         }
 
-        // Remaining timer & Progress bar
         const time_r = if (has_two_lines) rect.row + 8 else rect.row + 7;
 
         const rem_s = if (wellbeing.focus_state.phase == .short_break or wellbeing.focus_state.phase == .long_break)
@@ -537,27 +510,26 @@ pub const Overlay = struct {
 
         if (time_r < rect.maxRow() - 2) {
             _ = self.drawString(allocator, atlas, rasterizer, content_col, time_r, "Remaining", self.tokens.secondary, 255, max_content_col);
-            const time_w: u16 = 5; // "00:00"
+            const time_w: u16 = 5;
             const time_col = if (max_content_col >= time_w) max_content_col - time_w + 1 else content_col;
             _ = self.drawString(allocator, atlas, rasterizer, time_col, time_r, time_str, self.tokens.primary, 255, max_content_col);
 
-            // Responsive progress bar width (never exceed time_col or modal boundary)
-            const avail_bar_w = if (time_col > content_col + 2) time_col - content_col - 2 else 0;
-            const bar_w: u16 = @min(24, avail_bar_w);
-            if (bar_w >= 4) {
-                _ = self.drawProgressBar(allocator, atlas, rasterizer, content_col, time_r + 1, bar_w, frac, accent_color, self.tokens.border_subtle, 255, icon_style);
-                var pct_buf: [16]u8 = undefined;
-                const pct_str = std.fmt.bufPrint(&pct_buf, "{d:>3}%", .{@as(u32, @intFromFloat(std.math.clamp(frac, 0.0, 1.0) * 100.0))}) catch "";
-                _ = self.drawString(allocator, atlas, rasterizer, time_col + 1, time_r + 1, pct_str, self.tokens.secondary, 255, max_content_col);
+            const avail_bar_w = if (max_content_col > content_col) max_content_col - content_col + 1 else 0;
+            if (avail_bar_w >= 8) {
+                _ = ProgressBar.render(.{
+                    .col = content_col,
+                    .row = time_r + 1,
+                    .width = avail_bar_w,
+                    .progress = frac,
+                    .fill_color = accent_color,
+                    .show_percentage = true,
+                }, self.tokens, &self.card_buffer, allocator, drawer);
             }
         }
 
-        // Action Line: Terminal prompt cursor + highlighted shortcut key + muted label
         const action_r = time_r + 3;
         if (action_r < rect.maxRow() - 1) {
-            _ = self.drawString(allocator, atlas, rasterizer, content_col, action_r, ">", self.tokens.accent, 255, max_content_col);
-            const key_drawn = self.drawString(allocator, atlas, rasterizer, content_col + 2, action_r, "Ctrl+Shift+D", self.tokens.primary, 255, max_content_col);
-            _ = self.drawString(allocator, atlas, rasterizer, content_col + 2 + key_drawn + 2, action_r, "Unlock early", self.tokens.muted, 255, max_content_col);
+            _ = Kbd.renderHint(content_col, action_r, max_content_col, ">", "Ctrl+Shift+D", "Unlock early", .{ .style = .subtle, .icon_style = self.icon_opt.style }, self.tokens, &self.card_buffer, drawer, null, null);
         }
     }
 
@@ -569,41 +541,44 @@ pub const Overlay = struct {
         wellbeing: *const Wellbeing,
         total_cols: u16,
         total_rows: u16,
-        hotspots: ?*HotspotTable,
+        hotspots: ?*Table,
     ) void {
         const icon_style = icons.resolveStyle(self.icon_opt.style);
 
-        var active_apps: u16 = 0;
-        for (&wellbeing.data.today.top_apps) |*app| {
-            if (app.seconds > 0 and app.name[0] != 0) active_apps += 1;
-        }
-        const needed_h: u16 = if (active_apps > 3) 16 else 15;
-        const target_w: u16 = @max(self.modal_opt.width, 66);
+        const needed_h: u16 = 18;
+        const target_w: u16 = @max(self.modal_opt.width, 70);
         const modal_w: u16 = if (total_cols > 6) @min(total_cols - 2, target_w) else total_cols;
         const modal_h: u16 = if (total_rows > 4) @min(total_rows - 2, needed_h) else total_rows;
-        const col: u16 = if (total_cols > modal_w) (total_cols - modal_w) / 2 else 0;
-        const row: u16 = if (total_rows > modal_h) (total_rows - modal_h) / 2 else 0;
-
-        const rect = PanelRect{ .col = col, .row = row, .width = modal_w, .height = modal_h };
-
-        if (self.modal_opt.dim_alpha > 0) {
-            self.drawDimmingBackdropOutside(allocator, total_cols, total_rows, rect, .{ self.tokens.bg[0], self.tokens.bg[1], self.tokens.bg[2], self.modal_opt.dim_alpha });
-        }
+        const center_rect = Rect.center(total_cols, total_rows, modal_w, modal_h);
+        const rect = PanelRect{ .col = center_rect.col, .row = center_rect.row, .width = center_rect.width, .height = center_rect.height };
 
         const effective_radius = self.modal_opt.corner_radius orelse self.card_opt.effectiveRadius();
         const effective_border_w = self.modal_opt.border_width orelse self.card_opt.border_width;
 
-        const border_color: [3]u8 = if (self.card_opt.border_style == .semantic) self.tokens.accent else self.tokens.border;
-        self.card_buffer.append(allocator, .{
-            .col = rect.col,
-            .row = rect.row,
-            .width = rect.width,
-            .height = rect.height,
-            .bg_color = tokens.toF32Rgba(self.tokens.card_opaque, 255),
-            .border_color = tokens.toF32Rgba(border_color, 255),
-            .radius = effective_radius,
-            .border_width = effective_border_w,
-        }) catch {};
+        _ = Box.render(
+            .{
+                .rect = center_rect,
+                .option = .{
+                    .surface = .card,
+                    .border = .{
+                        .shape = if (self.card_opt.border_shape == .sharp) .sharp else .rounded,
+                        .radius = effective_radius,
+                        .width = effective_border_w,
+                        .style = if (self.card_opt.border_style == .semantic) .semantic else .normal,
+                    },
+                    .backdrop_dim_alpha = self.modal_opt.dim_alpha,
+                },
+                .semantic_accent = self.tokens.accent,
+                .viewport_cols = total_cols,
+                .viewport_rows = total_rows,
+            },
+            self.tokens,
+            &self.bg_buffer,
+            &self.card_buffer,
+            allocator,
+            null,
+            null,
+        );
 
         const content_col = rect.col + 3;
         const max_content_col = if (rect.width > 6) rect.col + rect.width - 4 else rect.col + rect.width - 1;
@@ -616,66 +591,166 @@ pub const Overlay = struct {
             .color_buffer = &self.color_buffer,
         };
 
-        // Header inside box (preserves unbroken top border)
         const header = "Digital Wellbeing";
-        _ = Text.draw(drawer, content_col, rect.row + 1, header, self.tokens.primary, 255, max_content_col);
+        const header_w = Text.draw(drawer, content_col, rect.row + 1, header, self.tokens.primary, 255, max_content_col);
 
-        var streak_buf: [32]u8 = undefined;
-        const streak_str = std.fmt.bufPrint(&streak_buf, "Streak: {d}d", .{wellbeing.data.current_streak}) catch "";
-        const streak_w: u16 = Text.measure(streak_str);
-        if (max_content_col > streak_w) {
-            _ = Text.draw(drawer, max_content_col - streak_w, rect.row + 1, streak_str, self.tokens.warning, 255, max_content_col);
+        const tabs = [_]TabBar.Tab{
+            .{ .label = "Overview", .shortcut = "1" },
+            .{ .label = "Pomodoro", .shortcut = "2" },
+            .{ .label = "Activity", .shortcut = "3" },
+        };
+        const tab_start = content_col + header_w + 2;
+        if (tab_start + 30 <= max_content_col) {
+            _ = TabBar.render(.{
+                .col = tab_start,
+                .row = rect.row + 1,
+                .max_col = max_content_col,
+                .tabs = &tabs,
+                .active_index = @intFromEnum(self.active_tab),
+                .icon_style = self.icon_opt.style,
+            }, self.tokens, &self.card_buffer, drawer, hotspots);
         }
 
-        var r = rect.row + 2;
-        var fmt_buf: [128]u8 = undefined;
+        if (rect.row + 2 < rect.maxRow() - 2) {
+            Divider.renderHorizontal(rect.col, rect.row + 2, rect.width, null, .{
+                .mode = .glyph,
+                .color = self.tokens.border,
+                .glyph_style = icon_style,
+            }, self.tokens, null, drawer);
+        }
 
-        // Section 1: Screen Time
-        if (r < rect.maxRow() - 2) {
+        const body_start_r = rect.row + 3;
+        const footer_r = rect.maxRow() - 2;
+        const body_max_r = if (footer_r > 2) footer_r - 2 else rect.maxRow();
+
+        switch (self.active_tab) {
+            .overview => self.renderOverviewTab(drawer, wellbeing, content_col, max_content_col, body_start_r, body_max_r),
+            .pomodoro => self.renderPomodoroTab(drawer, wellbeing, content_col, max_content_col, body_start_r, body_max_r, hotspots),
+            .activity => self.renderActivityTab(drawer, wellbeing, content_col, max_content_col, body_start_r, body_max_r, hotspots),
+        }
+
+        if (footer_r > rect.row + 2) {
+            Divider.renderHorizontal(rect.col, footer_r - 1, rect.width, null, .{
+                .mode = .glyph,
+                .color = self.tokens.border,
+                .glyph_style = icon_style,
+            }, self.tokens, null, drawer);
+
+            const FooterHint = struct { chord: []const u8, label: []const u8, button: ?ButtonId };
+            const footer_hints = [_]FooterHint{
+                .{ .chord = "Esc/q", .label = "Close", .button = .close },
+                .{ .chord = "Tab", .label = "View", .button = null },
+                .{ .chord = "p", .label = "Focus", .button = .toggle_focus },
+                .{ .chord = "s", .label = "Skip", .button = .skip_focus },
+                .{ .chord = "c", .label = "Copy", .button = .copy_card },
+            };
+            // Lowercase letters are kept because these bindings fire without Shift.
+            const footer_kbd: Kbd.Option = .{ .style = .keycap, .connector_pad = 0, .uppercase_letters = false, .icon_style = self.icon_opt.style };
+
+            var act_c = content_col;
+            for (footer_hints) |hint| {
+                if (act_c > max_content_col) break;
+                act_c += Kbd.renderHint(
+                    act_c,
+                    footer_r,
+                    max_content_col,
+                    null,
+                    hint.chord,
+                    hint.label,
+                    footer_kbd,
+                    self.tokens,
+                    &self.card_buffer,
+                    drawer,
+                    hotspots,
+                    if (hint.button) |b| .{ .button = @intFromEnum(b) } else null,
+                );
+                act_c += 2;
+            }
+        }
+    }
+
+    fn renderOverviewTab(
+        self: *Overlay,
+        drawer: Text.Drawer,
+        wellbeing: *const Wellbeing,
+        content_col: u16,
+        max_content_col: u16,
+        start_row: u16,
+        max_row: u16,
+    ) void {
+        const avail_w: u16 = if (max_content_col > content_col) max_content_col - content_col + 1 else return;
+        var r = start_row;
+
+        // Top KPI Row: 3 StatCards side-by-side
+        if (r + 3 <= max_row and avail_w >= 36) {
+            const gap: u16 = 2;
+            const card_w: u16 = (avail_w - gap * 2) / 3;
+
             const active_s = wellbeing.data.today.active_screen_s;
             const limit_m = wellbeing.option.screen_time.daily_limit_minutes orelse 480;
             const limit_s: u32 = @as(u32, limit_m) * 60;
-            const frac: f32 = if (limit_s > 0) @as(f32, @floatFromInt(active_s)) / @as(f32, @floatFromInt(limit_s)) else 0.0;
+            const screen_frac: f32 = if (limit_s > 0) @as(f32, @floatFromInt(active_s)) / @as(f32, @floatFromInt(limit_s)) else 0.0;
 
-            const st_str = std.fmt.bufPrint(
-                &fmt_buf,
-                "Today Active: {d}h {d:0>2}m / {d}h {d:0>2}m  ",
-                .{ active_s / 3600, (active_s % 3600) / 60, limit_m / 60, limit_m % 60 },
-            ) catch "";
-            const cur_c = content_col + self.drawString(allocator, atlas, rasterizer, content_col, r, st_str, self.tokens.primary, 255, max_content_col);
+            var screen_val_buf: [32]u8 = undefined;
+            const screen_val = std.fmt.bufPrint(&screen_val_buf, "{d}h {d:0>2}m / {d}h", .{ active_s / 3600, (active_s % 3600) / 60, limit_m / 60 }) catch "";
+            var screen_pct_buf: [16]u8 = undefined;
+            const screen_pct = std.fmt.bufPrint(&screen_pct_buf, "{d}%", .{@as(u32, @intFromFloat(@min(1.0, screen_frac) * 100.0))}) catch "";
 
-            const bar_w: u16 = if (max_content_col > cur_c + 8) @min(18, (max_content_col - cur_c - 8)) else 0;
-            if (bar_w >= 4) {
-                const fill_color: [3]u8 = if (frac >= 1.0) self.tokens.critical else self.tokens.healthy;
-                const bar_drawn = self.drawProgressBar(allocator, atlas, rasterizer, cur_c, r, bar_w, frac, fill_color, self.tokens.border_subtle, 255, icon_style);
-                var pct_buf: [16]u8 = undefined;
-                const pct_str = std.fmt.bufPrint(&pct_buf, " {d}%", .{@as(u32, @intFromFloat(@min(1.0, frac) * 100.0))}) catch "";
-                _ = self.drawString(allocator, atlas, rasterizer, cur_c + bar_drawn, r, pct_str, self.tokens.secondary, 255, max_content_col);
-            }
-            r += 1;
-        }
+            StatCard.render(.{
+                .col = content_col,
+                .row = r,
+                .width = card_w,
+                .height = 3,
+                .title = "Screen Quota",
+                .value = screen_val,
+                .badge = screen_pct,
+                .progress = screen_frac,
+                .progress_mode = .semantic_quota,
+            }, self.tokens, &self.card_buffer, drawer);
 
-        // Separator
-        if (r < rect.maxRow() - 2) {
-            self.drawSeparator(allocator, atlas, rasterizer, rect.col, r, rect.width, self.tokens.border, 255, icon_style);
-            r += 1;
-        }
-
-        // Section 2: Focus Session Metrics
-        if (r < rect.maxRow() - 2) {
             const foc_s = wellbeing.data.today.focus_s;
-            const brk_s = wellbeing.data.today.break_s;
-            const focus_line = std.fmt.bufPrint(
-                &fmt_buf,
-                "Focus: {d}h {d:0>2}m  |  Rest: {d}h {d:0>2}m  |  Done: {d}  |  Best: {d}d",
-                .{ foc_s / 3600, (foc_s % 3600) / 60, brk_s / 3600, (brk_s % 3600) / 60, wellbeing.data.today.tasks_completed, wellbeing.data.best_streak },
-            ) catch "";
-            _ = self.drawString(allocator, atlas, rasterizer, content_col, r, focus_line, self.tokens.secondary, 255, max_content_col);
-            r += 1;
+            var foc_val_buf: [32]u8 = undefined;
+            const foc_val = std.fmt.bufPrint(&foc_val_buf, "{d}h {d:0>2}m", .{ foc_s / 3600, (foc_s % 3600) / 60 }) catch "";
+            var tasks_buf: [24]u8 = undefined;
+            const tasks_badge = std.fmt.bufPrint(&tasks_buf, "{d} done", .{wellbeing.data.today.tasks_completed}) catch "";
+            const total_steps = @max(@as(u8, 1), wellbeing.focus_state.option.tasks_before_long_break);
+            const cycle_frac: f32 = @as(f32, @floatFromInt(wellbeing.focus_state.tasks_in_cycle)) / @as(f32, @floatFromInt(total_steps));
+
+            StatCard.render(.{
+                .col = content_col + card_w + gap,
+                .row = r,
+                .width = card_w,
+                .height = 3,
+                .title = "Focus Today",
+                .value = foc_val,
+                .badge = tasks_badge,
+                .progress = cycle_frac,
+                .progress_mode = .semantic_completion,
+            }, self.tokens, &self.card_buffer, drawer);
+
+            var streak_val_buf: [32]u8 = undefined;
+            const streak_val = std.fmt.bufPrint(&streak_val_buf, "{d} days", .{wellbeing.data.current_streak}) catch "";
+            var best_buf: [24]u8 = undefined;
+            const best_badge = std.fmt.bufPrint(&best_buf, "Best {d}d", .{wellbeing.data.best_streak}) catch "";
+
+            StatCard.render(.{
+                .col = content_col + (card_w + gap) * 2,
+                .row = r,
+                .width = avail_w - (card_w + gap) * 2,
+                .height = 3,
+                .title = "Focus Streak",
+                .value = streak_val,
+                .badge = best_badge,
+                .value_color = self.tokens.warning,
+            }, self.tokens, &self.card_buffer, drawer);
+
+            r += 4;
         }
 
-        // Focus Phase line
-        if (r < rect.maxRow() - 2) {
+        var fmt_buf: [128]u8 = undefined;
+
+        // Pomodoro Status & Cycle Pips
+        if (r <= max_row) {
             const rem_s = (wellbeing.focus_state.remaining_ms + 999) / 1000;
             const phase_name = switch (wellbeing.focus_state.phase) {
                 .task => "Task",
@@ -684,109 +759,356 @@ pub const Overlay = struct {
                 .idle => "Idle",
             };
             const phase_info = if (wellbeing.focus_state.phase != .idle)
-                std.fmt.bufPrint(&fmt_buf, "Phase: {s} [{d:0>2}:{d:0>2}] {s}", .{
+                std.fmt.bufPrint(&fmt_buf, "Pomodoro: {s} [{d:0>2}:{d:0>2}] {s}", .{
                     phase_name,
                     rem_s / 60,
                     rem_s % 60,
-                    if (wellbeing.isFocusPausedByAlert()) "[PAUSED]" else if (wellbeing.focus_state.paused) "[PAUSED]" else "[RUNNING]",
+                    if (wellbeing.isFocusPausedByAlert() or wellbeing.focus_state.paused) "[PAUSED]" else "[RUNNING]",
                 }) catch ""
             else
-                std.fmt.bufPrint(&fmt_buf, "Phase: {s} (Press 'p' to start)", .{phase_name}) catch "";
-            _ = self.drawString(allocator, atlas, rasterizer, content_col, r, phase_info, self.tokens.primary, 255, max_content_col);
+                std.fmt.bufPrint(&fmt_buf, "Pomodoro: {s} (Press 'p' or switch to Tab 2)", .{phase_name}) catch "";
+            const text_w = Text.draw(drawer, content_col, r, phase_info, self.tokens.primary, 255, max_content_col);
+
+            const total_steps = wellbeing.focus_state.option.tasks_before_long_break;
+            const pips_w = StepIndicator.measureWidth(total_steps, 2, 1);
+            if (max_content_col > content_col + text_w + pips_w + 2) {
+                _ = StepIndicator.render(.{
+                    .col = max_content_col - pips_w,
+                    .row = r,
+                    .max_col = max_content_col,
+                    .total_steps = total_steps,
+                    .completed_steps = wellbeing.focus_state.tasks_in_cycle,
+                    .active_step = if (wellbeing.focus_state.phase == .task) wellbeing.focus_state.tasks_in_cycle else null,
+                }, self.tokens, &self.card_buffer, drawer.allocator);
+            }
             r += 1;
         }
 
-        // Separator
-        if (r < rect.maxRow() - 2) {
-            self.drawSeparator(allocator, atlas, rasterizer, rect.col, r, rect.width, self.tokens.border, 255, icon_style);
-            r += 1;
-        }
-
-        // Section 3: Health Tallies
-        if (r < rect.maxRow() - 2) {
+        // Health Tallies
+        if (r <= max_row) {
             const health_line = std.fmt.bufPrint(
                 &fmt_buf,
                 "Eye Pauses: {d}  |  Posture Checks: {d}  |  Hydration: {d}",
                 .{ wellbeing.data.today.eyesight_breaks, wellbeing.data.today.movement_breaks, wellbeing.data.today.hydration_count },
             ) catch "";
             _ = Text.drawEllipsis(drawer, content_col, r, health_line, self.tokens.secondary, 255, max_content_col, "…");
-            r += 1;
+            r += 2;
         }
 
-        // Separator
-        if (r < rect.maxRow() - 2) {
-            self.drawSeparator(allocator, atlas, rasterizer, rect.col, r, rect.width, self.tokens.border, 255, icon_style);
-            r += 1;
-        }
-
-        // Section 4: Top Foreground Tools
-        if (r < rect.maxRow() - 3) {
+        // Top Foreground Tools Horizontal Bar Chart
+        if (r <= max_row) {
             _ = Text.draw(drawer, content_col, r, "Top Foreground Tools:", self.tokens.muted, 255, max_content_col);
             r += 1;
 
-            const max_tools_row = @min(r + 1, rect.maxRow() - 3);
-            var flow = Text.Flow.init(content_col + 2, r, max_content_col, max_tools_row);
+            var bars: [4]BarChart.HorizontalBar = undefined;
+            var val_bufs: [4][24]u8 = undefined;
+            var bar_count: usize = 0;
+
             for (&wellbeing.data.today.top_apps) |*app| {
                 if (app.seconds == 0 or app.name[0] == 0) continue;
-                const app_name = app.getName();
-                var val_buf: [16]u8 = undefined;
-                const val_str = std.fmt.bufPrint(&val_buf, "({d}m)", .{app.seconds / 60}) catch "";
-                _ = flow.addBullet(
-                    drawer,
-                    "•",
-                    app_name,
-                    val_str,
-                    self.tokens.muted,
-                    self.tokens.primary,
-                    self.tokens.secondary,
-                    255,
-                    2,
-                );
+                if (bar_count >= 4) break;
+                const val_str = std.fmt.bufPrint(&val_bufs[bar_count], "{d}m {d:0>2}s", .{ app.seconds / 60, app.seconds % 60 }) catch "";
+                bars[bar_count] = .{
+                    .label = app.getName(),
+                    .value = @floatFromInt(app.seconds),
+                    .value_text = val_str,
+                };
+                bar_count += 1;
             }
-            if (flow.overflow_count > 0 and flow.cur_row < rect.maxRow() - 3) {
-                var more_buf: [16]u8 = undefined;
-                const more_str = std.fmt.bufPrint(&more_buf, "+{d} more", .{flow.overflow_count}) catch "";
-                _ = flow.add(drawer, more_str, self.tokens.muted, 255, 1);
-            } else if (flow.items_drawn == 0) {
-                _ = Text.draw(drawer, content_col + 2, r, "(No process samples yet)", self.tokens.muted, 255, max_content_col);
+
+            if (bar_count > 0 and r <= max_row) {
+                const max_bar_rows = max_row - r + 1;
+                _ = BarChart.renderHorizontal(.{
+                    .col = content_col,
+                    .row = r,
+                    .width = avail_w,
+                    .max_rows = max_bar_rows,
+                    .bars = bars[0..bar_count],
+                }, self.tokens, &self.card_buffer, drawer);
+            } else if (r <= max_row) {
+                _ = Text.draw(drawer, content_col, r, "(No foreground process samples yet)", self.tokens.muted, 255, max_content_col);
             }
-            r = flow.cur_row + 1;
+        }
+    }
+
+    fn renderPomodoroTab(
+        self: *Overlay,
+        drawer: Text.Drawer,
+        wellbeing: *const Wellbeing,
+        content_col: u16,
+        max_content_col: u16,
+        start_row: u16,
+        max_row: u16,
+        hotspots: ?*Table,
+    ) void {
+        const avail_w: u16 = if (max_content_col > content_col) max_content_col - content_col + 1 else return;
+        const avail_h: u16 = if (max_row >= start_row) max_row - start_row + 1 else return;
+
+        const ring_w: u16 = @min(22, avail_w / 2);
+        const ring_h: u16 = @min(9, avail_h);
+
+        const phase = wellbeing.focus_state.phase;
+        const is_paused = wellbeing.isFocusPausedByAlert() or wellbeing.focus_state.paused;
+        const total_ms: u64 = switch (phase) {
+            .task => wellbeing.focus_state.option.task_ms,
+            .short_break => wellbeing.focus_state.option.short_break_ms,
+            .long_break => wellbeing.focus_state.option.long_break_ms,
+            .idle => wellbeing.focus_state.option.task_ms,
+        };
+        const rem_ms: u64 = if (phase == .idle) total_ms else wellbeing.focus_state.remaining_ms;
+        const rem_s: u64 = (rem_ms + 999) / 1000;
+
+        const progress: f32 = if (phase == .idle)
+            0.0
+        else if (total_ms > 0)
+            1.0 - (@as(f32, @floatFromInt(rem_ms)) / @as(f32, @floatFromInt(total_ms)))
+        else
+            0.0;
+
+        const ring_color: [3]u8 = if (phase == .idle)
+            self.tokens.border
+        else if (is_paused)
+            self.tokens.warning
+        else switch (phase) {
+            .task => self.tokens.accent,
+            .short_break, .long_break => self.tokens.healthy,
+            .idle => self.tokens.border,
+        };
+
+        var time_buf: [16]u8 = undefined;
+        const time_str = std.fmt.bufPrint(&time_buf, "{d:0>2}:{d:0>2}", .{ rem_s / 60, rem_s % 60 }) catch "00:00";
+
+        const badge_str: []const u8 = if (phase == .idle)
+            "IDLE"
+        else if (is_paused)
+            "PAUSED"
+        else switch (phase) {
+            .task => "FOCUS",
+            .short_break => "SHORT BREAK",
+            .long_break => "LONG BREAK",
+            .idle => "IDLE",
+        };
+
+        const total_steps = wellbeing.focus_state.option.tasks_before_long_break;
+        var cycle_buf: [24]u8 = undefined;
+        const cycle_str = std.fmt.bufPrint(&cycle_buf, "Task {d}/{d}", .{
+            @min(wellbeing.focus_state.tasks_in_cycle + 1, total_steps),
+            total_steps,
+        }) catch "";
+
+        RingGauge.render(.{
+            .col = content_col,
+            .row = start_row,
+            .width = ring_w,
+            .height = ring_h,
+            .progress = progress,
+            .stroke_width_px = 6.5,
+            .fill_color = ring_color,
+            .headline = time_str,
+            .badge = badge_str,
+            .badge_color = ring_color,
+            .caption = cycle_str,
+        }, self.tokens, &self.card_buffer, drawer.allocator, drawer);
+
+        // StepIndicator pips centered below RingGauge
+        const pips_row = start_row + ring_h;
+        if (pips_row <= max_row) {
+            const pips_w = StepIndicator.measureWidth(total_steps, 2, 1);
+            const pips_col = if (ring_w > pips_w) content_col + (ring_w - pips_w) / 2 else content_col;
+            _ = StepIndicator.render(.{
+                .col = pips_col,
+                .row = pips_row,
+                .max_col = content_col + ring_w,
+                .total_steps = total_steps,
+                .completed_steps = wellbeing.focus_state.tasks_in_cycle,
+                .active_step = if (phase == .task) wellbeing.focus_state.tasks_in_cycle else null,
+            }, self.tokens, &self.card_buffer, drawer.allocator);
         }
 
-        // Section 5: All-Time Lifetime Summary
-        if (r < rect.maxRow() - 2) {
-            const total_foc = wellbeing.data.total_focus_s + wellbeing.data.today.focus_s;
-            const total_screen = wellbeing.data.total_active_screen_s + wellbeing.data.today.active_screen_s;
-            const life_line = std.fmt.bufPrint(
-                &fmt_buf,
-                "All-Time Focus: {d}h {d:0>2}m  |  Total Screen: {d}h {d:0>2}m",
-                .{ total_foc / 3600, (total_foc % 3600) / 60, total_screen / 3600, (total_screen % 3600) / 60 },
+        // Right Column: Pomodoro Stats + Interactive Control Buttons
+        const right_col = content_col + ring_w + 3;
+        if (right_col + 16 > max_content_col) return;
+        const right_w = max_content_col - right_col + 1;
+
+        var r = start_row;
+        const half_w = (right_w - 2) / 2;
+        if (r + 3 <= max_row and half_w >= 10) {
+            const foc_s = wellbeing.data.today.focus_s;
+            var foc_buf: [24]u8 = undefined;
+            const foc_str = std.fmt.bufPrint(&foc_buf, "{d}h {d:0>2}m", .{ foc_s / 3600, (foc_s % 3600) / 60 }) catch "";
+
+            StatCard.render(.{
+                .col = right_col,
+                .row = r,
+                .width = half_w,
+                .height = 3,
+                .title = "Focus Time",
+                .value = foc_str,
+            }, self.tokens, &self.card_buffer, drawer);
+
+            const brk_s = wellbeing.data.today.break_s;
+            var brk_buf: [24]u8 = undefined;
+            const brk_str = std.fmt.bufPrint(&brk_buf, "{d}h {d:0>2}m", .{ brk_s / 3600, (brk_s % 3600) / 60 }) catch "";
+
+            StatCard.render(.{
+                .col = right_col + half_w + 2,
+                .row = r,
+                .width = right_w - half_w - 2,
+                .height = 3,
+                .title = "Rest Time",
+                .value = brk_str,
+            }, self.tokens, &self.card_buffer, drawer);
+
+            r += 4;
+        }
+
+        var info_buf: [64]u8 = undefined;
+        if (r <= max_row) {
+            const summary = std.fmt.bufPrint(
+                &info_buf,
+                "Completed: {d} tasks  |  Sessions: {d}",
+                .{ wellbeing.data.today.tasks_completed, wellbeing.data.sessions },
             ) catch "";
-            _ = Text.drawEllipsis(drawer, content_col, r, life_line, self.tokens.muted, 255, max_content_col, "…");
+            _ = Text.draw(drawer, right_col, r, summary, self.tokens.secondary, 255, max_content_col);
+            r += 2;
+        }
+
+        if (hotspots) |ht| {
+            const btn_w: u16 = @min(16, (right_w - 2) / 2);
+            if (r <= max_row and btn_w >= 10) {
+                const start_label = if (phase == .idle) "Start Focus" else if (is_paused) "Resume" else "Pause";
+                Button.render(.{
+                    .col = right_col,
+                    .row = r,
+                    .width = btn_w,
+                    .label = start_label,
+                    .shortcut = "p",
+                    .style = .primary,
+                    .focused = true,
+                    .action = .{ .button = @intFromEnum(ButtonId.toggle_focus) },
+                }, self.tokens, &self.card_buffer, ht, drawer);
+
+                Button.render(.{
+                    .col = right_col + btn_w + 2,
+                    .row = r,
+                    .width = right_w - btn_w - 2,
+                    .label = "Skip Phase",
+                    .shortcut = "s",
+                    .style = .default,
+                    .action = .{ .button = @intFromEnum(ButtonId.skip_focus) },
+                }, self.tokens, &self.card_buffer, ht, drawer);
+                r += 2;
+            }
+
+            if (r <= max_row and btn_w >= 10) {
+                Button.render(.{
+                    .col = right_col,
+                    .row = r,
+                    .width = btn_w,
+                    .label = "Reset Cycle",
+                    .shortcut = "r",
+                    .style = .danger,
+                    .action = .{ .button = @intFromEnum(ButtonId.reset_focus) },
+                }, self.tokens, &self.card_buffer, ht, drawer);
+            }
+        }
+    }
+
+    fn renderActivityTab(
+        self: *Overlay,
+        drawer: Text.Drawer,
+        wellbeing: *const Wellbeing,
+        content_col: u16,
+        max_content_col: u16,
+        start_row: u16,
+        max_row: u16,
+        hotspots: ?*Table,
+    ) void {
+        const avail_w: u16 = if (max_content_col > content_col) max_content_col - content_col + 1 else return;
+        var r = start_row;
+
+        const hist_count: usize = @min(wellbeing.data.history_count, storage.max_history_days);
+        const total_days: usize = hist_count + 1;
+        const selected_idx: u16 = @intCast(@min(self.selected_day_idx orelse @as(u16, @intCast(total_days - 1)), total_days - 1));
+
+        const inspected_record: storage.DayRecord = if (selected_idx < hist_count)
+            wellbeing.data.history[selected_idx]
+        else
+            wellbeing.data.today;
+
+        var hdr_buf: [96]u8 = undefined;
+        const day_tag = if (selected_idx == total_days - 1) "Today" else "Selected";
+        const hdr_str = std.fmt.bufPrint(
+            &hdr_buf,
+            "History ({s}: {d}m focus / {d}m active, {d} tasks)",
+            .{ day_tag, inspected_record.focus_s / 60, inspected_record.active_screen_s / 60, inspected_record.tasks_completed },
+        ) catch "Activity History";
+
+        if (r <= max_row) {
+            _ = Text.drawEllipsis(drawer, content_col, r, hdr_str, self.tokens.secondary, 255, max_content_col, "…");
             r += 1;
         }
 
-        // Footer Separator
-        const footer_r = rect.maxRow() - 2;
-        if (footer_r > rect.row + 2) {
-            self.drawSeparator(allocator, atlas, rasterizer, rect.col, footer_r - 1, rect.width, self.tokens.border, 255, icon_style);
+        // Build vertical bar chart columns from history + today
+        var cols: [storage.max_history_days + 1]BarChart.Column = undefined;
+        var lbl_bufs: [storage.max_history_days + 1][8]u8 = undefined;
+        for (0..total_days) |i| {
+            const rec = if (i < hist_count) wellbeing.data.history[i] else wellbeing.data.today;
+            const lbl = if (i == total_days - 1)
+                "Now"
+            else
+                std.fmt.bufPrint(&lbl_bufs[i], "-{d}d", .{total_days - 1 - i}) catch "";
+            cols[i] = .{
+                .value = @floatFromInt(rec.focus_s),
+                .secondary_value = @floatFromInt(rec.active_screen_s),
+                .label = lbl,
+            };
+        }
 
-            // Action Bar
-            var act_c = content_col;
-            const w_close = self.drawShortcut(allocator, atlas, rasterizer, act_c, footer_r, "[Esc/q]", " Close   ");
-            if (hotspots) |ht| ht.add(act_c, footer_r, w_close, 1, .wellbeing_close);
-            act_c += w_close;
+        const chart_h: u16 = @min(5, if (max_row > r) max_row - r else 2);
+        if (chart_h >= 2 and r + chart_h <= max_row) {
+            _ = BarChart.renderVertical(.{
+                .col = content_col,
+                .row = r,
+                .width = avail_w,
+                .height = chart_h,
+                .columns = cols[0..total_days],
+                .selected_index = selected_idx,
+            }, self.tokens, &self.card_buffer, drawer, hotspots);
+            r += chart_h + 1;
+        }
 
-            const w_focus = self.drawShortcut(allocator, atlas, rasterizer, act_c, footer_r, "[p]", " Focus   ");
-            if (hotspots) |ht| ht.add(act_c, footer_r, w_focus, 1, .wellbeing_toggle_focus);
-            act_c += w_focus;
+        // Lower section: Inspected Day's Top Foreground Tools Horizontal Bar Chart
+        if (r <= max_row) {
+            _ = Text.draw(drawer, content_col, r, "Foreground Tool Breakdown:", self.tokens.muted, 255, max_content_col);
+            r += 1;
 
-            const w_reset = self.drawShortcut(allocator, atlas, rasterizer, act_c, footer_r, "[r]", " Reset   ");
-            if (hotspots) |ht| ht.add(act_c, footer_r, w_reset, 1, .wellbeing_reset);
-            act_c += w_reset;
+            var bars: [storage.max_top_apps]BarChart.HorizontalBar = undefined;
+            var val_bufs: [storage.max_top_apps][24]u8 = undefined;
+            var bar_count: usize = 0;
 
-            const w_copy = self.drawShortcut(allocator, atlas, rasterizer, act_c, footer_r, "[c]", " Copy Card");
-            if (hotspots) |ht| ht.add(act_c, footer_r, w_copy, 1, .wellbeing_copy_card);
+            for (&inspected_record.top_apps) |*app| {
+                if (app.seconds == 0 or app.name[0] == 0) continue;
+                const val_str = std.fmt.bufPrint(&val_bufs[bar_count], "{d}m {d:0>2}s", .{ app.seconds / 60, app.seconds % 60 }) catch "";
+                bars[bar_count] = .{
+                    .label = app.getName(),
+                    .value = @floatFromInt(app.seconds),
+                    .value_text = val_str,
+                };
+                bar_count += 1;
+            }
+
+            if (bar_count > 0 and r <= max_row) {
+                _ = BarChart.renderHorizontal(.{
+                    .col = content_col,
+                    .row = r,
+                    .width = avail_w,
+                    .max_rows = max_row - r + 1,
+                    .bars = bars[0..bar_count],
+                }, self.tokens, &self.card_buffer, drawer);
+            } else if (r <= max_row) {
+                _ = Text.draw(drawer, content_col, r, "(No process usage recorded for this day)", self.tokens.muted, 255, max_content_col);
+            }
         }
     }
 
@@ -814,17 +1136,7 @@ pub const Overlay = struct {
         height: u16,
         color: [4]u8,
     ) void {
-        for (0..height) |i| {
-            self.bg_buffer.append(allocator, .{
-                .col = col,
-                .row = @intCast(row + i),
-                .span = width,
-                .r = color[0],
-                .g = color[1],
-                .b = color[2],
-                .a = color[3],
-            }) catch {};
-        }
+        Box.fillCells(allocator, &self.bg_buffer, .{ .col = col, .row = row, .width = width, .height = height }, color);
     }
 
     pub fn drawDimmingBackdropOutside(
@@ -835,26 +1147,12 @@ pub const Overlay = struct {
         rect: PanelRect,
         dim_color: [4]u8,
     ) void {
-        if (dim_color[3] == 0) return;
-
-        if (rect.row > 0) {
-            self.drawBox(allocator, 0, 0, total_cols, rect.row, dim_color);
-        }
-        const mid_start = rect.row;
-        const mid_end = @min(total_rows, rect.maxRow());
-        if (mid_end > mid_start) {
-            const mid_h = mid_end - mid_start;
-            if (rect.col > 0) {
-                self.drawBox(allocator, 0, mid_start, rect.col, mid_h, dim_color);
-            }
-            const right_start = rect.maxCol();
-            if (total_cols > right_start) {
-                self.drawBox(allocator, right_start, mid_start, total_cols - right_start, mid_h, dim_color);
-            }
-        }
-        if (total_rows > rect.maxRow()) {
-            self.drawBox(allocator, 0, rect.maxRow(), total_cols, total_rows - rect.maxRow(), dim_color);
-        }
+        Box.dimOutside(allocator, &self.bg_buffer, total_cols, total_rows, .{
+            .col = rect.col,
+            .row = rect.row,
+            .width = rect.width,
+            .height = rect.height,
+        }, dim_color);
     }
 
     pub fn drawBorder(
@@ -871,38 +1169,22 @@ pub const Overlay = struct {
         style: IconStyle,
         shape: BorderShape,
     ) void {
-        if (width < 2 or height < 2) return;
-        const max_c = col + width;
-
-        const tl: u21 = if (style == .ascii) '+' else if (shape == .sharp) 0x250C else 0x256D; // ╭ or ┌ or +
-        const tr: u21 = if (style == .ascii) '+' else if (shape == .sharp) 0x2510 else 0x256E; // ╮ or ┐ or +
-        const bl: u21 = if (style == .ascii) '+' else if (shape == .sharp) 0x2514 else 0x2570; // ╰ or └ or +
-        const br: u21 = if (style == .ascii) '+' else if (shape == .sharp) 0x2518 else 0x256F; // ╯ or ┘ or +
-        const horiz: u21 = if (style == .ascii) '-' else 0x2500; // ─ or -
-        const vert: u21 = if (style == .ascii) '|' else 0x2502; // │ or |
-
-        // Top row
-        _ = self.drawChar(allocator, atlas, rasterizer, col, row, tl, fg, fg_a);
-        var c = col + 1;
-        while (c < max_c - 1) : (c += 1) {
-            _ = self.drawChar(allocator, atlas, rasterizer, c, row, horiz, fg, fg_a);
-        }
-        _ = self.drawChar(allocator, atlas, rasterizer, max_c - 1, row, tr, fg, fg_a);
-
-        // Vertical sides
-        var r = row + 1;
-        while (r < row + height - 1) : (r += 1) {
-            _ = self.drawChar(allocator, atlas, rasterizer, col, r, vert, fg, fg_a);
-            _ = self.drawChar(allocator, atlas, rasterizer, max_c - 1, r, vert, fg, fg_a);
-        }
-
-        // Bottom row
-        _ = self.drawChar(allocator, atlas, rasterizer, col, row + height - 1, bl, fg, fg_a);
-        c = col + 1;
-        while (c < max_c - 1) : (c += 1) {
-            _ = self.drawChar(allocator, atlas, rasterizer, c, row + height - 1, horiz, fg, fg_a);
-        }
-        _ = self.drawChar(allocator, atlas, rasterizer, max_c - 1, row + height - 1, br, fg, fg_a);
+        const drawer: Text.Drawer = .{
+            .allocator = allocator,
+            .atlas = atlas,
+            .rasterizer = rasterizer,
+            .gray_buffer = &self.gray_buffer,
+            .color_buffer = &self.color_buffer,
+        };
+        const b_opt: Border.Option = .{
+            .shape = shape,
+            .style = .custom,
+            .mode = .glyph,
+            .color = fg,
+            .alpha = fg_a,
+            .glyph_style = style,
+        };
+        b_opt.render(.{ .col = col, .row = row, .width = width, .height = height }, self.tokens, null, false, &self.card_buffer, allocator, drawer);
     }
 
     fn drawSeparator(
@@ -917,49 +1199,20 @@ pub const Overlay = struct {
         fg_a: u8,
         style: IconStyle,
     ) void {
-        if (width < 6) return;
-        const start_c = col + 2;
-        const end_c = col + width - 2;
-        const horiz: u21 = if (style == .ascii) '-' else 0x2500; // ─ or -
-
-        var c = start_c;
-        while (c < end_c) : (c += 1) {
-            _ = self.drawChar(allocator, atlas, rasterizer, c, row, horiz, fg, fg_a);
-        }
-    }
-
-    fn drawProgressBar(
-        self: *Overlay,
-        allocator: Allocator,
-        atlas: *Atlas,
-        rasterizer: *Rasterizer,
-        col: u16,
-        row: u16,
-        bar_width: u16,
-        fraction: f32,
-        fg_fill: [3]u8,
-        fg_empty: [3]u8,
-        fg_a: u8,
-        style: IconStyle,
-    ) u16 {
-        if (bar_width < 2) return 0;
-        const clamped_frac = std.math.clamp(fraction, 0.0, 1.0);
-        const filled_count: u16 = @intFromFloat(@round(clamped_frac * @as(f32, @floatFromInt(bar_width))));
-
-        const fill_cp: u21 = if (style == .ascii) '=' else 0x2588; // █ or =
-        const empty_cp: u21 = if (style == .ascii) '.' else 0x2591; // ░ or .
-
-        var c = col;
-        var i: u16 = 0;
-        while (i < filled_count) : (i += 1) {
-            _ = self.drawChar(allocator, atlas, rasterizer, c, row, fill_cp, fg_fill, fg_a);
-            c += 1;
-        }
-        while (i < bar_width) : (i += 1) {
-            _ = self.drawChar(allocator, atlas, rasterizer, c, row, empty_cp, fg_empty, fg_a);
-            c += 1;
-        }
-        return c - col;
+        const drawer: Text.Drawer = .{
+            .allocator = allocator,
+            .atlas = atlas,
+            .rasterizer = rasterizer,
+            .gray_buffer = &self.gray_buffer,
+            .color_buffer = &self.color_buffer,
+        };
+        Divider.renderHorizontal(col, row, width, null, .{
+            .mode = .glyph,
+            .color = fg,
+            .alpha = fg_a,
+            .glyph_style = style,
+            .inset_cols = 2,
+        }, self.tokens, null, drawer);
     }
 
     fn drawChar(

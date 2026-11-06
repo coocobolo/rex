@@ -21,6 +21,7 @@ const CursorStyle = @import("cell.zig").CursorStyle;
 const Screen = @import("screen.zig").Screen;
 const dispatcher = @import("dispatcher.zig");
 
+const flag_set = @import("../flag_set.zig");
 const wc = @import("../unicode/wcwidth.zig");
 const utf8 = @import("../unicode/utf8.zig");
 
@@ -152,6 +153,14 @@ pub const MouseTracking = enum {
         return switch (tracking) {
             .normal, .button_motion, .any_motion => true,
             .off, .x10 => false,
+        };
+    }
+
+    /// True when mouse motion events may be reported to the host.
+    pub fn reportsMotion(tracking: MouseTracking) bool {
+        return switch (tracking) {
+            .button_motion, .any_motion => true,
+            .off, .x10, .normal => false,
         };
     }
 };
@@ -297,42 +306,69 @@ pub const ResponseQueue = Response;
 
 /// What a `feed` asks the caller to do. Coalesced host signals inspected
 /// by the caller on each update.
-pub const Events = struct {
-    /// BEL arrived.
+/// Strongly typed bit flags for terminal emulation protocol events.
+/// Bits 0 through 5 hold protocol events. Bit 8 indicates a pending resize payload.
+pub const EventBits = packed struct(u32) {
     bell: bool = false,
-    /// OSC 0 or 2 changed the title.
     title: bool = false,
-    /// OSC 1 changed the icon name.
     icon_name: bool = false,
-    /// OSC 12 changed the cursor colour.
     cursor_color: bool = false,
-    /// The selection no longer matches the screen (RIS or a screen
-    /// switch).
     selection_reset: bool = false,
-    /// RIS ran.
     hard_reset: bool = false,
-    /// CSI 8 ; rows ; cols t asked for this size. The caller resizes the
-    /// pty, then calls `Terminal.resize`.
-    resize: ?Resize = null,
+    _pad_host: u2 = 0,
+    resize: bool = false,
+    _pad: u23 = 0,
+};
+
+pub const EventSet = flag_set.IntegerSet(EventBits);
+
+comptime {
+    std.debug.assert(@sizeOf(EventSet) == 4);
+}
+
+/// Side-effects reported by the terminal across byte streams.
+pub const Events = struct {
+    flags: EventSet = .empty,
+    resize: Resize = .{ .rows = 0, .cols = 0 },
 
     pub const Resize = struct { rows: u16, cols: u16 };
+    pub const Field = std.meta.FieldEnum(EventBits);
 
-    /// True when any event is pending.
-    pub fn any(self: *const Events) bool {
-        return self.bell or
-            self.title or
-            self.icon_name or
-            self.cursor_color or
-            self.selection_reset or
-            self.hard_reset or
-            self.resize != null;
+    /// Sets an event flag.
+    pub inline fn set(self: *Events, comptime field: Field) void {
+        self.flags.insert(field);
+    }
+
+    /// True if an event flag is set.
+    pub inline fn has(self: Events, comptime field: Field) bool {
+        return self.flags.has(field);
+    }
+
+    /// Returns the underlying bitfield struct.
+    pub inline fn bits(self: Events) EventBits {
+        return self.flags.bits;
+    }
+
+    /// True when any event flag is set.
+    pub inline fn any(self: Events) bool {
+        return self.flags.any();
     }
 
     /// Clears every event.
-    pub fn clear(self: *Events) void {
+    pub inline fn clear(self: *Events) void {
         self.* = .{};
     }
+
+    /// Returns the resize payload if the resize flag is set.
+    pub inline fn getResize(self: Events) ?Resize {
+        return if (self.has(.resize)) self.resize else null;
+    }
 };
+
+comptime {
+    std.debug.assert(@sizeOf(Events) == 8);
+    std.debug.assert(@alignOf(Events) == 4);
+}
 
 /// Operating level set by DECSCL (VT510). The tag is the DECSCL
 /// parameter.
@@ -846,8 +882,8 @@ pub fn Terminal(comptime option: Option) type {
 
             self.events.clear();
             self.response.clear();
-            self.events.hard_reset = true;
-            self.events.selection_reset = true;
+            self.events.set(.hard_reset);
+            self.events.set(.selection_reset);
         }
 
         fn switchScreen(self: *Self, to_alt: bool) void {
@@ -858,7 +894,7 @@ pub fn Terminal(comptime option: Option) type {
             // OSC 10-19 colors belong to the terminal, not a screen, so
             // the cursor color stays.
             self.active().dirty_rows = .full;
-            self.events.selection_reset = true;
+            self.events.set(.selection_reset);
         }
 
         /// SM (CSI h) and RM (CSI l). Unknown modes are ignored.
@@ -921,6 +957,7 @@ pub fn Terminal(comptime option: Option) type {
                     // done by setActive
 
                     // Notify app to update PTY winsize
+                    self.events.set(.resize);
                     self.events.resize = .{ .rows = self.active().active_rows, .cols = new_cols };
                 },
                 5 => {
@@ -1275,6 +1312,7 @@ pub fn Terminal(comptime option: Option) type {
             @memcpy(self.title[0..len], title[0..len]);
             self.title[len] = 0;
             self.title_len = len;
+            self.events.set(.title);
         }
 
         /// Sets the icon name (OSC 1), cut to `max_title_len` bytes on a
@@ -1284,6 +1322,7 @@ pub fn Terminal(comptime option: Option) type {
             @memcpy(self.icon_name[0..len], name[0..len]);
             self.icon_name[len] = 0;
             self.icon_name_len = len;
+            self.events.set(.icon_name);
         }
 
         /// The title. Valid until the next `setTitle`.

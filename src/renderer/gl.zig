@@ -29,6 +29,7 @@ pub const DYNAMIC_DRAW = c.GL_DYNAMIC_DRAW;
 pub const FLOAT = c.GL_FLOAT;
 pub const SHORT = c.GL_SHORT;
 pub const UNSIGNED_SHORT = c.GL_UNSIGNED_SHORT;
+pub const UNSIGNED_INT = c.GL_UNSIGNED_INT;
 pub const UNSIGNED_BYTE = c.GL_UNSIGNED_BYTE;
 pub const FALSE = c.GL_FALSE;
 pub const TRUE = c.GL_TRUE;

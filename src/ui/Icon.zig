@@ -54,36 +54,9 @@ pub const IconId = enum {
     posture,
 };
 
-/// Resolves the effective IconStyle when `.auto` is requested.
-/// Checks REX_ICON_STYLE environment variable first, then uses conservative
-/// fallback to `.unicode` (or `.ascii` if locale is non-UTF-8).
+/// Resolves the effective IconStyle when `.auto` is requested, defaulting deterministically to `.unicode`.
 pub fn resolveStyle(configured: IconStyle) IconStyle {
-    if (configured != .auto) return configured;
-
-    if (std.c.getenv("REX_ICON_STYLE")) |ptr| {
-        const env_val = std.mem.span(ptr);
-        if (std.ascii.eqlIgnoreCase(env_val, "nerd_font") or
-            std.ascii.eqlIgnoreCase(env_val, "nerdfont") or
-            std.ascii.eqlIgnoreCase(env_val, "nf"))
-        {
-            return .nerd_font;
-        }
-        if (std.ascii.eqlIgnoreCase(env_val, "unicode") or std.ascii.eqlIgnoreCase(env_val, "utf8")) {
-            return .unicode;
-        }
-        if (std.ascii.eqlIgnoreCase(env_val, "ascii")) {
-            return .ascii;
-        }
-    }
-
-    // If explicit NERD_FONT=1 is exported in environment
-    if (std.c.getenv("NERD_FONT")) |ptr| {
-        const nf = std.mem.span(ptr);
-        if (nf.len > 0 and nf[0] != '0') return .nerd_font;
-    }
-
-    // Conservative default: clean Unicode
-    return .unicode;
+    return if (configured == .auto) .unicode else configured;
 }
 
 /// Returns the glyph string for the given semantic icon and rendering mode.

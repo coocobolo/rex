@@ -9,6 +9,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const posix = std.posix;
 const system = posix.system;
+const Theme = @import("../color/root.zig").Theme;
 
 /// Maximum payload for an inlined bytes event.
 pub const max_bytes_payload = 128;
@@ -61,6 +62,8 @@ pub const InputEvent = union(enum) {
     focus: bool,
     /// Terminal hard reset request.
     hard_reset,
+    /// Live color theme update.
+    set_theme: Theme,
 
     /// Helper to create a bytes event from a slice (up to max_bytes_payload).
     pub fn makeBytes(slice: []const u8) InputEvent {

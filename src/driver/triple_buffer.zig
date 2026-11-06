@@ -22,8 +22,8 @@ pub fn Buffer(comptime option: Option) type {
     return struct {
         const Self = @This();
 
-        /// Three pre-allocated viewport frames.
-        frames: [3]FrameType,
+        /// Three pre-allocated viewport frames aligned to 64B so frame headers never share index cache lines.
+        frames: [3]FrameType align(64),
 
         /// Private buffer index currently owned by producer (Driver thread).
         /// Aligned to 64 bytes to eliminate false sharing with consumer thread.
@@ -36,6 +36,15 @@ pub fn Buffer(comptime option: Option) type {
         /// Shared atomic status word packing ready_idx (bits 0..1) and has_new flag (bit 2).
         /// Aligned to 64 bytes to eliminate false sharing between producer and consumer cores.
         shared_state: std.atomic.Value(u32) align(64),
+
+        comptime {
+            std.debug.assert(@offsetOf(Self, "fill_idx") / 64 != @offsetOf(Self, "read_idx") / 64);
+            std.debug.assert(@offsetOf(Self, "fill_idx") / 64 != @offsetOf(Self, "shared_state") / 64);
+            std.debug.assert(@offsetOf(Self, "read_idx") / 64 != @offsetOf(Self, "shared_state") / 64);
+            std.debug.assert(@offsetOf(Self, "frames") / 64 != @offsetOf(Self, "fill_idx") / 64);
+            std.debug.assert(@offsetOf(Self, "frames") / 64 != @offsetOf(Self, "read_idx") / 64);
+            std.debug.assert(@offsetOf(Self, "frames") / 64 != @offsetOf(Self, "shared_state") / 64);
+        }
 
         /// Pre-allocates all 3 frames with 64-byte alignment. Free with `deinit`.
         pub fn init(allocator: Allocator) !Self {

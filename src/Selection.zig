@@ -40,7 +40,101 @@ pub const Position = struct {
         self.col = col;
         self.captured_scroll_gen = scroll_gen;
     }
+
+    /// Resolves this position's anchor row in scrollback history space, returning null if evicted.
+    pub inline fn resolve(self: Position, total_lines_scrolled: i64, scrollback_used: i64) ?i64 {
+        return resolveAnchor(self, total_lines_scrolled, scrollback_used);
+    }
 };
+
+/// Resolves an anchor row in scrollback history space, returning null if evicted.
+pub fn resolveAnchor(position: anytype, total_lines_scrolled: i64, scrollback_used: i64) ?i64 {
+    const delta: i64 = total_lines_scrolled - position.captured_scroll_gen;
+    const anchor_now: i64 = @as(i64, position.row) - delta;
+    if (anchor_now < -scrollback_used) return null;
+    return anchor_now;
+}
+
+/// Extracts UTF-8 text within `selection` from `screen` into `buf`.
+/// Performs zero dynamic allocations; returns number of bytes written.
+pub fn extractText(screen: anytype, selection: anytype, buf: []u8) usize {
+    const total_lines_scrolled = screen.total_lines_scrolled;
+    const scrollback_used = screen.scrollbackUsedAs(i64);
+
+    const start_anchor = resolveAnchor(selection.range.start, total_lines_scrolled, scrollback_used) orelse return 0;
+    const end_anchor = resolveAnchor(selection.range.end, total_lines_scrolled, scrollback_used) orelse return 0;
+
+    const start_col: u16 = @intCast(selection.range.start.col);
+    const end_col: u16 = @intCast(selection.range.end.col);
+
+    const lo_anchor, const lo_col, const hi_anchor, const hi_col = blk: {
+        if (start_anchor < end_anchor or (start_anchor == end_anchor and start_col <= end_col)) {
+            break :blk .{ start_anchor, start_col, end_anchor, end_col };
+        } else {
+            break :blk .{ end_anchor, end_col, start_anchor, start_col };
+        }
+    };
+
+    const active_rows: i64 = @intCast(screen.active_rows);
+    const clamped_lo: i64 = std.math.clamp(lo_anchor, -scrollback_used, active_rows - 1);
+    const clamped_hi: i64 = std.math.clamp(hi_anchor, -scrollback_used, active_rows - 1);
+    if (clamped_hi < clamped_lo) return 0;
+
+    const is_block = selection.kind == .block;
+    const block_left = @min(start_col, end_col);
+    const block_right = @min(@max(start_col, end_col), @max(screen.active_cols, 1) - 1);
+
+    var pos: usize = 0;
+    var anchor_row: i64 = clamped_lo;
+    while (anchor_row <= clamped_hi) : (anchor_row += 1) {
+        var col_start: usize = if (is_block) block_left else (if (anchor_row == clamped_lo) lo_col else 0);
+        const col_end: usize = if (is_block) block_right else (if (anchor_row == clamped_hi) hi_col else @max(screen.active_cols, 1) - 1);
+
+        if (col_start > 0) {
+            const maybe_placeholder = screen.cellAtAnchor(anchor_row, col_start);
+            if (maybe_placeholder.kind == .wide_right) col_start -= 1;
+        }
+
+        const row_start = pos;
+
+        for (col_start..col_end + 1) |col| {
+            const cell = screen.cellAtAnchor(anchor_row, col);
+            if (pos + 4 > buf.len) break;
+
+            switch (cell.kind) {
+                .wide_right => continue,
+                .empty => {
+                    buf[pos] = ' ';
+                    pos += 1;
+                },
+                .narrow, .wide_left => {
+                    const cp: u21 = std.math.cast(u21, cell.codepoint) orelse ' ';
+                    const len = std.unicode.utf8Encode(cp, buf[pos..][0..4]) catch continue;
+                    pos += len;
+                },
+                .grapheme, .grapheme_wide => {
+                    const cps = screen.getGrapheme(cell.codepoint) orelse continue;
+                    for (cps) |cp| {
+                        if (pos + 4 > buf.len) break;
+                        const len = std.unicode.utf8Encode(cp, buf[pos..][0..4]) catch continue;
+                        pos += len;
+                    }
+                },
+                .shaped => {},
+            }
+        }
+
+        while (pos > row_start and buf[pos - 1] == ' ') pos -= 1;
+
+        const is_wrapped = !is_block and (screen.active_cols > 0) and screen.cellAtAnchor(anchor_row, screen.active_cols - 1).wrapped;
+        if (!is_wrapped and anchor_row < clamped_hi and pos < buf.len - 1) {
+            buf[pos] = '\n';
+            pos += 1;
+        }
+    }
+
+    return pos;
+}
 
 pub const Phase = enum {
     /// Nothing selected.

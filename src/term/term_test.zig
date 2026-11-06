@@ -779,11 +779,11 @@ test "hardReset: events cleared" {
     var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
-    t.events.bell = true;
+    t.events.set(.bell);
     t.response.append("foo");
     t.hardReset();
 
-    try testing.expect(!t.events.bell);
+    try testing.expect(!t.events.has(.bell));
     try testing.expect(t.response.isEmpty());
 }
 
@@ -811,8 +811,8 @@ test "Terminal: takeEvents and drainReplies" {
     var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
-    t.events.bell = true;
-    t.events.title = true;
+    t.events.set(.bell);
+    t.events.set(.title);
     t.response.append("hello reply");
 
     try testing.expect(t.hasReplies());
@@ -823,8 +823,8 @@ test "Terminal: takeEvents and drainReplies" {
 
     try testing.expect(t.events.any());
     const ev = t.takeEvents();
-    try testing.expect(ev.bell);
-    try testing.expect(ev.title);
+    try testing.expect(ev.has(.bell));
+    try testing.expect(ev.has(.title));
     try testing.expect(!t.events.any());
 }
 

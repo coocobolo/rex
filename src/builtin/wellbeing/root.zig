@@ -7,7 +7,6 @@ pub const reminders = @import("reminders.zig");
 pub const winddown = @import("winddown.zig");
 pub const dashboard = @import("dashboard.zig");
 pub const focus = @import("focus.zig");
-pub const tokens = @import("tokens.zig");
 pub const icons = @import("icons.zig");
 pub const overlay = @import("overlay.zig");
 

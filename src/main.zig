@@ -115,80 +115,14 @@ const prod_wellbeing_option: rex.builtin.wellbeing.Option = .{
         .show_animation = false,
     },
     .winddown = .{
-        .enabled = true,
-        .start_hour = 21, // 9:00 PM
+        .enabled = false,
+        .start_hour = 0, // 9:00 PM
         .start_minute = 0,
-        .end_hour = 7, // 7:00 AM
+        .end_hour = 23, // 7:00 AM
         .end_minute = 0,
         .warmth_factor = 0.85,
-        .mute_audio_bell = true,
+        .mute_audio_bell = false,
         .prompt = "Wind-down time. Time to wrap up work for today.",
-    },
-    .privacy = .{
-        .strict_local = true,
-        .track_foreground_apps = true,
-    },
-};
-
-const wellbeing_option: rex.builtin.wellbeing.Option = .{
-    .enabled = true,
-    .focus = .{
-        .task_ms = 12 * std.time.ms_per_s, // 12-second work period
-        .short_break_ms = 8 * std.time.ms_per_s, // 8-second break period
-        .long_break_ms = 12 * std.time.ms_per_s,
-        .tasks_before_long_break = 2,
-        .timer_mode = .countdown,
-        .transition_mode = .auto, // Auto-advances to break to test lock/animation
-        .mute_notifications_in_task = true,
-        .rotate_break_prompts = true,
-        .lock_input_on_break = true, // Locks terminal during break
-        .show_break_animation = true, // Dimming pulse wave during break
-    },
-    .screen_time = .{
-        .daily_limit_minutes = 1, // Reaches limit after 60s of active terminal use
-        .grayscale_on_limit = true,
-        .grayscale_transition_s = 5, // Fades into full monochrome over 5 seconds
-        .idle_threshold_s = 15, // Inactivity for 15s enters idle mode
-        .proc_sample_interval_s = 2, // Samples foreground tools (e.g. nvim/top) every 2s
-        .track_foreground_apps = true,
-        .lock_input_on_limit = false,
-        .show_limit_animation = true,
-    },
-    .eyesight = .{
-        .enabled = true,
-        .interval_minutes = 1, // Fires at the 60-second mark
-        .duration_s = 10, // 10-second rest
-        .lock_input = true, // Locks keyboard input for 10s
-        .show_animation = true,
-        .animation = .pulse_dim, // Dimming pulse breathing wave
-        .prompt = "Look at an object 20 feet away for 20 seconds.",
-    },
-    .movement = .{
-        .enabled = true,
-        .interval_minutes = 2, // Fires at the 120-second mark
-        .duration_s = 15,
-        .lock_input = true, // Locks keyboard input for 15s
-        .show_animation = true,
-        .animation = .warm_glow, // Amber glow breathing wave
-        .prompt = "Time to stand up, stretch your back, and move.",
-    },
-    .routines = .{
-        .hydration_interval_minutes = 1,
-        .hydration_prompt = "Stay hydrated: drink some fresh water.",
-        .posture_interval_minutes = 1,
-        .posture_prompt = "Check posture: roll shoulders back and align neck.",
-        .lock_input = false,
-        .show_animation = false,
-    },
-    .winddown = .{
-        .enabled = true,
-        .start_hour = 0, // Covers entire 24h day for immediate manual verification
-        .start_minute = 0,
-        .end_hour = 23,
-        .end_minute = 59,
-        .warmth_factor = 0.80, // Visible warm amber tint
-        .mute_audio_bell = true, // Mutes terminal bell
-        .prompt = "Wind-down mode active: time to wrap up.",
     },
     .privacy = .{
         .strict_local = true,
@@ -260,7 +194,7 @@ const banner_option = rex.ui.Banner.Option{
 };
 
 const icon_option = rex.ui.Icon.Option{
-    .style = .auto,
+    .style = .unicode,
 };
 
 const modal_option = rex.ui.Modal.Option{
@@ -268,6 +202,7 @@ const modal_option = rex.ui.Modal.Option{
     .dim_alpha = 10,
     .close_on_outside_click = true,
     .default_focus = .confirm,
+    .icon_style = .unicode,
 };
 
 pub const BracketPair = struct { open: u21, close: u21 };
@@ -309,6 +244,7 @@ const config: rex.App.Config = .{
         .icon = icon_option,
         .modal = modal_option,
         .confirm_quit = true,
+        .bell = .on,
     },
     .environments = &.{
         .{ .key = "SHELL", .value = "/bin/bash" },
@@ -367,7 +303,7 @@ pub fn main(init: std.process.Init) !void {
             );
             defer dirs.deinit(allocator);
 
-            var wb = rex.builtin.wellbeing.Wellbeing.init(wellbeing_option);
+            var wb = rex.builtin.wellbeing.Wellbeing.init(prod_wellbeing_option);
             wb.loadState(init.io, dirs.state);
 
             if (args.next()) |action| {
