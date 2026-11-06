@@ -262,6 +262,10 @@ const config: rex.App.Config = .{
 };
 
 pub fn main(init: std.process.Init) !void {
+    // Short-lived work that runs once (argument handling, the config
+    // subcommands) uses the process arena. The app itself allocates and
+    // frees for as long as it runs, so it gets the general purpose
+    // allocator: with the arena, its frees would never return memory.
     const allocator = init.arena.allocator();
     const environ = init.minimal.environ;
 
@@ -356,8 +360,8 @@ pub fn main(init: std.process.Init) !void {
         }
     }
 
-    var app: rex.App = try .init(allocator, init.io, &environ, argv0, &config, custom_config_path);
-    defer app.deinit(allocator);
+    var app: rex.App = try .init(init.gpa, init.io, &environ, argv0, &config, custom_config_path);
+    defer app.deinit(init.gpa);
 
     try app.run();
 }
