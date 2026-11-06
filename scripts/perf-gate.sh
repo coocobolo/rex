@@ -6,7 +6,9 @@ set -uo pipefail
 case_=${1:?}; max=${2:-15}
 tmp=$(mktemp); trap 'rm -f "$tmp"' EXIT
 
-zig build -Doptimize=ReleaseFast -Dcpu=native >/dev/null 2>&1 || exit 125
+# The `benchmark` step installs zig-out/bin/benchmark; a plain `zig build`
+# does not, and a bisect would then time a stale binary.
+zig build benchmark -Doptimize=ReleaseFast -Dcpu=native >/dev/null 2>&1 || exit 125
 
 for _ in 1 2 3; do
   taskset --cpu-list "${BENCH_CPU:-2}" zig-out/bin/benchmark --filter "$case_" --save "$tmp.$_" >/dev/null 2>&1 || exit 125
