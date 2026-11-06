@@ -24,6 +24,8 @@
 #   PASTES         number of pastes (default 20)
 #   PASTE_KIB      size of each paste in KiB (default 1024)
 #   FONT_CYCLES    font cycles; each is 5 steps up and 5 down (default 10)
+#   PASTE_VERIFY   1: the sink writes to a file instead of /dev/null, and the
+#                  pasted bytes are checked against the expected data
 #
 # Output: perf-results/runs/gui-<ts>_<sha>[-dirty]_<mode>/
 #   result.txt   the numbers below
@@ -37,6 +39,7 @@ idle_seconds="${IDLE_SECONDS:-60}"
 pastes="${PASTES:-20}"
 paste_kib="${PASTE_KIB:-1024}"
 font_cycles="${FONT_CYCLES:-10}"
+paste_verify="${PASTE_VERIFY:-0}"
 
 die() { echo "error: $*" >&2; exit 1; }
 
@@ -61,16 +64,13 @@ mkdir -p "$out" "$data"
 result="$out/result.txt"
 say() { echo "$*" | tee -a "$result"; }
 
-# The sandbox HOME. Its .bashrc turns the shell into a sink before any
-# prompt, with echo off so pasted data doesn't fill the scrollback.
+# The sandbox HOME. `launch` writes its .bashrc, which turns the shell into
+# a sink before any prompt: raw mode, so the kernel hands over every byte
+# at once instead of holding back unfinished lines, and no echo, so pasted
+# data doesn't fill the scrollback.
 sandbox="$out/home"
 mkdir -p "$sandbox"
-cat > "$sandbox/.bashrc" <<'EOF'
-HISTFILE=/dev/null
-stty -echo
-exec cat > /dev/null
-EOF
-
+sink_target=/dev/null
 # State the EXIT trap cleans up. `sink` is Rex's child: it must be killed
 # too, because Rex leaks its pty master into the child (a known Rex bug),
 # so the pty never hangs up and the child would outlive Rex.
@@ -112,22 +112,25 @@ fi
 
 rss_kb() { awk '/^VmRSS/{print $2}' "/proc/$1/status"; }
 
-# Fails unless Rex's only child is `cat` reading the pty and writing to
-# /dev/null. Called before any key is sent.
+# Fails unless Rex's only child is `cat` reading the pty and writing to the
+# sink target. Called before any key is sent.
 assert_sink() {
     local children child
     children=$(pgrep -P "$rex" || true)
     [ "$(wc -w <<< "$children")" = 1 ] || die "rex $rex has children '$children', expected one cat"
     child=$children
     [ "$(cat "/proc/$child/comm")" = cat ] || die "rex child $child is $(cat "/proc/$child/comm"), not cat"
-    [ "$(readlink "/proc/$child/fd/1")" = /dev/null ] || die "rex child $child doesn't write to /dev/null"
+    [ "$(readlink "/proc/$child/fd/1")" = "$sink_target" ] || die "rex child $child doesn't write to $sink_target"
     [[ "$(readlink "/proc/$child/fd/0")" == /dev/pts/* ]] || die "rex child $child doesn't read a pty"
 }
 
-# Starts Rex in the sandbox, waits for its sink and its window. Sets rex,
-# pts and win.
+# Starts Rex in the sandbox with its sink writing to $2 and the tty set up
+# with `stty $3`, waits for the sink and the window. Sets rex, pts, win and
+# sink_target.
 launch() {
     local log="$out/rex-$1.log" i child
+    sink_target=$2
+    printf 'HISTFILE=/dev/null\nstty %s\nexec cat > %q\n' "$3" "$sink_target" > "$sandbox/.bashrc"
     # 9>&-: Rex and everything it starts must not inherit the lock.
     env -u XDG_CONFIG_HOME -u XDG_DATA_HOME -u XDG_STATE_HOME -u XDG_CACHE_HOME \
         HOME="$sandbox" "$prefix/bin/rex" > "$log" 2>&1 9>&- &
@@ -166,8 +169,15 @@ keys() {
 say "== perf-gui $mode @ $sha, $(date -Iseconds) =="
 say "pastes=$pastes x ${paste_kib} KiB, font_cycles=$font_cycles, idle=${idle_seconds}s"
 
-# Instance 1: idle, then pastes, then font changes.
-launch session
+# Instance 1: idle, then pastes, then font changes. Raw mode, so the kernel
+# hands every pasted byte to the sink at once instead of holding back an
+# unfinished last line. With PASTE_VERIFY=1 the sink keeps what it
+# receives, for the check after the pastes.
+if [ "$paste_verify" = 1 ]; then
+    launch session "$out/received.bin" "raw -echo"
+else
+    launch session /dev/null "raw -echo"
+fi
 say "rss_start_kb=$(rss_kb "$rex")"
 
 say "-- idle ${idle_seconds}s"
@@ -188,7 +198,20 @@ done
 sleep 1
 rss_after=$(rss_kb "$rex")
 say "paste_rss_before_kb=$rss_before paste_rss_after_kb=$rss_after paste_rss_growth_kb=$((rss_after - rss_before))"
-say "paste_write_errors=$(grep -c 'failed to write' "$out/rex-session.log" || true)"
+# Old drivers log "failed to write"; since the outbound queue, a refused
+# write logs "dropping".
+say "paste_write_errors=$(grep -cE 'failed to write|dropping' "$out/rex-session.log" || true)"
+if [ "$paste_verify" = 1 ]; then
+    expected_size=$((pastes * $(stat -c %s "$paste_data")))
+    for i in $(seq 100); do # up to 10 s for the last bytes to arrive
+        [ "$(stat -c %s "$sink_target")" -ge "$expected_size" ] && break
+        sleep 0.1
+    done
+    expected_sum=$(for i in $(seq "$pastes"); do cat "$paste_data"; done | sha256sum | cut -c1-16)
+    received_sum=$(sha256sum < "$sink_target" | cut -c1-16)
+    say "paste_verify_expected=${expected_size}B/${expected_sum} received=$(stat -c %s "$sink_target")B/${received_sum}"
+    if [ "$expected_sum" = "$received_sum" ]; then say "paste_verify=OK"; else say "paste_verify=MISMATCH"; fi
+fi
 
 say "-- font changes"
 rss_before=$(rss_kb "$rex")
@@ -205,7 +228,10 @@ stop
 
 # Instance 2: end-to-end throughput, written to Rex's pty slave so the
 # bytes arrive exactly like program output.
-launch throughput
+# Cooked mode, as in the 2026-11 baseline: the kernel's output processing
+# (ONLCR turns \n into \r\n) is part of what this measures, so changing the
+# mode changes the numbers.
+launch throughput /dev/null "-echo"
 say "-- throughput (100 MiB per run)"
 for file in "$plain" "$escapes"; do
     for run in 1 2 3; do
