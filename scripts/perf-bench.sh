@@ -182,7 +182,9 @@ vlog "benchmark args:      ${bench_args[*]:-(none)}"
 stage "building (ReleaseFast, native cpu)"
 summary_mode=failures
 if [ "$verbose" = 1 ]; then summary_mode=all; fi
-zig build -Doptimize=ReleaseFast -Dcpu=native --summary "$summary_mode"
+# The `benchmark` step installs zig-out/bin/benchmark; a plain `zig build`
+# does not (see -Dinstall-bench in build.zig).
+zig build benchmark -Doptimize=ReleaseFast -Dcpu=native --summary "$summary_mode"
 stage_done
 
 binary="$PWD/zig-out/bin/benchmark"
