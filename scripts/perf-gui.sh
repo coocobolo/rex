@@ -3,7 +3,10 @@
 # throughput, and memory growth from pastes and font-size changes.
 #
 # Usage:
-#   perf-gui.sh [ReleaseSafe|ReleaseFast]      (default ReleaseSafe)
+#   perf-gui.sh [ReleaseSafe|ReleaseFast|Debug]      (default ReleaseSafe)
+#
+# Debug builds check the allocator: with CLEAN_EXIT=1 Rex exits normally
+# and reports leaks and invalid frees in its log, summarized at the end.
 #
 # Needs an X11 session and: xdotool, xclip, pidstat, bc, base64.
 #
@@ -26,6 +29,10 @@
 #   FONT_CYCLES    font cycles; each is 5 steps up and 5 down (default 10)
 #   PASTE_VERIFY   1: the sink writes to a file instead of /dev/null, and the
 #                  pasted bytes are checked against the expected data
+#   RELOADS        config reloads (SIGHUP) after the font changes (default 0)
+#   CLEAN_EXIT     1: end each Rex by ending its child, so it exits normally
+#                  and runs its cleanup, instead of being killed (default 0)
+#   SKIP_THROUGHPUT 1: skip the throughput instance (default 0)
 #
 # Output: perf-results/runs/gui-<ts>_<sha>[-dirty]_<mode>/
 #   result.txt   the numbers below
@@ -33,13 +40,16 @@
 set -Eeuo pipefail
 
 mode="${1:-ReleaseSafe}"
-case "$mode" in ReleaseSafe | ReleaseFast) ;; *) echo "usage: $0 [ReleaseSafe|ReleaseFast]" >&2; exit 2 ;; esac
+case "$mode" in ReleaseSafe | ReleaseFast | Debug) ;; *) echo "usage: $0 [ReleaseSafe|ReleaseFast|Debug]" >&2; exit 2 ;; esac
 
 idle_seconds="${IDLE_SECONDS:-60}"
 pastes="${PASTES:-20}"
 paste_kib="${PASTE_KIB:-1024}"
 font_cycles="${FONT_CYCLES:-10}"
 paste_verify="${PASTE_VERIFY:-0}"
+reloads="${RELOADS:-0}"
+clean_exit="${CLEAN_EXIT:-0}"
+skip_throughput="${SKIP_THROUGHPUT:-0}"
 
 die() { echo "error: $*" >&2; exit 1; }
 
@@ -97,6 +107,11 @@ fi
 
 zig build -Doptimize="$mode" -p "$prefix" >/dev/null
 
+# A real config file in the sandbox, so startup and reloads go through the
+# config loading path (keymap merging and the rest), not only the defaults.
+mkdir -p "$sandbox/.config/rex"
+"$prefix/bin/rex" config dump-default > "$sandbox/.config/rex/config"
+
 # Test data, generated once and reused across runs.
 plain="$data/plain-100M.txt"
 escapes="$data/escapes-100M.txt"
@@ -151,11 +166,34 @@ launch() {
 }
 
 stop() {
-    kill "$rex"
-    wait "$rex" 2>/dev/null || true
+    local status=killed i
+    if [ "$clean_exit" = 1 ]; then
+        # Ending the child makes Rex leave its loop and run its cleanup
+        # (and, in Debug, the allocator's leak check) as on a normal exit.
+        kill "$sink" 2>/dev/null || true
+        for i in $(seq 150); do # up to 15 s
+            kill -0 "$rex" 2>/dev/null || { status=clean; break; }
+            sleep 0.1
+        done
+    fi
+    if [ "$status" = clean ]; then
+        local code=0
+        wait "$rex" 2>/dev/null || code=$?
+        status="clean, exit code $code"
+    else
+        kill "$rex"
+        wait "$rex" 2>/dev/null || true
+    fi
     kill "$sink" 2>/dev/null || true
+    say "rex_exit=$status"
     rex=""
     sink=""
+}
+
+# Counts the allocator's reports in a Rex log (Debug builds only).
+allocator_report() {
+    local log="$out/rex-$1.log"
+    say "leaks_reported=$(grep -c 'leaked:' "$log" || true) invalid_frees=$(grep -cE 'Double free detected|does not match free' "$log" || true) panics=$(grep -c 'panic' "$log" || true)"
 }
 
 # Sends Rex shortcuts to Rex's window through XTEST, as real key presses.
@@ -224,7 +262,25 @@ sleep 1
 rss_after=$(rss_kb "$rex")
 say "font_rss_before_kb=$rss_before font_rss_after_kb=$rss_after font_rss_growth_kb=$((rss_after - rss_before))"
 say "font_changes_logged=$(grep -c 'cell=' "$out/rex-session.log" || true)"
+
+if [ "$reloads" -gt 0 ]; then
+    say "-- config reloads"
+    rss_before=$(rss_kb "$rex")
+    for i in $(seq "$reloads"); do
+        kill -HUP "$rex"
+        sleep 0.3
+    done
+    sleep 1
+    rss_after=$(rss_kb "$rex")
+    say "reload_rss_before_kb=$rss_before reload_rss_after_kb=$rss_after reload_rss_growth_kb=$((rss_after - rss_before))"
+fi
 stop
+[ "$mode" = Debug ] && allocator_report session
+
+if [ "$skip_throughput" = 1 ]; then
+    say "results: $result"
+    exit 0
+fi
 
 # Instance 2: end-to-end throughput, written to Rex's pty slave so the
 # bytes arrive exactly like program output.
@@ -243,5 +299,6 @@ for file in "$plain" "$escapes"; do
     done
 done
 stop
+[ "$mode" = Debug ] && allocator_report throughput
 
 say "results: $result"
