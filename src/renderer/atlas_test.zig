@@ -164,6 +164,26 @@ test "invalidate: clears both textures to zero, partial tiles included" {
     try testing.expect(std.mem.allEqual(u8, &color, 0));
 }
 
+test "invalidate: restores the clear color and framebuffer binding" {
+    try testGlContext();
+
+    var atlas = try Atlas.create(alloc, .{ .width = 32, .height = 32 });
+    defer atlas.destroy();
+
+    const color: [4]f32 = .{ 0.25, 0.5, 0.75, 1.0 };
+    gl.clearColor(color[0], color[1], color[2], color[3]);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, 0);
+
+    atlas.invalidate();
+
+    var after_color: [4]f32 = undefined;
+    gl.getFloatv(gl.COLOR_CLEAR_VALUE, &after_color);
+    var after_fbo: gl.GLint = -1;
+    gl.getIntegerv(gl.FRAMEBUFFER_BINDING, &after_fbo);
+    try testing.expectEqual(color, after_color);
+    try testing.expectEqual(0, after_fbo);
+}
+
 test "upload: zero-size glyph (space) returns zero metrics without GL Upload" {
     try testGlContext();
 

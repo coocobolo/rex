@@ -372,46 +372,37 @@ pub fn invalidate(self: *Atlas) void {
     self.ascii_lut = initAsciiLut();
     self.state.gray = PackingState.init;
     self.state.color = PackingState.init;
-    clearTexture(self.gray_texture, gl.RED, self.width, self.height);
-    clearTexture(self.color_texture, gl.RGBA, self.width, self.height);
+    clearTexture(self.gray_texture);
+    clearTexture(self.color_texture);
 }
 
-/// Side, in pixels, of the square tiles `clearTexture` uploads.
-const clear_tile_side = 64;
+/// Sets every pixel of `texture` to zero on the GPU by attaching it to a
+/// temporary framebuffer and clearing that (GL 3.0 core; glClearTexImage
+/// needs 4.4). Unlike uploading zeros, no pixel data passes through
+/// client memory. R8 and RGBA8 must be color-renderable on any 3.3
+/// driver, so the framebuffer is complete; if it isn't, the error is
+/// logged and the texture keeps its pixels. Restores the framebuffer
+/// binding and the clear color.
+fn clearTexture(texture: gl.GLuint) void {
+    var previous_fbo: gl.GLint = 0;
+    gl.getIntegerv(gl.FRAMEBUFFER_BINDING, &previous_fbo);
+    var previous_color: [4]gl.GLfloat = undefined;
+    gl.getFloatv(gl.COLOR_CLEAR_VALUE, &previous_color);
 
-/// Zero source for `clearTexture`, large enough for one tile at four
-/// bytes per pixel.
-const clear_tile: [clear_tile_side * clear_tile_side * 4]u8 = @splat(0);
+    var fbo: gl.GLuint = 0;
+    gl.genFramebuffers(1, &fbo);
+    defer gl.deleteFramebuffers(1, &fbo);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+    defer gl.bindFramebuffer(gl.FRAMEBUFFER, @intCast(previous_fbo));
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
 
-/// Sets every pixel of the `width` by `height` `texture` to zero by
-/// uploading zero tiles, which stays within GL 3.3 core (glClearTexImage
-/// needs 4.4). `format` is the upload format: RED for the gray texture,
-/// RGBA for the color one. Leaves texture 0 bound, like `upload`.
-fn clearTexture(texture: gl.GLuint, format: gl.GLenum, width: u16, height: u16) void {
-    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
-    gl.pixelStorei(gl.UNPACK_ROW_LENGTH, 0);
-    gl.bindTexture(gl.TEXTURE_2D, texture);
-
-    var y: u32 = 0;
-    while (y < height) : (y += clear_tile_side) {
-        const tile_h = @min(clear_tile_side, height - y);
-        var x: u32 = 0;
-        while (x < width) : (x += clear_tile_side) {
-            const tile_w = @min(clear_tile_side, width - x);
-            gl.texSubImage2D(
-                gl.TEXTURE_2D,
-                0,
-                @intCast(x),
-                @intCast(y),
-                @intCast(tile_w),
-                @intCast(tile_h),
-                format,
-                gl.UNSIGNED_BYTE,
-                &clear_tile,
-            );
-        }
+    const status = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
+    if (status != gl.FRAMEBUFFER_COMPLETE) {
+        log.err("atlas clear: framebuffer incomplete (status 0x{x}); texture {d} keeps its pixels", .{ status, texture });
+        return;
     }
 
-    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
-    gl.bindTexture(gl.TEXTURE_2D, 0);
+    gl.clearColor(0, 0, 0, 0);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.clearColor(previous_color[0], previous_color[1], previous_color[2], previous_color[3]);
 }
