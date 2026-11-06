@@ -20,6 +20,7 @@ pub const single = @import("single.zig");
 pub const threaded = @import("threaded.zig");
 pub const triple_buffer = @import("triple_buffer.zig");
 pub const InputQueue = @import("InputQueue.zig");
+pub const OutboundQueue = @import("OutboundQueue.zig");
 
 pub const Events = @import("Events.zig");
 pub const EventBits = Events.Bits;
@@ -37,6 +38,7 @@ pub const WakeupChannel = InputQueue.WakeupChannel;
 test {
     _ = @import("Events.zig");
     _ = @import("InputQueue.zig");
+    _ = @import("OutboundQueue.zig");
     _ = @import("triple_buffer.zig");
     _ = @import("single.zig");
     _ = @import("threaded.zig");
@@ -144,7 +146,7 @@ pub fn Driver(comptime option: Option) type {
         pub fn sendBytes(self: *Self, bytes: []const u8) !void {
             switch (self.*) {
                 .single => |*d| try d.sendBytes(bytes),
-                .threaded => |d| d.sendBytes(bytes),
+                .threaded => |d| try d.sendBytes(bytes),
             }
         }
 
