@@ -8,8 +8,11 @@ the benchmark binary itself is `zig-out/bin/benchmark` (sources in `bench/`).
 | `perf-bench.sh` | build, run the benchmark, record results, compare against the baseline, `bless` a new baseline |
 | `perf-compare.sh` | compare any two `.jsonl` result files |
 | `perf-md.sh` | generate a markdown table from a blessed baseline |
+| `perf-gui.sh` | measure a running Rex (X11): idle CPU and wakeups, output throughput, memory growth from pastes and font changes |
 
 Requirements: `perf`, `zig`, `taskset`, `awk`. `jq` is needed by `perf-compare.sh` and `perf-md.sh`.
+`perf-gui.sh` needs an X11 session and `xdotool`, `xclip`, `pidstat`, `bc`; it takes over the
+keyboard focus while it runs (see the script header).
 
 ## Quick start
 
