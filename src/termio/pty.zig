@@ -130,7 +130,22 @@ pub const Posix = struct {
         self.* = .inactive;
     }
 
-    fn fcntl(fd: posix.fd_t, extra: posix.O) posix.UnexpectedError!void {
+    /// Sets FD_CLOEXEC, a descriptor flag (F_SETFD). Not to be confused with
+    /// `addStatusFlags`: F_SETFL silently ignores O_CLOEXEC on Linux.
+    fn setCloseOnExec(fd: posix.fd_t) posix.UnexpectedError!void {
+        const rc = system.fcntl(fd, posix.F.GETFD, @as(usize, 0));
+        const flags: usize = switch (posix.errno(rc)) {
+            .SUCCESS => @intCast(rc),
+            else => |err| return posix.unexpectedErrno(err),
+        };
+        return switch (posix.errno(system.fcntl(fd, posix.F.SETFD, flags | posix.FD_CLOEXEC))) {
+            .SUCCESS => {},
+            else => |err| posix.unexpectedErrno(err),
+        };
+    }
+
+    /// Adds file status flags (F_SETFL), such as O_NONBLOCK.
+    fn addStatusFlags(fd: posix.fd_t, extra: posix.O) posix.UnexpectedError!void {
         const rc = system.fcntl(fd, posix.F.GETFL, @as(usize, 0));
         var flags: c_int = switch (posix.errno(rc)) {
             .SUCCESS => @intCast(rc),
@@ -160,11 +175,16 @@ pub const Posix = struct {
             if (slave != -1) _ = system.close(slave);
         }
 
+        // Neither end may reach any program this process starts. The child
+        // gets the slave through dup2, which clears the flag on 0, 1 and 2.
+        // openpty can't set it atomically, so another thread forking in
+        // between would inherit them; Rex spawns before starting threads.
+        try setCloseOnExec(master);
+        try setCloseOnExec(slave);
+
         // [0] refers to the read end of the pipe.
         // [1] refers to the write end of the pipe.
         const pipe_flags: posix.O = .{ .CLOEXEC = true };
-
-        try fcntl(master, pipe_flags);
 
         var stdout_pipe: [2]posix.fd_t = .{ -1, -1 };
         if (option.capture_stdout and system.pipe2(&stdout_pipe, pipe_flags) == -1) return error.PipeFailed;
@@ -188,7 +208,7 @@ pub const Posix = struct {
         if (pid == -1) return error.SpawnFailed;
         if (pid == 0) {
             if (stdout_pipe[0] != -1) _ = system.close(stdout_pipe[0]);
-            if (stdout_pipe[0] != -1) _ = system.close(err_pipe[0]);
+            _ = system.close(err_pipe[0]);
             execChild(&option, slave, .{ .stdout_fd = stdout_pipe[1], .error_fd = err_pipe[1] });
         }
 
@@ -205,12 +225,12 @@ pub const Posix = struct {
         }
 
         // non blocking reads master fd
-        fcntl(master, option.o_flags) catch |err| {
+        addStatusFlags(master, option.o_flags) catch |err| {
             log.warn("pty: failed to set master non-blocking: {}", .{err});
         };
         // non blocking reads stdout capture end fd
         if (stdout_pipe[0] != -1) {
-            fcntl(stdout_pipe[0], .{ .NONBLOCK = true }) catch |err| {
+            addStatusFlags(stdout_pipe[0], .{ .NONBLOCK = true }) catch |err| {
                 log.warn("pty: failed to set stdout non-blocking: {}", .{err});
             };
         }
@@ -242,6 +262,8 @@ pub const Posix = struct {
         report(capture.error_fd, .dup2_stderr, system.dup2(slave, posix.STDERR_FILENO));
         if (slave > posix.STDERR_FILENO) _ = system.close(slave);
 
+        closeOnExecFrom3();
+
         if (option.cwd) |dir| {
             report(capture.error_fd, .chdir, system.chdir(dir));
         }
@@ -256,6 +278,26 @@ pub const Posix = struct {
         const argv = option.argv orelse @as([*:null]const ?[*:0]const u8, &[_:null]?[*:0]const u8{ "/bin/sh", null });
         const file: [*:0]const u8 = argv[0] orelse "/bin/sh";
         reportChildError(capture.error_fd, .execve, posix.errno(system.execve(file, argv, option.envp)));
+    }
+
+    /// Marks every descriptor from 3 up close-on-exec, so the program gets
+    /// only stdin, stdout and stderr: not the pty master, and nothing this
+    /// process inherited from whatever started it. The error pipe keeps
+    /// working until execve, which is when it is meant to close. Runs in
+    /// the forked child, so it neither allocates nor logs.
+    fn closeOnExecFrom3() void {
+        if (native_os == .linux) {
+            const rc = std.os.linux.close_range(3, std.math.maxInt(posix.fd_t), .{ .UNSHARE = false, .CLOEXEC = true });
+            if (posix.errno(rc) == .SUCCESS) return;
+            // ENOSYS or EINVAL before Linux 5.11: fall through.
+        }
+        // One fcntl per possible descriptor, up to the soft limit.
+        const limit = posix.getrlimit(.NOFILE) catch return;
+        const last: posix.rlim_t = @min(limit.cur, 1 << 20);
+        var fd: posix.fd_t = 3;
+        while (fd < last) : (fd += 1) {
+            _ = system.fcntl(fd, posix.F.SETFD, @as(usize, posix.FD_CLOEXEC));
+        }
     }
 
     fn destroyPipe(fds: [2]posix.fd_t) void {
@@ -651,4 +693,45 @@ test "Posix: spawn, with stdout capture" {
     try testing.expect(pty.master > 0);
     try testing.expect(pty.stdout_read_fd >= 0);
     try testing.expect(pty.pid > 0);
+}
+
+test "Posix: the master is close-on-exec in the parent" {
+    var pty: Posix = try Posix.spawn(.{});
+    defer pty.close(testing.io);
+    try pty.waitForSpawn();
+
+    const flags = system.fcntl(pty.master, posix.F.GETFD, @as(usize, 0));
+    try testing.expectEqual(posix.E.SUCCESS, posix.errno(flags));
+    try testing.expect(@as(usize, @intCast(flags)) & posix.FD_CLOEXEC != 0);
+}
+
+test "Posix: the child gets only stdin, stdout and stderr" {
+    // A descriptor without close-on-exec, as if inherited from whatever
+    // started this process. Neither it nor the pty master may reach the
+    // child.
+    const inherited = system.open("/dev/null", .{ .ACCMODE = .RDONLY }, @as(posix.mode_t, 0));
+    try testing.expectEqual(posix.E.SUCCESS, posix.errno(inherited));
+    defer _ = system.close(@intCast(inherited));
+
+    // `ls` runs as a child of the shell and lists the shell's descriptors.
+    const argv = [_:null]?[*:0]const u8{ "/bin/sh", "-c", "ls /proc/$$/fd", null };
+    var pty: Posix = try Posix.spawn(.{ .argv = &argv, .capture_stdout = true });
+    defer pty.close(testing.io);
+    try pty.waitForSpawn();
+
+    var out: [256]u8 = undefined;
+    var len: usize = 0;
+    var rounds: usize = 0;
+    while (rounds < 5000) : (rounds += 1) { // up to ~5 s
+        const n = system.read(pty.stdout_read_fd, out[len..].ptr, out.len - len);
+        switch (posix.errno(n)) {
+            .SUCCESS => {
+                if (n == 0) break; // EOF: the shell has exited
+                len += @intCast(n);
+            },
+            .AGAIN => std.Io.sleep(testing.io, .fromMilliseconds(1), .awake) catch {},
+            else => return error.TestReadFailed,
+        }
+    }
+    try testing.expectEqualStrings("0\n1\n2\n", out[0..len]);
 }
