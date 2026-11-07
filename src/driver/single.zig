@@ -681,6 +681,9 @@ test "SingleDriver: pasted text can't end a bracketed paste early" {
 test "SingleDriver: a flood of queries is reported, the replies that fit arrive whole" {
     const testing = std.testing;
     const gpa = testing.allocator;
+    // The drop warning is the expected outcome here; keep it out of the
+    // test output (the runner resets the level for the next test).
+    testing.log_level = .err;
     const opt: Option = .{ .max_rows = 24, .max_cols = 80, .max_scrollback = 100 };
 
     var sv: [2]posix.fd_t = undefined;
