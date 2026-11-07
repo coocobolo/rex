@@ -5,11 +5,79 @@ const builtin = @import("builtin");
 
 const log = std.log.scoped(.window);
 
+const gl = @import("gl.zig");
+const c = @import("glfw");
+
 const Dimension = @import("dimension.zig").Dimension;
 
-const gl = @import("gl.zig");
+/// The windowing platform the config asks for. `auto` is Wayland on a
+/// Wayland session and X11 otherwise (ADR 0001, decision 3).
+pub const Platform = enum { auto, wayland, x11 };
 
-const c = @import("glfw");
+/// The GLFW platform `init` starts on, and whether the user forced it.
+/// Only an `auto` choice of Wayland may fall back to X11.
+pub const PlatformChoice = struct {
+    platform: c_int,
+    forced: bool,
+
+    pub fn format(self: PlatformChoice, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+        try writer.print("{s}", .{self.name()});
+    }
+
+    fn name(self: *const PlatformChoice) []const u8 {
+        return switch (self.platform) {
+            c.GLFW_PLATFORM_X11 => "x11",
+            c.GLFW_PLATFORM_WAYLAND => "wayland",
+            c.GLFW_PLATFORM_NULL => "null",
+            c.GLFW_PLATFORM_COCOA => "cocoa",
+            c.GLFW_PLATFORM_WIN32 => "win32",
+            else => "unknown",
+        };
+    }
+};
+
+pub fn choosePlatform(requested: Platform, wayland_session: bool) PlatformChoice {
+    return switch (requested) {
+        .auto => .{
+            .platform = if (wayland_session) c.GLFW_PLATFORM_WAYLAND else c.GLFW_PLATFORM_X11,
+            .forced = false,
+        },
+        .x11 => .{ .platform = c.GLFW_PLATFORM_X11, .forced = true },
+        .wayland => .{ .platform = c.GLFW_PLATFORM_WAYLAND, .forced = true },
+    };
+}
+
+/// Initialises GLFW on `choice.platform`, never on GLFW's own pick.
+/// An automatic Wayland that fails falls back to X11 explicitly, with a
+/// warning; a forced platform that fails is an error.
+fn initGlfw(choice: PlatformChoice) error{
+    PlatformUnsupported,
+    GlfwInitFailed,
+}!void {
+    if (c.glfwPlatformSupported(choice.platform) == 0) {
+        log.err("platform {f} is not built into this Rex binary", .{choice});
+        return error.PlatformUnsupported;
+    }
+
+    c.glfwInitHint(c.GLFW_PLATFORM, choice.platform);
+    if (c.glfwInit() != 0) {
+        log.info("platform: {f}", .{PlatformChoice{
+            .platform = c.glfwGetPlatform(),
+            .forced = false,
+        }});
+        return;
+    }
+
+    if (choice.forced or choice.platform != c.GLFW_PLATFORM_WAYLAND) {
+        log.err("cannot start on {f} (see GLFW error above)", .{choice});
+        return error.GlfwInitFailed;
+    }
+
+    log.warn("cannot start on wayland (see the GLFW error above); falling back to x11", .{});
+    c.glfwInitHint(c.GLFW_PLATFORM, c.GLFW_PLATFORM_X11);
+    if (c.glfwInit() == 0) return error.GlfwInitFailed;
+    log.info("platform: x11 (fallback from wayland)", .{});
+}
 
 pub const GlfwWindow = c.GLFWwindow;
 
@@ -74,9 +142,17 @@ fn hintContext() void {
     c.glfwWindowHint(c.GLFW_OPENGL_FORWARD_COMPAT, c.GLFW_TRUE); // required on macOS, harmless on Linux
 }
 
-pub fn init(width: u16, height: u16, title: [:0]const u8) !Window {
+const InitOption = struct {
+    width: u16,
+    height: u16,
+    title: [:0]const u8,
+    platform: PlatformChoice,
+};
+
+pub fn init(option: InitOption) !Window {
     _ = c.glfwSetErrorCallback(glfwErrorCallback);
-    if (c.glfwInit() == 0) return error.GlfwInitFailed;
+
+    try initGlfw(option.platform);
 
     hintContext();
     c.glfwWindowHint(c.GLFW_DECORATED, c.GLFW_TRUE);
@@ -85,9 +161,9 @@ pub fn init(width: u16, height: u16, title: [:0]const u8) !Window {
     c.glfwWindowHint(c.GLFW_TRANSPARENT_FRAMEBUFFER, c.GLFW_TRUE);
 
     const win = c.glfwCreateWindow(
-        @intCast(width),
-        @intCast(height),
-        title.ptr,
+        @intCast(option.width),
+        @intCast(option.height),
+        option.title.ptr,
         null,
         null,
     ) orelse {

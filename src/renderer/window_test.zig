@@ -28,3 +28,33 @@ test "Xlib: the bell functions load next to GLFW's X11 connection" {
     var xlib = try Window.Xlib.load();
     xlib.close();
 }
+
+test "choosePlatform: auto follows the session, an explicit choice is forced" {
+    const Case = struct {
+        requested: Window.Platform,
+        wayland_session: bool,
+        platform: c_int,
+        forced: bool,
+    };
+    const cases = [_]Case{
+        .{ .requested = .auto, .wayland_session = true, .platform = c.GLFW_PLATFORM_WAYLAND, .forced = false },
+        .{ .requested = .auto, .wayland_session = false, .platform = c.GLFW_PLATFORM_X11, .forced = false },
+        .{ .requested = .wayland, .wayland_session = true, .platform = c.GLFW_PLATFORM_WAYLAND, .forced = true },
+        .{ .requested = .wayland, .wayland_session = false, .platform = c.GLFW_PLATFORM_WAYLAND, .forced = true },
+        .{ .requested = .x11, .wayland_session = true, .platform = c.GLFW_PLATFORM_X11, .forced = true },
+        .{ .requested = .x11, .wayland_session = false, .platform = c.GLFW_PLATFORM_X11, .forced = true },
+    };
+    for (cases) |case| {
+        const choice = Window.choosePlatform(case.requested, case.wayland_session);
+        try testing.expectEqual(case.platform, choice.platform);
+        try testing.expectEqual(case.forced, choice.forced);
+    }
+}
+
+test "PlatformChoice: formats as the platform name for the startup log" {
+    var buf: [16]u8 = undefined;
+    const x11: Window.PlatformChoice = .{ .platform = c.GLFW_PLATFORM_X11, .forced = false };
+    try testing.expectEqualStrings("x11", try std.fmt.bufPrint(&buf, "{f}", .{x11}));
+    const wayland: Window.PlatformChoice = .{ .platform = c.GLFW_PLATFORM_WAYLAND, .forced = true };
+    try testing.expectEqualStrings("wayland", try std.fmt.bufPrint(&buf, "{f}", .{wayland}));
+}

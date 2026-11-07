@@ -7,12 +7,6 @@ pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const requested_platform = b.option(
-        GlfwResolver.Platform,
-        "glfw-platform",
-        "windowing backend API",
-    ) orelse .x11;
-
     const glfw_dep = b.dependency("glfw", .{});
     const glfw_lib = b.addLibrary(.{
         .name = "glfw",
@@ -27,7 +21,7 @@ pub fn build(b: *std.Build) !void {
     glfw_lib.root_module.addIncludePath(glfw_dep.path("src"));
     glfw_lib.root_module.addIncludePath(glfw_dep.path("include"));
 
-    GlfwResolver.add(glfw_lib, glfw_dep, target, requested_platform);
+    GlfwResolver.add(glfw_lib, glfw_dep, target);
 
     switch (target.result.os.tag) {
         .linux => {},
@@ -125,7 +119,6 @@ pub fn build(b: *std.Build) !void {
     mod.addIncludePath(glfw_dep.path("include"));
     mod.linkLibrary(glfw_lib);
 
-    // FIXME! this should aligned with glfw option -Dglfw-platform?
     if (target.result.os.tag == .linux) {
         // dlopen and pthread_* are part of libc from glibc 2.34 on, so
         // neither libdl nor libpthread is linked; older glibc can't link Rex.
@@ -526,55 +519,77 @@ const glfw_linux_srcs = [_][]const u8{
     "src/posix_poll.c",
 };
 
-const GlfwResolver = struct {
-    const Platform = enum {
-        win32,
-        cocoa,
-        wayland,
-        x11,
-    };
+const glfw_wayland_protocols = &[_][]const u8{
+    "wayland",
+    "viewporter",
+    "xdg-shell",
+    "idle-inhibit-unstable-v1",
+    "pointer-constraints-unstable-v1",
+    "relative-pointer-unstable-v1",
+    "fractional-scale-v1",
+    "xdg-activation-v1",
+    "xdg-decoration-unstable-v1",
+};
 
-    fn mustValidate(target: std.Build.ResolvedTarget, platform: Platform) void {
-        switch (platform) {
-            .win32 => if (target.result.os.tag != .windows) @panic("glfw-platform=win32 requires a Windows target"),
-            .cocoa => if (target.result.os.tag != .macos) @panic("glfw-platform=cocoa requires a macOS target"),
-            .wayland, .x11 => if (target.result.os.tag != .linux) @panic("X11 and Wayland require a Linux target"),
+const GlfwResolver = struct {
+    /// Runs wayland-scanner as GLFW's CMake does and returns one directory
+    /// holding the 18 generated headers, under the names GLFW's sources
+    /// include (wl_init.c, wl_window.c, wl_monitor.c).
+    fn generateWaylandProtocols(b: *std.Build, dep: *std.Build.Dependency) std.Build.LazyPath {
+        const out = b.addWriteFiles();
+        inline for (glfw_wayland_protocols) |name| {
+            const xml = dep.path("deps/wayland/" ++ name ++ ".xml");
+
+            inline for (.{
+                .{ "client-header", "-client-protocol.h" },
+                .{ "private-code", "-client-protocol-code.h" },
+            }) |kind| {
+                const scanner = b.addSystemCommand(&.{ "wayland-scanner", kind[0] });
+                scanner.addFileArg(xml);
+                const file = name ++ kind[1];
+                _ = out.addCopyFile(scanner.addOutputFileArg(file), file);
+            }
         }
+
+        return out.getDirectory();
     }
 
     fn add(
         compile: *std.Build.Step.Compile,
         dep: *std.Build.Dependency,
         target: std.Build.ResolvedTarget,
-        platform: Platform,
     ) void {
-        mustValidate(target, platform);
-
         compile.root_module.addIncludePath(dep.path("src"));
         compile.root_module.addIncludePath(dep.path("include"));
 
-        switch (platform) {
-            .x11 => addX11(compile.root_module, dep.path("")),
+        const root = dep.path("");
+        switch (target.result.os.tag) {
+            .linux => {
+                compile.root_module.addIncludePath(generateWaylandProtocols(compile.step.owner, dep));
+                compile.root_module.addCSourceFiles(
+                    .{
+                        .root = root,
+                        .flags = &.{ "-D_GLFW_X11", "-D_GLFW_WAYLAND", "-DHAVE_MEMFD_CREATE" },
+                        .files = &[_][]const u8{} ++ glfw_common_srcs ++
+                            glfw_posix_srcs ++ glfw_linux_srcs ++
+                            &[_][]const u8{
+                                // wayland
+                                "src/wl_init.c",
+                                "src/wl_monitor.c",
+                                "src/wl_window.c",
+                                // X11
+                                "src/x11_init.c",
+                                "src/x11_monitor.c",
+                                "src/x11_window.c",
+                                "src/xkb_unicode.c",
+                                "src/glx_context.c",
+                            },
+                    },
+                );
+            },
+
             else => @panic("unsupported GLFW target os"),
         }
-    }
-
-    // FIXME need reading more about Zig build equivalent to
-    // the generate_wayland_protocol macro in src/CMakeLists.txt
-    // runs wayland-scanner twice per protocol XML file to produce
-    // two generated C artifacts that GLFW's Wayland backend.
-    fn addWayland(module: *std.Build.Module, root: ?std.Build.LazyPath) void {
-        module.addCSourceFiles(.{
-            .root = root,
-            .flags = &.{"-D_GLFW_WAYLAND"},
-            .files = &[_][]const u8{} ++ glfw_common_srcs ++
-                glfw_posix_srcs ++ glfw_linux_srcs ++
-                &[_][]const u8{
-                    "src/wl_init.c",
-                    "src/wl_monitor.c",
-                    "src/wl_window.c",
-                },
-        });
     }
 
     fn addCocoa(module: *std.Build.Module, root: ?std.Build.LazyPath) void {
@@ -587,21 +602,5 @@ const GlfwResolver = struct {
         _ = module;
         _ = root;
         @panic("not implemented!");
-    }
-
-    fn addX11(module: *std.Build.Module, root: ?std.Build.LazyPath) void {
-        module.addCSourceFiles(.{
-            .root = root,
-            .flags = &.{"-D_GLFW_X11"},
-            .files = &[_][]const u8{} ++ glfw_common_srcs ++
-                glfw_linux_srcs ++ glfw_posix_srcs ++
-                &[_][]const u8{
-                    "src/x11_init.c",
-                    "src/x11_monitor.c",
-                    "src/x11_window.c",
-                    "src/xkb_unicode.c",
-                    "src/glx_context.c",
-                },
-        });
     }
 };

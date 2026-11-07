@@ -7,7 +7,7 @@ const builtin = @import("builtin");
 const log = std.log.scoped(.app);
 
 pub const std_options: std.Options = .{
-    .log_level = .warn,
+    .log_level = .debug,
 };
 
 const native_os = builtin.os.tag;
@@ -103,6 +103,7 @@ pub const Config = struct {
     /// Optional handcrafted design tokens override for custom surface and border styling.
     tokens: ?rex.color.Tokens = null,
     window: struct {
+        platform: Window.Platform = .auto,
         background: Background.Option,
         /// Rings the X bell on BEL and on pomodoro phase changes (window
         /// attention only where there is no audible bell).
@@ -351,6 +352,9 @@ pub fn init(
     var envmap = try environ.createMap(gpa);
     defer envmap.deinit();
 
+    const wayland_session = envmap.get("WAYLAND_DISPLAY") != null or
+        std.mem.eql(u8, envmap.get("XDG_SESSION_TYPE") orelse "", "wayland");
+
     var dirs = try rex.dirs.Application.resolve(
         gpa,
         terminal_option.name,
@@ -429,7 +433,15 @@ pub fn init(
 
     log.debug("termio.pty: {f}", .{pty});
 
-    var win: Window = try .init(active_config.window.size.width, active_config.window.size.height, active_config.window.title);
+    const platform = Window.choosePlatform(active_config.window.platform, wayland_session);
+    log.debug("platform: {f}, forced: {}", .{ platform, platform.forced });
+
+    var win: Window = try .init(.{
+        .width = active_config.window.size.width,
+        .height = active_config.window.size.height,
+        .title = active_config.window.title,
+        .platform = platform,
+    });
     errdefer win.deinit();
 
     var rasterizer: Rasterizer = try .create(gpa, active_config.font);
@@ -1182,6 +1194,10 @@ pub fn reloadConfig(self: *App) void {
         self.needs_redraw = true;
         return;
     };
+
+    if (new_config.window.platform != self.config.window.platform) {
+        log.info("window.platform takes effect on the next start", .{});
+    }
 
     // Freeing the old arena leaves the rasterizer with a dangling font path:
     // FreeType keeps the path pointer in its stream (src/base/ftsystem.c:252)
