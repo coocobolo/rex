@@ -27,6 +27,7 @@
 #   PASTES         number of pastes (default 20)
 #   PASTE_KIB      size of each paste in KiB (default 1024)
 #   FONT_CYCLES    font cycles; each is 5 steps up and 5 down (default 10)
+#   FONT_SAMPLE_EVERY  record RSS after every N font cycles (default 0, off)
 #   PASTE_VERIFY   1: the sink writes to a file instead of /dev/null, and the
 #                  pasted bytes are checked against the expected data
 #   RELOADS        config reloads (SIGHUP) after the font changes (default 0)
@@ -46,6 +47,7 @@ idle_seconds="${IDLE_SECONDS:-60}"
 pastes="${PASTES:-20}"
 paste_kib="${PASTE_KIB:-1024}"
 font_cycles="${FONT_CYCLES:-10}"
+font_sample_every="${FONT_SAMPLE_EVERY:-0}"
 paste_verify="${PASTE_VERIFY:-0}"
 reloads="${RELOADS:-0}"
 clean_exit="${CLEAN_EXIT:-0}"
@@ -168,6 +170,9 @@ launch() {
     say "sink_extra_fds=$(wc -w <<< "$extra")${extra:+ ($extra)}"
     win=$(timeout 10 xdotool search --sync --pid "$rex" | head -1) || die "rex $rex has no window"
     sleep 2 # startup settles: glyph warmup, first frames
+    # The GLX vendor library Rex loaded, e.g. libGLX_nvidia or libGLX_mesa
+    # (selectable with __GLX_VENDOR_LIBRARY_NAME).
+    say "glx_vendor=$(grep -o 'libGLX_[a-z]*' "/proc/$rex/maps" | sort -u | tr '\n' ' ')"
 }
 
 stop() {
@@ -269,6 +274,9 @@ rss_before=$(rss_kb "$rex")
 for i in $(seq "$font_cycles"); do
     keys ctrl+equal ctrl+equal ctrl+equal ctrl+equal ctrl+equal \
         ctrl+minus ctrl+minus ctrl+minus ctrl+minus ctrl+minus
+    if [ "$font_sample_every" -gt 0 ] && [ $((i % font_sample_every)) = 0 ]; then
+        say "font_rss cycle=$i changes=$((i * 10)) kb=$(rss_kb "$rex")"
+    fi
 done
 keys ctrl+0
 sleep 1
