@@ -108,11 +108,58 @@ Notes:
   while idle) includes the desktop on a 165 Hz display and can't be
   attributed to Rex.
 
-## 3. Not measured yet
+## 3. Input latency inside Rex (added 2026-11-07)
 
-- **Input latency.** Needs per-stage timestamps in the code (an optional
-  build flag) for the internal breakdown, plus an end-to-end
-  keystroke-to-pixel tool (e.g. Typometer) to compare with other terminals.
+Measured later than the rest of this page, at `6a16182` (`cc4c6b2` plus the
+HiDPI, Wayland and tracing work), same machine, X11 session, ReleaseFast,
+vsync on (`glfwSwapInterval(1)`, 165 Hz). `LATENCY_KEYS=1000
+scripts/perf-gui.sh ReleaseFast` builds Rex with `-Dtrace-latency` and types
+1,000 keys 50 ms apart through XTEST: batches of 15 `a` and a Return. Rex's
+child is the `cat` sink with the tty in canonical mode and echo on, so the
+kernel echoes each key and no shell is involved. `scripts/latency-report.sh`
+summarizes the trace. Stages are defined in `src/driver/latency_trace.zig`.
+All 1,000 keys matched in both scenarios. Times in microseconds.
+
+| Step | Quiet median | Quiet p95 | Quiet p99 | Loaded median | Loaded p95 | Loaded p99 |
+|---|---|---|---|---|---|---|
+| key callback -> queued | 2.4 | 4.2 | 5.5 | 1.3 | 3.0 | 6.5 |
+| queued -> written to the pty | 17.3 | 25.8 | 33.1 | 1,222 | 3,935 | 5,140 |
+| written -> echo read | 15.0 | 22.0 | 32.0 | 26.4 | 40.0 | 71.7 |
+| echo read -> frame published | 11.9 | 22.0 | 36.8 | 510 | 2,268 | 3,520 |
+| published -> picked by the GUI | 10.9 | 15.7 | 22.7 | 4,151 | 5,732 | 7,145 |
+| picked -> drawn (build + draw calls) | 166.5 | 288.6 | 2,407 | 301 | 6,252 | 6,654 |
+| drawn -> `swapBuffers` returned | 46.9 | 106.1 | 1,911 | 5,514 | 5,852 | 7,683 |
+| **key -> swapped** | **275.6** | **546.5** | **3,255** | **12,029** | **13,114** | **18,163** |
+
+Quiet: an idle terminal. Loaded: a `yes` process streams 76-column lines
+into the pty while the keys are typed.
+
+Notes:
+
+- **Loaded numbers are a lower bound.** With output streaming in, the first
+  pty read after a key is almost always program output, not the echo, so
+  from "echo read" on the loaded column follows the first output after the
+  key. The frame that shows the key's own echo can only be the same or a
+  later one.
+- **Quiet:** the pty round trip (queued to echo read) is about 32 us at the
+  median. Building and drawing the frame is the largest step (167 us
+  median), and its p99 of 2.4 ms is the main source of the 3.3 ms p99.
+  Not investigated yet.
+- **Loaded:** about 12 ms at the median, two frames at 165 Hz. Where the
+  time goes was not investigated: the worker writes a queued key only after
+  it has handled the output it was busy with (about 1.2 ms), the GUI picks up
+  a new frame about 4 ms after it was published, and `swapBuffers` blocks
+  for about 5.5 ms, close to one 6.06 ms frame interval, which suggests it
+  waits for vsync with frames already queued. These are hypotheses, not
+  measurements of cause.
+- **Not covered:** time before the key callback (input device, X server,
+  GLFW dispatch, events waiting while the GUI thread is busy) and after
+  `swapBuffers` returns (GPU work, compositing, scan-out). An end-to-end
+  keystroke-to-pixel tool (#10) is needed for those and for comparing with
+  other terminals.
+
+## 4. Not measured yet
+
 - **Font-change time.**
 
 ## Reproducing
@@ -124,4 +171,6 @@ scripts/perf-bench.sh                 # section 1 (needs the perf-bench.sh fix, 
 # section 2: copy scripts/perf-gui.sh from a newer checkout, then
 scripts/perf-gui.sh ReleaseSafe       # X11 only; takes the keyboard focus for ~3 minutes
 scripts/perf-gui.sh ReleaseFast
+# section 3, at 6a16182 or later (also runs in a Wayland session, on XWayland):
+LATENCY_KEYS=1000 scripts/perf-gui.sh ReleaseFast
 ```
