@@ -114,6 +114,9 @@ library: c.FT_Library,
 face: struct {
     bold: c.FT_Face,
     bold_italic: c.FT_Face,
+    /// Null when no emoji font is configured. FreeType's
+    /// `FT_Get_Char_Index` returns 0 for a null face, so `findFace`
+    /// skips it without a check.
     emoji: c.FT_Face,
     italic: c.FT_Face,
     regular: c.FT_Face,
@@ -148,7 +151,7 @@ pub const empty: Rasterizer = .{
     .face = .{
         .bold = undefined,
         .bold_italic = undefined,
-        .emoji = undefined,
+        .emoji = null,
         .italic = undefined,
         .regular = undefined,
     },
@@ -345,7 +348,7 @@ pub fn destroy(self: *Rasterizer, gpa: Allocator) void {
     ft.doneFace(self.face.italic) catch {};
     ft.doneFace(self.face.bold) catch {};
     ft.doneFace(self.face.bold_italic) catch {};
-    ft.doneFace(self.face.emoji) catch {};
+    if (self.face.emoji != null) ft.doneFace(self.face.emoji) catch {};
 
     for (self.fallback_faces) |fb| ft.doneFace(fb) catch {};
     gpa.free(self.fallback_faces);
