@@ -328,6 +328,9 @@ pub fn build(b: *std.Build) !void {
     const test_step = b.step("test", "Run all tests");
     test_step.dependOn(tests.run(tests.add("test-rex", mod, test_filters)));
     test_step.dependOn(tests.run(tests.add("test-exe", exe.root_module, test_filters)));
+    // `test` doesn't run the benchmark, but it compiles it, so a change the
+    // benchmark cases depend on can't break `perf-bench.sh` unnoticed.
+    test_step.dependOn(&bench.step);
 
     // Fuzzing (see CONTRIBUTING.md, "Fuzzing"):
     //   - One target per file in src/fuzz/, each built on

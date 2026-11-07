@@ -88,7 +88,7 @@ Run them:
 
 | Command | Runs |
 | --- | --- |
-| `zig build test` | everything, each test once |
+| `zig build test` | everything, each test once; also compiles the benchmark |
 | `zig build test-term` | `term/` (screen, dispatcher, input engine) |
 | `zig build test-vt` | the VT parser |
 | `zig build test-unicode` | width tables and decoders |
