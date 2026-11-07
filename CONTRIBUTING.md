@@ -1,5 +1,43 @@
 # Contributing
 
+## Development setup
+
+Rex builds on Linux with Zig 0.16.0 (`minimum_zig_version` in
+`build.zig.zon`) and glibc 2.34 or later; `dlopen` and `pthread_*` are
+part of libc from 2.34 on, and `build.zig` stops with a message on an
+older glibc. GLFW and FreeType come from `build.zig.zon` and GLAD is
+vendored; the rest comes from the system:
+
+| Need | For | Debian/Ubuntu package |
+| --- | --- | --- |
+| X11 headers | GLFW's X11 backend | `libx11-dev libxcursor-dev libxrandr-dev libxinerama-dev libxi-dev libxext-dev` |
+| Wayland headers, `wayland-scanner` | GLFW's Wayland backend and its protocol code | `libwayland-dev libwayland-bin` |
+| xkbcommon headers | GLFW's Wayland backend | `libxkbcommon-dev` |
+| libpng, zlib | FreeType | `libpng-dev zlib1g-dev` |
+| Xvfb, Mesa | GL tests without a display, as in CI | `xvfb libgl1-mesa-dri` |
+| kcov | `-Dcoverage` | `kcov` |
+| xdotool, xclip, pidstat, bc | `scripts/perf-gui.sh`, X11 only | `xdotool xclip sysstat bc` |
+
+To build and test:
+
+    sudo apt install libx11-dev libxcursor-dev libxrandr-dev libxinerama-dev \
+        libxi-dev libxext-dev libwayland-dev libwayland-bin libxkbcommon-dev \
+        libpng-dev zlib1g-dev
+    zig build test
+
+No X11, Wayland, GL or EGL library is linked: GLFW loads them at
+runtime, and so does the bell (libX11). A release build depends on
+libpng, libm and libc only; Debug builds also keep zlib.
+
+Running Rex needs an X11 or Wayland session and an OpenGL 3.3 core
+driver. On Wayland it runs natively;
+`window.platform = auto|wayland|x11` in the config overrides the
+choice (ADR 0001). The default fonts in `src/main.zig` are the
+maintainer's: the upright and italic faces and the emoji font must
+exist, or Rex stops at startup, while missing fallbacks are skipped.
+`font_family` replaces only the upright face (a file path); change the
+other paths in `src/main.zig` locally.
+
 ## Code style
 
 Check each file you touch against this list.
