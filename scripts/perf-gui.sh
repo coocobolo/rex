@@ -34,6 +34,24 @@
 #   CLEAN_EXIT     1: end each Rex by ending its child, so it exits normally
 #                  and runs its cleanup, instead of being killed (default 0)
 #   SKIP_THROUGHPUT 1: skip the throughput instance (default 0)
+#   LATENCY_KEYS   N > 0: run only the input latency measurement, N keys per
+#                  scenario, with a -Dtrace-latency build (default 0, off)
+#   LATENCY_INTERVAL_MS  pause between keys (default 50); longer than one
+#                  round trip, since the trace matches one key in flight
+#   LATENCY_LOAD   1: also measure while output streams into the terminal
+#                  (default 1)
+#
+# Latency mode. Rex's child is the same `cat` sink, with the tty in
+# canonical mode and echo on, so the kernel echoes each typed key and no
+# shell takes part in the round trip. Keys go out in batches of 15 `a`
+# and a Return (which ends the kernel's line before its 4095-byte limit),
+# and the script checks before each batch that Rex's window has the
+# keyboard focus. Rex is always ended through its child so it exits
+# normally and writes its trace. In a Wayland session Rex runs on X11
+# through XWayland, so that path is what gets measured. Under load the
+# first pty read after a key is usually program output rather than the
+# echo, so "echoed" there means "first output after the key" and the
+# result is a lower bound for the key's own echo.
 #
 # Output: perf-results/runs/gui-<ts>_<sha>[-dirty]_<mode>/
 #   result.txt   the numbers below
@@ -52,10 +70,19 @@ paste_verify="${PASTE_VERIFY:-0}"
 reloads="${RELOADS:-0}"
 clean_exit="${CLEAN_EXIT:-0}"
 skip_throughput="${SKIP_THROUGHPUT:-0}"
+latency_keys="${LATENCY_KEYS:-0}"
+latency_interval_ms="${LATENCY_INTERVAL_MS:-50}"
+latency_load="${LATENCY_LOAD:-1}"
 
 die() { echo "error: $*" >&2; exit 1; }
 
-[ "${XDG_SESSION_TYPE:-}" = x11 ] || die "needs an X11 session (XDG_SESSION_TYPE=${XDG_SESSION_TYPE:-unset})"
+# Latency mode also runs in a Wayland session, with Rex on XWayland.
+platform=x11
+case "${XDG_SESSION_TYPE:-}" in
+x11) ;;
+wayland) [ "$latency_keys" -gt 0 ] && platform=xwayland || die "needs an X11 session; only LATENCY_KEYS runs under Wayland (on XWayland)" ;;
+*) die "needs an X11 session (XDG_SESSION_TYPE=${XDG_SESSION_TYPE:-unset})" ;;
+esac
 
 # One run at a time, across all checkouts: two runs would fight over the
 # keyboard focus and the CPU, and both would report wrong numbers.
@@ -72,6 +99,7 @@ git diff --quiet HEAD -- || sha="$sha-dirty"
 out="$PWD/perf-results/runs/gui-$(date +%Y%m%dT%H%M%S)_${sha}_${mode}"
 data=".bench/gui-data"
 prefix=".bench/gui-$mode"
+[ "$latency_keys" -gt 0 ] && prefix=".bench/gui-$mode-trace"
 mkdir -p "$out" "$data"
 result="$out/result.txt"
 say() { echo "$*" | tee -a "$result"; }
@@ -88,9 +116,21 @@ sink_target=/dev/null
 # so the pty never hangs up and the child would outlive Rex.
 rex=""
 sink=""
+loader=""
 clipboard_saved=0
+# Extra environment for the next `launch`, as NAME=value words.
+launch_env=()
+
+# Stops the background output writer of the loaded latency scenario.
+stop_loader() {
+    [ -n "$loader" ] || return 0
+    kill "$loader" 2>/dev/null || true
+    wait "$loader" 2>/dev/null || true
+    loader=""
+}
 
 cleanup() {
+    stop_loader
     [ -z "$rex" ] || kill "$rex" 2>/dev/null || true
     [ -z "$sink" ] || kill "$sink" 2>/dev/null || true
     if [ "$clipboard_saved" = 1 ]; then
@@ -107,12 +147,20 @@ if xclip -selection clipboard -o > "$out/clipboard.saved" 2>/dev/null; then
     clipboard_saved=1
 fi
 
-zig build -Doptimize="$mode" -p "$prefix" >/dev/null
+if [ "$latency_keys" -gt 0 ]; then
+    zig build -Doptimize="$mode" -Dtrace-latency -p "$prefix" >/dev/null
+else
+    zig build -Doptimize="$mode" -p "$prefix" >/dev/null
+fi
 
 # A real config file in the sandbox, so startup and reloads go through the
 # config loading path (keymap merging and the rest), not only the defaults.
 mkdir -p "$sandbox/.config/rex"
 "$prefix/bin/rex" config dump-default > "$sandbox/.config/rex/config"
+if [ "$platform" = xwayland ]; then
+    sed -i 's/^platform = auto$/platform = x11/' "$sandbox/.config/rex/config"
+    grep -q '^platform = x11$' "$sandbox/.config/rex/config" || die "couldn't set platform = x11 in the sandbox config"
+fi
 
 # Test data, generated once and reused across runs.
 plain="$data/plain-100M.txt"
@@ -150,7 +198,7 @@ launch() {
     printf 'HISTFILE=/dev/null\nstty %s\nexec cat > %q\n' "$3" "$sink_target" > "$sandbox/.bashrc"
     # 9>&-: Rex and everything it starts must not inherit the lock.
     env -u XDG_CONFIG_HOME -u XDG_DATA_HOME -u XDG_STATE_HOME -u XDG_CACHE_HOME \
-        HOME="$sandbox" "$prefix/bin/rex" > "$log" 2>&1 9>&- &
+        HOME="$sandbox" "${launch_env[@]}" "$prefix/bin/rex" > "$log" 2>&1 9>&- &
     rex=$!
     pts=""
     for i in $(seq 100); do
@@ -223,6 +271,47 @@ keys() {
 }
 
 say "== perf-gui $mode @ $sha, $(date -Iseconds) =="
+
+# Types LATENCY_KEYS keys into a traced Rex and summarizes its trace.
+# $1 is the scenario: quiet, or loaded (output streams in meanwhile).
+latency_run() {
+    local csv="$out/latency-$1.csv" sent=0 batch i keys_arg
+    launch_env=("REX_LATENCY_TRACE=$csv")
+    launch "latency-$1" /dev/null "sane echo"
+    launch_env=()
+    if [ "$1" = loaded ]; then
+        # One process, so stopping it leaves nothing behind: 76-column
+        # lines of the plain test data, as fast as Rex takes them.
+        yes "$(head -1 "$plain")" > "$pts" 2>/dev/null 9>&- &
+        loader=$!
+        sleep 1
+    fi
+    say "-- latency $1: $latency_keys keys, ${latency_interval_ms} ms apart"
+    while [ "$sent" -lt "$latency_keys" ]; do
+        batch=$((latency_keys - sent < 16 ? latency_keys - sent : 16))
+        keys_arg="" # batch - 1 times `a`; the last key is Return
+        for ((i = 1; i < batch; i++)); do keys_arg+="a "; done
+        assert_sink
+        xdotool windowactivate --sync "$win"
+        [ "$(xdotool getactivewindow)" = "$win" ] || die "Rex's window lost the keyboard focus; stopped typing"
+        # shellcheck disable=SC2086 # keys_arg is a list of key names
+        xdotool key --clearmodifiers --delay "$latency_interval_ms" $keys_arg Return
+        sent=$((sent + batch))
+    done
+    sleep 1
+    stop_loader
+    clean_exit=1 stop
+    [ -s "$csv" ] || die "Rex wrote no latency trace to $csv; see $out/rex-latency-$1.log"
+    scripts/latency-report.sh "$csv" | tee -a "$result"
+}
+
+if [ "$latency_keys" -gt 0 ]; then
+    say "platform=$platform"
+    latency_run quiet
+    [ "$latency_load" = 1 ] && latency_run loaded
+    say "results: $result"
+    exit 0
+fi
 say "pastes=$pastes x ${paste_kib} KiB, font_cycles=$font_cycles, idle=${idle_seconds}s"
 
 # Instance 1: idle, then pastes, then font changes. Raw mode, so the kernel

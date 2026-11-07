@@ -9,10 +9,13 @@ the benchmark binary itself is `zig-out/bin/benchmark` (sources in `bench/`).
 | `perf-compare.sh` | compare any two `.jsonl` result files |
 | `perf-md.sh` | generate a markdown table from a blessed baseline |
 | `perf-gui.sh` | measure a running Rex (X11): idle CPU and wakeups, output throughput, memory growth from pastes and font changes |
+| `latency-report.sh` | median, p95, p99 and max per stage from a `-Dtrace-latency` trace (`LATENCY_KEYS=N perf-gui.sh` runs one) |
 
 Requirements: `perf`, `zig`, `taskset`, `awk`. `jq` is needed by `perf-compare.sh` and `perf-md.sh`.
 `perf-gui.sh` needs an X11 session and `xdotool`, `xclip`, `pidstat`, `bc`; it takes over the
 keyboard focus while it runs (see the script header).
+With `LATENCY_KEYS=N` it only measures input latency, quiet and under output load, with a
+`-Dtrace-latency` build; that mode also runs in a Wayland session, with Rex on XWayland.
 
 ## Quick start
 
