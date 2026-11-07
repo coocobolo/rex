@@ -1,10 +1,10 @@
 [Desktop Entry]
 Type=Application
-Version=0.1
+Version=1.5
 Name=rex
 GenericName=Utility
 Exec=rex
 Icon=rex
 Terminal=false
-Categories=Utility;Development;System;
+Categories=System;TerminalEmulator;
 Keywords=t;trex;terminal;term;t-rex;
