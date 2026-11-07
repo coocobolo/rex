@@ -21,6 +21,7 @@ pub const threaded = @import("threaded.zig");
 pub const triple_buffer = @import("triple_buffer.zig");
 pub const InputQueue = @import("InputQueue.zig");
 pub const OutboundQueue = @import("OutboundQueue.zig");
+pub const latency_trace = @import("latency_trace.zig");
 
 pub const Events = @import("Events.zig");
 pub const EventBits = Events.Bits;
@@ -38,6 +39,7 @@ pub const WakeupChannel = InputQueue.WakeupChannel;
 test {
     _ = @import("Events.zig");
     _ = @import("InputQueue.zig");
+    _ = @import("latency_trace_test.zig");
     _ = @import("OutboundQueue.zig");
     _ = @import("paste_test.zig");
     _ = @import("triple_buffer.zig");
@@ -122,6 +124,15 @@ pub fn Driver(comptime option: Option) type {
             return switch (self.*) {
                 .single => |*d| d.getFrame(),
                 .threaded => |d| d.getFrame(),
+            };
+        }
+
+        /// The traced key whose echo is the newest one in the frame
+        /// `getFrame` returned last, or 0. Only the threaded driver traces.
+        pub fn latencyFrameSeq(self: *const Self) u32 {
+            return switch (self.*) {
+                .single => 0,
+                .threaded => |d| d.latencyFrameSeq(),
             };
         }
 
@@ -281,7 +292,7 @@ test "driver: Driver polymorphic union dispatch" {
     }
 
     {
-        const th: *Threaded(opt) = try .create(testing.allocator, testing.io, Pty.inactive, Theme.graphite, 200);
+        const th: *Threaded(opt) = try .create(testing.allocator, testing.io, Pty.inactive, Theme.graphite, 200, latency_trace.none);
         var driver: Driver(opt) = .{ .threaded = th };
         defer driver.deinit();
 

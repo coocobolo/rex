@@ -37,6 +37,7 @@ pub const InputQueue = @import("InputQueue.zig");
 pub const InputEvent = InputQueue.InputEvent;
 const OutboundQueue = @import("OutboundQueue.zig");
 const paste = @import("paste.zig");
+const latency_trace = @import("latency_trace.zig");
 
 const triple_buffer = @import("triple_buffer.zig");
 pub const TripleBuffer = triple_buffer.Buffer;
@@ -77,6 +78,15 @@ pub fn Driver(comptime option: Option) type {
         terminal: ?*TerminalType = null,
         terminal_mutex: std.Io.Mutex align(64) = .init,
         wakeup_fn: ?*const fn () void = null,
+        /// The latency trace this driver writes to, owned by the caller of
+        /// `create` and valid until `destroy` returns.
+        latency: latency_trace.Handle,
+        /// Per triple-buffer slot, the traced key whose echo is the newest
+        /// in that slot's frame. The worker writes the fill slot before
+        /// publishing it and the GUI reads the read slot after acquiring
+        /// it, so the slots follow the frames' ownership.
+        latency_slot_seq: if (latency_trace.enabled) [3]u32 else void =
+            if (latency_trace.enabled) @splat(0) else {},
 
         comptime {
             std.debug.assert(@offsetOf(Self, "last_frame") / 64 != @offsetOf(Self, "shared_modes") / 64);
@@ -89,7 +99,8 @@ pub fn Driver(comptime option: Option) type {
         pub const Modes = SharedModes;
 
         /// Creates and starts the ThreadedDriver and its background worker thread.
-        pub fn create(allocator: Allocator, io: std.Io, pty: Pty, theme: Theme, sync_output_timeout_ms: u32) !*Self {
+        /// `latency` is `latency_trace.none` unless the caller traces.
+        pub fn create(allocator: Allocator, io: std.Io, pty: Pty, theme: Theme, sync_output_timeout_ms: u32, latency: latency_trace.Handle) !*Self {
             const self = try allocator.create(Self);
             errdefer allocator.destroy(self);
 
@@ -118,6 +129,7 @@ pub fn Driver(comptime option: Option) type {
                 .terminal = null,
                 .terminal_mutex = .init,
                 .wakeup_fn = null,
+                .latency = latency,
             };
 
             const thread = try std.Thread.spawn(.{}, workerThreadMain, .{ self, theme });
@@ -186,6 +198,9 @@ pub fn Driver(comptime option: Option) type {
 
             // Bytes for the pty that the kernel hasn't accepted yet. Owned by
             // this thread; POLLOUT is watched only while it isn't empty.
+            // Matches traced keys to their echo; used only with a trace.
+            var latency_worker: latency_trace.Worker = .{};
+
             var outbound: OutboundQueue = .init(OutboundQueue.default_limit);
             defer {
                 const dropped = outbound.discard(self.allocator);
@@ -229,6 +244,9 @@ pub fn Driver(comptime option: Option) type {
                         self.processInputEvent(&terminal, &reply_buffer, &outbound, ev);
                         had_input = true;
                     }
+                    if (latency_trace.enabled) {
+                        if (self.latency) |trace| latency_worker.inputHandled(trace);
+                    }
                 }
 
                 if (!child_closed and pollfds[0].fd >= 0 and (pollfds[0].revents & (system.POLL.IN | system.POLL.HUP | system.POLL.ERR)) != 0) {
@@ -248,6 +266,10 @@ pub fn Driver(comptime option: Option) type {
                         if (n == 0) {
                             child_closed = true;
                             break :drain;
+                        }
+
+                        if (latency_trace.enabled and total_read == 0) {
+                            if (self.latency) |trace| latency_worker.read(trace, latency_trace.now(self.io));
                         }
 
                         terminal.feed(read_buffer[0..n]);
@@ -280,6 +302,9 @@ pub fn Driver(comptime option: Option) type {
                 // Write what the kernel accepts now: input queued this round, or
                 // older bytes once POLLOUT says there's room again.
                 if (!child_closed) self.flushOutbound(&outbound);
+                if (latency_trace.enabled and latency_worker.awaiting_write != 0) {
+                    if (self.latency) |trace| latency_worker.flushed(trace, outbound.isEmpty(), latency_trace.now(self.io));
+                }
 
                 self.updateSharedModes(&terminal);
 
@@ -309,7 +334,17 @@ pub fn Driver(comptime option: Option) type {
 
                 if (should_publish) {
                     self.triple_buffer.getFillFrame().copyFrom(&local_frame);
+                    if (latency_trace.enabled) {
+                        self.latency_slot_seq[self.triple_buffer.fill_idx] = latency_worker.echoed;
+                    }
                     self.triple_buffer.publish();
+                    if (latency_trace.enabled) {
+                        if (self.latency) |trace| {
+                            if (latency_worker.echoed != latency_worker.published) {
+                                latency_worker.framePublished(trace, latency_trace.now(self.io));
+                            }
+                        }
+                    }
                     if (self.wakeup_fn) |wake| wake();
                 } else if (child_closed or (terminal.events.any())) {
                     if (self.wakeup_fn) |wake| wake();
@@ -493,6 +528,12 @@ pub fn Driver(comptime option: Option) type {
             return self.last_frame orelse &self.triple_buffer.frames[self.triple_buffer.read_idx];
         }
 
+        /// The traced key whose echo is the newest in the frame `getFrame`
+        /// returned last, or 0. GUI thread only.
+        pub fn latencyFrameSeq(self: *const Self) u32 {
+            return if (latency_trace.enabled) self.latency_slot_seq[self.triple_buffer.read_idx] else 0;
+        }
+
         /// Returns true if a fresh frame is ready in the TripleBuffer.
         pub inline fn hasNewFrame(self: *const Self) bool {
             return self.triple_buffer.hasNew();
@@ -602,7 +643,7 @@ test "ThreadedDriver: create, destroy and basic frame acquisition" {
         .error_read_fd = -1,
     };
 
-    var driver = try DriverType.create(testing.allocator, testing.io, mock_pty, Theme.graphite, 150);
+    var driver = try DriverType.create(testing.allocator, testing.io, mock_pty, Theme.graphite, 150, latency_trace.none);
     defer {
         driver.pty.pid = -1;
         driver.destroy();
@@ -639,7 +680,7 @@ test "ThreadedDriver: async PTY input, frame update, and GUI reply" {
         .error_read_fd = -1,
     };
 
-    var driver = try DriverType.create(testing.allocator, testing.io, mock_pty, Theme.graphite, 150);
+    var driver = try DriverType.create(testing.allocator, testing.io, mock_pty, Theme.graphite, 150, latency_trace.none);
     defer driver.destroy();
 
     // Simulate child outputting characters
@@ -700,7 +741,7 @@ test "ThreadedDriver: Mode 2026 synchronized output hold and release" {
         .error_read_fd = -1,
     };
 
-    var driver = try DriverType.create(testing.allocator, testing.io, mock_pty, Theme.graphite, 150);
+    var driver = try DriverType.create(testing.allocator, testing.io, mock_pty, Theme.graphite, 150, latency_trace.none);
     defer driver.destroy();
 
     // Begin synchronized output: \x1b[?2026h, write text
@@ -760,7 +801,7 @@ test "ThreadedDriver: wakeup_fn callback and alternate screen alt_scroll" {
         .error_read_fd = -1,
     };
 
-    var driver = try DriverType.create(testing.allocator, testing.io, mock_pty, Theme.graphite, 150);
+    var driver = try DriverType.create(testing.allocator, testing.io, mock_pty, Theme.graphite, 150, latency_trace.none);
     defer driver.destroy();
 
     test_wake_count.store(0, .release);
@@ -826,7 +867,7 @@ test "ThreadedDriver: a 1 MiB paste reaches a child that echoes it back" {
     defer _ = system.close(sv[1]);
 
     const mock_pty: Pty = .{ .master = sv[0], .pid = -1, .stdout_read_fd = -1, .error_read_fd = -1 };
-    var driver = try DriverType.create(gpa, testing.io, mock_pty, Theme.graphite, 150);
+    var driver = try DriverType.create(gpa, testing.io, mock_pty, Theme.graphite, 150, latency_trace.none);
     defer driver.destroy();
 
     // Printable lines, so the echoed bytes are ordinary terminal output.
@@ -877,7 +918,7 @@ test "ThreadedDriver: pasted text can't end a bracketed paste early" {
     defer _ = system.close(sv[1]);
 
     const mock_pty: Pty = .{ .master = sv[0], .pid = -1, .stdout_read_fd = -1, .error_read_fd = -1 };
-    var driver = try DriverType.create(gpa, testing.io, mock_pty, Theme.graphite, 150);
+    var driver = try DriverType.create(gpa, testing.io, mock_pty, Theme.graphite, 150, latency_trace.none);
     defer driver.destroy();
 
     // The child turns bracketed paste on; wait until the worker has seen it.

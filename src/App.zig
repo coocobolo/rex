@@ -62,6 +62,7 @@ const Binding = input.Binding;
 const KeyContext = input.KeyContext;
 
 const Pty = rex.termio.Pty;
+const latency_trace = rex.driver.latency_trace;
 
 const Theme = rex.terminal.Theme;
 const Color = rex.terminal.cell.Color;
@@ -252,6 +253,14 @@ frame_builder: FrameBuilderType,
 io: std.Io,
 renderer: RendererType,
 driver: Driver,
+
+/// Input latency trace (`-Dtrace-latency`), created in `init` and written
+/// to `latency_path` in `deinit` once the driver has stopped.
+latency: latency_trace.Handle = latency_trace.none,
+/// Where the trace goes: `$REX_LATENCY_TRACE`, or `latency-<pid>.csv` in
+/// the state directory. Owned, freed in `deinit`.
+latency_path: if (latency_trace.enabled) []u8 else void =
+    if (latency_trace.enabled) &.{} else {},
 
 word_classifier: unicode.Classifier,
 
@@ -496,9 +505,22 @@ pub fn init(
     var wellbeing_state = wellbeing.Wellbeing.init(active_config.wellbeing);
     wellbeing_state.loadState(io, dirs.state);
 
+    // Created before the driver, which writes to it, and destroyed after it.
+    const latency: latency_trace.Handle = if (latency_trace.enabled) try latency_trace.Trace.create(gpa) else {};
+    errdefer if (latency_trace.enabled) latency.?.destroy(gpa);
+    const latency_path = if (latency_trace.enabled) environ.getAlloc(gpa, "REX_LATENCY_TRACE") catch |err| switch (err) {
+        error.EnvironmentVariableMissing => try std.fmt.allocPrint(gpa, "{s}/latency-{d}.csv", .{ dirs.state, std.c.getpid() }),
+        else => |e| return e,
+    } else {};
+    errdefer if (latency_trace.enabled) gpa.free(latency_path);
+    if (latency_trace.enabled) {
+        if (active_config.threading.mode == .single) log.warn("latency trace: the single-threaded driver isn't traced", .{});
+        log.info("latency trace: writing to {s} on exit", .{latency_path});
+    }
+
     var driver: Driver = switch (active_config.threading.mode) {
         .single => .{ .single = try SingleDriverType.initWithTimeout(gpa, io, pty, active_config.theme, active_config.threading.sync_output_timeout_ms) },
-        .multi => .{ .threaded = try ThreadedDriverType.create(gpa, io, pty, active_config.theme, active_config.threading.sync_output_timeout_ms) },
+        .multi => .{ .threaded = try ThreadedDriverType.create(gpa, io, pty, active_config.theme, active_config.threading.sync_output_timeout_ms, latency) },
     };
     errdefer driver.deinit();
 
@@ -537,6 +559,8 @@ pub fn init(
     const app = App{
         .io = io,
         .driver = driver,
+        .latency = latency,
+        .latency_path = latency_path,
         .window = win,
         .background_color = .{ background_color.r, background_color.g, background_color.b, background_alpha },
         .blink = .{ .period_ms = active_config.blink.half_period },
@@ -578,6 +602,16 @@ pub fn deinit(self: *App, gpa: std.mem.Allocator) void {
     self.rasterizer.destroy(gpa);
     self.window.deinit();
     self.driver.deinit();
+    if (latency_trace.enabled) {
+        // The driver's worker has been joined, so the trace is complete.
+        if (self.latency.?.writeFile(self.io, self.latency_path)) {
+            log.info("latency trace written to {s}", .{self.latency_path});
+        } else |err| {
+            log.err("cannot write the latency trace to {s}: {}", .{ self.latency_path, err });
+        }
+        self.latency.?.destroy(gpa);
+        gpa.free(self.latency_path);
+    }
     self.wellbeing_overlay.deinit(gpa);
 
     self.wellbeing_state.saveState(self.io, self.dirs.state) catch |err| {
@@ -738,13 +772,28 @@ pub fn run(self: *App) !void {
         }
 
         self.waitForNextEvent(had_data);
+        if (latency_trace.enabled) self.latency.?.eventsHandled();
         self.flushScroll();
     }
+}
+
+/// Starts tracing bytes about to go to the driver; pair with
+/// `latencyQueued`. Only with `-Dtrace-latency`.
+fn latencyBeginSend(self: *App) u32 {
+    return self.latency.?.beginSend(latency_trace.now(self.io));
+}
+
+/// The bytes traced as `seq` were pushed to the driver.
+fn latencyQueued(self: *App, seq: u32) void {
+    self.latency.?.stamp(seq, .queued, latency_trace.now(self.io));
 }
 
 fn renderFrame(self: *App) !bool {
     const atlas = &self.atlas;
     const current_frame = self.driver.getFrame();
+    if (latency_trace.enabled) {
+        self.latency.?.framePicked(self.driver.latencyFrameSeq(), latency_trace.now(self.io));
+    }
 
     const selection_state = self.buildSelectionState(current_frame);
 
@@ -889,7 +938,11 @@ fn renderFrame(self: *App) !bool {
         .{ .blink_on = self.blink_on, .blink_rapid_on = self.blink_rapid_on },
     );
 
+    const swapped_seq = if (latency_trace.enabled) self.latency.?.frameDrawn(latency_trace.now(self.io)) else {};
     self.window.swapBuffers();
+    if (latency_trace.enabled and swapped_seq != 0) {
+        self.latency.?.stamp(swapped_seq, .swapped, latency_trace.now(self.io));
+    }
     return true;
 }
 
@@ -1767,10 +1820,12 @@ const charCb: c.GLFWcharfun = struct {
         var buf: [4]u8 = undefined;
         const len = std.unicode.utf8Encode(cp, &buf) catch return;
         if (len > 0) {
+            const seq = if (latency_trace.enabled) app.latencyBeginSend() else {};
             app.driver.sendBytes(buf[0..len]) catch |err| {
                 log.err("charCallback: driver sendBytes failed: {}", .{err});
                 return;
             };
+            if (latency_trace.enabled) app.latencyQueued(seq);
             app.snapToLiveView();
         }
     }
@@ -1780,6 +1835,7 @@ const keyCb: c.GLFWkeyfun = struct {
     fn cb(window: ?*c.GLFWwindow, key: c_int, _: c_int, action: c_int, mods: c_int) callconv(.c) void {
         const app: *App = @ptrCast(@alignCast(c.glfwGetWindowUserPointer(window) orelse return));
         if (action == c.GLFW_RELEASE) return;
+        const pressed_at = if (latency_trace.enabled) latency_trace.now(app.io) else {};
         app.wellbeing_state.recordActivity();
 
         const maybe_key = rex.input.Key.fromGlfw(key);
@@ -1796,6 +1852,8 @@ const keyCb: c.GLFWkeyfun = struct {
         if (!input.isModifierKey(key)) {
             app.selection = .empty;
             app.needs_redraw = true;
+            // Its bytes may come from here or from the char callback.
+            if (latency_trace.enabled) app.latency.?.keyPressed(pressed_at);
         }
 
         // Terminal key encoding
@@ -1809,10 +1867,12 @@ const keyCb: c.GLFWkeyfun = struct {
         var buf: [32]u8 = undefined;
         const bytes = rex.input.encodeKey(key, mods, context, &buf);
         if (bytes.len > 0) {
+            const seq = if (latency_trace.enabled) app.latencyBeginSend() else {};
             app.driver.sendBytes(bytes) catch |err| {
                 log.err("keyCallback: driver sendBytes failed: {}", .{err});
                 return;
             };
+            if (latency_trace.enabled) app.latencyQueued(seq);
             app.snapToLiveView();
         }
     }
@@ -2494,7 +2554,7 @@ test "Driver: single and threaded polymorphic dispatch" {
         .error_read_fd = -1,
     };
 
-    const threaded_driver = try ThreadedDriverType.create(allocator, testing.io, pty_multi, .graphite, 150);
+    const threaded_driver = try ThreadedDriverType.create(allocator, testing.io, pty_multi, .graphite, 150, latency_trace.none);
     var driver_m: Driver = .{ .threaded = threaded_driver };
     defer driver_m.deinit();
 

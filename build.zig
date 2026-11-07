@@ -103,6 +103,17 @@ pub fn build(b: *std.Build) !void {
         },
     });
 
+    // Per-stage input latency tracing (src/driver/latency_trace.zig). Off,
+    // the hooks compile to nothing.
+    const trace_latency = b.option(
+        bool,
+        "trace-latency",
+        "Record per-stage input latency and write it as CSV on exit",
+    ) orelse false;
+    const build_options = b.addOptions();
+    build_options.addOption(bool, "trace_latency", trace_latency);
+    mod.addImport("build_options", build_options.createModule());
+
     mod.addIncludePath(freetype_dep.path("include"));
     mod.linkLibrary(freetype_lib);
 
