@@ -869,6 +869,23 @@ test "Terminal: snapshot live view, dirty rows and buffer switch" {
     try testing.expectEqual('H', frame.displayRow(0)[0].codepoint);
 }
 
+test "print: utf-8 continuation bytes in the C1 range are text, not controls" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    // U+2010 is E2 80 90 and U+2022 is E2 80 A2. Fed to the parser as raw
+    // bytes, 0x90 would open a DCS that swallows the SGR after it.
+    t.feed("a\xE2\x80\x90b\xE2\x80\xA2\x1b[1mc");
+
+    try testing.expectEqual(@as(u21, 'a'), t.active().cellAt(0, 0).codepoint);
+    try testing.expectEqual(@as(u21, 0x2010), t.active().cellAt(0, 1).codepoint);
+    try testing.expectEqual(@as(u21, 'b'), t.active().cellAt(0, 2).codepoint);
+    try testing.expectEqual(@as(u21, 0x2022), t.active().cellAt(0, 3).codepoint);
+    try testing.expectEqual(@as(u21, 'c'), t.active().cellAt(0, 4).codepoint);
+    try testing.expectEqual(@as(u16, 5), t.active().cursor.col);
+    try testing.expect(t.active().cursor.attr.flags.bold); // the SGR ran
+}
+
 test "invalid utf-8: sequence cut by ESC is one u+fffd, then ESC runs" {
     var t = try Term.create(alloc);
     defer t.destroy(alloc);
