@@ -180,7 +180,7 @@ pub fn Driver(comptime option: Option) type {
             };
 
             var read_buffer: [64 * 1024]u8 align(64) = undefined;
-            var reply_buffer: [1024]u8 = undefined;
+            var reply_buffer: [term.Response.capacity]u8 = undefined;
             var sync_start: ?std.Io.Clock.Timestamp = null;
             var child_closed = false;
 
@@ -317,13 +317,16 @@ pub fn Driver(comptime option: Option) type {
             }
         }
 
-        fn drainRepliesToPty(self: *Self, terminal: *TerminalType, buf: *[1024]u8, out: *OutboundQueue) void {
-            if (!terminal.hasReplies()) return;
-            while (true) {
-                const n = terminal.drainReplies(buf);
-                if (n == 0) break;
-                self.queue(out, &.{buf[0..n]}) catch break;
+        /// Queues the terminal's replies for the pty and reports replies it
+        /// had to drop. A refused queue append is logged by `queue`.
+        fn drainRepliesToPty(self: *Self, terminal: *TerminalType, buf: *[term.Response.capacity]u8, out: *OutboundQueue) void {
+            const dropped = terminal.takeDroppedReplies();
+            if (dropped > 0) {
+                log.warn("dropped {d} terminal replies: the reply queue ({d} bytes) was full", .{ dropped, term.Response.capacity });
             }
+            if (!terminal.hasReplies()) return;
+            const n = terminal.drainReplies(buf);
+            self.queue(out, &.{buf[0..n]}) catch {};
         }
 
         /// Queues `parts` for the pty as one unit, all or nothing. A refusal
@@ -349,7 +352,7 @@ pub fn Driver(comptime option: Option) type {
             };
         }
 
-        fn processInputEvent(self: *Self, terminal: *TerminalType, reply_buf: *[1024]u8, out: *OutboundQueue, ev: InputEvent) void {
+        fn processInputEvent(self: *Self, terminal: *TerminalType, reply_buf: *[term.Response.capacity]u8, out: *OutboundQueue, ev: InputEvent) void {
             switch (ev) {
                 .bytes => |b| self.queue(out, &.{b.data[0..b.len]}) catch {},
                 .paste => |slice| {
