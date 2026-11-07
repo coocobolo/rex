@@ -92,7 +92,11 @@ pub const Config = struct {
         /// Half period of SGR 6 rapid blink, in ms. 0 turns it off.
         rapid_half_period: u64 = 250,
     },
+    /// `height`, `min_size` and `max_size` are in logical pixels; the
+    /// rasterizer gets `FontConfig.pixelSize(height, content_scale)`.
     font: Freetype.FontConfig,
+    /// Step of increase_font_size and decrease_font_size, in logical pixels.
+    font_size_step: u32 = 2,
     keymap: []const Binding,
     wellbeing: wellbeing.Option = .{},
     termio: rex.termio.pty.SpawnOption,
@@ -278,8 +282,13 @@ scrollbar_drag_offset_y: f32 = 0,
 scrollbar_dragging: bool = false,
 
 // Font state
+/// Current font size, in logical pixels (pixels at 100% scale).
 font_size: u32,
 font_size_pending: ?u32 = null,
+/// The window's display scale (1.0 at 100%). Every size in logical pixels
+/// is multiplied by it on the way to the screen: today the font, later UI
+/// geometry too.
+content_scale: f32,
 
 needs_redraw: bool = true,
 quit_confirm_open: bool = false,
@@ -444,7 +453,12 @@ pub fn init(
     });
     errdefer win.deinit();
 
-    var rasterizer: Rasterizer = try .create(gpa, active_config.font);
+    // The font is rasterized at the display's scale; the config's size is
+    // in logical pixels.
+    const content_scale = win.getWindowContentScale().width;
+    var font_pixels = active_config.font;
+    font_pixels.height = Freetype.FontConfig.pixelSize(active_config.font.height, content_scale);
+    var rasterizer: Rasterizer = try .create(gpa, font_pixels);
     errdefer rasterizer.destroy(gpa);
 
     var atlas: Atlas = try .create(gpa, active_config.window.atlas);
@@ -529,6 +543,7 @@ pub fn init(
         .config_watcher = watcher,
         .config_path = user_cfg_path,
         .font_size = active_config.font.height,
+        .content_scale = content_scale,
         .wellbeing_state = wellbeing_state,
         .wellbeing_overlay = wellbeing_overlay,
         .toast_queue = .{},
@@ -1108,16 +1123,35 @@ pub fn notifySimple(self: *App, title: []const u8, description: []const u8, vari
     });
 }
 
+/// Sets the font size in logical pixels, clamped to the configured bounds,
+/// and reports the result in a toast.
 fn setFontSize(self: *App, new_size: u32) void {
     const clamped_size: u32 = @max(self.config.font.min_size, @min(new_size, self.config.font.max_size));
     if (clamped_size == self.font_size) return;
+    if (!self.rebuildFont(clamped_size, self.content_scale)) return;
 
+    var toast_buf: [64]u8 = undefined;
+    const toast_msg = std.fmt.bufPrint(&toast_buf, "Font: {d} ({d} px at {d}%, cell {d}x{d})", .{
+        clamped_size,
+        Freetype.FontConfig.pixelSize(clamped_size, self.content_scale),
+        @as(u32, @intFromFloat(@round(self.content_scale * 100))),
+        self.rasterizer.cell_width,
+        self.rasterizer.cell_height,
+    }) catch "Font size updated";
+    self.notifySimple(toast_msg, "", .info);
+}
+
+/// Recreates the rasterizer for `size` logical pixels at display `scale`,
+/// clears the glyph atlas and recomputes the grid. Shared by font-size and
+/// scale changes. Returns false, keeping the old font, if the new one
+/// can't be created.
+fn rebuildFont(self: *App, size: u32, scale: f32) bool {
     var font_config = self.config.font;
-    font_config.height = clamped_size;
+    font_config.height = Freetype.FontConfig.pixelSize(size, scale);
     // Create new rasterizer BEFORE destroying old one (avoid dangling ptr on failure)
     const new_rasterizer = Rasterizer.create(self.allocator, font_config) catch |err| {
-        log.err("setFontSize: rasterizer.create failed: {}", .{err});
-        return;
+        log.err("rebuildFont: rasterizer.create failed: {}", .{err});
+        return false;
     };
     self.rasterizer.destroy(self.allocator);
     self.rasterizer = new_rasterizer;
@@ -1129,7 +1163,8 @@ fn setFontSize(self: *App, new_size: u32) void {
     // Invalidate frame builder cached generation
     self.frame_builder.last_generation = null;
 
-    self.font_size = clamped_size;
+    self.font_size = size;
+    self.content_scale = scale;
     self.needs_redraw = true;
 
     // Reset cached fb size to force handleResize to recompute rows/cols
@@ -1137,19 +1172,7 @@ fn setFontSize(self: *App, new_size: u32) void {
 
     const fb = self.window.frameBufferSize(u16);
     self.handleResize(fb);
-
-    var toast_buf: [64]u8 = undefined;
-    const toast_msg = std.fmt.bufPrint(&toast_buf, "Font: {d}pt ({d}x{d} px)", .{
-        clamped_size,
-        self.rasterizer.cell_width,
-        self.rasterizer.cell_height,
-    }) catch "Font size updated";
-    self.notifySimple(toast_msg, "", .info);
-}
-
-fn adjustFontSize(self: *App, delta: i32) void {
-    const new_size: i32 = @as(i32, @intCast(self.font_size)) + delta;
-    self.setFontSize(@intCast(@max(6, new_size)));
+    return true;
 }
 
 pub fn reloadConfig(self: *App) void {
@@ -1257,12 +1280,11 @@ fn handleAction(self: *App, action: rex.input.Action) void {
             self.needs_redraw = true;
         },
         .increase_font_size => {
-            const target = (self.font_size_pending orelse self.font_size) + 2;
+            const target = (self.font_size_pending orelse self.font_size) +| self.config.font_size_step;
             self.font_size_pending = @min(target, self.config.font.max_size);
         },
         .decrease_font_size => {
-            const current = self.font_size_pending orelse self.font_size;
-            const target = if (current > 2) current - 2 else 6;
+            const target = (self.font_size_pending orelse self.font_size) -| self.config.font_size_step;
             self.font_size_pending = @max(target, self.config.font.min_size);
         },
         .reset_font_size => {

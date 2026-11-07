@@ -92,6 +92,20 @@ pub fn parseDurationSeconds(str: []const u8) ?u32 {
 }
 
 /// Normalizes key names by stripping dashes and underscores for case-insensitive matching.
+/// Parses a font size, step or bound in logical pixels: a positive
+/// integer. Anything else is reported and yields null, so the default stays.
+fn parseFontSize(val: []const u8, comptime what: []const u8, line: usize, col: usize, diags: *Diagnostics) ?u32 {
+    const n = std.fmt.parseInt(u32, val, 10) catch {
+        diags.warn(line, col, "invalid " ++ what ++ " '{s}' (expected a positive integer)", .{val});
+        return null;
+    };
+    if (n == 0) {
+        diags.warn(line, col, what ++ " must be at least 1", .{});
+        return null;
+    }
+    return n;
+}
+
 fn matchKey(key: []const u8, comptime target: []const u8) bool {
     var ki: usize = 0;
     var ti: usize = 0;
@@ -191,6 +205,12 @@ pub const Parser = struct {
                         diags.warn(line, col, "invalid font size '{s}'", .{val});
                         return;
                     };
+                } else if (matchKey(key, "font-size-step")) {
+                    config.font_size_step = parseFontSize(val, "font size step", line, col, diags) orelse return;
+                } else if (matchKey(key, "font-size-min")) {
+                    config.font_size_min = parseFontSize(val, "minimum font size", line, col, diags) orelse return;
+                } else if (matchKey(key, "font-size-max")) {
+                    config.font_size_max = parseFontSize(val, "maximum font size", line, col, diags) orelse return;
                 } else if (matchKey(key, "font-weight")) {
                     config.font_weight = std.fmt.parseInt(u16, val, 10) catch {
                         diags.warn(line, col, "invalid font weight '{s}'", .{val});
@@ -215,6 +235,12 @@ pub const Parser = struct {
                         diags.warn(line, col, "invalid font size '{s}'", .{val});
                         return;
                     };
+                } else if (matchKey(key, "size-step")) {
+                    config.font_size_step = parseFontSize(val, "font size step", line, col, diags) orelse return;
+                } else if (matchKey(key, "size-min") or matchKey(key, "min-size")) {
+                    config.font_size_min = parseFontSize(val, "minimum font size", line, col, diags) orelse return;
+                } else if (matchKey(key, "size-max") or matchKey(key, "max-size")) {
+                    config.font_size_max = parseFontSize(val, "maximum font size", line, col, diags) orelse return;
                 } else if (matchKey(key, "weight")) {
                     config.font_weight = std.fmt.parseInt(u16, val, 10) catch {
                         diags.warn(line, col, "invalid font weight '{s}'", .{val});

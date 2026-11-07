@@ -4,6 +4,8 @@
 //! and explicit CLI flags in deterministic precedence order.
 
 const std = @import("std");
+
+const log = std.log.scoped(.config);
 const Allocator = std.mem.Allocator;
 const fs = std.fs;
 
@@ -65,6 +67,21 @@ pub fn applyFileConfig(target: *App.Config, file: *const FileConfig, allocator: 
     // Font properties
     if (file.font_size) |sz| {
         target.font.height = @intFromFloat(sz);
+    }
+    if (file.font_size_step) |step| target.font_size_step = step;
+    {
+        // Checked together: each bound is valid alone (the parser rejects
+        // 0), but the pair must still be ordered.
+        const min = file.font_size_min orelse target.font.min_size;
+        const max = file.font_size_max orelse target.font.max_size;
+        if (min > max) {
+            log.warn("font_size_min {d} is above font_size_max {d}; keeping {d} and {d}", .{
+                min, max, target.font.min_size, target.font.max_size,
+            });
+        } else {
+            target.font.min_size = min;
+            target.font.max_size = max;
+        }
     }
     if (target.font.font.family == .variable) {
         if (file.font_weight) |w| target.font.font.family.variable.regular_weight = @floatFromInt(w);
@@ -205,10 +222,22 @@ pub const canonical_default_config: []const u8 =
     \\# Default: GoogleSansCode-VariableFont_MONO,wght.ttf
     \\# font_family = "GoogleSansCode-VariableFont_MONO,wght.ttf"
     \\
-    \\# Font size in points.
+    \\# Font size in pixels at 100% display scale; Rex multiplies it by the
+    \\# display's scale (125%, 150%, ...), so text keeps its size on HiDPI.
     \\# Supported values: positive float (e.g. 10.0, 14.0, 18.0)
     \\# Default: 14.0
     \\font_size = 14.0
+    \\
+    \\# Step of increase_font_size and decrease_font_size, in pixels at 100% scale.
+    \\# Supported values: positive integer
+    \\# Default: 2
+    \\font_size_step = 2
+    \\
+    \\# Smallest and largest size those keys reach, in pixels at 100% scale.
+    \\# Supported values: positive integer, font_size_min <= font_size_max
+    \\# Default: 6 and 196
+    \\font_size_min = 6
+    \\font_size_max = 196
     \\
     \\# Regular font weight for variable fonts.
     \\# Supported values: integer from 100 to 900 (100: Thin, 400: Regular, 500: Medium, 700: Bold)
@@ -580,8 +609,8 @@ pub const canonical_default_config: []const u8 =
     \\#     quit                    - Terminate Rex window session (prompts if confirm_quit = true)
     \\#
     \\#   Font Zoom:
-    \\#     increase_font_size      - Increase font size by 1 point
-    \\#     decrease_font_size      - Decrease font size by 1 point
+    \\#     increase_font_size      - Increase font size by font_size_step
+    \\#     decrease_font_size      - Decrease font size by font_size_step
     \\#     reset_font_size         - Reset font size to default configured size
     \\#
     \\#   Viewport Scrolling:
@@ -634,6 +663,9 @@ pub fn mergeFileConfigs(target: *FileConfig, src: *const FileConfig) void {
     if (src.font_size) |sz| target.font_size = sz;
     if (src.font_weight) |w| target.font_weight = w;
     if (src.font_weight_bold) |wb| target.font_weight_bold = wb;
+    if (src.font_size_step) |v| target.font_size_step = v;
+    if (src.font_size_min) |v| target.font_size_min = v;
+    if (src.font_size_max) |v| target.font_size_max = v;
 
     if (src.window_background_alpha) |v| target.window_background_alpha = v;
     if (src.window_background_blur) |v| target.window_background_blur = v;
@@ -765,12 +797,32 @@ pub fn serializeConfig(config: *const FileConfig, writer: anytype) !void {
     }
 
     try writer.writeAll(
-        \\# Font size in points.
+        \\# Font size in pixels at 100% display scale; Rex multiplies it by the
+        \\# display's scale (125%, 150%, ...), so text keeps its size on HiDPI.
         \\# Supported values: positive float (e.g. 10.0, 14.0, 18.0)
         \\# Default: 14.0
         \\
     );
     try writer.print("font_size = {d:.1}\n\n", .{config.font_size orelse 14.0});
+
+    try writer.writeAll(
+        \\# Step of increase_font_size and decrease_font_size, in pixels at 100% scale.
+        \\# Supported values: positive integer
+        \\# Default: 2
+        \\
+    );
+    try writer.print("font_size_step = {d}\n\n", .{config.font_size_step orelse 2});
+
+    try writer.writeAll(
+        \\# Smallest and largest size those keys reach, in pixels at 100% scale.
+        \\# Supported values: positive integer, font_size_min <= font_size_max
+        \\# Default: 6 and 196
+        \\
+    );
+    try writer.print("font_size_min = {d}\nfont_size_max = {d}\n\n", .{
+        config.font_size_min orelse 6,
+        config.font_size_max orelse 196,
+    });
 
     try writer.writeAll(
         \\# Regular font weight for variable fonts.
@@ -1454,8 +1506,8 @@ pub fn serializeConfig(config: *const FileConfig, writer: anytype) !void {
         \\#     quit                    - Terminate Rex window session (prompts if confirm_quit = true)
         \\#
         \\#   Font Zoom:
-        \\#     increase_font_size      - Increase font size by 1 point
-        \\#     decrease_font_size      - Decrease font size by 1 point
+        \\#     increase_font_size      - Increase font size by font_size_step
+        \\#     decrease_font_size      - Decrease font size by font_size_step
         \\#     reset_font_size         - Reset font size to default configured size
         \\#
         \\#   Viewport Scrolling:

@@ -17,6 +17,10 @@ comptime {
     std.testing.refAllDecls(@This());
 }
 
+test {
+    _ = @import("config_test.zig");
+}
+
 /// Convert FreeType error code to human-readable string.
 pub fn ftErrorString(err: c.FT_Error) []const u8 {
     const msg = c.FT_Error_String(err);

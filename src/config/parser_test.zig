@@ -515,6 +515,9 @@ test "config: serializeConfig produces valid re-parseable configuration" {
         .scroll_lines = 5,
         .scroll_wheel_lines = 6,
         .window_platform = .wayland,
+        .font_size_step = 3,
+        .font_size_min = 9,
+        .font_size_max = 64,
     };
     original.keybindings[0] = keymap_parser.parseBinding("ctrl+shift+p", "focus_toggle").?;
     original.keybindings[1] = keymap_parser.parseBinding("ctrl+q", "quit").?;
@@ -534,6 +537,9 @@ test "config: serializeConfig produces valid re-parseable configuration" {
     try testing.expect(!diags.hasErrors());
     try testing.expectEqual(@as(usize, 0), diags.count);
     try testing.expectEqual(.wayland, reparsed.window_platform.?);
+    try testing.expectEqual(3, reparsed.font_size_step.?);
+    try testing.expectEqual(9, reparsed.font_size_min.?);
+    try testing.expectEqual(64, reparsed.font_size_max.?);
     try testing.expectEqual(@as(f32, 16.5), reparsed.font_size.?);
     try testing.expectEqual(@as(u16, 500), reparsed.font_weight.?);
     try testing.expectEqual(@as(u16, 700), reparsed.font_weight_bold.?);
@@ -610,4 +616,68 @@ test "config: an unknown window.platform is rejected with a warning" {
     try testing.expectEqual(1, diags.count);
     try testing.expectEqual(.warning, diags.items[0].severity);
     try testing.expectEqualStrings("unknown platform 'mir' (expected auto, wayland or x11)", diags.items[0].message());
+}
+
+test "config: font size step and bounds parse at the root and in [font]" {
+    const texts = [_][]const u8{
+        "font_size_step = 4\nfont_size_min = 8\nfont_size_max = 72",
+        "[font]\nsize-step = 4\nsize-min = 8\nsize-max = 72",
+    };
+    for (texts) |text| {
+        var parser = Parser.init(text);
+        var cfg = FileConfig{};
+        var diags = Diagnostics{};
+        parser.parseInto(&cfg, &diags);
+
+        try testing.expectEqual(0, diags.count);
+        try testing.expectEqual(4, cfg.font_size_step.?);
+        try testing.expectEqual(8, cfg.font_size_min.?);
+        try testing.expectEqual(72, cfg.font_size_max.?);
+    }
+}
+
+test "config: a font size step or bound that isn't a positive integer is rejected" {
+    const cases = [_]struct { text: []const u8, message: []const u8 }{
+        .{ .text = "font_size_step = 0", .message = "font size step must be at least 1" },
+        .{ .text = "font_size_min = big", .message = "invalid minimum font size 'big' (expected a positive integer)" },
+        .{ .text = "font_size_max = -3", .message = "invalid maximum font size '-3' (expected a positive integer)" },
+    };
+    for (cases) |case| {
+        var parser = Parser.init(case.text);
+        var cfg = FileConfig{};
+        var diags = Diagnostics{};
+        parser.parseInto(&cfg, &diags);
+
+        try testing.expect(cfg.font_size_step == null and cfg.font_size_min == null and cfg.font_size_max == null);
+        try testing.expectEqual(1, diags.count);
+        try testing.expectEqual(.warning, diags.items[0].severity);
+        try testing.expectEqualStrings(case.message, diags.items[0].message());
+    }
+}
+
+test "config: applyFileConfig takes font bounds only as an ordered pair" {
+    const merge_mod = @import("merge.zig");
+    const App = @import("../App.zig");
+    // The rejected pair is reported with a warning; keep it out of the output.
+    testing.log_level = .err;
+
+    var app_cfg: App.Config = undefined;
+    app_cfg.keymap = &.{};
+    app_cfg.font.font.family = .{ .variable = .{ .upright = "default.ttf" } };
+    app_cfg.font.min_size = 6;
+    app_cfg.font.max_size = 196;
+    app_cfg.font_size_step = 2;
+
+    // min above max: both bounds stay, the step still applies.
+    var bad: FileConfig = .{ .font_size_min = 80, .font_size_max = 40, .font_size_step = 3 };
+    try merge_mod.applyFileConfig(&app_cfg, &bad, testing.allocator);
+    try testing.expectEqual(6, app_cfg.font.min_size);
+    try testing.expectEqual(196, app_cfg.font.max_size);
+    try testing.expectEqual(3, app_cfg.font_size_step);
+
+    // One bound alone is checked against the other's current value.
+    var only_max: FileConfig = .{ .font_size_max = 48 };
+    try merge_mod.applyFileConfig(&app_cfg, &only_max, testing.allocator);
+    try testing.expectEqual(6, app_cfg.font.min_size);
+    try testing.expectEqual(48, app_cfg.font.max_size);
 }
