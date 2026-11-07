@@ -125,7 +125,9 @@ pub const Config = struct {
         /// distinct glyphs (emoji, CJK, large fonts) before it is full.
         atlas: Atlas.Option = .{},
         selection: renderer_mod.Selection.Option,
-        /// Initial window size, in screen coordinates.
+        /// Initial window size, in logical pixels (pixels at 100% scale).
+        /// On X11 the window grows by the display scale when it's created;
+        /// on Wayland the compositor scales it.
         size: Dimension(u16) = .{ .width = 1920, .height = 1080 },
         /// Window title. A running pomodoro is appended after it.
         title: [:0]const u8 = "rex",
@@ -289,6 +291,9 @@ font_size_pending: ?u32 = null,
 /// is multiplied by it on the way to the screen: today the font, later UI
 /// geometry too.
 content_scale: f32,
+/// A scale reported by the content-scale callback, applied in the event
+/// loop by `applyContentScale` rather than inside the GLFW callback.
+content_scale_pending: ?f32 = null,
 
 needs_redraw: bool = true,
 quit_confirm_open: bool = false,
@@ -610,6 +615,7 @@ pub fn run(self: *App) !void {
     self.window.setScrollCallback(scrollCb);
     self.window.setWindowFocusCallback(windowFocusCb);
     self.window.setWindowCloseCallback(windowCloseCb);
+    self.window.setWindowContentScaleCallback(contentScaleCb);
 
     start: while (true) {
         if (self.window.windowShouldClose()) {
@@ -696,6 +702,11 @@ pub fn run(self: *App) !void {
 
         if (f.child_closed) {
             break :start;
+        }
+
+        if (self.content_scale_pending) |scale| {
+            self.applyContentScale(scale);
+            self.content_scale_pending = null;
         }
 
         if (self.font_size_pending) |size| {
@@ -1139,6 +1150,15 @@ fn setFontSize(self: *App, new_size: u32) void {
         self.rasterizer.cell_height,
     }) catch "Font size updated";
     self.notifySimple(toast_msg, "", .info);
+}
+
+/// The one place that reacts to a new display scale. Today it rebuilds the
+/// terminal font at the same logical size; UI layout hooks in here too.
+fn applyContentScale(self: *App, scale: f32) void {
+    if (scale == self.content_scale) return;
+    log.info("display scale {d:.2} -> {d:.2}", .{ self.content_scale, scale });
+    // On failure rebuildFont has logged why and the old font and scale stay.
+    _ = self.rebuildFont(self.font_size, scale);
 }
 
 /// Recreates the rasterizer for `size` logical pixels at display `scale`,
@@ -2367,6 +2387,14 @@ const framebufferSizeCb: c.GLFWframebuffersizefun = struct {
     fn cb(handle: ?*c.GLFWwindow, w: c_int, h: c_int) callconv(.c) void {
         const app: *App = @ptrCast(@alignCast(c.glfwGetWindowUserPointer(handle) orelse return));
         app.handleResize(.{ .height = @intCast(h), .width = @intCast(w) });
+    }
+}.cb;
+
+const contentScaleCb: c.GLFWwindowcontentscalefun = struct {
+    fn cb(handle: ?*c.GLFWwindow, xscale: f32, yscale: f32) callconv(.c) void {
+        _ = yscale; // GLFW reports one scale per axis; Rex uses the horizontal one
+        const app: *App = @ptrCast(@alignCast(c.glfwGetWindowUserPointer(handle) orelse return));
+        app.content_scale_pending = xscale;
     }
 }.cb;
 

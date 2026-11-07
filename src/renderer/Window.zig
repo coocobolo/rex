@@ -159,6 +159,10 @@ pub fn init(option: InitOption) !Window {
     c.glfwWindowHint(c.GLFW_RESIZABLE, c.GLFW_TRUE);
     c.glfwWindowHint(c.GLFW_FOCUSED, c.GLFW_TRUE);
     c.glfwWindowHint(c.GLFW_TRANSPARENT_FRAMEBUFFER, c.GLFW_TRUE);
+    // The configured size is in logical pixels: on X11 GLFW multiplies it
+    // by the content scale when it creates the window (x11_window.c); on
+    // Wayland the size is logical anyway and the hint is unused.
+    c.glfwWindowHint(c.GLFW_SCALE_TO_MONITOR, c.GLFW_TRUE);
 
     const win = c.glfwCreateWindow(
         @intCast(option.width),
@@ -374,6 +378,13 @@ pub fn setWindowFocusCallback(self: *Window, cb: c.GLFWwindowfocusfun) void {
 
 pub fn setWindowCloseCallback(self: *Window, cb: c.GLFWwindowclosefun) void {
     _ = c.glfwSetWindowCloseCallback(self.handle, cb);
+}
+
+/// Called when the window's content scale changes, for example when it
+/// moves to a monitor with another scale. GLFW reports it on Wayland; on
+/// X11 the scale is fixed for the session (Xft.dpi) and it never fires.
+pub fn setWindowContentScaleCallback(self: *Window, cb: c.GLFWwindowcontentscalefun) void {
+    _ = c.glfwSetWindowContentScaleCallback(self.handle, cb);
 }
 
 pub fn frameBufferSize(self: *const Window, comptime T: type) Dimension(T) {
