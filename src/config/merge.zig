@@ -32,8 +32,11 @@ pub const max_config_file_size = 64 * 1024;
 /// System-wide configuration file location on POSIX systems.
 pub const system_config_path = "/etc/rex/config";
 
-/// Loads and parses a configuration file from the filesystem if present.
-pub fn loadFile(path: []const u8, config: *FileConfig, diags: *Diagnostics) !bool {
+pub const LoadFileError = std.posix.OpenError || std.posix.ReadError;
+
+/// Parses the configuration file at `path` into `config` if it exists.
+/// Returns false when there is no such file.
+pub fn loadFile(path: []const u8, config: *FileConfig, diags: *Diagnostics) LoadFileError!bool {
     var path_buf: [std.fs.max_path_bytes]u8 = undefined;
     if (path.len >= path_buf.len) return false;
     @memcpy(path_buf[0..path.len], path);
@@ -59,8 +62,10 @@ pub fn resolveUserConfigPath(allocator: Allocator, app_dirs: *const dirs.Applica
     return std.fs.path.join(allocator, &.{ app_dirs.config, "config" });
 }
 
-/// Merges non-null fields from a FileConfig into an active Config.
-pub fn applyFileConfig(target: *Config, file: *const FileConfig, allocator: Allocator) !void {
+/// Merges non-null fields from a FileConfig into `target`. What it
+/// allocates (the font path, the merged keymap) comes from `allocator`,
+/// which must outlive `target`'s use.
+pub fn applyFileConfig(target: *Config, file: *const FileConfig, allocator: Allocator) Allocator.Error!void {
     // Theme
     if (file.theme) |t| target.theme = t;
 
@@ -1558,16 +1563,27 @@ pub fn serializeConfig(config: *const FileConfig, writer: anytype) !void {
     }
 }
 
-/// Minimal unbuffered POSIX file writer.
-pub const FileWriter = struct {
+/// Minimal unbuffered writer on a POSIX file descriptor, for stdout and
+/// config files. A reader that closed the pipe early (`rex ... | head`)
+/// is `error.BrokenPipe`; every other failed write is `error.WriteFailed`.
+pub const FdWriter = struct {
     fd: std.posix.fd_t,
 
-    pub fn writeAll(self: @This(), bytes: []const u8) !void {
+    pub const Error = error{ BrokenPipe, WriteFailed };
+
+    pub fn writeAll(self: @This(), bytes: []const u8) Error!void {
         var written: usize = 0;
         while (written < bytes.len) {
             const rc = std.posix.system.write(self.fd, bytes[written..].ptr, bytes[written..].len);
-            if (rc <= 0) return error.WriteFailed;
-            written += @intCast(rc);
+            switch (std.posix.errno(rc)) {
+                .SUCCESS => {
+                    if (rc == 0) return error.WriteFailed;
+                    written += @intCast(rc);
+                },
+                .INTR => continue,
+                .PIPE => return error.BrokenPipe,
+                else => return error.WriteFailed,
+            }
         }
     }
 
@@ -1616,20 +1632,18 @@ pub fn writeConfigFile(path: []const u8, config: *const FileConfig) !void {
     );
     defer _ = std.posix.system.close(fd);
 
-    const fw = FileWriter{ .fd = fd };
+    const fw = FdWriter{ .fd = fd };
     try serializeConfig(config, fw);
 }
 
 /// Merges two configuration files and writes the combined configuration to an output file or writer.
 pub fn mergeFiles(
-    allocator: Allocator,
     base_path: []const u8,
     override_path: []const u8,
     out_path: ?[]const u8,
     writer: anytype,
     diags: *Diagnostics,
 ) !bool {
-    _ = allocator;
     var base_cfg = FileConfig{};
     const base_loaded = try loadFile(base_path, &base_cfg, diags);
     if (!base_loaded) return false;
@@ -1649,27 +1663,16 @@ pub fn mergeFiles(
     return true;
 }
 
-/// Migrates an existing configuration file by populating the canonical default template with user values.
+/// Migrates the configuration file at `src_path` by populating the
+/// canonical default template with its values.
 pub fn migrateConfigFile(
-    allocator: Allocator,
-    src_path: ?[]const u8,
+    src_path: []const u8,
     out_path: ?[]const u8,
     in_place: bool,
-    environ: *const std.process.Environ,
     writer: anytype,
     diags: *Diagnostics,
 ) !bool {
-    const resolved_src_path = blk: {
-        if (src_path) |p| break :blk try allocator.dupe(u8, p);
-        const home_dir = try environ.getAlloc(allocator, "HOME");
-        defer allocator.free(home_dir);
-        var envmap = try environ.createMap(allocator);
-        defer envmap.deinit();
-        var app_dirs = try dirs.Application.resolve(allocator, "rex", home_dir, &envmap);
-        defer app_dirs.deinit(allocator);
-        break :blk try resolveUserConfigPath(allocator, &app_dirs);
-    };
-    defer allocator.free(resolved_src_path);
+    const resolved_src_path = src_path;
 
     var canonical_cfg = FileConfig{};
     var dump_diags = Diagnostics{};

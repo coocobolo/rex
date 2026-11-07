@@ -126,7 +126,9 @@ config_arena: std.heap.ArenaAllocator,
 /// caller of `init`.
 base_config: *const Config,
 config_watcher: ?rex.config.Watcher = null,
-config_path: ?[]const u8 = null,
+/// The user config file: the --config path, else <config dir>/config.
+/// Owned, freed in `deinit`.
+config_path: []const u8,
 background_color: [4]f32,
 
 rasterizer: Rasterizer,
@@ -271,44 +273,19 @@ pub fn init(
 
     log.debug("dirs: {f}", .{dirs});
 
-    var active_config: Config = config.*;
-    // Owns what applying the config files allocates; moved into the App
-    // below, so take a fresh `allocator()` from the field after that.
-    var config_arena: std.heap.ArenaAllocator = .init(gpa);
-    errdefer config_arena.deinit();
+    // The user file: the --config path, else <config dir>/config.
+    const user_cfg_path: []const u8 = if (custom_config_path) |ccp|
+        try gpa.dupe(u8, ccp)
+    else
+        try rex.config.resolveUserConfigPath(gpa, &dirs);
+    errdefer gpa.free(user_cfg_path);
 
-    // Resolve user configuration path or use custom CLI path
-    var user_cfg_path: ?[]const u8 = null;
-    if (custom_config_path) |ccp| {
-        user_cfg_path = try gpa.dupe(u8, ccp);
-    } else {
-        user_cfg_path = rex.config.resolveUserConfigPath(gpa, &dirs) catch null;
-    }
-    errdefer if (user_cfg_path) |p| gpa.free(p);
-
-    // Layer 1: System config (/etc/rex/config)
-    var sys_diags = rex.config.Diagnostics{};
-    var sys_file_cfg = rex.config.FileConfig{};
-    if (rex.config.loadFile(rex.config.system_config_path, &sys_file_cfg, &sys_diags) catch false) {
-        rex.config.applyFileConfig(&active_config, &sys_file_cfg, config_arena.allocator()) catch |err| {
-            log.warn("failed to apply system config: {}", .{err});
-        };
-    }
-
-    // Layer 2: User config (~/.config/rex/config or custom path)
-    var startup_banner: ?Banner = null;
-    if (user_cfg_path) |p| {
-        var user_diags = rex.config.Diagnostics{};
-        var user_file_cfg = rex.config.FileConfig{};
-        if (rex.config.loadFile(p, &user_file_cfg, &user_diags) catch false) {
-            if (user_diags.hasErrors()) {
-                startup_banner = formatDiagnosticBanner(&user_diags.items[0]);
-            }
-            rex.config.applyFileConfig(&active_config, &user_file_cfg, config_arena.allocator()) catch |err| {
-                log.warn("failed to apply user config: {}", .{err});
-            };
-        }
-    }
+    // At startup a file with errors still applies as far as it parsed;
+    // the banner names the first error.
+    var loaded = try rex.config.load(gpa, config, .{ .user = user_cfg_path });
+    errdefer loaded.deinit();
+    const active_config = loaded.config;
+    const startup_banner: ?Banner = if (loaded.firstError()) |d| formatDiagnosticBanner(d) else null;
 
     // apply user's overrides environment values
     for (active_config.environments) |*envp| {
@@ -414,14 +391,10 @@ pub fn init(
     const classifier = try unicode.Classifier.init(active_config.selection.classifier);
     const now = std.Io.Clock.Timestamp.now(io, .awake);
 
-    var watcher: ?rex.config.Watcher = null;
-    if (user_cfg_path) |cfg_p| {
-        const dir_name = std.fs.path.dirname(cfg_p) orelse dirs.config;
-        const file_name = std.fs.path.basename(cfg_p);
-        watcher = rex.config.Watcher.init(dir_name, file_name);
-    } else {
-        watcher = rex.config.Watcher.init(dirs.config, "config");
-    }
+    const watcher: ?rex.config.Watcher = rex.config.Watcher.init(
+        std.fs.path.dirname(user_cfg_path) orelse dirs.config,
+        std.fs.path.basename(user_cfg_path),
+    );
 
     if (is_posix) {
         posix.sigaction(.HUP, &.{
@@ -455,7 +428,7 @@ pub fn init(
         .atlas = atlas,
         .frame_builder = frame_builder,
         .config = active_config,
-        .config_arena = config_arena,
+        .config_arena = loaded.arena,
         .base_config = config,
         .config_watcher = watcher,
         .config_path = user_cfg_path,
@@ -476,7 +449,7 @@ pub fn init(
 
 pub fn deinit(self: *App, gpa: std.mem.Allocator) void {
     if (self.config_watcher) |*w| w.deinit();
-    if (self.config_path) |p| gpa.free(p);
+    gpa.free(self.config_path);
 
     self.renderer.deinit();
     self.frame_builder.deinit(gpa);
@@ -1137,40 +1110,10 @@ fn rebuildFont(self: *App, size: u32, scale: f32) bool {
 }
 
 pub fn reloadConfig(self: *App) void {
-    var diags = rex.config.Diagnostics{};
-    var file_cfg = rex.config.FileConfig{};
-
-    var loaded_any = false;
-
-    if (rex.config.loadFile(rex.config.system_config_path, &file_cfg, &diags) catch false) {
-        loaded_any = true;
-    }
-
-    if (self.config_path) |p| {
-        if (rex.config.loadFile(p, &file_cfg, &diags) catch false) {
-            loaded_any = true;
-        }
-    }
-
-    if (!loaded_any and diags.count == 0) {
-        self.notifySimple("Configuration", "No config file found", .neutral);
-        return;
-    }
-
-    if (diags.hasErrors()) {
-        self.config_banner = formatDiagnosticBanner(&diags.items[0]);
-        self.frame_builder.last_generation = null;
-        self.needs_redraw = true;
-        return;
-    }
-
-    // Build the new config from the defaults, not on top of the current one,
-    // so a setting removed from the file falls back to its default. It goes
-    // into a new arena; the current config stays valid until the swap.
-    var new_arena: std.heap.ArenaAllocator = .init(self.allocator);
-    var new_config: Config = self.base_config.*;
-    rex.config.applyFileConfig(&new_config, &file_cfg, new_arena.allocator()) catch |err| {
-        new_arena.deinit();
+    // Built from the defaults, not on top of the current config, so a
+    // setting removed from a file falls back to its default. The current
+    // config stays valid until the swap below.
+    var loaded = rex.config.load(self.allocator, self.base_config, .{ .user = self.config_path }) catch |err| {
         var err_buf: [128]u8 = undefined;
         const err_msg = std.fmt.bufPrint(&err_buf, "Failed to apply: {}", .{err}) catch "Apply failed";
         self.config_banner = Banner.init(.err, "Config error", err_msg);
@@ -1178,6 +1121,23 @@ pub fn reloadConfig(self: *App) void {
         self.needs_redraw = true;
         return;
     };
+
+    if (!loaded.foundAny() and loaded.diagnosticCount() == 0) {
+        loaded.deinit();
+        self.notifySimple("Configuration", "No config file found", .neutral);
+        return;
+    }
+
+    // A running session keeps its config when a file has errors.
+    if (loaded.firstError()) |d| {
+        self.config_banner = formatDiagnosticBanner(d);
+        loaded.deinit();
+        self.frame_builder.last_generation = null;
+        self.needs_redraw = true;
+        return;
+    }
+    const new_config = loaded.config;
+    const new_arena = loaded.arena;
 
     if (new_config.window.platform != self.config.window.platform) {
         log.info("window.platform takes effect on the next start", .{});

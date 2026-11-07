@@ -34,11 +34,20 @@ pub const serializeConfig = merge.serializeConfig;
 pub const mergeFiles = merge.mergeFiles;
 pub const migrateConfigFile = merge.migrateConfigFile;
 pub const system_config_path = merge.system_config_path;
+pub const FdWriter = merge.FdWriter;
+
+pub const loader = @import("loader.zig");
+pub const load = loader.load;
+pub const Loaded = loader.Loaded;
+pub const Layer = loader.Layer;
+pub const Sources = loader.Sources;
+pub const userPathFromEnviron = loader.userPathFromEnviron;
 
 pub const watcher = @import("watcher.zig");
 pub const Watcher = watcher.Watcher;
 
 test {
     _ = @import("parser_test.zig");
+    _ = @import("loader_test.zig");
     std.testing.refAllDecls(@This());
 }

@@ -262,6 +262,15 @@ const config: rex.config.Config = .{
 };
 
 pub fn main(init: std.process.Init) !void {
+    run(init) catch |err| switch (err) {
+        // stdout closed early, e.g. `rex config dump-default | head`:
+        // the reader has what it wanted, so this isn't a failure.
+        error.BrokenPipe => return,
+        else => return err,
+    };
+}
+
+fn run(init: std.process.Init) !void {
     // Short-lived work that runs once (argument handling, the config
     // subcommands) uses the process arena. The app itself allocates and
     // frees for as long as it runs, so it gets the general purpose
@@ -285,7 +294,7 @@ pub fn main(init: std.process.Init) !void {
                 std.process.exit(1);
             };
         } else if (std.mem.eql(u8, arg, "--dump-default") or std.mem.eql(u8, arg, "dump-default")) {
-            try rex.config.dumpDefaultConfig(StdoutWriter{});
+            try rex.config.dumpDefaultConfig(stdout);
             return;
         } else if (subcmd == null) {
             subcmd = arg;
@@ -328,14 +337,14 @@ pub fn main(init: std.process.Init) !void {
                 try handleConfigLocate(allocator, &environ);
                 return;
             } else if (std.mem.eql(u8, config_action, "dump-default")) {
-                try rex.config.dumpDefaultConfig(StdoutWriter{});
+                try rex.config.dumpDefaultConfig(stdout);
                 return;
             } else if (std.mem.eql(u8, config_action, "validate") or std.mem.eql(u8, config_action, "check")) {
                 const target_path = args.next() orelse custom_config_path;
                 try handleConfigValidate(allocator, &environ, target_path);
                 return;
             } else if (std.mem.eql(u8, config_action, "merge")) {
-                try handleConfigMerge(allocator, &args);
+                try handleConfigMerge(&args);
                 return;
             } else if (std.mem.eql(u8, config_action, "migrate")) {
                 try handleConfigMigrate(allocator, &environ, &args, custom_config_path);
@@ -345,7 +354,7 @@ pub fn main(init: std.process.Init) !void {
                 std.process.exit(1);
             }
         } else if (std.mem.eql(u8, sc, "merge-config")) {
-            try handleConfigMerge(allocator, &args);
+            try handleConfigMerge(&args);
             return;
         } else if (std.mem.eql(u8, sc, "migrate-config")) {
             try handleConfigMigrate(allocator, &environ, &args, custom_config_path);
@@ -355,7 +364,7 @@ pub fn main(init: std.process.Init) !void {
             try handleConfigValidate(allocator, &environ, target_path);
             return;
         } else if (std.mem.eql(u8, sc, "dump-default") or std.mem.eql(u8, sc, "--dump-default")) {
-            try rex.config.dumpDefaultConfig(StdoutWriter{});
+            try rex.config.dumpDefaultConfig(stdout);
             return;
         }
     }
@@ -366,26 +375,11 @@ pub fn main(init: std.process.Init) !void {
     try app.run();
 }
 
-const StdoutWriter = struct {
-    pub fn writeAll(_: @This(), bytes: []const u8) !void {
-        var written: usize = 0;
-        while (written < bytes.len) {
-            const rc = std.posix.system.write(std.posix.STDOUT_FILENO, bytes[written..].ptr, bytes[written..].len);
-            if (rc <= 0) break;
-            written += @intCast(rc);
-        }
-    }
-
-    pub fn print(self: @This(), comptime fmt: []const u8, args: anytype) !void {
-        var buf: [1024]u8 = undefined;
-        const msg = try std.fmt.bufPrint(&buf, fmt, args);
-        try self.writeAll(msg);
-    }
-};
+/// Output of the CLI commands.
+const stdout: rex.config.FdWriter = .{ .fd = std.posix.STDOUT_FILENO };
 
 fn printStdout(msg: []const u8) void {
-    const writer = StdoutWriter{};
-    writer.writeAll(msg) catch {};
+    stdout.writeAll(msg) catch {};
 }
 
 fn printStderr(msg: []const u8) void {
@@ -433,17 +427,9 @@ fn printHelp() void {
 }
 
 fn handleConfigLocate(allocator: std.mem.Allocator, environ: *const std.process.Environ) !void {
-    const home_dir = try environ.getAlloc(allocator, "HOME");
-    defer allocator.free(home_dir);
-    var envmap = try environ.createMap(allocator);
-    defer envmap.deinit();
-    var dirs = try rex.dirs.Application.resolve(allocator, rex_terminal_option.name, home_dir, &envmap);
-    defer dirs.deinit(allocator);
-
-    const user_path = try rex.config.resolveUserConfigPath(allocator, &dirs);
+    const user_path = try rex.config.userPathFromEnviron(allocator, environ, rex_terminal_option.name);
     defer allocator.free(user_path);
 
-    const stdout = StdoutWriter{};
     try stdout.print("System config: {s} [{s}]\n", .{
         rex.config.system_config_path,
         if (fileExists(rex.config.system_config_path)) "found" else "not found",
@@ -455,17 +441,10 @@ fn handleConfigLocate(allocator: std.mem.Allocator, environ: *const std.process.
 }
 
 fn handleConfigValidate(allocator: std.mem.Allocator, environ: *const std.process.Environ, explicit_path: ?[]const u8) !void {
-    const stdout = StdoutWriter{};
-    const resolved_path = blk: {
-        if (explicit_path) |p| break :blk try allocator.dupe(u8, p);
-        const home_dir = try environ.getAlloc(allocator, "HOME");
-        defer allocator.free(home_dir);
-        var envmap = try environ.createMap(allocator);
-        defer envmap.deinit();
-        var dirs = try rex.dirs.Application.resolve(allocator, rex_terminal_option.name, home_dir, &envmap);
-        defer dirs.deinit(allocator);
-        break :blk try rex.config.resolveUserConfigPath(allocator, &dirs);
-    };
+    const resolved_path = if (explicit_path) |p|
+        try allocator.dupe(u8, p)
+    else
+        try rex.config.userPathFromEnviron(allocator, environ, rex_terminal_option.name);
     defer allocator.free(resolved_path);
 
     if (!fileExists(resolved_path)) {
@@ -503,7 +482,7 @@ fn handleConfigValidate(allocator: std.mem.Allocator, environ: *const std.proces
     }
 }
 
-fn handleConfigMerge(allocator: std.mem.Allocator, args: anytype) !void {
+fn handleConfigMerge(args: anytype) !void {
     const base_path = args.next() orelse {
         printStderr("Error: config merge requires <base_file> and <override_file>\nUsage: rex config merge <base_file> <override_file> [-o <out_path>]\n");
         std.process.exit(1);
@@ -529,8 +508,8 @@ fn handleConfigMerge(allocator: std.mem.Allocator, args: anytype) !void {
     }
 
     var diags = rex.config.Diagnostics{};
-    const stdout = StdoutWriter{};
-    const ok = rex.config.mergeFiles(allocator, base_path, override_path, out_path, stdout, &diags) catch |err| {
+    const ok = rex.config.mergeFiles(base_path, override_path, out_path, stdout, &diags) catch |err| {
+        if (err == error.BrokenPipe) return err;
         printStderr("Error: failed to merge configurations: ");
         var err_buf: [64]u8 = undefined;
         const err_str = std.fmt.bufPrint(&err_buf, "{}\n", .{err}) catch "unknown error\n";
@@ -572,9 +551,15 @@ fn handleConfigMigrate(allocator: std.mem.Allocator, environ: *const std.process
         std.process.exit(1);
     }
 
+    const path = if (src_path) |p|
+        try allocator.dupe(u8, p)
+    else
+        try rex.config.userPathFromEnviron(allocator, environ, rex_terminal_option.name);
+    defer allocator.free(path);
+
     var diags = rex.config.Diagnostics{};
-    const stdout = StdoutWriter{};
-    const ok = rex.config.migrateConfigFile(allocator, src_path, out_path, in_place, environ, stdout, &diags) catch |err| {
+    const ok = rex.config.migrateConfigFile(path, out_path, in_place, stdout, &diags) catch |err| {
+        if (err == error.BrokenPipe) return err;
         printStderr("Error: configuration migration failed: ");
         var err_buf: [64]u8 = undefined;
         const err_str = std.fmt.bufPrint(&err_buf, "{}\n", .{err}) catch "unknown error\n";
@@ -583,13 +568,9 @@ fn handleConfigMigrate(allocator: std.mem.Allocator, environ: *const std.process
     };
 
     if (!ok) {
-        if (src_path) |sp| {
-            printStderr("Error: configuration file not found: ");
-            printStderr(sp);
-            printStderr("\n");
-        } else {
-            printStderr("Error: configuration file not found in default user config path\n");
-        }
+        printStderr("Error: configuration file not found: ");
+        printStderr(path);
+        printStderr("\n");
         std.process.exit(1);
     }
 }
