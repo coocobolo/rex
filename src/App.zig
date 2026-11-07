@@ -104,7 +104,8 @@ pub const Config = struct {
     tokens: ?rex.color.Tokens = null,
     window: struct {
         background: Background.Option,
-        /// Rings the X bell on BEL and on pomodoro phase changes.
+        /// Rings the X bell on BEL and on pomodoro phase changes (window
+        /// attention only where there is no audible bell).
         bell: enum { on, off } = .on,
         /// XBell volume, as a percent of the X server bell volume.
         bell_volume: u8 = 100,
@@ -997,7 +998,8 @@ fn updateWindowTitle(self: *App) void {
     self.window.setWindowTitle(formatted);
 }
 
-/// Rings the X bell at the configured volume, unless the bell is off or muted by wellbeing.
+/// Rings the X bell at the configured volume (window attention only where
+/// there is no audible bell), unless the bell is off or muted by wellbeing.
 fn ringBell(self: *App) void {
     if (self.config.window.bell == .off) return;
     if (self.wellbeing_state.mute_audio_bell) return;

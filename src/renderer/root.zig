@@ -25,5 +25,6 @@ test {
     _ = @import("frame_test.zig");
     _ = @import("scrollbar_test.zig");
     _ = @import("shader_test.zig");
+    _ = @import("window_test.zig");
     std.testing.refAllDecls(@This());
 }

@@ -140,9 +140,8 @@ pub fn build(b: *std.Build) !void {
             }
         }
 
-        // Rex's own bell (renderer/Window.zig ringBellX11) calls Xlib
-        // directly. GLFW itself loads its X11 libraries at runtime.
-        mod.linkSystemLibrary("X11", .{});
+        // No X11 library is linked: GLFW loads its X11 libraries at
+        // runtime, and so does the bell (renderer/Window.zig, Xlib).
         mod.linkSystemLibrary("m", .{});
         // Building GLFW's X11 backend needs the X11 development headers
         // (it loads the libraries itself at runtime), e.g. on Debian/Ubuntu:
