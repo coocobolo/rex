@@ -127,18 +127,26 @@ pub fn build(b: *std.Build) !void {
 
     // FIXME! this should aligned with glfw option -Dglfw-platform?
     if (target.result.os.tag == .linux) {
+        // dlopen and pthread_* are part of libc from glibc 2.34 on, so
+        // neither libdl nor libpthread is linked; older glibc can't link Rex.
+        const min_glibc: std.SemanticVersion = .{ .major = 2, .minor = 34, .patch = 0 };
+        if (target.result.isGnuLibC()) {
+            const glibc = target.result.os.versionRange().gnuLibCVersion().?;
+            if (glibc.order(min_glibc) == .lt) {
+                std.debug.panic(
+                    "Rex needs glibc {f} or later (dlopen and pthread in libc); the target has {f}",
+                    .{ min_glibc, glibc },
+                );
+            }
+        }
+
+        // Rex's own bell (renderer/Window.zig ringBellX11) calls Xlib
+        // directly. GLFW itself loads its X11 libraries at runtime.
         mod.linkSystemLibrary("X11", .{});
-        mod.linkSystemLibrary("Xrandr", .{});
-        mod.linkSystemLibrary("Xi", .{});
-        mod.linkSystemLibrary("Xcursor", .{});
-        mod.linkSystemLibrary("Xinerama", .{});
-        mod.linkSystemLibrary("GL", .{});
-        mod.linkSystemLibrary("EGL", .{});
-        mod.linkSystemLibrary("dl", .{});
         mod.linkSystemLibrary("m", .{});
-        mod.linkSystemLibrary("pthread", .{});
-        // Install the X11 extension development headers on your system, e.g. on Ubuntu/Debian:
-        // sudo apt install libxcursor-dev libxrandr-dev libxinerama-dev libxi-dev libx11-dev libxext-dev
+        // Building GLFW's X11 backend needs the X11 development headers
+        // (it loads the libraries itself at runtime), e.g. on Debian/Ubuntu:
+        // sudo apt install libx11-dev libxcursor-dev libxrandr-dev libxinerama-dev libxi-dev libxext-dev
     } else {
         @panic("unimplemented glfw extension link library headers");
     }
@@ -487,13 +495,36 @@ const freetype_base_srcs = [_][]const u8{
     "src/base/ftsystem.c",
 };
 
+/// Sources every GLFW build compiles, whatever the backend
+/// (src/CMakeLists.txt, add_library(glfw ...), GLFW 3.5.1).
 const glfw_common_srcs = [_][]const u8{
     "src/context.c",
     "src/init.c",
     "src/input.c",
     "src/monitor.c",
+    "src/platform.c",
     "src/vulkan.c",
     "src/window.c",
+    "src/egl_context.c",
+    "src/osmesa_context.c",
+    "src/null_init.c",
+    "src/null_monitor.c",
+    "src/null_window.c",
+    "src/null_joystick.c",
+};
+
+/// Time, thread and module code shared by every backend on a Unix
+/// that isn't macOS, icludiing the null backend.
+const glfw_posix_srcs = [_][]const u8{
+    "src/posix_module.c",
+    "src/posix_time.c",
+    "src/posix_thread.c",
+};
+
+/// Shared by the X11 and Wayland backends on Linux.
+const glfw_linux_srcs = [_][]const u8{
+    "src/linux_joystick.c",
+    "src/posix_poll.c",
 };
 
 const GlfwResolver = struct {
@@ -537,22 +568,13 @@ const GlfwResolver = struct {
         module.addCSourceFiles(.{
             .root = root,
             .flags = &.{"-D_GLFW_WAYLAND"},
-            .files = &[_][]const u8{} ++ glfw_common_srcs ++ &[_][]const u8{
-                "src/egl_context.c",
-                "src/osmesa_context.c",
-                "src/null_init.c",
-                "src/null_monitor.c",
-                "src/null_window.c",
-                "src/null_joystick.c",
-                "src/posix_time.c",
-                "src/posix_thread.c",
-                "src/posix_module.c",
-                "src/wl_init.c",
-                "src/wl_monitor.c",
-                "src/wl_window.c",
-                "src/linux_joystick.c",
-                "src/posix_poll.c",
-            },
+            .files = &[_][]const u8{} ++ glfw_common_srcs ++
+                glfw_posix_srcs ++ glfw_linux_srcs ++
+                &[_][]const u8{
+                    "src/wl_init.c",
+                    "src/wl_monitor.c",
+                    "src/wl_window.c",
+                },
         });
     }
 
@@ -572,18 +594,15 @@ const GlfwResolver = struct {
         module.addCSourceFiles(.{
             .root = root,
             .flags = &.{"-D_GLFW_X11"},
-            .files = &[_][]const u8{} ++ glfw_common_srcs ++ &[_][]const u8{
-                "src/x11_init.c",
-                "src/x11_monitor.c",
-                "src/x11_window.c",
-                "src/xkb_unicode.c",
-                "src/posix_time.c",
-                "src/posix_thread.c",
-                "src/glx_context.c",
-                "src/egl_context.c",
-                "src/osmesa_context.c",
-                "src/linux_joystick.c",
-            },
+            .files = &[_][]const u8{} ++ glfw_common_srcs ++
+                glfw_linux_srcs ++ glfw_posix_srcs ++
+                &[_][]const u8{
+                    "src/x11_init.c",
+                    "src/x11_monitor.c",
+                    "src/x11_window.c",
+                    "src/xkb_unicode.c",
+                    "src/glx_context.c",
+                },
         });
     }
 };

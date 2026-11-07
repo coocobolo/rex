@@ -8,8 +8,8 @@
             .hash = "N-V-__8AAKfbpwAXnUJ6TJEaqZGWgp6F_8OhiLErejRxQ7Y5",
         },
         .glfw = .{
-            .url = "https://github.com/glfw/glfw/archive/refs/tags/3.3.10.tar.gz",
-            .hash = "N-V-__8AABdJQwDAR1lEBNtGgT_9wVeV4jNEksColHsVI5is",
+            .url = "https://github.com/glfw/glfw/archive/refs/tags/3.5.1.tar.gz",
+            .hash = "N-V-__8AAFAoSgCaIXvRyU85vZ0bKDcZLaUHWrojNKxEio2r",
         },
     },
     .paths = .{
