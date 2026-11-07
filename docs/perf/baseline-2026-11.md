@@ -63,7 +63,7 @@ files are read or written, and its shell is replaced by `cat > /dev/null`.
 | Idle CPU (60 s average) | 0.07% | 0.05% |
 | Idle voluntary context switches | 10.9/s | 11.0/s |
 | 20 pastes of 1 MiB | **20 of 20 truncated** (`WouldBlock`); RSS +1.1 MiB | **20 of 20 truncated**; RSS +3.0 MiB |
-| 100 font changes | RSS +12.5 MiB (~128 KiB each) | RSS +13.4 MiB (~137 KiB each) |
+| 100 font changes | RSS +12.5 MiB (one-time, see notes) | RSS +13.4 MiB (one-time, see notes) |
 | Throughput, plain | 86.4-87.5 MiB/s | 82.2-85.6 MiB/s |
 | Throughput, escapes | 74.2-76.3 MiB/s | 73.2-75.5 MiB/s |
 
@@ -72,9 +72,14 @@ Notes:
 - **Pastes larger than the pty buffer are cut off.** Every 1 MiB paste failed
   with `failed to write paste: error.WouldBlock`: the pty master is
   non-blocking, and the rest of the paste is dropped instead of queued.
-- **Font changes leave memory behind** (about 130 KiB each), consistent with
-  the app allocating from the process arena, whose `free` only reclaims the
-  most recent allocation.
+- **Font changes raise RSS once, then not again.** Measured later
+  (2026-11-07, `e81bdec`, ReleaseSafe): on the NVIDIA driver RSS rose
+  about 17 MiB over the first 10 changes and 4 MiB more by 20, then stayed
+  flat through 1,000 changes. With Mesa's software renderer (llvmpipe) it
+  rose about 1 MiB in all. The first change's FreeType and glibc share is
+  about 3 MiB of freed heap glibc keeps (a rasterizer-only probe levels
+  off at that). It is neither the process arena nor a leak; the per-change
+  figures this table first gave were extrapolated from one 100-change run.
 - **Idle is not idle:** about 11 wakeups per second, consistent with the
   blink timers (500 ms and 250 ms) and the once-a-second title update found
   in code review.
