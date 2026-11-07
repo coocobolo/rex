@@ -552,3 +552,34 @@ test "config: serializeConfig produces valid re-parseable configuration" {
     try testing.expectEqual(@as(u32, 6), reparsed.scroll_wheel_lines.?);
     try testing.expectEqual(@as(usize, 2), reparsed.keybindings_count);
 }
+
+test "config: bell volume above 100 or not a number is rejected with a warning" {
+    const cases = [_]struct { text: []const u8, message: []const u8 }{
+        .{ .text = "window.bell_volume = 150", .message = "bell volume 150 is above 100" },
+        .{ .text = "window.bell_volume = loud", .message = "invalid bell volume 'loud' (expected 0 to 100)" },
+        .{ .text = "window.bell_volume = 300", .message = "invalid bell volume '300' (expected 0 to 100)" },
+    };
+    for (cases) |case| {
+        var parser = Parser.init(case.text);
+        var cfg = FileConfig{};
+        var diags = Diagnostics{};
+        parser.parseInto(&cfg, &diags);
+
+        try testing.expectEqual(null, cfg.window_bell_volume);
+        try testing.expectEqual(1, diags.count);
+        try testing.expectEqual(.warning, diags.items[0].severity);
+        try testing.expectEqualStrings(case.message, diags.items[0].message());
+    }
+}
+
+test "config: bell volume from 0 to 100 is accepted" {
+    for ([_][]const u8{ "window.bell_volume = 0", "window.bell_volume = 100" }, [_]u8{ 0, 100 }) |text, expected| {
+        var parser = Parser.init(text);
+        var cfg = FileConfig{};
+        var diags = Diagnostics{};
+        parser.parseInto(&cfg, &diags);
+
+        try testing.expectEqual(0, diags.count);
+        try testing.expectEqual(expected, cfg.window_bell_volume.?);
+    }
+}

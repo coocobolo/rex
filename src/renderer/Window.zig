@@ -195,9 +195,12 @@ pub fn bellKind(platform: c_int) BellKind {
 }
 
 /// Asks for window attention and, on X11, sounds the X bell at `volume`
-/// percent of its base volume, on GLFW's own connection. Where there is
-/// no audible bell, that is logged once. Call on the GLFW (main) thread.
+/// percent of its base volume, on GLFW's own connection. `volume` is at
+/// most 100: the config parser rejects larger values, which XBell would
+/// answer with an X error that ends the program. Where there is no
+/// audible bell, that is logged once. Call on the GLFW (main) thread.
 pub fn ringBell(self: *Window, volume: u8) void {
+    std.debug.assert(volume <= 100);
     self.requestWindowAttention();
     switch (bellKind(c.glfwGetPlatform())) {
         .audible_x11 => if (has_x11) self.ringX11Bell(volume),
