@@ -23,8 +23,10 @@
 
 // TODO!
 //
-// Add the remaining content cases (sgr_colon, esc_intermediates, utf8_mixed, c1_8bit).
-// Nothing in this run covers UTF-8 or latin1 paths.
+// Add the remaining content cases (sgr_colon, esc_intermediates, c1_8bit).
+// UTF-8 is out of scope here: the parser takes decoded input only (see
+// `corpus_names`), so UTF-8 corpora run through Terminal in the term suite
+// (bench/cases/term/corpus.zig).
 
 const std = @import("std");
 
@@ -42,11 +44,14 @@ const Result = support.Result;
 
 const suite = "vt";
 
-const corpus_dir = "bench/cases/vt/testdata/corpus/";
+pub const corpus_dir = "bench/cases/vt/testdata/corpus/";
+
+/// Corpora fed to the parser as raw bytes. `vt.Parser` treats 0x80-0x9F as
+/// C1 controls and needs UTF-8 decoded upstream, so only pure ASCII
+/// captures belong here; `runCorpus` refuses any other. `htop` and
+/// `man_bash` contain UTF-8 and run through Terminal in the term suite.
 const corpus_names = [_][]const u8{
     "ls_color",
-    "htop",
-    "man_bash",
 };
 
 const mib = 1024 * 1024;
@@ -250,7 +255,7 @@ fn buildRandomPlan(gpa: Allocator, total: usize, max_chunk: u32, seed: u64) ![]u
 
 /// Parses a `.plan` file (one decimal byte count per line, as written by
 /// capture-corpus.sh). The counts must add up to exactly `expected_total`.
-fn parsePlan(gpa: Allocator, text: []const u8, expected_total: usize) ![]u32 {
+pub fn parsePlan(gpa: Allocator, text: []const u8, expected_total: usize) ![]u32 {
     var list: std.ArrayList(u32) = .empty;
     errdefer list.deinit(gpa);
 
@@ -267,7 +272,7 @@ fn parsePlan(gpa: Allocator, text: []const u8, expected_total: usize) ![]u32 {
     return list.toOwnedSlice(gpa);
 }
 
-fn readFile(io: Io, gpa: Allocator, path: []const u8) ![]u8 {
+pub fn readFile(io: Io, gpa: Allocator, path: []const u8) ![]u8 {
     var file = try Io.Dir.openFile(.cwd(), io, path, .{ .mode = .read_only });
     defer file.close(io);
 
@@ -619,6 +624,10 @@ pub fn runCorpus(io: Io, gpa: Allocator, opts: Options, results: *std.ArrayList(
 
         const raw = try readFile(io, gpa, raw_path);
         defer gpa.free(raw);
+        for (raw, 0..) |b, i| if (b >= 0x80) {
+            std.debug.print("!! {s}: byte 0x{X:0>2} at offset {d}; the parser takes ASCII-only corpora, run UTF-8 ones through Terminal\n", .{ raw_path, b, i });
+            return error.CorpusNotAscii;
+        };
         const plan_text = try readFile(io, gpa, plan_path);
         defer gpa.free(plan_text);
 

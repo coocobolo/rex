@@ -6,6 +6,8 @@
 //!   zero_row.zig   row-clear strategies (rep stos, vector, memset)
 //!   reflow.zig     Terminal.resize on a near-full ring: zoom steps,
 //!                  window dragging, height-only resizes
+//!   corpus.zig     real PTY captures through Terminal: UTF-8 decoding,
+//!                  parsing and screen work
 
 const std = @import("std");
 
@@ -19,6 +21,7 @@ const Result = support.Result;
 pub const scroll = @import("scroll.zig");
 pub const zero_row = @import("zero_row.zig");
 pub const reflow = @import("reflow.zig");
+pub const corpus = @import("corpus.zig");
 
 /// Prefix of every Result.case in this suite.
 pub const suite = "term";
@@ -27,6 +30,7 @@ pub fn run(io: Io, gpa: Allocator, options: Options, results: *std.ArrayList(Res
     try scroll.run(io, gpa, options, results);
     try zero_row.run(io, gpa, options, results);
     try reflow.run(io, gpa, options, results);
+    try corpus.run(io, gpa, options, results);
 }
 
 /// Hash of everything a screen shows: every scrollback and active row
