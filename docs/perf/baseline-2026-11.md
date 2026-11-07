@@ -29,10 +29,25 @@ was recorded from a dirty tree and covers only `vt`):
 - `term` has no earlier baseline; this is its first.
 - `vt` deltas are mixed: `osc_title` is 4-15% faster; `htop` and `sgr_*` are
   4-16% slower; most other cases are within noise.
-- **`vt.man_bash` reports a checksum mismatch in all 7 variants.** Its input
-  (`bench/cases/vt/testdata/corpus/man_bash.*`) hasn't changed since
-  `234161b`, so the parser's event stream for that input differs. Not yet
-  investigated: it could be an intended behaviour change or a regression.
+- **`vt.man_bash` and `vt.dcs_passthrough` changed checksum in every
+  variant.** Investigated later (2026-11-07). Both change at `10f6aa1`
+  (fix(vt): keep a dcs string hooked after esc), measured with each commit's
+  own bench from `abbc3d6` on. Earlier commits can't be measured: at `234161b`
+  the committed parser doesn't compile and the bench build step, `src/root.zig`
+  and the term suite weren't in git, so baseline 0001's vt checksums can't be
+  reproduced.
+  - `dcs_passthrough`: intended. `ESC \` closing a DCS no longer also
+    dispatches a separate ESC final, as in xterm.
+  - `man_bash`: a flaw in the benchmark, not in Rex. It fed raw UTF-8 to
+    `vt.Parser`, which needs decoded input and treats 0x80-0x9F as C1
+    controls, so the 0x90 ending every `‐` (U+2010) opened a false DCS. Its
+    timings measured input Rex never gives the parser. `htop` had one such
+    character (`▽`).
+  - Since then the vt suite takes ASCII-only corpora (`ls_color`) and refuses
+    others, and all three captures run through Terminal as
+    `term.corpus.{ls_color,htop,man_bash}`. Compared with this baseline,
+    `vt.htop` and `vt.man_bash` are missing and the `term.corpus` cases are
+    new.
 
 Known issue: `perf-bench.sh` builds with `zig build`, which doesn't install
 the benchmark binary. This run built it first with `zig build benchmark
