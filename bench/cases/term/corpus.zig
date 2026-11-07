@@ -29,7 +29,7 @@ const Result = support.Result;
 const term = @import("root.zig");
 const vt = @import("../vt/parser.zig");
 
-const option = rex.App.default_terminal_option;
+const option = rex.config.Config.default_terminal;
 const Term = rex.terminal.Terminal(option);
 
 /// Size the captures were made at.

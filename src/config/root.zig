@@ -5,6 +5,8 @@
 
 const std = @import("std");
 
+pub const Config = @import("Config.zig");
+
 pub const types = @import("types.zig");
 pub const FileConfig = types.FileConfig;
 pub const Diagnostics = types.Diagnostics;

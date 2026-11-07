@@ -19,7 +19,7 @@ const input = @import("../input.zig");
 const Binding = input.Binding;
 const Key = input.Key;
 const Modifiers = input.Modifiers;
-const App = @import("../App.zig");
+const Config = @import("Config.zig");
 const Card = @import("../renderer/Card.zig");
 const Toast = @import("../ui/Toast.zig");
 const Banner = @import("../ui/Banner.zig");
@@ -59,8 +59,8 @@ pub fn resolveUserConfigPath(allocator: Allocator, app_dirs: *const dirs.Applica
     return std.fs.path.join(allocator, &.{ app_dirs.config, "config" });
 }
 
-/// Merges non-null fields from a FileConfig into an active App.Config struct.
-pub fn applyFileConfig(target: *App.Config, file: *const FileConfig, allocator: Allocator) !void {
+/// Merges non-null fields from a FileConfig into an active Config.
+pub fn applyFileConfig(target: *Config, file: *const FileConfig, allocator: Allocator) !void {
     // Theme
     if (file.theme) |t| target.theme = t;
 

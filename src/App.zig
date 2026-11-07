@@ -78,132 +78,14 @@ const wellbeing = rex.builtin.wellbeing;
 /// Largest selection copied to the clipboard, in bytes.
 const max_copy_size: usize = std.math.maxInt(u16) - 1;
 
-pub const QuitDialogOption = struct {
-    title: []const u8 = "QUIT TERMINAL?",
-    line1: []const u8 = "Active terminal session is still running.",
-    line2: []const u8 = "Close this window and terminate the session?",
-    confirm_label: []const u8 = "Quit terminal",
-    cancel_label: []const u8 = "Cancel and stay",
-};
-
-pub const Config = struct {
-    blink: struct {
-        /// Half period of SGR 5 blink, in ms. 0 turns blinking off.
-        half_period: u64 = 500,
-        /// Half period of SGR 6 rapid blink, in ms. 0 turns it off.
-        rapid_half_period: u64 = 250,
-    },
-    /// `height`, `min_size` and `max_size` are in logical pixels; the
-    /// rasterizer gets `FontConfig.pixelSize(height, content_scale)`.
-    font: Freetype.FontConfig,
-    /// Step of increase_font_size and decrease_font_size, in logical pixels.
-    font_size_step: u32 = 2,
-    keymap: []const Binding,
-    wellbeing: wellbeing.Option = .{},
-    termio: rex.termio.pty.SpawnOption,
-    /// Bytes read from the pty per read call, default 65534. Bigger
-    /// reads parse long output in fewer frames; 0 is treated as 1.
-    read_buffer_size: usize = std.math.maxInt(u16) - 1,
-    theme: Theme,
-    /// Optional handcrafted design tokens override for custom surface and border styling.
-    tokens: ?rex.color.Tokens = null,
-    window: struct {
-        platform: Window.Platform = .auto,
-        background: Background.Option,
-        /// Rings the X bell on BEL and on pomodoro phase changes (window
-        /// attention only where there is no audible bell).
-        bell: enum { on, off } = .on,
-        /// XBell volume, as a percent of the X server bell volume.
-        bell_volume: u8 = 100,
-        scrollbar: Scrollbar.Option,
-        cursor: Cursor.Option,
-        /// Positions, thicknesses and looks of underline, strikethrough
-        /// and overline. The defaults follow the font.
-        decoration: renderer_mod.Decoration.Option = .{},
-        /// Opacity of SGR 2 (dim) text, 0.0 to 1.0.
-        dim_alpha: f32 = 0.5,
-        /// Glyph atlas texture size, default 2048x2048. Bigger fits more
-        /// distinct glyphs (emoji, CJK, large fonts) before it is full.
-        atlas: Atlas.Option = .{},
-        selection: renderer_mod.Selection.Option,
-        /// Initial window size, in logical pixels (pixels at 100% scale).
-        /// On X11 the window grows by the display scale when it's created;
-        /// on Wayland the compositor scales it.
-        size: Dimension(u16) = .{ .width = 1920, .height = 1080 },
-        /// Window title. A running pomodoro is appended after it.
-        title: [:0]const u8 = "rex",
-        /// Rounded card surface options for UI modals and overlays.
-        card: Card.Option = .{},
-        /// In-terminal toast notification options.
-        toast: Toast.Option = .{},
-        /// Configuration diagnostic notification banner options.
-        banner: Banner.Option = .{},
-        /// Semantic icon rendering options.
-        icon: Icon.Option = .{},
-        /// Modal dialog options including dimensions, dimming, and default focus.
-        modal: Modal.Option = .{},
-        /// Copy and labels for the quit confirmation modal dialog.
-        quit_dialog: QuitDialogOption = .{},
-        /// Interactive button primitive options.
-        button: Button.Option = .{},
-        /// Prompts for confirmation before closing the window while the terminal session is active.
-        confirm_quit: bool = true,
-    },
-    scroll: struct {
-        /// Lines moved by the scroll_up and scroll_down actions.
-        lines: u32 = 3,
-        /// Lines moved per mouse wheel step.
-        wheel_lines: u32 = 3,
-    } = .{},
-    selection: struct {
-        mouse_double_click_interval_ms: f64 = 500,
-        classifier: unicode.Classifier.Option,
-    },
-    /// Stores list of plain environment variable using "KEY=VALUE" format
-    environments: []const rex.env.PlainVar,
-    /// Grid limits and identity: max_rows (200), max_cols (220),
-    /// tab_width (8), max_scrollback (3896), ambiguous_width (.narrow),
-    /// name ("rex") and version ("0.1.0"). Rows plus scrollback should
-    /// be a power of two so the ring wastes nothing, see
-    /// TerminalOption.optimized.
-    ///
-    /// These size the screen at compile time, so the types below read
-    /// them from the root file: main.zig declares
-    /// `pub const rex_terminal_option = config.terminal;`. App.init
-    /// fails to compile when the two differ.
-    terminal: TerminalOption = default_terminal_option,
-    /// Threading configuration: .single for in-loop synchronous execution,
-    /// or .multi for dedicated background worker thread with wait-free triple buffer.
-    threading: ThreadingConfig = .{},
-};
-
-pub const ThreadingMode = enum {
-    single,
-    multi,
-};
-
-pub const ThreadingConfig = struct {
-    mode: ThreadingMode = .multi,
-    sync_output_timeout_ms: u32 = 150,
-};
-
-/// Terminal limits used when the root file sets none, as in tests.
-/// 200 rows plus 3896 scrollback lines fill a 4096 row ring.
-pub const default_terminal_option: TerminalOption = .{
-    .max_rows = 200,
-    .max_cols = 220,
-    .tab_width = 8,
-    .max_scrollback = 3896,
-    .name = "rex",
-    .version = "0.1.0",
-};
+const Config = rex.config.Config;
 
 /// Terminal limits the screen, frame and renderer types are built
 /// with: the root rex_terminal_option when declared, else the defaults.
 pub const terminal_option: TerminalOption = if (@hasDecl(root, "rex_terminal_option"))
     root.rex_terminal_option
 else
-    default_terminal_option;
+    Config.default_terminal;
 
 /// Whether two terminal options are the same, comparing strings by
 /// content.
@@ -1598,7 +1480,7 @@ fn formatDiagnosticBanner(diag: *const rex.config.Diagnostic) Banner {
     return Banner.init(level, title, diag.message());
 }
 
-fn quitConfirmModalRequest(card_opt: Card.Option, modal_opt: Modal.Option, quit_opt: QuitDialogOption, actions: *[2]Modal.Action) Modal.Request {
+fn quitConfirmModalRequest(card_opt: Card.Option, modal_opt: Modal.Option, quit_opt: Config.QuitDialog, actions: *[2]Modal.Action) Modal.Request {
     actions.* = .{
         .{ .shortcut = "Enter / Y", .label = quit_opt.confirm_label },
         .{ .shortcut = "Esc / N", .label = quit_opt.cancel_label },

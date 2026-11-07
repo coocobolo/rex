@@ -211,7 +211,7 @@ pub const BracketPair = struct { open: u21, close: u21 };
 /// time. Set them in config.terminal.
 pub const rex_terminal_option = config.terminal;
 
-const config: rex.App.Config = .{
+const config: rex.config.Config = .{
     .blink = .{ .half_period = 500, .rapid_half_period = 250 },
     .font = font_config,
     .keymap = rex.input.default_keymap,

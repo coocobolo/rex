@@ -226,7 +226,7 @@ test "config: full declarative parser execution" {
 
 test "config: merge and applyFileConfig overrides" {
     const merge_mod = @import("merge.zig");
-    const App = @import("../App.zig");
+    const Config = @import("Config.zig");
 
     const cfg_text =
         \\[card]
@@ -244,8 +244,8 @@ test "config: merge and applyFileConfig overrides" {
     var diags = Diagnostics{};
     parser.parseInto(&file_cfg, &diags);
 
-    // Mock initial App.Config
-    var app_cfg: App.Config = undefined;
+    // Mock initial Config
+    var app_cfg: Config = undefined;
     app_cfg.window.card.corner_radius = 8.0;
     app_cfg.window.toast.duration_ms = 5000;
     app_cfg.window.modal.dim_alpha = 180;
@@ -370,8 +370,8 @@ test "config: banner section and options parsing" {
     try testing.expectEqual(@as(u16, 2), cfg.banner_margin_rows.?);
 
     const merge_mod = @import("merge.zig");
-    const App = @import("../App.zig");
-    var app_cfg: App.Config = undefined;
+    const Config = @import("Config.zig");
+    var app_cfg: Config = undefined;
     app_cfg.window.banner = .{};
     app_cfg.keymap = &.{};
     app_cfg.font.font.family = .{
@@ -409,8 +409,8 @@ test "config: card border_style cascades and syncs across native UI elements" {
     try testing.expectEqual(Card.BorderStyle.subtle, cfg.card_border_style.?);
 
     const merge_mod = @import("merge.zig");
-    const App = @import("../App.zig");
-    var app_cfg: App.Config = undefined;
+    const Config = @import("Config.zig");
+    var app_cfg: Config = undefined;
     app_cfg.window.card = .{};
     app_cfg.window.modal = .{};
     app_cfg.window.toast = .{};
@@ -657,11 +657,11 @@ test "config: a font size step or bound that isn't a positive integer is rejecte
 
 test "config: applyFileConfig takes font bounds only as an ordered pair" {
     const merge_mod = @import("merge.zig");
-    const App = @import("../App.zig");
+    const Config = @import("Config.zig");
     // The rejected pair is reported with a warning; keep it out of the output.
     testing.log_level = .err;
 
-    var app_cfg: App.Config = undefined;
+    var app_cfg: Config = undefined;
     app_cfg.keymap = &.{};
     app_cfg.font.font.family = .{ .variable = .{ .upright = "default.ttf" } };
     app_cfg.font.min_size = 6;
