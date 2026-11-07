@@ -1112,13 +1112,23 @@ pub fn Terminal(comptime option: Option) type {
             return ev;
         }
 
-        /// Copies queued replies into caller's buffer and empties the reply queue.
-        /// Returns the number of bytes copied.
-        pub fn drainReplies(self: *Self, out: []u8) usize {
-            const count = @min(out.len, self.response.len);
-            @memcpy(out[0..count], self.response.buf[0..count]);
-            self.response.len = 0;
-            return count;
+        /// Copies every queued reply into `out` and empties the queue.
+        /// `out` holds the queue's whole capacity, so nothing is cut or
+        /// left behind. Returns the number of bytes copied.
+        pub fn drainReplies(self: *Self, out: *[Response.capacity]u8) usize {
+            const n = self.response.len;
+            @memcpy(out[0..n], self.response.buf[0..n]);
+            self.response.clear();
+            return n;
+        }
+
+        /// Returns how many replies were dropped whole because the queue was
+        /// full, since the last call, and resets the count. The host reports
+        /// it: a dropped reply leaves the program waiting for an answer.
+        pub fn takeDroppedReplies(self: *Self) u32 {
+            const n = self.response.dropped;
+            self.response.dropped = 0;
+            return n;
         }
 
         /// True when replies are queued for the PTY.

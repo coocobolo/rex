@@ -257,6 +257,26 @@ test "reply: one that doesn't fit whole is dropped, not half-written" {
     try testing.expectEqual(1, t.response.dropped);
 }
 
+test "reply: takeDroppedReplies reports a flood once and resets" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    // 300 CPR queries in one feed: their replies (6 bytes each) overflow
+    // the queue, so the ones that don't fit are dropped whole.
+    const cpr = "\x1b[1;1R";
+    for (0..300) |_| t.feed("\x1b[6n");
+    const kept = Response.capacity / cpr.len;
+    try testing.expectEqual(300 - kept, t.takeDroppedReplies());
+    try testing.expectEqual(0, t.takeDroppedReplies());
+
+    var out: [Response.capacity]u8 = undefined;
+    const n = t.drainReplies(&out);
+    try testing.expectEqual(kept * cpr.len, n);
+    var it = std.mem.window(u8, out[0..n], cpr.len, cpr.len);
+    while (it.next()) |r| try testing.expectEqualStrings(cpr, r);
+    try testing.expect(!t.hasReplies());
+}
+
 test "reply: an answerback longer than the queue is dropped whole" {
     var t = try Term.create(alloc);
     defer t.destroy(alloc);
@@ -816,7 +836,7 @@ test "Terminal: takeEvents and drainReplies" {
     t.response.append("hello reply");
 
     try testing.expect(t.hasReplies());
-    var out: [64]u8 = undefined;
+    var out: [Response.capacity]u8 = undefined;
     const n = t.drainReplies(&out);
     try testing.expectEqualStrings("hello reply", out[0..n]);
     try testing.expect(!t.hasReplies());
