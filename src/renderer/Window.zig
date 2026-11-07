@@ -134,6 +134,11 @@ silent_bell_logged: bool = false,
 /// on macOS, whose core profile stops at 4.1.
 pub const gl_version: struct { major: c_int, minor: c_int } = .{ .major = 3, .minor = 3 };
 
+/// The Wayland app_id and X11 WM_CLASS of Rex's window. Desktops match it
+/// against the `.desktop` file name, so it must stay `rex` while the entry
+/// is `rex.desktop`.
+const app_id = "rex";
+
 /// Asks GLFW for a core `gl_version` context in the next window.
 fn hintContext() void {
     c.glfwWindowHint(c.GLFW_CONTEXT_VERSION_MAJOR, gl_version.major);
@@ -163,6 +168,11 @@ pub fn init(option: InitOption) !Window {
     // by the content scale when it creates the window (x11_window.c); on
     // Wayland the size is logical anyway and the hint is unused.
     c.glfwWindowHint(c.GLFW_SCALE_TO_MONITOR, c.GLFW_TRUE);
+    // Without these GLFW sends no app_id on Wayland, and on X11 it uses the
+    // window title as WM_CLASS (wl_window.c, x11_window.c).
+    c.glfwWindowHintString(c.GLFW_WAYLAND_APP_ID, app_id);
+    c.glfwWindowHintString(c.GLFW_X11_CLASS_NAME, app_id);
+    c.glfwWindowHintString(c.GLFW_X11_INSTANCE_NAME, app_id);
 
     const win = c.glfwCreateWindow(
         @intCast(option.width),
