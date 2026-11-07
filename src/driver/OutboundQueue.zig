@@ -17,6 +17,7 @@ const std = @import("std");
 const posix = std.posix;
 const system = posix.system;
 const Allocator = std.mem.Allocator;
+const assert = std.debug.assert;
 
 const OutboundQueue = @This();
 
@@ -71,6 +72,30 @@ pub fn append(self: *OutboundQueue, gpa: Allocator, parts: []const []const u8) A
     self.compact();
     try self.buf.ensureUnusedCapacity(gpa, total);
     for (parts) |part| self.buf.appendSliceAssumeCapacity(part);
+}
+
+/// Returns `max_len` writable bytes at the end of the queue, for a caller
+/// that builds a unit in place instead of copying it in from parts. Nothing
+/// is queued until `commit`, and a unit that is never committed is simply
+/// dropped. Fails with `error.QueueFull`, reserving nothing, when `max_len`
+/// more pending bytes would exceed `limit`.
+///
+/// The slice is valid until the next call on the queue, so `commit` must
+/// follow before any other call.
+pub fn reserve(self: *OutboundQueue, gpa: Allocator, max_len: usize) AppendError![]u8 {
+    if (max_len > self.limit - self.pending()) return error.QueueFull;
+
+    self.compact();
+    try self.buf.ensureUnusedCapacity(gpa, max_len);
+    return self.buf.unusedCapacitySlice()[0..max_len];
+}
+
+/// Queues the first `len` bytes of the slice the last `reserve` returned,
+/// as one unit. `len` must not exceed the reserved length.
+pub fn commit(self: *OutboundQueue, len: usize) void {
+    assert(len <= self.limit - self.pending());
+    assert(len <= self.buf.unusedCapacitySlice().len);
+    self.buf.items.len += len;
 }
 
 /// Writes as much of the queue to `fd` as it accepts without blocking and
@@ -297,4 +322,69 @@ test "OutboundQueue: compaction keeps unwritten bytes and their order" {
     try queue.append(gpa, &.{"ab"});
     try testing.expectEqual(0, queue.head);
     try testing.expectEqualStrings("6789ab", queue.buf.items);
+}
+
+test "OutboundQueue: reserve and commit queue a unit built in place" {
+    const gpa = testing.allocator;
+
+    var queue: OutboundQueue = .init(1024);
+    defer queue.deinit(gpa);
+
+    try queue.append(gpa, &.{"a"});
+    const slot = try queue.reserve(gpa, 8);
+    try testing.expectEqual(8, slot.len);
+    @memcpy(slot[0..3], "xyz");
+    queue.commit(3); // shorter than reserved: only these bytes are queued
+    try queue.append(gpa, &.{"b"});
+
+    try testing.expectEqualSlices(u8, "axyzb", queue.buf.items[queue.head..]);
+}
+
+test "OutboundQueue: a reservation over the limit is refused, one never committed queues nothing" {
+    const gpa = testing.allocator;
+
+    var queue: OutboundQueue = .init(10);
+    defer queue.deinit(gpa);
+
+    try queue.append(gpa, &.{"12345678"});
+    try testing.expectError(error.QueueFull, queue.reserve(gpa, 3));
+    try testing.expectEqual(8, queue.pending());
+
+    _ = try queue.reserve(gpa, 2); // exactly at the limit
+    try testing.expectEqual(8, queue.pending());
+    try queue.append(gpa, &.{"9a"}); // the uncommitted slot is reused
+    try testing.expectEqualSlices(u8, "123456789a", queue.buf.items[queue.head..]);
+}
+
+test "OutboundQueue: a reservation after a partial flush keeps the order" {
+    const gpa = testing.allocator;
+    const pair = try Pair.open();
+    defer pair.close();
+
+    const payload = try gpa.alloc(u8, 512 * 1024);
+    defer gpa.free(payload);
+    pattern(payload, 11);
+
+    var queue: OutboundQueue = .init(64 * 1024 * 1024);
+    defer queue.deinit(gpa);
+    try queue.append(gpa, &.{payload});
+
+    var received: std.ArrayList(u8) = .empty;
+    defer received.deinit(gpa);
+    // Drain most of it so the next reserve compacts the buffer first.
+    while (queue.pending() > payload.len / 4) {
+        _ = try queue.flush(gpa, pair.writer);
+        try pair.drain(&received, 16 * 1024);
+    }
+    const slot = try queue.reserve(gpa, 4);
+    @memcpy(slot, "tail");
+    queue.commit(4);
+
+    while (!queue.isEmpty()) {
+        _ = try queue.flush(gpa, pair.writer);
+        try pair.drain(&received, 16 * 1024);
+    }
+    try pair.drain(&received, std.math.maxInt(usize));
+    try testing.expectEqualSlices(u8, payload, received.items[0..payload.len]);
+    try testing.expectEqualSlices(u8, "tail", received.items[payload.len..]);
 }
