@@ -125,3 +125,16 @@ test "rasterizer: underline thickness scales with the font size" {
     // 3 px at 64 px; the old sign bug always fell back to 1 px.
     try testing.expect(r.metrics.underline_thickness > 1);
 }
+
+test "rasterizer: no emoji font configured" {
+    var config = test_font;
+    config.font.emoji = null;
+
+    var r = try Rasterizer.create(alloc, config);
+    defer r.destroy(alloc);
+
+    // Not in any configured face: the lookup must skip the missing emoji
+    // face and end at the regular face's .notdef.
+    const g = try r.rasterize(alloc, 0x1F600, .regular, .single);
+    try testing.expectEqual(.gray, g.kind);
+}
