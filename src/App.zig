@@ -291,8 +291,9 @@ font_size_pending: ?u32 = null,
 /// is multiplied by it on the way to the screen: today the font, later UI
 /// geometry too.
 content_scale: f32,
-/// A scale reported by the content-scale callback, applied in the event
-/// loop by `applyContentScale` rather than inside the GLFW callback.
+/// A scale reported by the content-scale callback, applied by
+/// `applyContentScale` from the framebuffer-size callback that follows it,
+/// or from the event loop when no size change follows.
 content_scale_pending: ?f32 = null,
 
 needs_redraw: bool = true,
@@ -463,6 +464,11 @@ pub fn init(
     const content_scale = win.getWindowContentScale().width;
     var font_pixels = active_config.font;
     font_pixels.height = Freetype.FontConfig.pixelSize(active_config.font.height, content_scale);
+    log.info("display scale {d:.2}, font {d} px for size {d}", .{
+        content_scale,
+        font_pixels.height,
+        active_config.font.height,
+    });
     var rasterizer: Rasterizer = try .create(gpa, font_pixels);
     errdefer rasterizer.destroy(gpa);
 
@@ -2386,6 +2392,15 @@ const windowFocusCb: c.GLFWwindowfocusfun = struct {
 const framebufferSizeCb: c.GLFWframebuffersizefun = struct {
     fn cb(handle: ?*c.GLFWwindow, w: c_int, h: c_int) callconv(.c) void {
         const app: *App = @ptrCast(@alignCast(c.glfwGetWindowUserPointer(handle) orelse return));
+        // GLFW reports a scale change just before the framebuffer size it
+        // causes (wl_window.c, fractionalScaleHandlePreferredScale). Applying
+        // the scale first resizes the grid once, with the new font; otherwise
+        // the pty sees an extra resize computed with the old cell size.
+        if (app.content_scale_pending) |scale| {
+            app.content_scale_pending = null;
+            app.applyContentScale(scale);
+        }
+        // A no-op when applyContentScale already resized to this size.
         app.handleResize(.{ .height = @intCast(h), .width = @intCast(w) });
     }
 }.cb;
