@@ -116,6 +116,11 @@ pub const FileConfig = struct {
     font_size: ?f32 = null,
     font_weight: ?u16 = null,
     font_weight_bold: ?u16 = null,
+    /// Step of increase_font_size and decrease_font_size, in logical pixels.
+    font_size_step: ?u32 = null,
+    /// Smallest and largest size those keys reach, in logical pixels.
+    font_size_min: ?u32 = null,
+    font_size_max: ?u32 = null,
 
     window_background_alpha: ?f32 = null,
     window_background_blur: ?u32 = null,
