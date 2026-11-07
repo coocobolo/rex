@@ -17,12 +17,49 @@ fn glfwErrorCallback(code: c_int, desc: [*c]const u8) callconv(.c) void {
     log.err("GLFW error {d}: {s}", .{ code, desc });
 }
 
-const x11 = if (builtin.os.tag == .linux or builtin.os.tag == .freebsd)
-    @cImport(@cInclude("X11/Xlib.h"))
-else
-    struct {};
+/// Whether GLFW can run on X11 on this OS, so the X11 bell can exist.
+const has_x11 = builtin.os.tag == .linux or builtin.os.tag == .freebsd;
+
+/// The two Xlib functions the bell needs. Rex doesn't link libX11: GLFW
+/// loads it at runtime, so opening it again only takes another reference
+/// (ADR 0001). `Display` stays opaque; only GLFW's own connection is used.
+pub const Xlib = struct {
+    pub const Display = opaque {};
+    pub const soname = "libX11.so.6";
+
+    lib: std.DynLib,
+    bell: *const fn (*Display, c_int) callconv(.c) c_int,
+    flush: *const fn (*Display) callconv(.c) c_int,
+
+    /// The caller owns the result and closes it with `close`.
+    pub fn load() !Xlib {
+        var lib = try std.DynLib.openZ(soname);
+        errdefer lib.close();
+        const bell = lib.lookup(*const fn (*Display, c_int) callconv(.c) c_int, "XBell") orelse
+            return error.SymbolNotFound;
+        const flush = lib.lookup(*const fn (*Display) callconv(.c) c_int, "XFlush") orelse
+            return error.SymbolNotFound;
+        return .{ .lib = lib, .bell = bell, .flush = flush };
+    }
+
+    pub fn close(self: *Xlib) void {
+        self.lib.close();
+        self.* = undefined;
+    }
+};
+
+/// GLFW's own X connection (glfw3native.h). Null unless GLFW runs on X11;
+/// check `glfwGetPlatform` first, as ADR 0001 requires.
+pub extern "c" fn glfwGetX11Display() ?*Xlib.Display;
 
 handle: *c.GLFWwindow,
+
+/// Xlib, loaded on the first X11 bell and closed by `deinit`.
+xlib: union(enum) { unloaded, loaded: Xlib, failed } = .unloaded,
+
+/// Whether a bell that could only ask for attention has been logged, so
+/// it's logged once rather than on every bell.
+silent_bell_logged: bool = false,
 
 /// The OpenGL core version the renderer needs: the shaders are GLSL 330
 /// and every GL call is core in 3.3. Keep it there so the renderer runs
@@ -129,6 +166,10 @@ fn gladGetProcAddress(name: [*c]const u8) callconv(.c) ?*anyopaque {
 }
 
 pub fn deinit(self: *Window) void {
+    switch (self.xlib) {
+        .loaded => |*xlib| xlib.close(),
+        .unloaded, .failed => {},
+    }
     c.glfwDestroyWindow(self.handle);
     c.glfwTerminate();
     self.* = undefined;
@@ -144,21 +185,48 @@ pub fn requestWindowAttention(self: *Window) void {
     c.glfwRequestWindowAttention(self.handle);
 }
 
-fn ringBellX11(volume: u8) void {
-    if (builtin.os.tag == .linux or builtin.os.tag == .freebsd) {
-        const display = x11.XOpenDisplay(null) orelse return;
-        defer _ = x11.XCloseDisplay(display);
-        _ = x11.XBell(display, @intCast(volume)); // percent of base volume
-        _ = x11.XFlush(display);
+/// What a bell does on a GLFW platform (`glfwGetPlatform`). GLFW has no
+/// bell API, so only X11 gets an audible bell; elsewhere the window only
+/// asks for attention.
+pub const BellKind = enum { audible_x11, attention_only };
+
+pub fn bellKind(platform: c_int) BellKind {
+    return if (has_x11 and platform == c.GLFW_PLATFORM_X11) .audible_x11 else .attention_only;
+}
+
+/// Asks for window attention and, on X11, sounds the X bell at `volume`
+/// percent of its base volume, on GLFW's own connection. Where there is
+/// no audible bell, that is logged once. Call on the GLFW (main) thread.
+pub fn ringBell(self: *Window, volume: u8) void {
+    self.requestWindowAttention();
+    switch (bellKind(c.glfwGetPlatform())) {
+        .audible_x11 => if (has_x11) self.ringX11Bell(volume),
+        .attention_only => self.logSilentBell("no audible bell on this platform"),
     }
 }
 
-pub fn ringBell(self: *Window, volume: u8) void {
-    self.requestWindowAttention();
-    switch (builtin.os.tag) {
-        .linux, .freebsd => ringBellX11(volume),
-        else => {},
+fn ringX11Bell(self: *Window, volume: u8) void {
+    const display = glfwGetX11Display() orelse return self.logSilentBell("GLFW has no X11 display");
+    if (self.xlib == .unloaded) {
+        self.xlib = if (Xlib.load()) |xlib| .{ .loaded = xlib } else |err| blk: {
+            log.warn("bell: cannot load {s}: {}", .{ Xlib.soname, err });
+            break :blk .failed;
+        };
     }
+    switch (self.xlib) {
+        .loaded => |xlib| {
+            _ = xlib.bell(display, volume);
+            _ = xlib.flush(display);
+        },
+        .failed => self.logSilentBell("Xlib is unavailable"),
+        .unloaded => unreachable,
+    }
+}
+
+fn logSilentBell(self: *Window, reason: []const u8) void {
+    if (self.silent_bell_logged) return;
+    self.silent_bell_logged = true;
+    log.info("bell: {s}; it only asks for window attention", .{reason});
 }
 
 pub fn setWindowUserPointer(self: *Window, ptr: ?*anyopaque) void {
