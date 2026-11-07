@@ -508,7 +508,18 @@ pub const Parser = struct {
                 diags.warn(line, col, "invalid bell setting '{s}'", .{val});
             }
         } else if (matchKey(key, "bell-volume")) {
-            config.window_bell_volume = std.fmt.parseInt(u8, val, 10) catch null;
+            // XBell takes a percent of the X server's bell volume, and
+            // Xlib's default error handler ends the program on anything
+            // outside -100..100, so a larger value must never get through.
+            const volume = std.fmt.parseInt(u8, val, 10) catch {
+                diags.warn(line, col, "invalid bell volume '{s}' (expected 0 to 100)", .{val});
+                return;
+            };
+            if (volume > 100) {
+                diags.warn(line, col, "bell volume {d} is above 100", .{volume});
+                return;
+            }
+            config.window_bell_volume = volume;
         } else if (matchKey(key, "title")) {
             copyString(&config.window_title, &config.window_title_len, val);
         } else if (matchKey(key, "width")) {
