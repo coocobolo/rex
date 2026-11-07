@@ -122,6 +122,7 @@ pub const FileConfig = struct {
     window_confirm_quit: ?bool = null,
     window_dim_alpha: ?f32 = null,
     window_bell: ?enum { on, off } = null,
+    window_platform: ?enum { auto, wayland, x11 } = null,
     window_bell_volume: ?u8 = null,
     window_title: ?[128]u8 = null,
     window_title_len: usize = 0,

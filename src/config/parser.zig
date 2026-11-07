@@ -507,6 +507,14 @@ pub const Parser = struct {
             } else {
                 diags.warn(line, col, "invalid bell setting '{s}'", .{val});
             }
+        } else if (matchKey(key, "platform")) {
+            config.window_platform = std.meta.stringToEnum(
+                @typeInfo(@TypeOf(config.window_platform)).optional.child,
+                val,
+            ) orelse {
+                diags.warn(line, col, "unknown platform '{s}' (expected auto, wayland or x11)", .{val});
+                return;
+            };
         } else if (matchKey(key, "bell-volume")) {
             // XBell takes a percent of the X server's bell volume, and
             // Xlib's default error handler ends the program on anything

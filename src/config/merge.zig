@@ -83,6 +83,11 @@ pub fn applyFileConfig(target: *App.Config, file: *const FileConfig, allocator: 
         .on => .on,
         .off => .off,
     };
+    if (file.window_platform) |p| target.window.platform = switch (p) {
+        .auto => .auto,
+        .wayland => .wayland,
+        .x11 => .x11,
+    };
     if (file.window_bell_volume) |vol| target.window.bell_volume = vol;
     if (file.window_width) |w| target.window.size.width = w;
     if (file.window_height) |h| target.window.size.height = h;
@@ -220,6 +225,13 @@ pub const canonical_default_config: []const u8 =
     \\# ==============================================================================
     \\[window]
     \\
+    \\# Windowing platform, chosen at startup (a config reload doesn't switch it).
+    \\# auto: Wayland on a Wayland session, X11 otherwise.
+    \\# Supported values: auto, wayland, x11
+    \\# Default: auto
+    \\platform = auto
+    \\
+    \\background_alpha = 0.95
     \\# Window background opacity multiplier.
     \\# Supported values: float from 0.0 (completely transparent) to 1.0 (fully opaque)
     \\# Default: 0.95
@@ -628,6 +640,7 @@ pub fn mergeFileConfigs(target: *FileConfig, src: *const FileConfig) void {
     if (src.window_confirm_quit) |v| target.window_confirm_quit = v;
     if (src.window_dim_alpha) |v| target.window_dim_alpha = v;
     if (src.window_bell) |v| target.window_bell = v;
+    if (src.window_platform) |v| target.window_platform = v;
     if (src.window_bell_volume) |v| target.window_bell_volume = v;
     if (src.window_title) |title| {
         target.window_title = title;
@@ -786,6 +799,16 @@ pub fn serializeConfig(config: *const FileConfig, writer: anytype) !void {
         \\# Default: 0.95
         \\
     );
+
+    try writer.writeAll(
+        \\# Windowing platform, chosen at startup (a config reload doesn't switch it).
+        \\# auto: Wayland on a Wayland session, X11 otherwise.
+        \\# Supported values: auto, wayland, x11
+        \\# Default: auto
+        \\
+    );
+    try writer.print("platform = {s}\n\n", .{@tagName(config.window_platform orelse .auto)});
+
     try writer.print("background_alpha = {d:.2}\n\n", .{config.window_background_alpha orelse 0.95});
 
     try writer.writeAll(

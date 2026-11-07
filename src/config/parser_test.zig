@@ -514,6 +514,7 @@ test "config: serializeConfig produces valid re-parseable configuration" {
         .wellbeing_focus_task_ms = 30 * 60 * 1000,
         .scroll_lines = 5,
         .scroll_wheel_lines = 6,
+        .window_platform = .wayland,
     };
     original.keybindings[0] = keymap_parser.parseBinding("ctrl+shift+p", "focus_toggle").?;
     original.keybindings[1] = keymap_parser.parseBinding("ctrl+q", "quit").?;
@@ -532,6 +533,7 @@ test "config: serializeConfig produces valid re-parseable configuration" {
 
     try testing.expect(!diags.hasErrors());
     try testing.expectEqual(@as(usize, 0), diags.count);
+    try testing.expectEqual(.wayland, reparsed.window_platform.?);
     try testing.expectEqual(@as(f32, 16.5), reparsed.font_size.?);
     try testing.expectEqual(@as(u16, 500), reparsed.font_weight.?);
     try testing.expectEqual(@as(u16, 700), reparsed.font_weight_bold.?);
@@ -582,4 +584,30 @@ test "config: bell volume from 0 to 100 is accepted" {
         try testing.expectEqual(0, diags.count);
         try testing.expectEqual(expected, cfg.window_bell_volume.?);
     }
+}
+
+test "config: window.platform accepts auto, wayland and x11" {
+    const texts = [_][]const u8{ "window.platform = auto", "window.platform = wayland", "window.platform = x11" };
+    const expected = [_]@typeInfo(@TypeOf(@as(FileConfig, .{}).window_platform)).optional.child{ .auto, .wayland, .x11 };
+    for (texts, expected) |text, want| {
+        var parser = Parser.init(text);
+        var cfg = FileConfig{};
+        var diags = Diagnostics{};
+        parser.parseInto(&cfg, &diags);
+
+        try testing.expectEqual(0, diags.count);
+        try testing.expectEqual(want, cfg.window_platform.?);
+    }
+}
+
+test "config: an unknown window.platform is rejected with a warning" {
+    var parser = Parser.init("window.platform = mir");
+    var cfg = FileConfig{};
+    var diags = Diagnostics{};
+    parser.parseInto(&cfg, &diags);
+
+    try testing.expectEqual(null, cfg.window_platform);
+    try testing.expectEqual(1, diags.count);
+    try testing.expectEqual(.warning, diags.items[0].severity);
+    try testing.expectEqualStrings("unknown platform 'mir' (expected auto, wayland or x11)", diags.items[0].message());
 }
