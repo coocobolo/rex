@@ -45,7 +45,7 @@ const Context = struct {
     t: *Term,
     bytes: []const u8,
     plan: ?[]const u32,
-    replies: [4096]u8 = undefined,
+    replies: [rex.terminal.Response.capacity]u8 = undefined,
 
     fn pass(ctx: *Context) !void {
         feedPass(ctx.t, ctx.bytes, ctx.plan);
