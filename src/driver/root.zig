@@ -39,6 +39,7 @@ test {
     _ = @import("Events.zig");
     _ = @import("InputQueue.zig");
     _ = @import("OutboundQueue.zig");
+    _ = @import("paste_test.zig");
     _ = @import("triple_buffer.zig");
     _ = @import("single.zig");
     _ = @import("threaded.zig");

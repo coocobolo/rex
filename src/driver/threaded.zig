@@ -36,6 +36,7 @@ const Pty = termio.pty.Posix;
 pub const InputQueue = @import("InputQueue.zig");
 pub const InputEvent = InputQueue.InputEvent;
 const OutboundQueue = @import("OutboundQueue.zig");
+const paste = @import("paste.zig");
 
 const triple_buffer = @import("triple_buffer.zig");
 pub const TripleBuffer = triple_buffer.Buffer;
@@ -353,10 +354,12 @@ pub fn Driver(comptime option: Option) type {
                 .bytes => |b| self.queue(out, &.{b.data[0..b.len]}) catch {},
                 .paste => |slice| {
                     defer self.allocator.free(slice);
-                    // The markers stay in one queued unit with the text, so they
-                    // can't be separated or interleaved with other input.
+                    // The mode is read here, on the worker, so it is current
+                    // when the paste is queued.
                     if (terminal.mode.bracketed_paste) {
-                        self.queue(out, &.{ "\x1b[200~", slice, "\x1b[201~" }) catch {};
+                        paste.queueBracketed(out, self.allocator, slice) catch |err| {
+                            log.err("dropping {d}-byte paste ({d} bytes already pending): {}", .{ slice.len, out.pending(), err });
+                        };
                     } else {
                         self.queue(out, &.{slice}) catch {};
                     }
@@ -857,4 +860,44 @@ test "ThreadedDriver: a 1 MiB paste reaches a child that echoes it back" {
         std.Thread.yield() catch {};
     }
     try testing.expectEqualSlices(u8, payload, received.items);
+}
+
+test "ThreadedDriver: pasted text can't end a bracketed paste early" {
+    const testing = std.testing;
+    const gpa = testing.allocator;
+    const test_option: Option = .{ .max_rows = 24, .max_cols = 80, .max_scrollback = 100 };
+    const DriverType = Driver(test_option);
+
+    var sv: [2]posix.fd_t = undefined;
+    const rc = system.socketpair(posix.AF.UNIX, posix.SOCK.STREAM | posix.SOCK.NONBLOCK, 0, &sv);
+    try testing.expectEqual(@as(c_int, 0), rc);
+    defer _ = system.close(sv[1]);
+
+    const mock_pty: Pty = .{ .master = sv[0], .pid = -1, .stdout_read_fd = -1, .error_read_fd = -1 };
+    var driver = try DriverType.create(gpa, testing.io, mock_pty, Theme.graphite, 150);
+    defer driver.destroy();
+
+    // The child turns bracketed paste on; wait until the worker has seen it.
+    _ = system.write(sv[1], "\x1b[?2004h", 8);
+    var rounds: usize = 0;
+    while (!driver.getModes().bracketed_paste) : (rounds += 1) {
+        if (rounds > 2_000) return error.TestModeNotSet;
+        _ = driver.pollAndDrain() catch {};
+        sleepNs(1_000_000);
+    }
+
+    try driver.writePaste("ls\x1b[201~rm -rf ~\n");
+
+    const expected = "\x1b[200~ls[201~rm -rf ~\n\x1b[201~";
+    var received: std.ArrayList(u8) = .empty;
+    defer received.deinit(gpa);
+    var chunk: [64]u8 = undefined;
+    rounds = 0;
+    while (received.items.len < expected.len) : (rounds += 1) {
+        if (rounds > 2_000) return error.TestPasteNotDelivered;
+        const n = system.read(sv[1], &chunk, chunk.len);
+        if (posix.errno(n) == .SUCCESS and n > 0) try received.appendSlice(gpa, chunk[0..@intCast(n)]);
+        sleepNs(1_000_000);
+    }
+    try testing.expectEqualStrings(expected, received.items);
 }

@@ -27,6 +27,7 @@ const Pty = termio.pty.Posix;
 const InputQueue = @import("InputQueue.zig");
 pub const InputEvent = InputQueue.InputEvent;
 const OutboundQueue = @import("OutboundQueue.zig");
+const paste = @import("paste.zig");
 
 const root = @import("root.zig");
 pub const Events = root.Events;
@@ -292,12 +293,13 @@ pub fn Driver(comptime option: Option) type {
             _ = self.terminal.snapshot(&self.frame_snapshot);
         }
 
-        /// Writes pasted clipboard text, wrapping in bracketed paste escape sequences if enabled.
-        /// The markers stay in one queued unit with the text, so they can't be
-        /// separated or interleaved with other input.
+        /// Writes pasted clipboard text. With bracketed paste on, it is
+        /// wrapped in the paste markers and its ESC bytes are removed (see
+        /// `paste.queueBracketed`).
         pub fn writePaste(self: *Self, text: []const u8) OutboundQueue.AppendError!void {
             if (self.terminal.mode.bracketed_paste) {
-                try self.send(&.{ "\x1b[200~", text, "\x1b[201~" });
+                try paste.queueBracketed(&self.outbound, self.allocator, text);
+                self.flushOutbound();
             } else {
                 try self.send(&.{text});
             }
@@ -641,4 +643,36 @@ test "SingleDriver: a 1 MiB paste is delivered whole across pollAndDrain calls" 
     }
     try testing.expectEqualSlices(u8, payload, received.items);
     try testing.expect(driver.outbound.isEmpty());
+}
+
+test "SingleDriver: pasted text can't end a bracketed paste early" {
+    const testing = std.testing;
+    const gpa = testing.allocator;
+    const opt: Option = .{ .max_rows = 24, .max_cols = 80, .max_scrollback = 100 };
+
+    var sv: [2]posix.fd_t = undefined;
+    const rc = system.socketpair(posix.AF.UNIX, posix.SOCK.STREAM | posix.SOCK.NONBLOCK, 0, &sv);
+    try testing.expectEqual(@as(c_int, 0), rc);
+    defer _ = system.close(sv[1]);
+
+    const mock_pty: Pty = .{ .master = sv[0], .pid = -1, .stdout_read_fd = -1, .error_read_fd = -1 };
+    var driver = try Driver(opt).init(gpa, testing.io, mock_pty, Theme.graphite);
+    defer driver.deinit();
+
+    const malicious = "ls\x1b[201~rm -rf ~\n";
+    var read_buf: [64]u8 = undefined;
+
+    // Off: the text goes through unchanged, ESC included.
+    try driver.writePaste(malicious);
+    var n = system.read(sv[1], &read_buf, read_buf.len);
+    try testing.expectEqualStrings(malicious, read_buf[0..@intCast(n)]);
+
+    // The child turns bracketed paste on.
+    _ = system.write(sv[1], "\x1b[?2004h", 8);
+    _ = try driver.pollAndDrain();
+    try testing.expect(driver.terminal.mode.bracketed_paste);
+
+    try driver.writePaste(malicious);
+    n = system.read(sv[1], &read_buf, read_buf.len);
+    try testing.expectEqualStrings("\x1b[200~ls[201~rm -rf ~\n\x1b[201~", read_buf[0..@intCast(n)]);
 }
