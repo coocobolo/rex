@@ -25,8 +25,17 @@ fn testConfig() Config {
 
 const defaults = testConfig();
 
-fn applyText(config: *Config, section: keys.Section, name: []const u8, text: []const u8) keys.Error!void {
-    return keys.apply(config, &defaults, keys.lookup(section, name).?, text);
+/// Non-path kinds never allocate, so the default context's arena fails every
+/// allocation: a test that allocates there fails loudly.
+const no_alloc_ctx: keys.Context = .{
+    .defaults = &defaults,
+    .arena = std.testing.failing_allocator,
+    .dir = "/etc/rex",
+    .home = "/home/user",
+};
+
+fn applyText(config: *Config, section: keys.Section, name: []const u8, text: []const u8) keys.ApplyError!void {
+    return keys.apply(config, no_alloc_ctx, keys.lookup(section, name).?, text);
 }
 
 test "FieldType: resolves nested struct and union paths" {
@@ -183,6 +192,76 @@ test "apply: theme is a preset name" {
     try applyText(&config, .root, "theme", "graphite");
     try std.testing.expectError(error.InvalidValue, applyText(&config, .root, "theme", "Graphite"));
     try std.testing.expectError(error.InvalidValue, applyText(&config, .root, "theme", "dark"));
+}
+
+test "apply: font file resolves its path and selects a variable family" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    var ctx = no_alloc_ctx;
+    ctx.arena = arena.allocator();
+    const file = keys.lookup(.font, "file").?;
+
+    var config = testConfig();
+    try keys.apply(&config, ctx, file, "/usr/share/fonts/a.ttf");
+    try std.testing.expectEqualStrings("/usr/share/fonts/a.ttf", std.mem.span(config.font.faces.family.variable.upright));
+    try keys.apply(&config, ctx, file, "fonts/b.ttf");
+    try std.testing.expectEqualStrings("/etc/rex/fonts/b.ttf", std.mem.span(config.font.faces.family.variable.upright));
+    try keys.apply(&config, ctx, file, "~/fonts/c.ttf");
+    try std.testing.expectEqualStrings("/home/user/fonts/c.ttf", std.mem.span(config.font.faces.family.variable.upright));
+    try keys.apply(&config, ctx, file, "\"/my fonts/d,wght.ttf\"");
+    try std.testing.expectEqualStrings("/my fonts/d,wght.ttf", std.mem.span(config.font.faces.family.variable.upright));
+    // Weights survive a new file.
+    try keys.apply(&config, ctx, keys.lookup(.font, "weight").?, "350");
+    try keys.apply(&config, ctx, file, "/e.ttf");
+    try std.testing.expectEqual(350, config.font.faces.family.variable.regular_weight);
+
+    var no_home = ctx;
+    no_home.home = null;
+    try std.testing.expectError(error.NoHome, keys.apply(&config, no_home, file, "~/x.ttf"));
+    try std.testing.expectError(error.InvalidValue, keys.apply(&config, ctx, file, "\"\""));
+    try std.testing.expectEqualStrings("/e.ttf", std.mem.span(config.font.faces.family.variable.upright));
+
+    // A static family switches to a variable one (F16).
+    var static = testConfig();
+    static.font.faces.family = .{ .static = .{ .regular = "r", .bold = "b", .italic = "i", .bold_italic = "bi" } };
+    try keys.apply(&static, ctx, file, "/v.ttf");
+    try std.testing.expectEqualStrings("/v.ttf", std.mem.span(static.font.faces.family.variable.upright));
+}
+
+test "unquote: bare values are raw, quoted values take escapes" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    try std.testing.expectEqualStrings("a\\b", try keys.unquote(a, "a\\b"));
+    try std.testing.expectEqualStrings("a b", try keys.unquote(a, "\"a b\""));
+    try std.testing.expectEqualStrings("it's", try keys.unquote(a, "'it\\'s'"));
+    try std.testing.expectEqualStrings("a\\b\"c\nd\te", try keys.unquote(a, "\"a\\\\b\\\"c\\nd\\te\""));
+    try std.testing.expectEqualStrings("\x1b[0m", try keys.unquote(a, "\"\\x1b[0m\""));
+    try std.testing.expectEqualStrings("\u{1F319}", try keys.unquote(a, "\"\\u{1F319}\""));
+    for ([_][]const u8{ "\"\\q\"", "\"\\x1\"", "\"\\xg0\"", "\"\\u{}\"", "\"\\u{110000}\"", "\"\\u{D800}\"", "\"\\u1F\"", "\"\\x+1\"" }) |raw| {
+        try std.testing.expectError(error.InvalidValue, keys.unquote(a, raw));
+    }
+}
+
+test "writeExpected: describes each kind" {
+    var buf: [128]u8 = undefined;
+    const cases = [_]struct { keys.Section, []const u8, []const u8 }{
+        .{ .window, "confirm_quit", "true or false" },
+        .{ .window, "platform", "one of: auto, wayland, x11" },
+        .{ .window, "width", "a whole number from 1 to 65535" },
+        .{ .bell, "volume", "a number from 0 to 1" },
+        .{ .card, "corner_radius", "a number of at least 0, like 4.5" },
+        .{ .toast, "duration", "a duration of at least 1ms, like 500ms, 30s, 25m or 1h" },
+        .{ .@"wellbeing.screen_time", "daily_limit", "a duration of at least 1ms, like 500ms, 30s, 25m or 1h, or none" },
+        .{ .modal, "border_style", "one of: semantic, subtle, or inherit" },
+        .{ .font, "weight", "a whole number from 1 to 1000" },
+        .{ .root, "theme", "a theme name: graphite" },
+    };
+    for (cases) |case| {
+        var w: std.Io.Writer = .fixed(&buf);
+        try keys.writeExpected(keys.lookup(case[0], case[1]).?, &w);
+        try std.testing.expectEqualStrings(case[2], w.buffered());
+    }
 }
 
 /// The value names users write for every enum key (C9/F12). Renaming a Zig

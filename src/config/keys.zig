@@ -7,12 +7,15 @@
 //! integers are decimal digits only; floats are digits with an optional
 //! fraction; enums are their tag names exactly; durations are an integer with
 //! a unit (`ms`, `s`, `m`, `h`); `default` resets any key to the built-in
-//! value. Kinds that no row uses yet (path, string, color, time of day, list,
-//! set) are added with their first row.
+//! value; quoted strings take the escapes `\\ \" \' \n \t \xHH \u{H…}`.
+//! Kinds that no row uses yet (color, time of day, list, set) are added with
+//! their first row.
 
 const std = @import("std");
+const Allocator = std.mem.Allocator;
 const Config = @import("Config.zig");
 const Theme = @import("../color/Theme.zig");
+const FontConfig = @import("../freetype/Config.zig");
 
 /// Section headers as users write them; dotted names are subsections (`[modal.blur]`).
 pub const Section = enum {
@@ -45,6 +48,10 @@ pub const Kind = enum {
     font_weight,
     /// A theme preset name.
     theme,
+    /// A path to a variable font file (C9/F16: setting it selects a variable
+    /// family). `~/` is the home directory; a relative path is relative to
+    /// the directory of the file that sets it (F11).
+    font_file,
 };
 
 /// The value that stands for null in an optional field (C9/F4).
@@ -79,6 +86,18 @@ pub const Key = struct {
 
 pub const KeyIndex = u16;
 
+/// What `apply` needs besides the text: the values `default` restores, the
+/// arena that owns strings stored in the config, and where paths resolve.
+pub const Context = struct {
+    defaults: *const Config,
+    /// Owns every string `apply` stores in the config; must outlive it.
+    arena: Allocator,
+    /// Directory of the file being applied.
+    dir: []const u8,
+    /// The home directory, for `~/` paths; null when unknown.
+    home: ?[]const u8,
+};
+
 pub const Error = error{
     /// The text is not a value of the key's kind.
     InvalidValue,
@@ -87,7 +106,11 @@ pub const Error = error{
     /// The key has no effect with the current settings (a font weight for a
     /// static font family).
     NotApplicable,
+    /// A `~/` path without a known home directory.
+    NoHome,
 };
+
+pub const ApplyError = Error || Allocator.Error;
 
 /// Comptime branch budget for code that unrolls over `table`: each row's path
 /// is resolved at comptime, and the default quota (1000) covers only a few rows.
@@ -98,6 +121,7 @@ const at_least_one: Bounds = .{ .min = 1 };
 pub const table = [_]Key{
     .{ .section = .root, .name = "theme", .field = "theme", .kind = .theme },
 
+    .{ .section = .font, .name = "file", .field = "font.faces.family", .kind = .font_file },
     .{ .section = .font, .name = "size", .field = "font.size", .bounds = at_least_one },
     .{ .section = .font, .name = "size_step", .field = "font.size_step", .bounds = at_least_one },
     .{ .section = .font, .name = "min_size", .field = "font.min_size", .bounds = at_least_one },
@@ -164,10 +188,97 @@ pub const table = [_]Key{
     .{ .section = .scroll, .name = "wheel_lines", .field = "scroll.wheel_lines", .bounds = at_least_one },
 };
 
-/// Theme presets by name, for `Kind.theme`.
-pub const theme_presets = std.StaticStringMap(Theme).initComptime(.{
+/// A key that existed in a released version and is gone or renamed; Sema
+/// reports it instead of "unknown key".
+pub const Retired = struct {
+    section: Section,
+    name: []const u8,
+    fate: union(enum) {
+        renamed: []const u8,
+        removed: []const u8,
+    },
+};
+
+/// Keys the old parser read but never applied (rebuild plan C8). They come
+/// back as real keys when implemented.
+pub const retired = [_]Retired{
+    .{ .section = .window, .name = "background_blur", .fate = .{ .removed = "not implemented yet" } },
+    .{ .section = .window, .name = "title", .fate = .{ .removed = "not implemented yet" } },
+    .{ .section = .wellbeing, .name = "eyesight_interval", .fate = .{ .removed = "not implemented yet" } },
+    .{ .section = .wellbeing, .name = "movement_interval", .fate = .{ .removed = "not implemented yet" } },
+    .{ .section = .wellbeing, .name = "hydration_interval", .fate = .{ .removed = "not implemented yet" } },
+    .{ .section = .wellbeing, .name = "posture_interval", .fate = .{ .removed = "not implemented yet" } },
+};
+
+pub fn retiredLookup(section: Section, name: []const u8) ?Retired {
+    for (retired) |entry| {
+        if (entry.section == section and std.mem.eql(u8, entry.name, name)) return entry;
+    }
+    return null;
+}
+
+/// `section.name` (or `name` for root keys) of each row, for messages.
+pub const qualified_names = blk: {
+    var names: [table.len][]const u8 = undefined;
+    for (table, 0..) |key, i| names[i] = qualifiedName(key);
+    break :blk names;
+};
+
+const theme_preset_list = .{
     .{ "graphite", Theme.graphite },
-});
+};
+
+/// Theme presets by name, for `Kind.theme`.
+pub const theme_presets = std.StaticStringMap(Theme).initComptime(theme_preset_list);
+
+/// Writes what a value of the row at `index` looks like, for messages:
+/// "true or false", "one of: auto, wayland, x11", "a whole number from 1 to
+/// 65535", and so on, plus the null keyword if the field has one.
+pub fn writeExpected(index: KeyIndex, w: *std.Io.Writer) std.Io.Writer.Error!void {
+    @setEvalBranchQuota(eval_branch_quota);
+    inline for (table, 0..) |key, i| {
+        if (i == index) return writeExpectedKey(key, w);
+    }
+    unreachable;
+}
+
+fn writeExpectedKey(comptime key: Key, w: *std.Io.Writer) std.Io.Writer.Error!void {
+    const T = FieldType(Config, key.field);
+    const Value = switch (@typeInfo(T)) {
+        .optional => |optional| optional.child,
+        else => T,
+    };
+    switch (key.kind) {
+        .infer => switch (@typeInfo(Value)) {
+            .bool => try w.writeAll("true or false"),
+            .@"enum" => |info| {
+                try w.writeAll("one of: ");
+                inline for (info.fields, 0..) |field, i| {
+                    if (i > 0) try w.writeAll(", ");
+                    try w.writeAll(field.name);
+                }
+            },
+            .int => try w.print("a whole number from {d} to {d}", .{ key.bounds.min, @min(key.bounds.max, @as(f64, @floatFromInt(std.math.maxInt(Value)))) }),
+            .float => if (key.bounds.max == std.math.inf(f64))
+                try w.print("a number of at least {d}, like 4.5", .{key.bounds.min})
+            else
+                try w.print("a number from {d} to {d}", .{ key.bounds.min, key.bounds.max }),
+            else => unreachable,
+        },
+        .fraction => try w.writeAll("a number from 0 to 1"),
+        .duration => try w.writeAll("a duration of at least 1ms, like 500ms, 30s, 25m or 1h"),
+        .font_weight => try w.print("a whole number from {d} to {d}", .{ key.bounds.min, key.bounds.max }),
+        .theme => {
+            try w.writeAll("a theme name: ");
+            inline for (theme_preset_list, 0..) |preset, i| {
+                if (i > 0) try w.writeAll(", ");
+                try w.writeAll(preset[0]);
+            }
+        },
+        .font_file => try w.writeAll("a path to a variable font file"),
+    }
+    if (key.null_keyword) |keyword| try w.print(", or {t}", .{keyword});
+}
 
 /// The type of the field at the dot-separated `path` inside `Root`. Struct and
 /// union fields can be passed through.
@@ -226,17 +337,19 @@ pub fn lookup(section: Section, name: []const u8) ?KeyIndex {
     return lookup_map.get(buf[0 .. prefix.len + 1 + name.len]);
 }
 
-/// Parses `text` for the row at `index` and stores it in `config`. `default`
-/// copies the field from `defaults`. The field is unchanged on error.
-pub fn apply(config: *Config, defaults: *const Config, index: KeyIndex, text: []const u8) Error!void {
+/// Parses `text` (the raw value token, quotes included) for the row at
+/// `index` and stores it in `config`. `default` copies the field from
+/// `ctx.defaults`. The field is unchanged on error.
+pub fn apply(config: *Config, ctx: Context, index: KeyIndex, text: []const u8) ApplyError!void {
     @setEvalBranchQuota(eval_branch_quota);
     inline for (table, 0..) |key, i| {
-        if (i == index) return applyKey(key, config, defaults, text);
+        if (i == index) return applyKey(key, config, ctx, text);
     }
     unreachable;
 }
 
-fn applyKey(comptime key: Key, config: *Config, defaults: *const Config, text: []const u8) Error!void {
+fn applyKey(comptime key: Key, config: *Config, ctx: Context, text: []const u8) ApplyError!void {
+    const defaults = ctx.defaults;
     const T = FieldType(Config, key.field);
     comptime checkRow(key, T);
 
@@ -255,11 +368,78 @@ fn applyKey(comptime key: Key, config: *Config, defaults: *const Config, text: [
             return;
         }
     }
+    if (key.kind == .font_file) {
+        const path = try resolvePath(ctx, try unquote(ctx.arena, text));
+        switch (config.font.faces.family) {
+            .variable => |*variable| variable.upright = path,
+            .static => config.font.faces.family = .{ .variable = .{ .upright = path } },
+        }
+        return;
+    }
     const Value = switch (@typeInfo(T)) {
         .optional => |optional| optional.child,
         else => T,
     };
     fieldPtr(Config, key.field, config).* = try parseValue(key, Value, text);
+}
+
+/// The text of a value: a quoted value with its escapes interpreted (F10), a
+/// bare value as is. The tokenizer guarantees a quoted value is closed.
+pub fn unquote(arena: Allocator, raw: []const u8) ApplyError![]const u8 {
+    if (raw.len < 2 or (raw[0] != '"' and raw[0] != '\'') or raw[raw.len - 1] != raw[0]) return raw;
+    const inner = raw[1 .. raw.len - 1];
+    if (std.mem.indexOfScalar(u8, inner, '\\') == null) return inner;
+    var out: std.ArrayList(u8) = try .initCapacity(arena, inner.len);
+    var i: usize = 0;
+    while (i < inner.len) : (i += 1) {
+        if (inner[i] != '\\') {
+            out.appendAssumeCapacity(inner[i]);
+            continue;
+        }
+        i += 1;
+        if (i == inner.len) return error.InvalidValue;
+        switch (inner[i]) {
+            '\\', '"', '\'' => out.appendAssumeCapacity(inner[i]),
+            'n' => out.appendAssumeCapacity('\n'),
+            't' => out.appendAssumeCapacity('\t'),
+            'x' => {
+                if (i + 2 >= inner.len) return error.InvalidValue;
+                const hex = inner[i + 1 .. i + 3];
+                if (!isHex(hex)) return error.InvalidValue;
+                out.appendAssumeCapacity(std.fmt.parseUnsigned(u8, hex, 16) catch unreachable);
+                i += 2;
+            },
+            'u' => {
+                if (i + 1 >= inner.len or inner[i + 1] != '{') return error.InvalidValue;
+                const close = std.mem.indexOfScalarPos(u8, inner, i + 2, '}') orelse return error.InvalidValue;
+                const hex = inner[i + 2 .. close];
+                if (hex.len == 0 or hex.len > 6 or !isHex(hex)) return error.InvalidValue;
+                const cp = std.fmt.parseUnsigned(u21, hex, 16) catch return error.InvalidValue;
+                var buf: [4]u8 = undefined;
+                const n = std.unicode.utf8Encode(cp, &buf) catch return error.InvalidValue;
+                try out.appendSlice(arena, buf[0..n]);
+                i = close;
+            },
+            else => return error.InvalidValue,
+        }
+    }
+    return out.items;
+}
+
+fn isHex(text: []const u8) bool {
+    for (text) |c| if (!std.ascii.isHex(c)) return false;
+    return true;
+}
+
+/// A NUL-terminated copy of `path` in the arena, resolved by F11.
+fn resolvePath(ctx: Context, path: []const u8) ApplyError![:0]const u8 {
+    if (path.len == 0) return error.InvalidValue;
+    if (std.mem.startsWith(u8, path, "~/")) {
+        const home = ctx.home orelse return error.NoHome;
+        return std.fs.path.joinZ(ctx.arena, &.{ home, path[2..] });
+    }
+    if (std.fs.path.isAbsolute(path)) return ctx.arena.dupeZ(u8, path);
+    return std.fs.path.joinZ(ctx.arena, &.{ ctx.dir, path });
 }
 
 /// Rejects, at compile time, a row whose kind, bounds or keyword doesn't fit
@@ -282,6 +462,7 @@ fn checkRow(comptime key: Key, comptime T: type) void {
         .duration => @typeInfo(Value) == .int and @typeInfo(Value).int.signedness == .unsigned,
         .font_weight => @typeInfo(Value) == .float,
         .theme => Value == Theme,
+        .font_file => Value == FontConfig.Family,
     };
     if (!ok) @compileError(key.name ++ ": kind ." ++ @tagName(key.kind) ++ " doesn't fit " ++ @typeName(T));
 }
@@ -307,6 +488,7 @@ fn parseValue(comptime key: Key, comptime V: type, text: []const u8) Error!V {
             return @floatFromInt(weight);
         },
         .theme => return theme_presets.get(text) orelse error.InvalidValue,
+        .font_file => unreachable, // applyKey handles it
     }
 }
 

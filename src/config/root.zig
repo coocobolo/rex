@@ -50,6 +50,7 @@ test {
     _ = @import("tokenizer_test.zig");
     _ = @import("ast_test.zig");
     _ = @import("keys_test.zig");
+    _ = @import("sema_test.zig");
     _ = @import("parser_test.zig");
     _ = @import("loader_test.zig");
     std.testing.refAllDecls(@This());
