@@ -114,6 +114,7 @@ const seeds = [_][]const u8{
     "[wellbeing.winddown]\nstart = 22:00\nend = 22:00\nend = default\n",
     "[shell]\nprogram = /bin/bash\nargument = --login\nargument = \"none\"\nargument = none\nargument = default\nworking_directory = ~/src\nprogram = bash\nworking_directory = inherit\n",
     "[env]\nLANG = en_GB.UTF-8\nEDITOR = \"nvim -u NONE\"\n1X = a\nGONE = none\nNUL = \"a\\x00b\"\nEMPTY =\nLANG = C\n",
+    "[selection]\nextra_word_characters = \"-./~@\"\nextra_word_characters = \"a b\"\nextra_word_characters = -./\nextra_word_characters = \"\\xff\"\n",
     "[keybinds]\nctrl+shift+c = copy_selection\nctrl+shift+v = paste_clipboard\nctrl+f13 = quit\nctrl+a b = quit\nctrl+q = none\n",
     "[font]\nfile = \"~/fonts/a \\\"b\\\".ttf\"\nweight = 350\nbold_weight = 700\nfile = rel/x.ttf\n",
     "# comment\r\n[fonts]\r\nsize = 1\r\n[terminal]\r\nx = 1\r\n[font]\r\nsise = 12\r\nsize = 0\r\nsize = 99999999999999999999\r\n",

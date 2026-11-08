@@ -41,6 +41,7 @@ pub const Section = enum {
     @"wellbeing.routines",
     @"wellbeing.privacy",
     scroll,
+    selection,
     shell,
     keybinds,
     env,
@@ -81,6 +82,9 @@ pub const Kind = enum {
     program_path,
     /// A directory path into a `[:0]const u8` field, resolved like `path`.
     directory_path,
+    /// Printable ASCII characters (`!` to `~`), copied into a `[]const u8`
+    /// field; quote them when they include `#`. `""` is none.
+    word_characters,
     /// A list of program arguments, one per line, with `font_fallback`'s
     /// rules (F2): the first line in a file replaces the lower layer's list,
     /// `none` empties it, `default` restores the base list; a quoted value is
@@ -288,6 +292,8 @@ pub const table = [_]Key{
     .{ .section = .scroll, .name = "step_lines", .field = "scroll.lines", .bounds = at_least_one },
     .{ .section = .scroll, .name = "wheel_lines", .field = "scroll.wheel_lines", .bounds = at_least_one },
 
+    .{ .section = .selection, .name = "extra_word_characters", .field = "selection.classifier.extra_word_chars", .kind = .word_characters },
+
     .{ .section = .shell, .name = "program", .field = "shell.program", .kind = .program_path, .null_keyword = .auto, .reload = .restart },
     .{ .section = .shell, .name = "argument", .field = "shell.arguments", .kind = .shell_argument, .reload = .restart },
     .{ .section = .shell, .name = "working_directory", .field = "shell.working_directory", .kind = .directory_path, .null_keyword = .inherit, .reload = .restart },
@@ -360,7 +366,10 @@ pub const internal = [_][]const u8{
     "window.decoration",
     "window.atlas",
     "window.selection",
-    "selection",
+    "selection.mouse_double_click_interval_ms",
+    "selection.classifier.join",
+    "selection.classifier.non_ascii",
+    "selection.classifier.control",
     // UI copy and glyphs not exposed yet.
     "window.title",
     "window.toast.icon_style",
@@ -475,6 +484,7 @@ fn writeExpectedKey(comptime key: Key, w: *std.Io.Writer) std.Io.Writer.Error!vo
         .program_path => try w.writeAll("an absolute path to a program, ~/ allowed"),
         .directory_path => try w.writeAll("a path to a directory"),
         .shell_argument => try w.writeAll("a program argument, one per line, or none"),
+        .word_characters => try w.writeAll("printable ASCII characters, like \"-./~@\", or \"\""),
     }
     if (key.null_keyword) |keyword| try w.print(", or {t}", .{keyword});
 }
@@ -615,6 +625,12 @@ fn applyKey(comptime key: Key, config: *Config, ctx: Context, text: []const u8) 
         fieldPtr(Config, key.field, config).* = if (Value == FontConfig.Face) .static(path) else path;
         return;
     }
+    if (key.kind == .word_characters) {
+        const chars = try unquote(ctx.arena, text);
+        for (chars) |c| if (c < '!' or c > '~') return error.InvalidValue;
+        fieldPtr(Config, key.field, config).* = try ctx.arena.dupe(u8, chars);
+        return;
+    }
     if (key.kind == .program_path) {
         const path = try unquote(ctx.arena, text);
         if (!std.fs.path.isAbsolute(path) and !std.mem.startsWith(u8, path, "~/")) return error.InvalidValue;
@@ -709,6 +725,7 @@ fn checkRow(comptime key: Key, comptime T: type) void {
         .path => Value == [*:0]const u8 or Value == FontConfig.Face,
         .program_path, .directory_path => Value == [:0]const u8,
         .shell_argument => Value == []const [:0]const u8,
+        .word_characters => Value == []const u8,
     };
     if (!ok) @compileError(key.name ++ ": kind ." ++ @tagName(key.kind) ++ " doesn't fit " ++ @typeName(T));
 }
@@ -737,7 +754,7 @@ fn parseValue(comptime key: Key, comptime V: type, text: []const u8) Error!V {
         },
         .theme => return theme_presets.get(text) orelse error.InvalidValue,
         .font_fallback, .shell_argument => unreachable, // Sema handles list rows
-        .path, .program_path, .directory_path => unreachable, // applyKey handles them
+        .path, .program_path, .directory_path, .word_characters => unreachable, // applyKey handles them
     }
 }
 

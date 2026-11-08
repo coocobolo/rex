@@ -175,6 +175,24 @@ test "apply: sets are tag names separated by commas, or none" {
     try std.testing.expect(on_limit.eql(defaults.wellbeing.screen_time.on_limit));
 }
 
+test "apply: word characters are printable ASCII" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    var ctx = no_alloc_ctx;
+    ctx.arena = arena.allocator();
+    var config = testConfig();
+    const index = keys.lookup(.selection, "extra_word_characters").?;
+    try keys.apply(&config, ctx, index, "\"-./~@#\"");
+    try std.testing.expectEqualStrings("-./~@#", config.selection.classifier.extra_word_chars);
+    try keys.apply(&config, ctx, index, "\"\"");
+    try std.testing.expectEqualStrings("", config.selection.classifier.extra_word_chars);
+    for ([_][]const u8{ "\"a b\"", "\"\\t\"", "\"é\"", "\"\\x7f\"" }) |text| {
+        errdefer std.debug.print("accepted {s}\n", .{text});
+        try std.testing.expectError(error.InvalidValue, keys.apply(&config, ctx, index, text));
+    }
+    try std.testing.expectEqualStrings("", config.selection.classifier.extra_word_chars);
+}
+
 test "apply: an optional field's keyword sets null" {
     var config = testConfig();
     try applyText(&config, .@"wellbeing.screen_time", "daily_limit", "none");
@@ -304,6 +322,7 @@ test "writeExpected: describes each kind" {
         .{ .shell, "program", "an absolute path to a program, ~/ allowed, or auto" },
         .{ .shell, "working_directory", "a path to a directory, or inherit" },
         .{ .shell, "argument", "a program argument, one per line, or none" },
+        .{ .selection, "extra_word_characters", "printable ASCII characters, like \"-./~@\", or \"\"" },
         .{ .@"wellbeing.screen_time", "on_limit", "none, or any of grayscale, lock_input, animation separated by commas" },
         .{ .root, "theme", "a theme name: graphite" },
     };

@@ -1208,6 +1208,13 @@ pub fn reloadConfig(self: *App) void {
     }
 
     self.wellbeing_state.applyOption(self.config.wellbeing);
+    // The keys accept only ASCII, so this fails only on a broken invariant;
+    // keep the previous classifier then rather than lose word selection.
+    if (unicode.Classifier.init(self.config.selection.classifier)) |classifier| {
+        self.word_classifier = classifier;
+    } else |err| {
+        log.err("word characters not applied: {}", .{err});
+    }
 
     self.needs_redraw = true;
     self.notifySimple("Configuration", "Configuration reloaded", .info);
