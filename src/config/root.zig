@@ -47,6 +47,8 @@ pub const watcher = @import("watcher.zig");
 pub const Watcher = watcher.Watcher;
 
 test {
+    _ = @import("tokenizer_test.zig");
+    _ = @import("ast_test.zig");
     _ = @import("parser_test.zig");
     _ = @import("loader_test.zig");
     std.testing.refAllDecls(@This());
