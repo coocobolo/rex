@@ -1258,7 +1258,7 @@ fn handleAction(self: *App, action: rex.input.Action) void {
             self.ringBell();
             self.updateWindowTitle();
         },
-        .focus_auto_transition => {
+        .focus_toggle_phase_end => {
             self.wellbeing_state.toggleFocusPhaseEnd();
             self.updateWindowTitle();
         },

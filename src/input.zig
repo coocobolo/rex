@@ -401,7 +401,7 @@ pub const Action = union(enum) {
     focus_toggle, // start / pause / resume
     focus_reset, // restart current session from scratch
     focus_skip, // skip to next phase (work to break or break to work)
-    focus_auto_transition, // transition to the next phase
+    focus_toggle_phase_end, // switch on_phase_end between wait and start_next
     wellbeing_dashboard, // show Digital Wellbeing dashboard
     wellbeing_clear, // clear Digital Wellbeing history
     wellbeing_dismiss, // dismiss active wellbeing alert / unlock input
@@ -431,7 +431,7 @@ pub const Binding = struct {
 
 pub const default_keymap: []const Binding = &.{
     .{ .key = .num_0, .mods = .{ .ctrl = true }, .action = .reset_font_size },
-    .{ .key = .a, .mods = .{ .ctrl = true, .shift = true }, .action = .focus_auto_transition },
+    .{ .key = .a, .mods = .{ .ctrl = true, .shift = true }, .action = .focus_toggle_phase_end },
     .{ .key = .backspace, .mods = .{ .ctrl = true, .shift = true }, .action = .focus_reset },
     .{ .key = .c, .mods = .{ .ctrl = true, .shift = true }, .action = .copy_selection },
     .{ .key = .d, .mods = .{ .ctrl = true, .shift = true }, .action = .wellbeing_dismiss },
