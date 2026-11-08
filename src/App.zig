@@ -535,7 +535,7 @@ pub fn run(self: *App) !void {
 
     start: while (true) {
         if (self.window.windowShouldClose()) {
-            if (!self.config.window.confirm_quit or self.quit_confirmed) break :start;
+            if (self.config.window.on_close == .close or self.quit_confirmed) break :start;
             self.requestQuit();
         }
         const now = std.Io.Clock.Timestamp.now(self.io, .awake);
@@ -1608,9 +1608,9 @@ fn quitConfirmModalRequest(surface: Config.Surface, modal_opt: Modal.Option, qui
     };
 }
 
-/// Requests closing the terminal window, opening the quit confirmation modal when `confirm_quit` is enabled.
+/// Requests closing the terminal window, opening the quit confirmation modal when `on_close` is `ask`.
 pub fn requestQuit(self: *App) void {
-    if (!self.config.window.confirm_quit or self.quit_confirm_open) {
+    if (self.config.window.on_close == .close or self.quit_confirm_open) {
         self.confirmQuit();
         return;
     }
@@ -2135,7 +2135,7 @@ fn handleOverlayClick(self: *App, col: u16, row: u16) bool {
             col,
             row,
         )) |hit| {
-            if (hit == .outside and self.config.window.modal.close_on_outside_click) {
+            if (hit == .outside and self.config.window.modal.on_outside_click == .close) {
                 self.quit_confirm_open = false;
                 self.frame_builder.last_generation = null;
                 self.needs_redraw = true;
@@ -2150,7 +2150,7 @@ fn handleOverlayClick(self: *App, col: u16, row: u16) bool {
             if (col < c_item.col or col >= c_item.col + c_item.width or
                 row < c_item.row or row >= c_item.row + c_item.height)
             {
-                if (self.config.window.modal.close_on_outside_click) {
+                if (self.config.window.modal.on_outside_click == .close) {
                     self.wellbeing_overlay.dashboard_open = false;
                     self.frame_builder.last_generation = null;
                     self.needs_redraw = true;

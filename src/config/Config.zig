@@ -115,8 +115,14 @@ pub const Window = struct {
     quit_dialog: QuitDialog = .{},
     /// Interactive button primitive options.
     button: Button.Option = .{},
-    /// Prompts for confirmation before closing the window while the terminal session is active.
-    confirm_quit: bool = true,
+    /// What closing the window does.
+    on_close: OnClose = .ask,
+
+    pub const OnClose = enum {
+        /// Show the quit dialog first.
+        ask,
+        close,
+    };
 
     pub const Surfaces = struct {
         card: SurfaceOverride = .inherit,

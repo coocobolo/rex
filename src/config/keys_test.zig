@@ -53,12 +53,12 @@ test "lookup: exact section and name only" {
 
 test "apply: bool is true or false only" {
     var config = testConfig();
-    try applyText(&config, .window, "confirm_quit", "false");
-    try std.testing.expectEqual(false, config.window.confirm_quit);
+    try applyText(&config, .bell, "enabled", "false");
+    try std.testing.expectEqual(false, config.window.bell.enabled);
     for ([_][]const u8{ "yes", "on", "1", "True", "FALSE", "" }) |text| {
-        try std.testing.expectError(error.InvalidValue, applyText(&config, .window, "confirm_quit", text));
+        try std.testing.expectError(error.InvalidValue, applyText(&config, .bell, "enabled", text));
     }
-    try std.testing.expectEqual(false, config.window.confirm_quit);
+    try std.testing.expectEqual(false, config.window.bell.enabled);
 }
 
 test "apply: integers are decimal digits within bounds and type" {
@@ -308,7 +308,8 @@ test "unquote: bare values are raw, quoted values take escapes" {
 test "writeExpected: describes each kind" {
     var buf: [128]u8 = undefined;
     const cases = [_]struct { keys.Section, []const u8, []const u8 }{
-        .{ .window, "confirm_quit", "true or false" },
+        .{ .bell, "enabled", "true or false" },
+        .{ .window, "on_close", "one of: ask, close" },
         .{ .window, "platform", "one of: auto, wayland, x11" },
         .{ .window, "width", "a whole number from 1 to 65535" },
         .{ .bell, "volume", "a number from 0 to 1" },
@@ -360,6 +361,8 @@ const enum_names = [_]struct { []const u8, []const []const u8 }{
     .{ "banner.border_shape", &.{ "rounded", "sharp" } },
     .{ "banner.border_style", &.{ "semantic", "subtle" } },
     .{ "modal.default_focus", &.{ "confirm", "cancel" } },
+    .{ "window.on_close", &.{ "ask", "close" } },
+    .{ "modal.on_outside_click", &.{ "close", "ignore" } },
     .{ "modal.border_shape", &.{ "rounded", "sharp" } },
     .{ "modal.border_style", &.{ "semantic", "subtle" } },
     .{ "wellbeing.screen_time.on_limit", &.{ "grayscale", "lock_input", "animation" } },

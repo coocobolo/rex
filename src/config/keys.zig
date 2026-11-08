@@ -194,7 +194,7 @@ pub const table = [_]Key{
 
     .{ .section = .window, .name = "background_opacity", .field = "window.background.alpha", .kind = .fraction },
     .{ .section = .window, .name = "dim_text_opacity", .field = "window.dim_alpha", .kind = .fraction },
-    .{ .section = .window, .name = "confirm_quit", .field = "window.confirm_quit" },
+    .{ .section = .window, .name = "on_close", .field = "window.on_close" },
     .{ .section = .window, .name = "platform", .field = "window.platform", .reload = .restart, .os = .linux },
     // The size the window opens with.
     .{ .section = .window, .name = "width", .field = "window.size.width", .bounds = at_least_one, .reload = .restart },
@@ -242,7 +242,7 @@ pub const table = [_]Key{
 
     .{ .section = .modal, .name = "cols", .field = "window.modal.cols", .bounds = at_least_one },
     .{ .section = .modal, .name = "backdrop_opacity", .field = "window.modal.backdrop_opacity", .kind = .fraction },
-    .{ .section = .modal, .name = "close_on_outside_click", .field = "window.modal.close_on_outside_click" },
+    .{ .section = .modal, .name = "on_outside_click", .field = "window.modal.on_outside_click" },
     .{ .section = .modal, .name = "default_focus", .field = "window.modal.default_focus" },
     .{ .section = .modal, .name = "corner_radius", .field = "window.surfaces.modal.corner_radius", .null_keyword = .inherit },
     .{ .section = .modal, .name = "border_width", .field = "window.surfaces.modal.border_width", .null_keyword = .inherit },

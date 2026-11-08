@@ -29,6 +29,9 @@ pub const DefaultFocus = enum {
     cancel,
 };
 
+/// What a click outside an open dialog does.
+pub const OutsideClick = enum { close, ignore };
+
 pub const Option = struct {
     /// Dialog width, in terminal columns.
     cols: u16 = 46,
@@ -36,7 +39,7 @@ pub const Option = struct {
     backdrop_opacity: f32 = 180.0 / 255.0,
     blur: bool = false,
     blur_radius: u8 = 12,
-    close_on_outside_click: bool = true,
+    on_outside_click: OutsideClick = .close,
     icon_style: Icon.IconStyle = .auto,
     default_focus: DefaultFocus = .confirm,
 
