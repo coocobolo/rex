@@ -1169,6 +1169,7 @@ pub fn reloadConfig(self: *App) void {
         return;
     }
     const new_config = loaded.config;
+    const faces_changed = !self.config.font.faces.eql(new_config.font.faces);
 
     if (new_config.window.platform != self.config.window.platform) {
         log.info("window.platform takes effect on the next start", .{});
@@ -1189,9 +1190,16 @@ pub fn reloadConfig(self: *App) void {
     self.driver.setTheme(self.config.theme);
     self.frame_builder.last_generation = null;
 
-    // Live update font size if modified
+    self.frame_builder.dim_alpha = renderer_mod.Frame.alphaByte(self.config.window.dim_alpha);
+
+    // A size change rebuilds the rasterizer with the new faces; a face
+    // change at the same size needs its own rebuild.
+    const size_before = self.font_size;
     if (self.config.font.size != self.font_size) {
         self.setFontSize(self.config.font.size);
+    }
+    if (faces_changed and self.font_size == size_before and !self.rebuildFont(self.font_size, self.content_scale)) {
+        self.config_banner = Banner.init(.err, "Config error", "the new font could not be loaded; the previous one stays");
     }
 
     // Live update wellbeing tracking options

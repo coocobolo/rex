@@ -152,21 +152,19 @@ const font_size: Bounds = .{ .min = 1, .max = 1000 };
 pub const table = [_]Key{
     .{ .section = .root, .name = "theme", .field = "theme", .kind = .theme },
 
-    // Font changes reach the rasterizer only with a size change (audit A2).
-    .{ .section = .font, .name = "file", .field = "font.faces.family", .kind = .font_file, .reload = .restart },
-    .{ .section = .font, .name = "italic_file", .field = "font.faces.family.variable.italic", .kind = .path, .null_keyword = .none, .reload = .restart },
-    .{ .section = .font, .name = "emoji_file", .field = "font.faces.emoji", .kind = .path, .null_keyword = .none, .reload = .restart },
-    .{ .section = .font, .name = "fallback", .field = "font.faces.fallbacks", .kind = .font_fallback, .reload = .restart },
+    .{ .section = .font, .name = "file", .field = "font.faces.family", .kind = .font_file },
+    .{ .section = .font, .name = "italic_file", .field = "font.faces.family.variable.italic", .kind = .path, .null_keyword = .none },
+    .{ .section = .font, .name = "emoji_file", .field = "font.faces.emoji", .kind = .path, .null_keyword = .none },
+    .{ .section = .font, .name = "fallback", .field = "font.faces.fallbacks", .kind = .font_fallback },
     .{ .section = .font, .name = "size", .field = "font.size", .bounds = font_size },
     .{ .section = .font, .name = "size_step", .field = "font.size_step", .bounds = font_size },
     .{ .section = .font, .name = "min_size", .field = "font.min_size", .bounds = font_size },
     .{ .section = .font, .name = "max_size", .field = "font.max_size", .bounds = font_size },
-    .{ .section = .font, .name = "weight", .field = "font.faces.family.variable.regular_weight", .kind = .font_weight, .bounds = .{ .min = 1, .max = 1000 }, .reload = .restart },
-    .{ .section = .font, .name = "bold_weight", .field = "font.faces.family.variable.bold_weight", .kind = .font_weight, .bounds = .{ .min = 1, .max = 1000 }, .reload = .restart },
+    .{ .section = .font, .name = "weight", .field = "font.faces.family.variable.regular_weight", .kind = .font_weight, .bounds = .{ .min = 1, .max = 1000 } },
+    .{ .section = .font, .name = "bold_weight", .field = "font.faces.family.variable.bold_weight", .kind = .font_weight, .bounds = .{ .min = 1, .max = 1000 } },
 
     .{ .section = .window, .name = "background_opacity", .field = "window.background.alpha", .kind = .fraction },
-    // Copied once at startup (audit A1).
-    .{ .section = .window, .name = "dim_text_opacity", .field = "window.dim_alpha", .kind = .fraction, .reload = .restart },
+    .{ .section = .window, .name = "dim_text_opacity", .field = "window.dim_alpha", .kind = .fraction },
     .{ .section = .window, .name = "confirm_quit", .field = "window.confirm_quit" },
     .{ .section = .window, .name = "platform", .field = "window.platform", .reload = .restart, .os = .linux },
     // The size the window opens with.

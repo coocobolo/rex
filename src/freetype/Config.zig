@@ -62,7 +62,21 @@ pub const Face = struct {
     pub fn variable(path: [*:0]const u8, weight: f64) Face {
         return .{ .path = path, .weight_axis = weight };
     }
+
+    pub fn eql(a: Face, b: Face) bool {
+        return pathEql(a.path, b.path) and a.weight_axis == b.weight_axis and a.index == b.index;
+    }
 };
+
+/// Paths compare by content: two configs keep them in different arenas.
+fn pathEql(a: [*:0]const u8, b: [*:0]const u8) bool {
+    return std.mem.orderZ(u8, a, b) == .eq;
+}
+
+fn optionalPathEql(a: ?[*:0]const u8, b: ?[*:0]const u8) bool {
+    if (a == null or b == null) return a == null and b == null;
+    return pathEql(a.?, b.?);
+}
 
 pub const Faces = struct {
     /// Primary typeface used for normal text.
@@ -80,4 +94,28 @@ pub const Faces = struct {
     /// No font chosen: an empty variable-font path, which the user must set
     /// (`[font] file`) until Rex has a default font (#20).
     pub const default: Faces = .{ .family = .{ .variable = .{ .upright = "" } } };
+
+    /// Whether `a` and `b` load the same fonts the same way, so a
+    /// rasterizer built for one serves the other.
+    pub fn eql(a: Faces, b: Faces) bool {
+        const family = switch (a.family) {
+            .variable => |av| switch (b.family) {
+                .variable => |bv| pathEql(av.upright, bv.upright) and optionalPathEql(av.italic, bv.italic) and
+                    av.regular_weight == bv.regular_weight and av.bold_weight == bv.bold_weight,
+                .static => false,
+            },
+            .static => |as| switch (b.family) {
+                .static => |bs| pathEql(as.regular, bs.regular) and pathEql(as.bold, bs.bold) and
+                    pathEql(as.italic, bs.italic) and pathEql(as.bold_italic, bs.bold_italic),
+                .variable => false,
+            },
+        };
+        if (!family) return false;
+        if (a.emoji == null or b.emoji == null) {
+            if (a.emoji != null or b.emoji != null) return false;
+        } else if (!a.emoji.?.eql(b.emoji.?)) return false;
+        if (a.fallbacks.len != b.fallbacks.len) return false;
+        for (a.fallbacks, b.fallbacks) |x, y| if (!x.eql(y)) return false;
+        return true;
+    }
 };

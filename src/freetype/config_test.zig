@@ -25,3 +25,35 @@ test "pixelSize: a scale GLFW couldn't determine counts as 100%" {
     try testing.expectEqual(21, Config.pixelSize(21, std.math.nan(f32)));
     try testing.expectEqual(21, Config.pixelSize(21, std.math.inf(f32)));
 }
+
+test "Faces.eql: paths compare by content, every setting counts" {
+    var upright_a = "/f/a.ttf".*;
+    var upright_b = "/f/a.ttf".*;
+    const base: Config.Faces = .{
+        .family = .{ .variable = .{ .upright = &upright_a, .italic = "/f/i.ttf" } },
+        .emoji = .static("/f/e.ttf"),
+        .fallbacks = &.{ .static("/f/x.ttf"), .static("/f/y.ttc") },
+    };
+    var same = base;
+    same.family.variable.upright = &upright_b;
+    try testing.expect(base.eql(same));
+
+    var weight = base;
+    weight.family.variable.bold_weight = 600;
+    try testing.expect(!base.eql(weight));
+    var italic = base;
+    italic.family.variable.italic = null;
+    try testing.expect(!base.eql(italic));
+    var emoji = base;
+    emoji.emoji = null;
+    try testing.expect(!base.eql(emoji));
+    var fallbacks = base;
+    fallbacks.fallbacks = &.{.static("/f/x.ttf")};
+    try testing.expect(!base.eql(fallbacks));
+    var order = base;
+    order.fallbacks = &.{ .static("/f/y.ttc"), .static("/f/x.ttf") };
+    try testing.expect(!base.eql(order));
+    var static = base;
+    static.family = .{ .static = .{ .regular = "/f/a.ttf", .bold = "/f/a.ttf", .italic = "/f/a.ttf", .bold_italic = "/f/a.ttf" } };
+    try testing.expect(!base.eql(static));
+}
