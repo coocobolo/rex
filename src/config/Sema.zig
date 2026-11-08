@@ -11,7 +11,7 @@ const Allocator = std.mem.Allocator;
 const Ast = @import("Ast.zig");
 const keys = @import("keys.zig");
 const Config = @import("Config.zig");
-const keymap_parser = @import("keymap_parser.zig");
+const keybind = @import("keybind.zig");
 const Binding = @import("../input.zig").Binding;
 
 pub const Error = struct {
@@ -49,8 +49,10 @@ pub const Error = struct {
         /// `font.min_size` is above `font.max_size`; both keep their previous
         /// values. Token: the name that was set last of the two.
         conflicting_font_sizes,
-        /// A chord or action `keymap_parser` doesn't know. Token: the value.
-        invalid_keybinding,
+        /// Not modifiers plus one key, or an unknown name (`keybind.zig`). Token: the chord.
+        invalid_chord,
+        /// Not an action name. Token: the action.
+        invalid_action,
         /// Key binding syntax reserved for a future version (`none`,
         /// `action:argument`, chord sequences). Token: the value.
         reserved_keybinding,
@@ -197,8 +199,12 @@ fn applyBinding(
     if (std.mem.eql(u8, action, "none") or std.mem.indexOfScalar(u8, action, ':') != null) {
         return errors.append(gpa, .{ .tag = .reserved_keybinding, .token = value, .section = .keybinds });
     }
-    const binding = keymap_parser.parseBinding(chord, action) orelse {
-        return errors.append(gpa, .{ .tag = .invalid_keybinding, .token = value, .section = .keybinds });
+    const binding = keybind.parseBinding(chord, action) catch |err| {
+        const tag: Error.Tag, const token = switch (err) {
+            error.InvalidChord => .{ .invalid_chord, entry.name },
+            error.InvalidAction => .{ .invalid_action, value },
+        };
+        return errors.append(gpa, .{ .tag = tag, .token = token, .section = .keybinds });
     };
     for (bindings.items, binding_tokens.items) |*existing, *token| {
         if (existing.key == binding.key and std.meta.eql(existing.mods, binding.mods)) {
@@ -260,7 +266,8 @@ pub fn renderError(tree: *const Ast, err: Error, w: *std.Io.Writer) std.Io.Write
         .not_applicable => try w.print("{s} applies only to a variable font", .{keys.qualified_names[err.key.?]}),
         .no_home => try w.print("{s} = {s}: '~/' needs a home directory, and none is known", .{ keys.qualified_names[err.key.?], text }),
         .conflicting_font_sizes => try w.writeAll("font.min_size is above font.max_size; both keep their previous values"),
-        .invalid_keybinding => try w.print("invalid key binding action or chord '{s}'", .{text}),
+        .invalid_chord => try w.print("invalid key chord '{s}': modifiers ctrl, shift, alt, super and one key, like ctrl+shift+w", .{text}),
+        .invalid_action => try w.print("unknown action '{s}'", .{text}),
         .reserved_keybinding => try w.print("key binding '{s}' uses syntax reserved for a future version", .{text}),
     }
 }

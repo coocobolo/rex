@@ -242,7 +242,7 @@ test "apply: keybinds override the previous keymap by chord" {
     defer a.deinit();
     try a.expectErrors(&.{
         .{ .duplicate_key, 3, "'ctrl+shift+n' is set more than once; the last value is used" },
-        .{ .invalid_keybinding, 4, "invalid key binding action or chord 'no_such_action'" },
+        .{ .invalid_action, 4, "unknown action 'no_such_action'" },
         .{ .reserved_keybinding, 5, "key binding 'none' uses syntax reserved for a future version" },
         .{ .reserved_keybinding, 6, "key binding 'ctrl+a c' uses syntax reserved for a future version" },
         .{ .reserved_keybinding, 7, "key binding 'goto:2' uses syntax reserved for a future version" },
