@@ -37,9 +37,6 @@ pub const Option = struct {
     blur: bool = false,
     blur_radius: u8 = 12,
     close_on_outside_click: bool = true,
-    corner_radius: ?f32 = null,
-    border_width: ?f32 = null,
-    border_style: ?Card.BorderStyle = null,
     icon_style: Icon.IconStyle = .auto,
     default_focus: DefaultFocus = .confirm,
 

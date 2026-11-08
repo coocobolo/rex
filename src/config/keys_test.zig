@@ -78,14 +78,14 @@ test "apply: integers are decimal digits within bounds and type" {
 
 test "apply: floats are digits with an optional fraction" {
     var config = testConfig();
-    try applyText(&config, .card, "corner_radius", "4");
-    try std.testing.expectEqual(4, config.window.card.corner_radius);
-    try applyText(&config, .card, "corner_radius", "4.5");
-    try std.testing.expectEqual(4.5, config.window.card.corner_radius);
+    try applyText(&config, .surface, "corner_radius", "4");
+    try std.testing.expectEqual(4, config.window.surface.corner_radius);
+    try applyText(&config, .surface, "corner_radius", "4.5");
+    try std.testing.expectEqual(4.5, config.window.surface.corner_radius);
     for ([_][]const u8{ "4.", ".5", "1e3", "inf", "nan", "-1", "+1", "0x1p3", "4_0" }) |text| {
-        try std.testing.expectError(error.InvalidValue, applyText(&config, .card, "corner_radius", text));
+        try std.testing.expectError(error.InvalidValue, applyText(&config, .surface, "corner_radius", text));
     }
-    try std.testing.expectEqual(4.5, config.window.card.corner_radius);
+    try std.testing.expectEqual(4.5, config.window.surface.corner_radius);
 }
 
 test "apply: fractions are 0 to 1" {
@@ -139,9 +139,9 @@ test "apply: an optional field's keyword sets null" {
     try std.testing.expectEqual(6 * std.time.ms_per_hour, config.wellbeing.screen_time.daily_limit_ms);
 
     try applyText(&config, .modal, "border_style", "subtle");
-    try std.testing.expectEqual(.subtle, config.window.modal.border_style);
+    try std.testing.expectEqual(.subtle, config.window.surfaces.modal.border_style);
     try applyText(&config, .modal, "border_style", "inherit");
-    try std.testing.expectEqual(null, config.window.modal.border_style);
+    try std.testing.expectEqual(null, config.window.surfaces.modal.border_style);
     // Each optional field has exactly one keyword.
     try std.testing.expectError(error.InvalidValue, applyText(&config, .modal, "border_style", "none"));
     try std.testing.expectError(error.InvalidValue, applyText(&config, .@"wellbeing.screen_time", "daily_limit", "inherit"));
@@ -265,7 +265,8 @@ test "writeExpected: describes each kind" {
         .{ .window, "platform", "one of: auto, wayland, x11" },
         .{ .window, "width", "a whole number from 1 to 65535" },
         .{ .bell, "volume", "a number from 0 to 1" },
-        .{ .card, "corner_radius", "a number of at least 0, like 4.5" },
+        .{ .surface, "corner_radius", "a number of at least 0, like 4.5" },
+        .{ .card, "corner_radius", "a number of at least 0, like 4.5, or inherit" },
         .{ .toast, "duration", "a duration of at least 1ms, like 500ms, 30s, 25m or 1h" },
         .{ .@"wellbeing.screen_time", "daily_limit", "a duration of at least 1ms, like 500ms, 30s, 25m or 1h, or none" },
         .{ .modal, "border_style", "one of: semantic, subtle, or inherit" },
@@ -293,14 +294,19 @@ test "availableOn: platform is Linux only, the rest everywhere" {
 /// tag changes what users must write, so it fails here until it is decided.
 const enum_names = [_]struct { []const u8, []const []const u8 }{
     .{ "window.platform", &.{ "auto", "wayland", "x11" } },
+    .{ "surface.border_shape", &.{ "rounded", "sharp" } },
+    .{ "surface.border_style", &.{ "semantic", "subtle" } },
     .{ "card.border_shape", &.{ "rounded", "sharp" } },
     .{ "card.border_style", &.{ "semantic", "subtle" } },
     .{ "toast.position", &.{ "top_right", "top_center", "bottom_right" } },
+    .{ "toast.border_shape", &.{ "rounded", "sharp" } },
     .{ "toast.border_style", &.{ "semantic", "subtle" } },
     .{ "banner.placement", &.{ "floating", "docked" } },
     .{ "banner.position", &.{ "top_center", "top_right", "top_left" } },
+    .{ "banner.border_shape", &.{ "rounded", "sharp" } },
     .{ "banner.border_style", &.{ "semantic", "subtle" } },
     .{ "modal.default_focus", &.{ "confirm", "cancel" } },
+    .{ "modal.border_shape", &.{ "rounded", "sharp" } },
     .{ "modal.border_style", &.{ "semantic", "subtle" } },
 };
 
@@ -382,4 +388,13 @@ test "exposure: every internal entry names a Config field" {
         errdefer std.debug.print("stale internal entry: {s}\n", .{prefix});
         try std.testing.expect(exists);
     }
+}
+
+test "SurfaceOverride.resolve: each field inherits on its own" {
+    const base: Config.Surface = .{ .corner_radius = 8, .border_width = 1, .border_shape = .rounded, .border_style = .semantic };
+    try std.testing.expectEqual(base, Config.SurfaceOverride.inherit.resolve(base));
+    const resolved = (Config.SurfaceOverride{ .border_width = 3, .border_style = .subtle }).resolve(base);
+    try std.testing.expectEqual(Config.Surface{ .corner_radius = 8, .border_width = 3, .border_shape = .rounded, .border_style = .subtle }, resolved);
+    const sharp = (Config.SurfaceOverride{ .border_shape = .sharp, .corner_radius = 4 }).resolve(base);
+    try std.testing.expectEqual(Config.Surface{ .corner_radius = 4, .border_width = 1, .border_shape = .sharp, .border_style = .semantic }, sharp);
 }

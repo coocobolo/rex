@@ -49,7 +49,6 @@ pub const BorderStyle = Card.BorderStyle;
 pub const Option = struct {
     enabled: bool = true,
     position: Position = .top_right,
-    border_style: BorderStyle = .semantic,
     icon_style: Icon.IconStyle = .auto,
     duration_ms: u32 = 5000,
     min_cols: u16 = 32,

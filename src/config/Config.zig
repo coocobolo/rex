@@ -97,8 +97,11 @@ pub const Window = struct {
     size: Dimension(u16) = .{ .width = 1920, .height = 1080 },
     /// Window title. A running pomodoro is appended after it.
     title: [:0]const u8 = "rex",
-    /// Rounded card surface options for UI modals and overlays.
-    card: Card.Option = .{},
+    /// The default look of every surface (`[surface]`): cards, toasts,
+    /// banners and dialogs.
+    surface: Surface = .{},
+    /// Each component's own look over `surface`; read through `surfaceFor`.
+    surfaces: Surfaces = .{},
     /// In-terminal toast notification options.
     toast: Toast.Option = .{},
     /// Configuration diagnostic notification banner options.
@@ -114,6 +117,20 @@ pub const Window = struct {
     /// Prompts for confirmation before closing the window while the terminal session is active.
     confirm_quit: bool = true,
 
+    pub const Surfaces = struct {
+        card: SurfaceOverride = .inherit,
+        toast: SurfaceOverride = .inherit,
+        banner: SurfaceOverride = .inherit,
+        modal: SurfaceOverride = .inherit,
+    };
+
+    pub const Component = std.meta.FieldEnum(Surfaces);
+
+    /// The look of `component`: its own settings, the rest from `surface`.
+    pub fn surfaceFor(window: *const Window, comptime component: Component) Surface {
+        return @field(window.surfaces, @tagName(component)).resolve(window.surface);
+    }
+
     /// Neutral values: every option's own preset.
     pub const default: Window = .{
         .background = .default,
@@ -121,6 +138,30 @@ pub const Window = struct {
         .cursor = .default,
         .selection = .default,
     };
+};
+
+/// The look of a surface: corner radius, border width, shape and style.
+pub const Surface = Card.Option;
+
+/// A component's own surface settings; null takes the value from
+/// `Window.surface` (CF11, naming doc §6.1). Resolved on read, so every
+/// layer and reload sees the same rule and nothing derived can go stale.
+pub const SurfaceOverride = struct {
+    corner_radius: ?f32 = null,
+    border_width: ?f32 = null,
+    border_shape: ?Card.BorderShape = null,
+    border_style: ?Card.BorderStyle = null,
+
+    pub const inherit: SurfaceOverride = .{};
+
+    pub fn resolve(override: SurfaceOverride, base: Surface) Surface {
+        return .{
+            .corner_radius = override.corner_radius orelse base.corner_radius,
+            .border_width = override.border_width orelse base.border_width,
+            .border_shape = override.border_shape orelse base.border_shape,
+            .border_style = override.border_style orelse base.border_style,
+        };
+    }
 };
 
 /// How selecting text behaves.

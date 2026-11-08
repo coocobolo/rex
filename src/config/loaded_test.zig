@@ -246,3 +246,40 @@ test "load: a layer whose fallback lines are all invalid keeps the lower list" {
     try expectFallbacks(loaded.config, &.{"/a.ttf"});
     try std.testing.expectEqual(0, loaded.set_by[key(.font, "fallback")].layer);
 }
+
+test "surfaceFor: [surface] restyles every component, a component's own key stays local" {
+    var loaded = try Loaded.load(gpa, io, &test_config, null, &.{
+        text("system", "[surface]\nborder_style = subtle\ncorner_radius = 12\n[toast]\nborder_style = semantic\n"),
+    });
+    defer loaded.deinit(gpa);
+    const window = &loaded.config.window;
+    inline for (.{ .card, .banner, .modal }) |component| {
+        try std.testing.expectEqual(.subtle, window.surfaceFor(component).border_style);
+        try std.testing.expectEqual(12, window.surfaceFor(component).corner_radius);
+    }
+    try std.testing.expectEqual(.semantic, window.surfaceFor(.toast).border_style);
+    try std.testing.expectEqual(12, window.surfaceFor(.toast).corner_radius);
+}
+
+test "surfaceFor: inherit and default both drop a lower layer's override" {
+    for ([_][]const u8{ "inherit", "default" }) |keyword| {
+        var buf: [64]u8 = undefined;
+        const user = try std.fmt.bufPrint(&buf, "[surface]\ncorner_radius = 5\n[toast]\ncorner_radius = {s}\n", .{keyword});
+        var loaded = try Loaded.load(gpa, io, &test_config, null, &.{
+            text("system", "[toast]\ncorner_radius = 3\n"),
+            text("user", user),
+        });
+        defer loaded.deinit(gpa);
+        try std.testing.expectEqual(null, loaded.config.window.surfaces.toast.corner_radius);
+        try std.testing.expectEqual(5, loaded.config.window.surfaceFor(.toast).corner_radius);
+    }
+}
+
+test "surfaceFor: a sharp banner has no corner radius" {
+    var loaded = try Loaded.load(gpa, io, &test_config, null, &.{
+        text("system", "[surface]\ncorner_radius = 9\n[banner]\nborder_shape = sharp\n"),
+    });
+    defer loaded.deinit(gpa);
+    try std.testing.expectEqual(0, loaded.config.window.surfaceFor(.banner).effectiveRadius());
+    try std.testing.expectEqual(9, loaded.config.window.surfaceFor(.modal).effectiveRadius());
+}

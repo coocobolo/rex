@@ -40,7 +40,6 @@ const SelectionState = renderer_mod.Selection.State;
 const Renderer = renderer_mod.Renderer;
 const Dimension = renderer_mod.Dimension;
 const FrameBuilder = renderer_mod.Frame.Builder;
-const Card = renderer_mod.Card;
 const ui_mod = rex.ui;
 const Modal = ui_mod.Modal;
 const Toast = ui_mod.Toast;
@@ -425,13 +424,6 @@ pub fn init(
         }, null);
     }
 
-    var wellbeing_overlay = wellbeing.overlay.Overlay{};
-    wellbeing_overlay.card_opt = active_config.window.card;
-    wellbeing_overlay.modal_opt = active_config.window.modal;
-    wellbeing_overlay.toast_opt = active_config.window.toast;
-    wellbeing_overlay.icon_opt = active_config.window.icon;
-    wellbeing_overlay.tokens = rex.color.Tokens.fromThemeWithOverride(active_config.theme, active_config.tokens);
-
     const app = App{
         .io = io,
         .driver = driver,
@@ -457,7 +449,8 @@ pub fn init(
         .font_size = active_config.font.size,
         .content_scale = content_scale,
         .wellbeing_state = wellbeing_state,
-        .wellbeing_overlay = wellbeing_overlay,
+        // Its options and tokens come with every `build`.
+        .wellbeing_overlay = .{},
         .toast_queue = .{},
         .config_banner = startup_banner,
         .frame_buffer_size = .empty,
@@ -711,7 +704,7 @@ fn renderFrame(self: *App) !bool {
         var actions: [2]Modal.Action = undefined;
         _ = Modal.render(
             quitConfirmModalRequest(
-                self.config.window.card,
+                self.config.window.surfaceFor(.modal),
                 self.config.window.modal,
                 self.config.window.quit_dialog,
                 &actions,
@@ -732,7 +725,7 @@ fn renderFrame(self: *App) !bool {
             &self.rasterizer,
             &self.wellbeing_state,
             tokens,
-            self.config.window.card,
+            overlaySurfaces(&self.config.window),
             self.config.window.toast,
             self.config.window.icon,
             self.config.window.modal,
@@ -775,6 +768,7 @@ fn renderFrame(self: *App) !bool {
                 total_cols,
                 total_rows,
                 self.config.window.banner,
+                self.config.window.surfaceFor(.banner),
                 &self.wellbeing_overlay.card_buffer,
                 drawer,
                 &self.hotspots,
@@ -1040,7 +1034,7 @@ pub fn notifyToast(self: *App, req: Toast.Request) u64 {
     return id;
 }
 
-/// Pushes a concise toast notification configured with the window's card, toast, and icon options.
+/// Pushes a concise toast notification with the configured toast surface, toast and icon options.
 pub fn notifySimple(self: *App, title: []const u8, description: []const u8, variant: Toast.Variant) void {
     if (!self.config.window.toast.enabled) return;
     const icon_id: Icon.IconId = switch (variant) {
@@ -1052,6 +1046,7 @@ pub fn notifySimple(self: *App, title: []const u8, description: []const u8, vari
     const icon_str = Icon.getGlyphWithOption(icon_id, self.config.window.icon);
     const icon_style = Icon.resolveStyle(self.config.window.icon.style);
     const dismiss_str = self.config.window.toast.dismiss_str orelse (if (icon_style == .ascii) "x" else "✕");
+    const toast_surface = self.config.window.surfaceFor(.toast);
     _ = self.notifyToast(.{
         .title = title,
         .description = description,
@@ -1060,9 +1055,9 @@ pub fn notifySimple(self: *App, title: []const u8, description: []const u8, vari
         .action_prompt = self.config.window.toast.action_prompt,
         .variant = variant,
         .position = self.config.window.toast.position,
-        .border_style = self.config.window.toast.border_style,
-        .corner_radius = self.config.window.card.effectiveRadius(),
-        .border_width = self.config.window.card.border_width,
+        .border_style = toast_surface.border_style,
+        .corner_radius = toast_surface.effectiveRadius(),
+        .border_width = toast_surface.border_width,
         .min_cols = self.config.window.toast.min_cols,
         .max_cols = self.config.window.toast.max_cols,
         .margin_cols = self.config.window.toast.margin_cols,
@@ -1198,13 +1193,6 @@ pub fn reloadConfig(self: *App) void {
     if (self.config.font.size != self.font_size) {
         self.setFontSize(self.config.font.size);
     }
-
-    // Live update wellbeing overlay options and tokens
-    self.wellbeing_overlay.card_opt = self.config.window.card;
-    self.wellbeing_overlay.modal_opt = self.config.window.modal;
-    self.wellbeing_overlay.toast_opt = self.config.window.toast;
-    self.wellbeing_overlay.icon_opt = self.config.window.icon;
-    self.wellbeing_overlay.tokens = rex.color.Tokens.fromThemeWithOverride(self.config.theme, self.config.tokens);
 
     // Live update wellbeing tracking options
     self.wellbeing_state.option = self.config.wellbeing;
@@ -1536,7 +1524,16 @@ fn diagnosticBanner(file: *const diagnostics.File, d: diagnostics.Diagnostic) Ba
     return Banner.init(level, title, w.buffered());
 }
 
-fn quitConfirmModalRequest(card_opt: Card.Option, modal_opt: Modal.Option, quit_opt: Config.QuitDialog, actions: *[2]Modal.Action) Modal.Request {
+/// The resolved looks of the surfaces the wellbeing overlay draws.
+fn overlaySurfaces(window: *const Config.Window) wellbeing.overlay.Surfaces {
+    return .{
+        .card = window.surfaceFor(.card),
+        .toast = window.surfaceFor(.toast),
+        .modal = window.surfaceFor(.modal),
+    };
+}
+
+fn quitConfirmModalRequest(surface: Config.Surface, modal_opt: Modal.Option, quit_opt: Config.QuitDialog, actions: *[2]Modal.Action) Modal.Request {
     actions.* = .{
         .{ .shortcut = "Enter / Y", .label = quit_opt.confirm_label },
         .{ .shortcut = "Esc / N", .label = quit_opt.cancel_label },
@@ -1547,12 +1544,12 @@ fn quitConfirmModalRequest(card_opt: Card.Option, modal_opt: Modal.Option, quit_
         .line2 = quit_opt.line2,
         .actions = actions,
         .variant = .warning,
-        .border_style = modal_opt.border_style orelse card_opt.border_style,
+        .border_style = surface.border_style,
         .dim_alpha = modal_opt.backdropAlpha(),
         .cols = modal_opt.cols,
         .icon_style = modal_opt.icon_style,
-        .corner_radius = modal_opt.corner_radius orelse card_opt.effectiveRadius(),
-        .border_width = modal_opt.border_width orelse card_opt.border_width,
+        .corner_radius = surface.effectiveRadius(),
+        .border_width = surface.border_width,
     };
 }
 
@@ -2077,7 +2074,7 @@ fn handleOverlayClick(self: *App, col: u16, row: u16) bool {
         const current_frame = self.driver.getFrame();
         var actions: [2]Modal.Action = undefined;
         if (Modal.hitTest(
-            quitConfirmModalRequest(self.config.window.card, self.config.window.modal, self.config.window.quit_dialog, &actions),
+            quitConfirmModalRequest(self.config.window.surfaceFor(.modal), self.config.window.modal, self.config.window.quit_dialog, &actions),
             current_frame.active_cols,
             current_frame.active_rows,
             col,
@@ -2538,37 +2535,6 @@ test "ScrollAccumulator: smooth line accumulation and direction reversal" {
     try testing.expectEqual(@as(f64, 0), accum_y);
     accum_y += y_offset * @as(f64, @floatFromInt(wheel_lines));
     try testing.expectApproxEqAbs(@as(f64, -0.6), accum_y, 0.0001);
-}
-
-test "App: general UI renderer options and theme accent in Config" {
-    const testing = std.testing;
-
-    var theme = Theme.graphite;
-    theme.accent = .{ .r = 138, .g = 110, .b = 240 };
-
-    const card_opt = Card.Option{
-        .corner_radius = 12.0,
-        .border_width = 2.0,
-        .border_shape = .sharp,
-    };
-    const toast_opt = Toast.Option{
-        .enabled = true,
-        .position = .bottom_right,
-        .border_style = .subtle,
-        .duration_ms = 4000,
-    };
-    const icon_opt = Icon.Option{
-        .style = .nerd_font,
-    };
-
-    try testing.expectEqual(@as(f32, 12.0), card_opt.corner_radius);
-    try testing.expectEqual(Card.BorderShape.sharp, card_opt.border_shape);
-    try testing.expectEqual(Toast.Position.bottom_right, toast_opt.position);
-    try testing.expectEqual(Toast.BorderStyle.subtle, toast_opt.border_style);
-    try testing.expectEqual(Icon.IconStyle.nerd_font, icon_opt.style);
-
-    const tokens = rex.color.Tokens.fromTheme(theme);
-    try testing.expectEqual([3]u8{ 138, 110, 240 }, tokens.accent);
 }
 
 test "App: quitConfirmModalRequest layout and hitTest" {

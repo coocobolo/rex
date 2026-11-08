@@ -158,6 +158,14 @@ pub const PanelRect = struct {
     }
 };
 
+/// The resolved looks of the surfaces the overlay draws
+/// (`config.Config.Window.surfaceFor`).
+pub const Surfaces = struct {
+    card: Card.Option = .{},
+    toast: Card.Option = .{},
+    modal: Card.Option = .{},
+};
+
 pub const Overlay = struct {
     dashboard_open: bool = false,
     active_tab: DashboardTab = .overview,
@@ -168,7 +176,7 @@ pub const Overlay = struct {
     last_toast_layout: ?Toast.Layout = null,
 
     tokens: ColorTokens = ColorTokens.dark,
-    card_opt: Card.Option = .{},
+    surfaces: Surfaces = .{},
     toast_opt: Toast.Option = .{},
     icon_opt: Icon.Option = .{},
     modal_opt: Modal.Option = .{},
@@ -260,7 +268,7 @@ pub const Overlay = struct {
         rasterizer: *Rasterizer,
         wellbeing: *const Wellbeing,
         color_tokens: ColorTokens,
-        card_opt: Card.Option,
+        surfaces: Surfaces,
         toast_opt: Toast.Option,
         icon_opt: Icon.Option,
         modal_opt: Modal.Option,
@@ -270,7 +278,7 @@ pub const Overlay = struct {
     ) void {
         self.tokens = color_tokens;
 
-        self.card_opt = card_opt;
+        self.surfaces = surfaces;
         self.toast_opt = toast_opt;
         self.icon_opt = icon_opt;
         self.modal_opt = modal_opt;
@@ -355,9 +363,9 @@ pub const Overlay = struct {
                 .critical => .critical,
             },
             .position = self.toast_opt.position,
-            .border_style = self.toast_opt.border_style,
-            .corner_radius = self.card_opt.effectiveRadius(),
-            .border_width = self.card_opt.border_width,
+            .border_style = self.surfaces.toast.border_style,
+            .corner_radius = self.surfaces.toast.effectiveRadius(),
+            .border_width = self.surfaces.toast.border_width,
             .min_cols = self.toast_opt.min_cols,
             .max_cols = self.toast_opt.max_cols,
             .margin_cols = self.toast_opt.margin_cols,
@@ -425,10 +433,10 @@ pub const Overlay = struct {
                 .option = .{
                     .surface = .card,
                     .border = .{
-                        .shape = if (self.card_opt.border_shape == .sharp) .sharp else .rounded,
-                        .radius = self.card_opt.effectiveRadius(),
-                        .width = self.card_opt.border_width,
-                        .style = if (self.card_opt.border_style == .semantic) .semantic else .normal,
+                        .shape = if (self.surfaces.card.border_shape == .sharp) .sharp else .rounded,
+                        .radius = self.surfaces.card.effectiveRadius(),
+                        .width = self.surfaces.card.border_width,
+                        .style = if (self.surfaces.card.border_style == .semantic) .semantic else .normal,
                     },
                     .backdrop_dim_alpha = dim_byte,
                 },
@@ -552,8 +560,7 @@ pub const Overlay = struct {
         const center_rect = Rect.center(total_cols, total_rows, modal_w, modal_h);
         const rect = PanelRect{ .col = center_rect.col, .row = center_rect.row, .width = center_rect.width, .height = center_rect.height };
 
-        const effective_radius = self.modal_opt.corner_radius orelse self.card_opt.effectiveRadius();
-        const effective_border_w = self.modal_opt.border_width orelse self.card_opt.border_width;
+        const surface = self.surfaces.modal;
 
         _ = Box.render(
             .{
@@ -561,10 +568,10 @@ pub const Overlay = struct {
                 .option = .{
                     .surface = .card,
                     .border = .{
-                        .shape = if (self.card_opt.border_shape == .sharp) .sharp else .rounded,
-                        .radius = effective_radius,
-                        .width = effective_border_w,
-                        .style = if (self.card_opt.border_style == .semantic) .semantic else .normal,
+                        .shape = if (surface.border_shape == .sharp) .sharp else .rounded,
+                        .radius = surface.effectiveRadius(),
+                        .width = surface.border_width,
+                        .style = if (surface.border_style == .semantic) .semantic else .normal,
                     },
                     .backdrop_dim_alpha = self.modal_opt.backdropAlpha(),
                 },
