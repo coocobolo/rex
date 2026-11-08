@@ -4,24 +4,8 @@ const testing = std.testing;
 const alloc = testing.allocator;
 
 const Rasterizer = @import("Rasterizer.zig");
-const Config = @import("Config.zig");
 
-const test_font: Config = .{
-    .max_size = 72,
-    .min_size = 8,
-    .font = .{
-        .family = .{
-            .static = .{
-                .regular = "testdata/font/NotoSansMono-Regular.ttf",
-                .bold = "testdata/font/NotoSansMono-Bold.ttf",
-                .italic = "testdata/font/NotoSans-Italic.ttf",
-                .bold_italic = "testdata/font/NotoSans-BoldItalic.ttf",
-            },
-        },
-        .emoji = .static("testdata/font/NotoColorEmoji.ttf"),
-    },
-    .height = 16,
-};
+const test_font = @import("test_fixtures.zig").test_font;
 
 test "rasterizer: cell metrics are set after create" {
     var r = try Rasterizer.create(alloc, test_font);
@@ -128,7 +112,7 @@ test "rasterizer: underline thickness scales with the font size" {
 
 test "rasterizer: no emoji font configured" {
     var config = test_font;
-    config.font.emoji = null;
+    config.faces.emoji = null;
 
     var r = try Rasterizer.create(alloc, config);
     defer r.destroy(alloc);

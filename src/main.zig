@@ -8,12 +8,11 @@ pub const std_options: std.Options = .{
 };
 const log = std.log.scoped(.main);
 
-const font_config: rex.FreeType.FontConfig = .{
-    .width = 0,
-    .height = 20,
+const font_config: rex.config.Config.Font = .{
+    .size = 20,
     .min_size = 6,
     .max_size = 196,
-    .font = .{
+    .faces = .{
         .family = .{
             // .static = .{
             //     .regular = "/home/ozy/.local/share/fonts/JetBrainsMono/JetBrainsMonoNerdFontMono-Regular.ttf",

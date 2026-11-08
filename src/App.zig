@@ -330,12 +330,14 @@ pub fn init(
     // The font is rasterized at the display's scale; the config's size is
     // in logical pixels.
     const content_scale = win.getWindowContentScale().width;
-    var font_pixels = active_config.font;
-    font_pixels.height = Freetype.FontConfig.pixelSize(active_config.font.height, content_scale);
+    const font_pixels: Freetype.FontConfig = .{
+        .faces = active_config.font.faces,
+        .height = Freetype.FontConfig.pixelSize(active_config.font.size, content_scale),
+    };
     log.info("display scale {d:.2}, font {d} px for size {d}", .{
         content_scale,
         font_pixels.height,
-        active_config.font.height,
+        active_config.font.size,
     });
     var rasterizer: Rasterizer = try .create(gpa, font_pixels);
     errdefer rasterizer.destroy(gpa);
@@ -432,7 +434,7 @@ pub fn init(
         .base_config = config,
         .config_watcher = watcher,
         .config_path = user_cfg_path,
-        .font_size = active_config.font.height,
+        .font_size = active_config.font.size,
         .content_scale = content_scale,
         .wellbeing_state = wellbeing_state,
         .wellbeing_overlay = wellbeing_overlay,
@@ -1080,8 +1082,10 @@ fn applyContentScale(self: *App, scale: f32) void {
 /// scale changes. Returns false, keeping the old font, if the new one
 /// can't be created.
 fn rebuildFont(self: *App, size: u32, scale: f32) bool {
-    var font_config = self.config.font;
-    font_config.height = Freetype.FontConfig.pixelSize(size, scale);
+    const font_config: Freetype.FontConfig = .{
+        .faces = self.config.font.faces,
+        .height = Freetype.FontConfig.pixelSize(size, scale),
+    };
     // Create new rasterizer BEFORE destroying old one (avoid dangling ptr on failure)
     const new_rasterizer = Rasterizer.create(self.allocator, font_config) catch |err| {
         log.err("rebuildFont: rasterizer.create failed: {}", .{err});
@@ -1162,8 +1166,8 @@ pub fn reloadConfig(self: *App) void {
     self.frame_builder.last_generation = null;
 
     // Live update font size if modified
-    if (self.config.font.height != self.font_size) {
-        self.setFontSize(self.config.font.height);
+    if (self.config.font.size != self.font_size) {
+        self.setFontSize(self.config.font.size);
     }
 
     // Live update wellbeing overlay options and tokens
@@ -1201,15 +1205,15 @@ fn handleAction(self: *App, action: rex.input.Action) void {
             self.needs_redraw = true;
         },
         .increase_font_size => {
-            const target = (self.font_size_pending orelse self.font_size) +| self.config.font_size_step;
+            const target = (self.font_size_pending orelse self.font_size) +| self.config.font.size_step;
             self.font_size_pending = @min(target, self.config.font.max_size);
         },
         .decrease_font_size => {
-            const target = (self.font_size_pending orelse self.font_size) -| self.config.font_size_step;
+            const target = (self.font_size_pending orelse self.font_size) -| self.config.font.size_step;
             self.font_size_pending = @max(target, self.config.font.min_size);
         },
         .reset_font_size => {
-            self.font_size_pending = self.config.font.height;
+            self.font_size_pending = self.config.font.size;
         },
         .new_window => self.openNewWindow(),
         .quit => self.requestQuit(),
@@ -2615,8 +2619,8 @@ test "App: a config reload starts from the defaults, in its own arena" {
     const base: Config = .{
         .blink = .{},
         .font = .{
-            .font = .{ .family = .{ .variable = .{ .upright = "/base/upright.ttf" } } },
-            .height = 20,
+            .faces = .{ .family = .{ .variable = .{ .upright = "/base/upright.ttf" } } },
+            .size = 20,
             .max_size = 96,
             .min_size = 6,
         },
@@ -2643,7 +2647,7 @@ test "App: a config reload starts from the defaults, in its own arena" {
     defer first_arena.deinit();
     var first: Config = base;
     try rex.config.applyFileConfig(&first, &with_settings, first_arena.allocator());
-    try testing.expectEqualStrings(family, std.mem.span(first.font.font.family.variable.upright));
+    try testing.expectEqualStrings(family, std.mem.span(first.font.faces.family.variable.upright));
     var ctrl_equal_quits = false;
     for (first.keymap) |b| {
         if (b.key == .equal and b.mods.ctrl and !b.mods.shift) ctrl_equal_quits = b.action == .quit;
@@ -2657,6 +2661,6 @@ test "App: a config reload starts from the defaults, in its own arena" {
     defer second_arena.deinit();
     var second: Config = base;
     try rex.config.applyFileConfig(&second, &without_settings, second_arena.allocator());
-    try testing.expectEqualStrings("/base/upright.ttf", std.mem.span(second.font.font.family.variable.upright));
+    try testing.expectEqualStrings("/base/upright.ttf", std.mem.span(second.font.faces.family.variable.upright));
     try testing.expectEqual(base.keymap.ptr, second.keymap.ptr);
 }

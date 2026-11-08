@@ -37,11 +37,7 @@ blink: struct {
     /// Half period of SGR 6 rapid blink, in ms. 0 turns it off.
     rapid_half_period: u64 = 250,
 },
-/// `height`, `min_size` and `max_size` are in logical pixels; the
-/// rasterizer gets `FontConfig.pixelSize(height, content_scale)`.
-font: FontConfig,
-/// Step of increase_font_size and decrease_font_size, in logical pixels.
-font_size_step: u32 = 2,
+font: Font,
 keymap: []const Binding,
 wellbeing: WellbeingOption = .{},
 termio: SpawnOption,
@@ -119,6 +115,20 @@ terminal: TerminalOption = default_terminal,
 /// Threading configuration: .single for in-loop synchronous execution,
 /// or .multi for dedicated background worker thread with wait-free triple buffer.
 threading: Threading = .{},
+
+/// The terminal font. Sizes are in logical pixels (pixels at 100% scale);
+/// the rasterizer gets `FontConfig.pixelSize(size, content_scale)` device
+/// pixels.
+pub const Font = struct {
+    faces: FontConfig.Faces,
+    size: u32,
+    /// Smallest and largest size that increase_font_size and
+    /// decrease_font_size reach.
+    min_size: u32,
+    max_size: u32,
+    /// Step of increase_font_size and decrease_font_size.
+    size_step: u32 = 2,
+};
 
 /// Copy and labels of the quit confirmation dialog.
 pub const QuitDialog = struct {

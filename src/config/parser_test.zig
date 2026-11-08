@@ -250,7 +250,7 @@ test "config: merge and applyFileConfig overrides" {
     app_cfg.window.toast.duration_ms = 5000;
     app_cfg.window.modal.dim_alpha = 180;
     app_cfg.keymap = &.{};
-    app_cfg.font.font.family = .{
+    app_cfg.font.faces.family = .{
         .variable = .{
             .upright = "default.ttf",
         },
@@ -374,7 +374,7 @@ test "config: banner section and options parsing" {
     var app_cfg: Config = undefined;
     app_cfg.window.banner = .{};
     app_cfg.keymap = &.{};
-    app_cfg.font.font.family = .{
+    app_cfg.font.faces.family = .{
         .variable = .{ .upright = "default.ttf" },
     };
 
@@ -416,7 +416,7 @@ test "config: card border_style cascades and syncs across native UI elements" {
     app_cfg.window.toast = .{};
     app_cfg.window.banner = .{};
     app_cfg.keymap = &.{};
-    app_cfg.font.font.family = .{
+    app_cfg.font.faces.family = .{
         .variable = .{ .upright = "default.ttf" },
     };
 
@@ -663,17 +663,17 @@ test "config: applyFileConfig takes font bounds only as an ordered pair" {
 
     var app_cfg: Config = undefined;
     app_cfg.keymap = &.{};
-    app_cfg.font.font.family = .{ .variable = .{ .upright = "default.ttf" } };
+    app_cfg.font.faces.family = .{ .variable = .{ .upright = "default.ttf" } };
     app_cfg.font.min_size = 6;
     app_cfg.font.max_size = 196;
-    app_cfg.font_size_step = 2;
+    app_cfg.font.size_step = 2;
 
     // min above max: both bounds stay, the step still applies.
     var bad: FileConfig = .{ .font_size_min = 80, .font_size_max = 40, .font_size_step = 3 };
     try merge_mod.applyFileConfig(&app_cfg, &bad, testing.allocator);
     try testing.expectEqual(6, app_cfg.font.min_size);
     try testing.expectEqual(196, app_cfg.font.max_size);
-    try testing.expectEqual(3, app_cfg.font_size_step);
+    try testing.expectEqual(3, app_cfg.font.size_step);
 
     // One bound alone is checked against the other's current value.
     var only_max: FileConfig = .{ .font_size_max = 48 };

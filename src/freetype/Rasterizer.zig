@@ -159,13 +159,12 @@ pub const empty: Rasterizer = .{
 
 const VariableFontOption = struct {
     path: [*:0]const u8,
-    width: u32,
     height: u32,
     weight_axis: f64,
 };
 
 fn initVariableFace(gpa: Allocator, lib: c.FT_Library, opt: VariableFontOption) !c.FT_Face {
-    const face = try ft.initFace(lib, opt.path, opt.width, opt.height);
+    const face = try ft.initFace(lib, opt.path, opt.height);
     errdefer ft.doneFace(face) catch {};
 
     if (ft.hasMM(face)) {
@@ -188,13 +187,12 @@ pub fn create(gpa: Allocator, config: Config) !Rasterizer {
     self.library = try ft.initFreeType();
     errdefer ft.doneFreeType(self.library) catch {};
 
-    const font = config.font;
-    const width = config.width;
+    const font = config.faces;
     const height = config.height;
 
     if (font.family == .variable) {
         const variable_font = font.family.variable;
-        inline for (std.enums.values(Config.FontStyle)) |style| {
+        inline for (std.enums.values(Config.Style)) |style| {
             switch (style) {
                 .regular => self.face.regular = try initVariableFace(
                     gpa,
@@ -202,7 +200,6 @@ pub fn create(gpa: Allocator, config: Config) !Rasterizer {
                     .{
                         .weight_axis = variable_font.regular_weight,
                         .path = variable_font.upright,
-                        .width = width,
                         .height = height,
                     },
                 ),
@@ -212,7 +209,6 @@ pub fn create(gpa: Allocator, config: Config) !Rasterizer {
                     .{
                         .weight_axis = variable_font.bold_weight,
                         .path = variable_font.upright,
-                        .width = width,
                         .height = height,
                     },
                 ),
@@ -222,7 +218,6 @@ pub fn create(gpa: Allocator, config: Config) !Rasterizer {
                     .{
                         .weight_axis = variable_font.regular_weight,
                         .path = variable_font.italic orelse variable_font.upright,
-                        .width = width,
                         .height = height,
                     },
                 ),
@@ -232,7 +227,6 @@ pub fn create(gpa: Allocator, config: Config) !Rasterizer {
                     .{
                         .weight_axis = variable_font.bold_weight,
                         .path = variable_font.italic orelse variable_font.upright,
-                        .width = width,
                         .height = height,
                     },
                 ),
@@ -241,21 +235,21 @@ pub fn create(gpa: Allocator, config: Config) !Rasterizer {
     } else if (font.family == .static) {
         const static_font = font.family.static;
 
-        self.face.regular = try ft.initFace(self.library, static_font.regular, width, height);
+        self.face.regular = try ft.initFace(self.library, static_font.regular, height);
         errdefer ft.doneFace(self.face.regular) catch {};
 
-        self.face.bold = try ft.initFace(self.library, static_font.bold, width, height);
+        self.face.bold = try ft.initFace(self.library, static_font.bold, height);
         errdefer ft.doneFace(self.face.bold) catch {};
 
-        self.face.italic = try ft.initFace(self.library, static_font.italic, width, height);
+        self.face.italic = try ft.initFace(self.library, static_font.italic, height);
         errdefer ft.doneFace(self.face.italic) catch {};
 
-        self.face.bold_italic = try ft.initFace(self.library, static_font.bold_italic, width, height);
+        self.face.bold_italic = try ft.initFace(self.library, static_font.bold_italic, height);
         errdefer ft.doneFace(self.face.bold_italic) catch {};
     }
 
     if (font.emoji) |emoji| {
-        self.face.emoji = try ft.initFace(self.library, emoji.path, width, height);
+        self.face.emoji = try ft.initFace(self.library, emoji.path, height);
         errdefer ft.doneFace(self.face.emoji) catch {};
     }
 
@@ -305,7 +299,7 @@ pub fn create(gpa: Allocator, config: Config) !Rasterizer {
         fb_list.deinit(gpa);
     }
     for (font.fallbacks) |spec| {
-        const fb = ft.initFace(self.library, spec.path, width, height) catch |err| {
+        const fb = ft.initFace(self.library, spec.path, height) catch |err| {
             log.warn("fallback font {s} failed to load: {}", .{ spec.path, err });
             continue;
         };

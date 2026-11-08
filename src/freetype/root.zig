@@ -130,8 +130,7 @@ pub fn initFreeType() FtError!c.FT_Library {
 ///
 /// Scalable fonts use FT_Set_Pixel_Sizes().
 /// Bitmap/color emoji fonts use the closest available fixed strike.
-pub fn initFace(ft_library: c.FT_Library, path: [*:0]const u8, pixel_width: u32, pixel_height: u32) FtError!c.FT_Face {
-    _ = pixel_width;
+pub fn initFace(ft_library: c.FT_Library, path: [*:0]const u8, pixel_height: u32) FtError!c.FT_Face {
     var face: c.FT_Face = undefined;
     try ftCheck(c.FT_New_Face(ft_library, path, 0, &face), "FT_New_Face");
 

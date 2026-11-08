@@ -71,9 +71,9 @@ pub fn applyFileConfig(target: *Config, file: *const FileConfig, allocator: Allo
 
     // Font properties
     if (file.font_size) |sz| {
-        target.font.height = @intFromFloat(sz);
+        target.font.size = @intFromFloat(sz);
     }
-    if (file.font_size_step) |step| target.font_size_step = step;
+    if (file.font_size_step) |step| target.font.size_step = step;
     {
         // Checked together: each bound is valid alone (the parser rejects
         // 0), but the pair must still be ordered.
@@ -88,12 +88,12 @@ pub fn applyFileConfig(target: *Config, file: *const FileConfig, allocator: Allo
             target.font.max_size = max;
         }
     }
-    if (target.font.font.family == .variable) {
-        if (file.font_weight) |w| target.font.font.family.variable.regular_weight = @floatFromInt(w);
-        if (file.font_weight_bold) |wb| target.font.font.family.variable.bold_weight = @floatFromInt(wb);
+    if (target.font.faces.family == .variable) {
+        if (file.font_weight) |w| target.font.faces.family.variable.regular_weight = @floatFromInt(w);
+        if (file.font_weight_bold) |wb| target.font.faces.family.variable.bold_weight = @floatFromInt(wb);
         if (file.getFontFamily()) |fam| {
             const fam_z = try allocator.dupeZ(u8, fam);
-            target.font.font.family.variable.upright = fam_z.ptr;
+            target.font.faces.family.variable.upright = fam_z.ptr;
         }
     }
 

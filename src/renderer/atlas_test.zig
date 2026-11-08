@@ -7,28 +7,11 @@ const window = @import("Window.zig");
 const gl = @import("gl.zig");
 const ft = @import("../freetype/root.zig");
 
-const FontConfig = ft.FontConfig;
 const Rasterizer = ft.Rasterizer;
 
 const testGlContext = window.testGlContext;
 
-const test_font: FontConfig = .{
-    .max_size = 64,
-    .min_size = 0,
-    .width = 0,
-    .font = .{
-        .family = .{
-            .static = .{
-                .regular = "testdata/font/NotoSansMono-Regular.ttf",
-                .bold = "testdata/font/NotoSansMono-Bold.ttf",
-                .italic = "testdata/font/NotoSans-Italic.ttf",
-                .bold_italic = "testdata/font/NotoSans-BoldItalic.ttf",
-            },
-        },
-        .emoji = .static("testdata/font/NotoColorEmoji.ttf"),
-    },
-    .height = 16,
-};
+const test_font = @import("../freetype/test_fixtures.zig").test_font;
 
 /// Returns a fake gray glyph backed by a stack buffer.
 /// The caller owns the buffer, keep it alive for the duration of upload().

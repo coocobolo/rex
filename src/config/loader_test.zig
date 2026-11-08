@@ -9,10 +9,10 @@ const input = @import("../input.zig");
 fn baseConfig() Config {
     var config: Config = undefined;
     config.keymap = &.{};
-    config.font.height = 14;
+    config.font.size = 14;
     config.font.min_size = 6;
     config.font.max_size = 196;
-    config.font.font.family = .{ .variable = .{ .upright = "base.ttf" } };
+    config.font.faces.family = .{ .variable = .{ .upright = "base.ttf" } };
     config.scroll = .{};
     return config;
 }
@@ -50,7 +50,7 @@ test "load without files keeps the base config" {
 
     try testing.expect(!loaded.foundAny());
     try testing.expectEqual(@as(usize, 0), loaded.diagnosticCount());
-    try testing.expectEqual(@as(u32, 14), loaded.config.font.height);
+    try testing.expectEqual(@as(u32, 14), loaded.config.font.size);
 }
 
 test "load applies the user file on top of the system file" {
@@ -69,7 +69,7 @@ test "load applies the user file on top of the system file" {
 
     try testing.expect(loaded.system.found);
     try testing.expect(loaded.user.?.found);
-    try testing.expectEqual(@as(u32, 12), loaded.config.font.height);
+    try testing.expectEqual(@as(u32, 12), loaded.config.font.size);
     try testing.expectEqual(@as(u32, 7), loaded.config.scroll.lines);
     try testing.expect(loaded.firstError() == null);
 }
@@ -128,6 +128,6 @@ test "parse errors are reported and the rest of the file applies" {
     });
     defer loaded.deinit();
 
-    try testing.expectEqual(@as(u32, 12), loaded.config.font.height);
+    try testing.expectEqual(@as(u32, 12), loaded.config.font.size);
     try testing.expect(loaded.diagnosticCount() > 0);
 }
