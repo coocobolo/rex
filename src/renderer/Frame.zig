@@ -110,9 +110,9 @@ pub fn cursorColor(palette: *const Palette, osc_color: ?[3]u8) [3]u8 {
 ///   7: reserved
 pub const Flags = packed struct(u8) {
     strikethrough: bool = false,
-    blink: bool = false, // SGR 5, Config.blink.half_period
+    blink: bool = false, // SGR 5, Config.blink.half_period_ms
     overline: bool = false,
-    blink_rapid: bool = false, // SGR 6, Config.blink.rapid_half_period
+    blink_rapid: bool = false, // SGR 6, Config.blink.rapid_half_period_ms
     underline: UnderlineStyle = .none,
     _pad: u1 = 0,
 };

@@ -78,19 +78,19 @@ const prod_wellbeing_option: rex.builtin.wellbeing.Option = .{
         .show_break_animation = true,
     },
     .screen_time = .{
-        .daily_limit_minutes = 480, // 8-hour daily limit
+        .daily_limit_ms = 8 * std.time.ms_per_hour,
         .grayscale_on_limit = true,
-        .grayscale_transition_s = 60, // Smooth 1-minute fade into grayscale
-        .idle_threshold_s = 180, // 3-minute idle threshold pauses tracking
-        .proc_sample_interval_s = 5,
+        .grayscale_transition_ms = std.time.ms_per_min, // smooth fade into grayscale
+        .idle_threshold_ms = 3 * std.time.ms_per_min, // idle pauses tracking
+        .proc_sample_interval_ms = 5 * std.time.ms_per_s,
         .track_foreground_apps = true,
         .lock_input_on_limit = false,
         .show_limit_animation = false,
     },
     .eyesight = .{
         .enabled = true,
-        .interval_minutes = 20, // 20-20-20 rule
-        .duration_s = 20,
+        .interval_ms = 20 * std.time.ms_per_min, // 20-20-20 rule
+        .duration_ms = 20 * std.time.ms_per_s,
         .lock_input = false,
         .show_animation = true,
         .animation = .pulse_dim,
@@ -98,17 +98,17 @@ const prod_wellbeing_option: rex.builtin.wellbeing.Option = .{
     },
     .movement = .{
         .enabled = true,
-        .interval_minutes = 50,
-        .duration_s = 60,
+        .interval_ms = 50 * std.time.ms_per_min,
+        .duration_ms = 60 * std.time.ms_per_s,
         .lock_input = false,
         .show_animation = true,
         .animation = .warm_glow,
         .prompt = "Time to stand up, stretch your back, and move.",
     },
     .routines = .{
-        .hydration_interval_minutes = 45,
+        .hydration_interval_ms = 45 * std.time.ms_per_min,
         .hydration_prompt = "Stay hydrated: drink some fresh water.",
-        .posture_interval_minutes = 30,
+        .posture_interval_ms = 30 * std.time.ms_per_min,
         .posture_prompt = "Check posture: roll shoulders back and align neck.",
         .lock_input = false,
         .show_animation = false,
@@ -211,7 +211,7 @@ pub const BracketPair = struct { open: u21, close: u21 };
 pub const rex_terminal_option = config.terminal;
 
 const config: rex.config.Config = .{
-    .blink = .{ .half_period = 500, .rapid_half_period = 250 },
+    .blink = .{ .half_period_ms = 500, .rapid_half_period_ms = 250 },
     .font = font_config,
     .keymap = rex.input.default_keymap,
     .termio = .{

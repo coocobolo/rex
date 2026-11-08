@@ -420,8 +420,8 @@ pub fn init(
         .latency_path = latency_path,
         .window = win,
         .background_color = .{ background_color.r, background_color.g, background_color.b, background_alpha },
-        .blink = .{ .period_ms = active_config.blink.half_period },
-        .blink_rapid = .{ .period_ms = active_config.blink.rapid_half_period },
+        .blink = .{ .period_ms = active_config.blink.half_period_ms },
+        .blink_rapid = .{ .period_ms = active_config.blink.rapid_half_period_ms },
         .dirs = dirs,
         .argv0 = argv0,
         .allocator = gpa,
@@ -1773,7 +1773,7 @@ fn detectMouseClickKind(self: *App, anchor: i32, col: u16, mods: c_int, scroll_g
         else
             false;
 
-        const within_time = (now_ms - self.mouse_last_click_ms) <= self.config.selection.mouse_double_click_interval_ms;
+        const within_time = (now_ms - self.mouse_last_click_ms) <= @as(f64, @floatFromInt(self.config.selection.mouse_double_click_interval_ms));
 
         if (same_spot and within_time)
             break :blk @min(self.mouse_click_count +| 1, 3)

@@ -28,8 +28,8 @@ test "storage: DayRecord addAppTime accumulates and sorts properly" {
 
 test "tracker: idle detection pauses screen time" {
     var tr = tracker.Tracker.init(.{
-        .idle_threshold_s = 60,
-        .daily_limit_minutes = 60,
+        .idle_threshold_ms = 60 * std.time.ms_per_s,
+        .daily_limit_ms = 60 * std.time.ms_per_min,
         .track_foreground_apps = false,
     });
 
@@ -58,10 +58,10 @@ test "tracker: idle detection pauses screen time" {
 
 test "tracker: daily limit triggers grayscale factor" {
     var tr = tracker.Tracker.init(.{
-        .idle_threshold_s = 300,
-        .daily_limit_minutes = 1, // 60 seconds
+        .idle_threshold_ms = 300 * std.time.ms_per_s,
+        .daily_limit_ms = 1 * std.time.ms_per_min, // 60 seconds
         .grayscale_on_limit = true,
-        .grayscale_transition_s = 10,
+        .grayscale_transition_ms = 10 * std.time.ms_per_s,
         .track_foreground_apps = false,
     });
 
@@ -82,11 +82,38 @@ test "tracker: daily limit triggers grayscale factor" {
     try testing.expectEqual(@as(f32, 1.0), tr.grayscale_factor);
 }
 
+test "tracker: secondsCeil rounds a millisecond threshold up to whole seconds" {
+    try testing.expectEqual(0, tracker.secondsCeil(0));
+    try testing.expectEqual(1, tracker.secondsCeil(1));
+    try testing.expectEqual(1, tracker.secondsCeil(1000));
+    try testing.expectEqual(2, tracker.secondsCeil(1001));
+    try testing.expectEqual(std.math.maxInt(u64) / 1000 + 1, tracker.secondsCeil(std.math.maxInt(u64)));
+}
+
+test "tracker and reminders: limits far beyond a day don't overflow" {
+    // Minutes used to be multiplied by 60 in u32, which overflowed (a panic in
+    // safe builds) for limits above about 71 million minutes.
+    var tr = tracker.Tracker.init(.{
+        .daily_limit_ms = std.math.maxInt(u64),
+        .track_foreground_apps = false,
+    });
+    var today = storage.DayRecord{};
+    const res = tr.tick(30, -1, &today);
+    try testing.expect(!res.limit_reached);
+
+    var rem = reminders.RemindersEngine.init(
+        .{ .interval_ms = std.math.maxInt(u64), .duration_ms = std.math.maxInt(u64) },
+        .{ .interval_ms = std.math.maxInt(u64) },
+        .{ .hydration_interval_ms = std.math.maxInt(u64), .posture_interval_ms = std.math.maxInt(u64) },
+    );
+    try testing.expectEqual(null, rem.tick(30, false, &today));
+}
+
 test "reminders: eyesight 20-20-20 and movement triggers" {
     var rem = reminders.RemindersEngine.init(
-        .{ .interval_minutes = 1, .duration_s = 20 },
-        .{ .interval_minutes = 2, .duration_s = 60 },
-        .{ .hydration_interval_minutes = 3 },
+        .{ .interval_ms = 1 * std.time.ms_per_min, .duration_ms = 20 * std.time.ms_per_s },
+        .{ .interval_ms = 2 * std.time.ms_per_min, .duration_ms = 60 * std.time.ms_per_s },
+        .{ .hydration_interval_ms = 3 * std.time.ms_per_min },
     );
 
     var today = storage.DayRecord{};
@@ -144,7 +171,7 @@ test "dashboard: renders card output cleanly" {
     data.today.addAppTime("claude", 2400);
 
     var buf: [2048]u8 = undefined;
-    const card = dashboard.render(&data, 240, &buf); // 4 hour limit
+    const card = dashboard.render(&data, 4 * std.time.ms_per_hour, &buf);
     try testing.expect(card.len > 0);
     try testing.expect(std.mem.indexOf(u8, card, "REX DIGITAL WELLBEING") != null);
     try testing.expect(std.mem.indexOf(u8, card, "nvim") != null);
@@ -204,8 +231,8 @@ test "reminders: lock_input and show_animation wave modulation" {
     var wb = wellbeing.Wellbeing.init(.{
         .eyesight = .{
             .enabled = true,
-            .interval_minutes = 1,
-            .duration_s = 20,
+            .interval_ms = 1 * std.time.ms_per_min,
+            .duration_ms = 20 * std.time.ms_per_s,
             .lock_input = true,
             .show_animation = true,
             .animation = .pulse_dim,
@@ -214,8 +241,8 @@ test "reminders: lock_input and show_animation wave modulation" {
             .enabled = false,
         },
         .routines = .{
-            .hydration_interval_minutes = null,
-            .posture_interval_minutes = null,
+            .hydration_interval_ms = null,
+            .posture_interval_ms = null,
         },
     });
 
@@ -245,14 +272,14 @@ test "focus: auto_pause_on_alert freezes task timer during locked health reminde
         },
         .eyesight = .{
             .enabled = true,
-            .interval_minutes = 1, // 60s
-            .duration_s = 10,
+            .interval_ms = 1 * std.time.ms_per_min, // 60s
+            .duration_ms = 10 * std.time.ms_per_s,
             .lock_input = true,
             .show_animation = false,
         },
         .routines = .{
-            .hydration_interval_minutes = null,
-            .posture_interval_minutes = null,
+            .hydration_interval_ms = null,
+            .posture_interval_ms = null,
         },
         .winddown = .{ .enabled = false },
     });

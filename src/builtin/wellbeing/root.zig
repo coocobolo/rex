@@ -370,7 +370,7 @@ pub const Wellbeing = struct {
     }
 
     pub fn renderDashboard(self: *const Wellbeing, buf: []u8) []const u8 {
-        return dashboard.render(&self.data, self.option.screen_time.daily_limit_minutes, buf);
+        return dashboard.render(&self.data, self.option.screen_time.daily_limit_ms, buf);
     }
 
     pub fn isFocusPausedByAlert(self: *const Wellbeing) bool {

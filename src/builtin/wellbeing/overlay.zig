@@ -687,14 +687,23 @@ pub const Overlay = struct {
             const card_w: u16 = (avail_w - gap * 2) / 3;
 
             const active_s = wellbeing.data.today.active_screen_s;
-            const limit_m = wellbeing.option.screen_time.daily_limit_minutes orelse 480;
-            const limit_s: u32 = @as(u32, limit_m) * 60;
-            const screen_frac: f32 = if (limit_s > 0) @as(f32, @floatFromInt(active_s)) / @as(f32, @floatFromInt(limit_s)) else 0.0;
+            // null: no daily limit, so no "/ limit" and no percentage.
+            const limit_s: ?u64 = if (wellbeing.option.screen_time.daily_limit_ms) |ms| ms / std.time.ms_per_s else null;
+            const screen_frac: f32 = if (limit_s) |l|
+                (if (l > 0) @as(f32, @floatFromInt(active_s)) / @as(f32, @floatFromInt(l)) else 0.0)
+            else
+                0.0;
 
             var screen_val_buf: [32]u8 = undefined;
-            const screen_val = std.fmt.bufPrint(&screen_val_buf, "{d}h {d:0>2}m / {d}h", .{ active_s / 3600, (active_s % 3600) / 60, limit_m / 60 }) catch "";
+            const screen_val = if (limit_s) |l|
+                std.fmt.bufPrint(&screen_val_buf, "{d}h {d:0>2}m / {d}h", .{ active_s / 3600, (active_s % 3600) / 60, l / 3600 }) catch ""
+            else
+                std.fmt.bufPrint(&screen_val_buf, "{d}h {d:0>2}m", .{ active_s / 3600, (active_s % 3600) / 60 }) catch "";
             var screen_pct_buf: [16]u8 = undefined;
-            const screen_pct = std.fmt.bufPrint(&screen_pct_buf, "{d}%", .{@as(u32, @intFromFloat(@min(1.0, screen_frac) * 100.0))}) catch "";
+            const screen_pct = if (limit_s != null)
+                std.fmt.bufPrint(&screen_pct_buf, "{d}%", .{@as(u32, @intFromFloat(@min(1.0, screen_frac) * 100.0))}) catch ""
+            else
+                "no limit";
 
             StatCard.render(.{
                 .col = content_col,

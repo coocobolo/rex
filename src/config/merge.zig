@@ -158,8 +158,8 @@ pub fn applyFileConfig(target: *Config, file: *const FileConfig, allocator: Allo
 
     // Wellbeing options
     if (file.wellbeing_enabled) |en| target.wellbeing.enabled = en;
-    if (file.wellbeing_daily_limit_minutes) |dl| target.wellbeing.screen_time.daily_limit_minutes = dl;
-    if (file.wellbeing_idle_threshold_s) |it| target.wellbeing.screen_time.idle_threshold_s = it;
+    if (file.wellbeing_daily_limit_minutes) |dl| target.wellbeing.screen_time.daily_limit_ms = @as(u64, dl) * std.time.ms_per_min;
+    if (file.wellbeing_idle_threshold_s) |it| target.wellbeing.screen_time.idle_threshold_ms = @as(u64, it) * std.time.ms_per_s;
     if (file.wellbeing_focus_task_ms) |ft| target.wellbeing.focus.task_ms = ft;
     if (file.wellbeing_focus_short_break_ms) |sb| target.wellbeing.focus.short_break_ms = sb;
     if (file.wellbeing_focus_long_break_ms) |lb| target.wellbeing.focus.long_break_ms = lb;

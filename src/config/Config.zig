@@ -33,9 +33,9 @@ const TerminalOption = @import("../term/term.zig").Option;
 
 blink: struct {
     /// Half period of SGR 5 blink, in ms. 0 turns blinking off.
-    half_period: u64 = 500,
+    half_period_ms: u64 = 500,
     /// Half period of SGR 6 rapid blink, in ms. 0 turns it off.
-    rapid_half_period: u64 = 250,
+    rapid_half_period_ms: u64 = 250,
 },
 font: Font,
 keymap: []const Binding,
@@ -96,7 +96,7 @@ scroll: struct {
     wheel_lines: u32 = 3,
 } = .{},
 selection: struct {
-    mouse_double_click_interval_ms: f64 = 500,
+    mouse_double_click_interval_ms: u32 = 500,
     classifier: Classifier.Option,
 },
 /// Stores list of plain environment variable using "KEY=VALUE" format

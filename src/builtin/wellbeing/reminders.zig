@@ -1,5 +1,6 @@
 const std = @import("std");
 const storage = @import("storage.zig");
+const secondsCeil = @import("tracker.zig").secondsCeil;
 
 pub const AnimationKind = enum {
     none,
@@ -10,8 +11,8 @@ pub const AnimationKind = enum {
 
 pub const EyesightOption = struct {
     enabled: bool = true,
-    interval_minutes: u32 = 20,
-    duration_s: u32 = 20,
+    interval_ms: u64 = 20 * std.time.ms_per_min,
+    duration_ms: u64 = 20 * std.time.ms_per_s,
     lock_input: bool = false,
     show_animation: bool = true,
     animation: AnimationKind = .pulse_dim,
@@ -20,8 +21,8 @@ pub const EyesightOption = struct {
 
 pub const MovementOption = struct {
     enabled: bool = true,
-    interval_minutes: u32 = 50,
-    duration_s: u32 = 60,
+    interval_ms: u64 = 50 * std.time.ms_per_min,
+    duration_ms: u64 = 60 * std.time.ms_per_s,
     lock_input: bool = false,
     show_animation: bool = true,
     animation: AnimationKind = .grayscale_wave,
@@ -29,12 +30,12 @@ pub const MovementOption = struct {
 };
 
 pub const RoutinesOption = struct {
-    hydration_interval_minutes: ?u32 = 45,
+    hydration_interval_ms: ?u64 = 45 * std.time.ms_per_min,
     hydration_prompt: []const u8 = "Stay hydrated: drink some fresh water.",
-    posture_interval_minutes: ?u32 = 30,
+    posture_interval_ms: ?u64 = 30 * std.time.ms_per_min,
     posture_prompt: []const u8 = "Check posture: roll shoulders back and align neck.",
     custom_name: ?[]const u8 = null,
-    custom_interval_minutes: ?u32 = null,
+    custom_interval_ms: ?u64 = null,
     custom_prompt: ?[]const u8 = null,
     lock_input: bool = false,
     show_animation: bool = false,
@@ -116,21 +117,21 @@ pub const RemindersEngine = struct {
 
         // Reminders only accumulate when user is actively using the terminal
         if (is_idle) {
-            // Seated movement timer resets when user has been idle/away for > 5 min
+            // Paused while idle: no timer advances and nothing triggers.
             return null;
         }
 
         // Advance all enabled timers first
         if (self.eyesight_opt.enabled) self.eyesight_timer_s +|= dt_s;
         if (self.movement_opt.enabled) self.movement_timer_s +|= dt_s;
-        if (self.routines_opt.hydration_interval_minutes != null) self.hydration_timer_s +|= dt_s;
-        if (self.routines_opt.posture_interval_minutes != null) self.posture_timer_s +|= dt_s;
-        if (self.routines_opt.custom_interval_minutes != null) self.custom_timer_s +|= dt_s;
+        if (self.routines_opt.hydration_interval_ms != null) self.hydration_timer_s +|= dt_s;
+        if (self.routines_opt.posture_interval_ms != null) self.posture_timer_s +|= dt_s;
+        if (self.routines_opt.custom_interval_ms != null) self.custom_timer_s +|= dt_s;
 
         var triggered: ?Alert = null;
 
-        if (self.routines_opt.custom_interval_minutes) |interval| {
-            if (self.custom_timer_s >= interval * 60) {
+        if (self.routines_opt.custom_interval_ms) |interval| {
+            if (self.custom_timer_s >= secondsCeil(interval)) {
                 self.custom_timer_s = 0;
                 triggered = .{
                     .kind = .custom,
@@ -143,8 +144,8 @@ pub const RemindersEngine = struct {
             }
         }
 
-        if (self.routines_opt.posture_interval_minutes) |interval| {
-            if (self.posture_timer_s >= interval * 60) {
+        if (self.routines_opt.posture_interval_ms) |interval| {
+            if (self.posture_timer_s >= secondsCeil(interval)) {
                 self.posture_timer_s = 0;
                 triggered = .{
                     .kind = .posture,
@@ -157,8 +158,8 @@ pub const RemindersEngine = struct {
             }
         }
 
-        if (self.routines_opt.hydration_interval_minutes) |interval| {
-            if (self.hydration_timer_s >= interval * 60) {
+        if (self.routines_opt.hydration_interval_ms) |interval| {
+            if (self.hydration_timer_s >= secondsCeil(interval)) {
                 self.hydration_timer_s = 0;
                 today.hydration_count +|= 1;
                 triggered = .{
@@ -173,14 +174,14 @@ pub const RemindersEngine = struct {
         }
 
         if (self.eyesight_opt.enabled) {
-            const threshold = self.eyesight_opt.interval_minutes * 60;
+            const threshold = secondsCeil(self.eyesight_opt.interval_ms);
             if (self.eyesight_timer_s >= threshold) {
                 self.eyesight_timer_s = 0;
                 today.eyesight_breaks +|= 1;
                 triggered = .{
                     .kind = .eyesight,
                     .prompt = self.eyesight_opt.prompt,
-                    .remaining_s = self.eyesight_opt.duration_s,
+                    .remaining_s = remainingSeconds(self.eyesight_opt.duration_ms),
                     .lock_input = self.eyesight_opt.lock_input,
                     .show_animation = self.eyesight_opt.show_animation,
                     .animation = self.eyesight_opt.animation,
@@ -189,14 +190,14 @@ pub const RemindersEngine = struct {
         }
 
         if (self.movement_opt.enabled) {
-            const threshold = self.movement_opt.interval_minutes * 60;
+            const threshold = secondsCeil(self.movement_opt.interval_ms);
             if (self.movement_timer_s >= threshold) {
                 self.movement_timer_s = 0;
                 today.movement_breaks +|= 1;
                 triggered = .{
                     .kind = .movement,
                     .prompt = self.movement_opt.prompt,
-                    .remaining_s = self.movement_opt.duration_s,
+                    .remaining_s = remainingSeconds(self.movement_opt.duration_ms),
                     .lock_input = self.movement_opt.lock_input,
                     .show_animation = self.movement_opt.show_animation,
                     .animation = self.movement_opt.animation,
@@ -218,3 +219,9 @@ pub const RemindersEngine = struct {
         return prompt;
     }
 };
+
+/// Countdown length in whole seconds for an alert lasting `ms`, saturated to
+/// the countdown's type.
+fn remainingSeconds(ms: u64) u32 {
+    return std.math.cast(u32, secondsCeil(ms)) orelse std.math.maxInt(u32);
+}

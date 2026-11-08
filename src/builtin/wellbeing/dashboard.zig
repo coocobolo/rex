@@ -44,7 +44,7 @@ fn appendFmt(buf: []u8, pos: *usize, comptime fmt: []const u8, args: anytype) bo
 
 pub fn render(
     data: *const storage.PersistentData,
-    daily_limit_min: ?u32,
+    daily_limit_ms: ?u64,
     buf: []u8,
 ) []const u8 {
     var pos: usize = 0;
@@ -57,8 +57,8 @@ pub fn render(
     var time_buf: [16]u8 = undefined;
     const active_str = fmtDuration(data.today.active_screen_s, &time_buf);
 
-    if (daily_limit_min) |limit_m| {
-        const limit_s = limit_m * 60;
+    if (daily_limit_ms) |limit_ms| {
+        const limit_s: u32 = std.math.cast(u32, limit_ms / std.time.ms_per_s) orelse std.math.maxInt(u32);
         var limit_buf: [16]u8 = undefined;
         const limit_str = fmtDuration(limit_s, &limit_buf);
         const pct: u32 = if (limit_s > 0) @min((data.today.active_screen_s *| 100) / limit_s, 100) else 0;
