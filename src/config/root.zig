@@ -57,5 +57,7 @@ test {
     _ = @import("default_test.zig");
     _ = @import("parser_test.zig");
     _ = @import("loader_test.zig");
+    _ = @import("diagnostics_test.zig");
+    _ = @import("loaded_test.zig");
     std.testing.refAllDecls(@This());
 }

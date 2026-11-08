@@ -7,7 +7,7 @@ const Theme = @import("../color/Theme.zig");
 /// values, the font is a variable family at `/base/upright.ttf`, size 20,
 /// bounds 6 to 96, and the keymap is empty.
 pub const test_config: Config = .{
-    .blink = .{},
+    .blink = .default,
     .font = .{
         .faces = .{ .family = .{ .variable = .{ .upright = "/base/upright.ttf" } } },
         .size = 20,
@@ -17,7 +17,7 @@ pub const test_config: Config = .{
     .keymap = &.{},
     .termio = .{},
     .theme = Theme.graphite,
-    .window = .{ .background = .{}, .scrollbar = .{}, .cursor = .{}, .selection = .{} },
-    .selection = .{ .classifier = .{} },
+    .window = .default,
+    .selection = .default,
     .environments = &.{},
 };

@@ -2617,7 +2617,7 @@ test "App: a config reload starts from the defaults, in its own arena" {
     const gpa = testing.allocator;
 
     const base: Config = .{
-        .blink = .{},
+        .blink = .default,
         .font = .{
             .faces = .{ .family = .{ .variable = .{ .upright = "/base/upright.ttf" } } },
             .size = 20,
@@ -2627,9 +2627,9 @@ test "App: a config reload starts from the defaults, in its own arena" {
         .keymap = rex.input.default_keymap,
         .termio = .{},
         .theme = Theme.graphite,
-        .window = .{ .background = .{}, .scrollbar = .{}, .cursor = .{}, .selection = .{} },
+        .window = .default,
         .scroll = .{},
-        .selection = .{ .classifier = .{} },
+        .selection = .default,
         .environments = &.{},
     };
 
