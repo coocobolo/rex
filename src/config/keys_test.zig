@@ -264,6 +264,16 @@ test "writeExpected: describes each kind" {
     }
 }
 
+test "availableOn: platform is Linux only, the rest everywhere" {
+    const platform = keys.lookup(.window, "platform").?;
+    try std.testing.expect(keys.availableOn(platform, .linux));
+    try std.testing.expect(!keys.availableOn(platform, .macos));
+    const size = keys.lookup(.font, "size").?;
+    try std.testing.expect(keys.availableOn(size, .linux) and keys.availableOn(size, .macos));
+    try std.testing.expectEqual(.restart, keys.table[platform].reload);
+    try std.testing.expectEqual(.live, keys.table[size].reload);
+}
+
 /// The value names users write for every enum key (C9/F12). Renaming a Zig
 /// tag changes what users must write, so it fails here until it is decided.
 const enum_names = [_]struct { []const u8, []const []const u8 }{

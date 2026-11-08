@@ -44,6 +44,9 @@ pub const Error = struct {
         value_out_of_range,
         /// A font weight for a static font family. Token: the name.
         not_applicable,
+        /// The key has no effect on this operating system (F17); it is not
+        /// applied. Token: the name.
+        not_available,
         /// A `~/` path with no known home directory. Token: the value.
         no_home,
         /// `font.min_size` is above `font.max_size`; both keep their previous
@@ -117,6 +120,10 @@ pub fn apply(gpa: Allocator, tree: *const Ast, config: *Config, ctx: keys.Contex
                     try errors.append(gpa, .{ .tag = .unknown_key, .token = entry.name, .section = current });
                     continue;
                 };
+                if (!keys.availableHere(index)) {
+                    try errors.append(gpa, .{ .tag = .not_available, .token = entry.name, .section = current, .key = index });
+                    continue;
+                }
                 if (set_by[index] != null) {
                     try errors.append(gpa, .{ .tag = .duplicate_key, .token = entry.name, .section = current, .key = index });
                 }
@@ -264,6 +271,7 @@ pub fn renderError(tree: *const Ast, err: Error, w: *std.Io.Writer) std.Io.Write
             try keys.writeExpected(err.key.?, w);
         },
         .not_applicable => try w.print("{s} applies only to a variable font", .{keys.qualified_names[err.key.?]}),
+        .not_available => try w.print("{s} is not available on this system", .{keys.qualified_names[err.key.?]}),
         .no_home => try w.print("{s} = {s}: '~/' needs a home directory, and none is known", .{ keys.qualified_names[err.key.?], text }),
         .conflicting_font_sizes => try w.writeAll("font.min_size is above font.max_size; both keep their previous values"),
         .invalid_chord => try w.print("invalid key chord '{s}': modifiers ctrl, shift, alt, super and one key, like ctrl+shift+w", .{text}),

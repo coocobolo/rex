@@ -12,6 +12,7 @@
 //! their first row.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 const Config = @import("Config.zig");
 const Theme = @import("../color/Theme.zig");
@@ -72,6 +73,20 @@ pub const Bounds = struct {
     max: f64 = std.math.inf(f64),
 };
 
+/// When a changed value takes effect (F17).
+pub const Reload = enum {
+    /// On the next config reload.
+    live,
+    /// Only when Rex starts; a reload keeps the running value.
+    restart,
+};
+
+/// Where a key has an effect (F17).
+pub const Os = enum { any, linux, macos };
+
+/// Whether a key may differ per profile (F15, reserved until profiles exist).
+pub const Scope = enum { global, profile };
+
 pub const Key = struct {
     section: Section,
     /// Canonical snake_case name within `section` (naming guide K1–K16).
@@ -82,6 +97,9 @@ pub const Key = struct {
     bounds: Bounds = .{},
     /// Required exactly when the field is optional.
     null_keyword: ?Keyword = null,
+    reload: Reload = .live,
+    os: Os = .any,
+    scope: Scope = .global,
 };
 
 pub const KeyIndex = u16;
@@ -121,20 +139,23 @@ const at_least_one: Bounds = .{ .min = 1 };
 pub const table = [_]Key{
     .{ .section = .root, .name = "theme", .field = "theme", .kind = .theme },
 
-    .{ .section = .font, .name = "file", .field = "font.faces.family", .kind = .font_file },
+    // Font changes reach the rasterizer only with a size change (audit A2).
+    .{ .section = .font, .name = "file", .field = "font.faces.family", .kind = .font_file, .reload = .restart },
     .{ .section = .font, .name = "size", .field = "font.size", .bounds = at_least_one },
     .{ .section = .font, .name = "size_step", .field = "font.size_step", .bounds = at_least_one },
     .{ .section = .font, .name = "min_size", .field = "font.min_size", .bounds = at_least_one },
     .{ .section = .font, .name = "max_size", .field = "font.max_size", .bounds = at_least_one },
-    .{ .section = .font, .name = "weight", .field = "font.faces.family.variable.regular_weight", .kind = .font_weight, .bounds = .{ .min = 1, .max = 1000 } },
-    .{ .section = .font, .name = "bold_weight", .field = "font.faces.family.variable.bold_weight", .kind = .font_weight, .bounds = .{ .min = 1, .max = 1000 } },
+    .{ .section = .font, .name = "weight", .field = "font.faces.family.variable.regular_weight", .kind = .font_weight, .bounds = .{ .min = 1, .max = 1000 }, .reload = .restart },
+    .{ .section = .font, .name = "bold_weight", .field = "font.faces.family.variable.bold_weight", .kind = .font_weight, .bounds = .{ .min = 1, .max = 1000 }, .reload = .restart },
 
     .{ .section = .window, .name = "background_opacity", .field = "window.background.alpha", .kind = .fraction },
-    .{ .section = .window, .name = "dim_text_opacity", .field = "window.dim_alpha", .kind = .fraction },
+    // Copied once at startup (audit A1).
+    .{ .section = .window, .name = "dim_text_opacity", .field = "window.dim_alpha", .kind = .fraction, .reload = .restart },
     .{ .section = .window, .name = "confirm_quit", .field = "window.confirm_quit" },
-    .{ .section = .window, .name = "platform", .field = "window.platform" },
-    .{ .section = .window, .name = "width", .field = "window.size.width", .bounds = at_least_one },
-    .{ .section = .window, .name = "height", .field = "window.size.height", .bounds = at_least_one },
+    .{ .section = .window, .name = "platform", .field = "window.platform", .reload = .restart, .os = .linux },
+    // The size the window opens with.
+    .{ .section = .window, .name = "width", .field = "window.size.width", .bounds = at_least_one, .reload = .restart },
+    .{ .section = .window, .name = "height", .field = "window.size.height", .bounds = at_least_one, .reload = .restart },
 
     .{ .section = .bell, .name = "enabled", .field = "window.bell.enabled" },
     .{ .section = .bell, .name = "volume", .field = "window.bell.volume", .kind = .fraction },
@@ -209,6 +230,20 @@ pub const retired = [_]Retired{
     .{ .section = .wellbeing, .name = "hydration_interval", .fate = .{ .removed = "not implemented yet" } },
     .{ .section = .wellbeing, .name = "posture_interval", .fate = .{ .removed = "not implemented yet" } },
 };
+
+/// Whether the row at `index` has an effect on `os` (F17).
+pub fn availableOn(index: KeyIndex, os: std.Target.Os.Tag) bool {
+    return switch (table[index].os) {
+        .any => true,
+        .linux => os == .linux,
+        .macos => os == .macos,
+    };
+}
+
+/// `availableOn` for the system Rex is built for.
+pub fn availableHere(index: KeyIndex) bool {
+    return availableOn(index, builtin.os.tag);
+}
 
 pub fn retiredLookup(section: Section, name: []const u8) ?Retired {
     for (retired) |entry| {
