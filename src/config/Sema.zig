@@ -51,6 +51,10 @@ pub const Error = struct {
         /// `font.min_size` is above `font.max_size`; both keep their previous
         /// values. Token: the name that was set last of the two.
         conflicting_font_sizes,
+        /// `wellbeing.winddown.start` equals `end`, a window that is never
+        /// active; both keep their previous values. Token: the name that was
+        /// set last of the two.
+        conflicting_winddown_times,
         /// Not modifiers plus one key, or an unknown name (`keybind.zig`). Token: the chord.
         invalid_chord,
         /// Not an action name. Token: the action.
@@ -91,6 +95,7 @@ pub fn apply(gpa: Allocator, tree: *const Ast, config: *Config, ctx: keys.Contex
     defer fallbacks.deinit(gpa);
 
     const sizes_before = .{ config.font.min_size, config.font.max_size };
+    const winddown_before = .{ config.wellbeing.winddown.start, config.wellbeing.winddown.end };
 
     // null: an unknown or reserved section, whose keys are skipped.
     var section: ?keys.Section = .root;
@@ -163,20 +168,41 @@ pub fn apply(gpa: Allocator, tree: *const Ast, config: *Config, ctx: keys.Contex
     const max_key = comptime keys.lookup(.font, "max_size").?;
     if (config.font.min_size > config.font.max_size and (set_by[min_key] != null or set_by[max_key] != null)) {
         config.font.min_size, config.font.max_size = sizes_before;
-        const last: keys.KeyIndex = if ((set_by[min_key] orelse 0) >= (set_by[max_key] orelse 0)) min_key else max_key;
-        try errors.append(gpa, .{ .tag = .conflicting_font_sizes, .token = set_by[last].?, .section = .font, .key = last });
-        set_by[min_key] = null;
-        set_by[max_key] = null;
+        try revertPair(gpa, &errors, &set_by, min_key, max_key, .conflicting_font_sizes, .font);
+    }
+    const start_key = comptime keys.lookup(.@"wellbeing.winddown", "start").?;
+    const end_key = comptime keys.lookup(.@"wellbeing.winddown", "end").?;
+    const winddown = &config.wellbeing.winddown;
+    if (std.meta.eql(winddown.start, winddown.end) and (set_by[start_key] != null or set_by[end_key] != null)) {
+        winddown.start, winddown.end = winddown_before;
+        try revertPair(gpa, &errors, &set_by, start_key, end_key, .conflicting_winddown_times, .@"wellbeing.winddown");
     }
 
-    // Errors were appended in source order except the font size check, which
-    // reports at a token that may come earlier.
+    // Errors were appended in source order except the cross-key checks, which
+    // report at a token that may come earlier.
     std.mem.sort(Error, errors.items, {}, struct {
         fn lessThan(_: void, a: Error, b: Error) bool {
             return a.token < b.token;
         }
     }.lessThan);
     return .{ .errors = try errors.toOwnedSlice(gpa), .set_by = set_by };
+}
+
+/// Reports a conflict between two keys at the one this file set last, and
+/// forgets that this file set either; the caller restores their values.
+fn revertPair(
+    gpa: Allocator,
+    errors: *std.ArrayList(Error),
+    set_by: *[keys.table.len]?Ast.TokenIndex,
+    a: keys.KeyIndex,
+    b: keys.KeyIndex,
+    tag: Error.Tag,
+    section: keys.Section,
+) Allocator.Error!void {
+    const last = if ((set_by[a] orelse 0) >= (set_by[b] orelse 0)) a else b;
+    try errors.append(gpa, .{ .tag = tag, .token = set_by[last].?, .section = section, .key = last });
+    set_by[a] = null;
+    set_by[b] = null;
 }
 
 /// One `fallback` line onto this file's list.
@@ -293,6 +319,7 @@ pub fn renderError(tree: *const Ast, err: Error, w: *std.Io.Writer) std.Io.Write
         .not_available => try w.print("{s} is not available on this system", .{keys.qualified_names[err.key.?]}),
         .no_home => try w.print("{s} = {s}: '~/' needs a home directory, and none is known", .{ keys.qualified_names[err.key.?], text }),
         .conflicting_font_sizes => try w.writeAll("font.min_size is above font.max_size; both keep their previous values"),
+        .conflicting_winddown_times => try w.writeAll("wellbeing.winddown.start equals end, so wind-down would never start; both keep their previous values"),
         .invalid_chord => try w.print("invalid key chord '{s}': modifiers ctrl, shift, alt, super and one key, like ctrl+shift+w", .{text}),
         .invalid_action => try w.print("unknown action '{s}'", .{text}),
         .reserved_keybinding => try w.print("key binding '{s}' uses syntax reserved for a future version", .{text}),

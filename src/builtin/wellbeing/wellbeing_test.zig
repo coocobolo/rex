@@ -138,6 +138,7 @@ test "reminders: eyesight 20-20-20 and movement triggers" {
 
 test "winddown: schedule window and color warmth tint" {
     var wd = winddown.WinddownEngine.init(.{
+        .enabled = true,
         .start = .{ .hour = 21, .minute = 0 },
         .end = .{ .hour = 7, .minute = 0 },
         .warmth_factor = 0.85,
@@ -167,6 +168,7 @@ fn localAt(day: i64, hour: i64, minute: i64, offset_h: i64) i64 {
 
 test "winddown: window follows local time east and west of UTC" {
     var wd = winddown.WinddownEngine.init(.{
+        .enabled = true,
         .start = .{ .hour = 21, .minute = 0 },
         .end = .{ .hour = 7, .minute = 0 },
     });
@@ -182,6 +184,7 @@ test "winddown: window follows local time east and west of UTC" {
 
 test "winddown: window crossing midnight includes start and excludes end" {
     var wd = winddown.WinddownEngine.init(.{
+        .enabled = true,
         .start = .{ .hour = 21, .minute = 0 },
         .end = .{ .hour = 7, .minute = 0 },
     });

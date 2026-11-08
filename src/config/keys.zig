@@ -6,10 +6,10 @@
 //! Value rules (config rebuild plan §4.3 and C9): bool is `true`/`false`;
 //! integers are decimal digits only; floats are digits with an optional
 //! fraction; enums are their tag names exactly; durations are an integer with
-//! a unit (`ms`, `s`, `m`, `h`); `default` resets any key to the built-in
-//! value; quoted strings take the escapes `\\ \" \' \n \t \xHH \u{H…}`.
-//! Kinds that no row uses yet (color, time of day, list, set) are added with
-//! their first row.
+//! a unit (`ms`, `s`, `m`, `h`); a time of day is `HH:MM` on the 24-hour
+//! clock (F9); `default` resets any key to the built-in value; quoted strings
+//! take the escapes `\\ \" \' \n \t \xHH \u{H…}`. Kinds that no row uses
+//! yet (color, list, set) are added with their first row.
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -17,6 +17,7 @@ const Allocator = std.mem.Allocator;
 const Config = @import("Config.zig");
 const Theme = @import("../color/Theme.zig");
 const FontConfig = @import("../freetype/Config.zig");
+const TimeOfDay = @import("../builtin/wellbeing/winddown.zig").TimeOfDay;
 
 /// Section headers as users write them; dotted names are subsections (`[modal.blur]`).
 pub const Section = enum {
@@ -33,6 +34,7 @@ pub const Section = enum {
     wellbeing,
     @"wellbeing.screen_time",
     @"wellbeing.focus",
+    @"wellbeing.winddown",
     scroll,
     keybinds,
 };
@@ -45,6 +47,9 @@ pub const Kind = enum {
     fraction,
     /// An integer with a unit, stored as milliseconds in an integer field.
     duration,
+    /// `HH:MM` on the 24-hour clock, exactly two digits each, from 00:00 to
+    /// 23:59, into a `TimeOfDay` field.
+    time_of_day,
     /// A font weight: a whole number stored as a float "wght" axis value.
     font_weight,
     /// A theme preset name.
@@ -229,6 +234,12 @@ pub const table = [_]Key{
     .{ .section = .@"wellbeing.focus", .name = "lock_input_on_break", .field = "wellbeing.focus.lock_input_on_break" },
     .{ .section = .@"wellbeing.focus", .name = "show_break_animation", .field = "wellbeing.focus.show_break_animation" },
     .{ .section = .@"wellbeing.focus", .name = "mute_notifications_in_task", .field = "wellbeing.focus.mute_notifications_in_task" },
+    // Sema rejects `start` equal to `end`, a window that is never active.
+    .{ .section = .@"wellbeing.winddown", .name = "enabled", .field = "wellbeing.winddown.enabled" },
+    .{ .section = .@"wellbeing.winddown", .name = "start", .field = "wellbeing.winddown.start", .kind = .time_of_day },
+    .{ .section = .@"wellbeing.winddown", .name = "end", .field = "wellbeing.winddown.end", .kind = .time_of_day },
+    .{ .section = .@"wellbeing.winddown", .name = "warmth", .field = "wellbeing.winddown.warmth_factor", .kind = .fraction },
+    .{ .section = .@"wellbeing.winddown", .name = "mute_bell", .field = "wellbeing.winddown.mute_audio_bell" },
 
     .{ .section = .scroll, .name = "step_lines", .field = "scroll.lines", .bounds = at_least_one },
     .{ .section = .scroll, .name = "wheel_lines", .field = "scroll.wheel_lines", .bounds = at_least_one },
@@ -329,7 +340,7 @@ pub const internal = [_][]const u8{
     "wellbeing.focus.transition_mode",
     "wellbeing.focus.rotate_break_prompts",
     "wellbeing.focus.auto_pause_on_alert",
-    "wellbeing.winddown",
+    "wellbeing.winddown.prompt",
     "wellbeing.routines",
     "wellbeing.lock_screen",
     "wellbeing.dashboard",
@@ -398,6 +409,7 @@ fn writeExpectedKey(comptime key: Key, w: *std.Io.Writer) std.Io.Writer.Error!vo
         },
         .fraction => try w.writeAll("a number from 0 to 1"),
         .duration => try w.writeAll("a duration of at least 1ms, like 500ms, 30s, 25m or 1h"),
+        .time_of_day => try w.writeAll("a time of day from 00:00 to 23:59, like 21:30"),
         .font_weight => try w.print("a whole number from {d} to {d}", .{ key.bounds.min, key.bounds.max }),
         .theme => {
             try w.writeAll("a theme name: ");
@@ -608,6 +620,7 @@ fn checkRow(comptime key: Key, comptime T: type) void {
         },
         .fraction => @typeInfo(Value) == .float,
         .duration => @typeInfo(Value) == .int and @typeInfo(Value).int.signedness == .unsigned,
+        .time_of_day => Value == TimeOfDay,
         .font_weight => @typeInfo(Value) == .float,
         .theme => Value == Theme,
         .font_fallback => Value == []const FontConfig.Face,
@@ -631,6 +644,7 @@ fn parseValue(comptime key: Key, comptime V: type, text: []const u8) Error!V {
         },
         .fraction => return fitFloat(V, .{ .min = 0, .max = 1 }, try parseDecimal(text)),
         .duration => return fitInt(V, key.bounds, try parseDuration(text)),
+        .time_of_day => return parseTimeOfDay(text),
         .font_weight => {
             const weight = try parseDigits(text);
             if (!inBounds(key.bounds, @floatFromInt(weight))) return error.OutOfRange;
@@ -697,6 +711,16 @@ fn parseDuration(text: []const u8) Error!u64 {
     const product = @mulWithOverflow(count, unit_ms);
     if (product[1] != 0) return error.OutOfRange;
     return product[0];
+}
+
+/// `HH:MM`: two digits, a colon, two digits. A well-formed time past 23:59
+/// is out of range rather than invalid.
+fn parseTimeOfDay(text: []const u8) Error!TimeOfDay {
+    if (text.len != 5 or text[2] != ':') return error.InvalidValue;
+    const hour = try parseDigits(text[0..2]);
+    const minute = try parseDigits(text[3..5]);
+    if (hour > 23 or minute > 59) return error.OutOfRange;
+    return .{ .hour = @intCast(hour), .minute = @intCast(minute) };
 }
 
 /// Dot paths of every leaf field reachable from `T`: struct fields are entered,

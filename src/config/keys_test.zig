@@ -131,6 +131,30 @@ test "apply: durations need a unit and fit the field" {
     try std.testing.expectError(error.OutOfRange, applyText(&config, .toast, "duration", "0ms"));
 }
 
+test "apply: time of day is HH:MM from 00:00 to 23:59" {
+    var config = testConfig();
+    const winddown = &config.wellbeing.winddown;
+    try applyText(&config, .@"wellbeing.winddown", "start", "21:30");
+    try std.testing.expectEqual(21, winddown.start.hour);
+    try std.testing.expectEqual(30, winddown.start.minute);
+    try applyText(&config, .@"wellbeing.winddown", "end", "00:00");
+    try std.testing.expectEqual(0, winddown.end.minutes());
+    try applyText(&config, .@"wellbeing.winddown", "end", "23:59");
+    try std.testing.expectEqual(23 * 60 + 59, winddown.end.minutes());
+    for ([_][]const u8{ "9:00", "09:0", "0900", "09.00", "09:00:00", "+9:00", "-1:00", "aa:bb", "09 :00", "" }) |text| {
+        errdefer std.debug.print("accepted {s}\n", .{text});
+        try std.testing.expectError(error.InvalidValue, applyText(&config, .@"wellbeing.winddown", "start", text));
+    }
+    for ([_][]const u8{ "24:00", "23:60", "99:99" }) |text| {
+        errdefer std.debug.print("accepted {s}\n", .{text});
+        try std.testing.expectError(error.OutOfRange, applyText(&config, .@"wellbeing.winddown", "start", text));
+    }
+    // Rejected values leave the field as it was.
+    try std.testing.expectEqual(21 * 60 + 30, winddown.start.minutes());
+    try applyText(&config, .@"wellbeing.winddown", "start", "default");
+    try std.testing.expectEqual(defaults.wellbeing.winddown.start, winddown.start);
+}
+
 test "apply: an optional field's keyword sets null" {
     var config = testConfig();
     try applyText(&config, .@"wellbeing.screen_time", "daily_limit", "none");
@@ -256,6 +280,7 @@ test "writeExpected: describes each kind" {
         .{ .@"wellbeing.screen_time", "daily_limit", "a duration of at least 1ms, like 500ms, 30s, 25m or 1h, or none" },
         .{ .modal, "border_style", "one of: semantic, subtle, or inherit" },
         .{ .font, "weight", "a whole number from 1 to 1000" },
+        .{ .@"wellbeing.winddown", "start", "a time of day from 00:00 to 23:59, like 21:30" },
         .{ .root, "theme", "a theme name: graphite" },
     };
     for (cases) |case| {

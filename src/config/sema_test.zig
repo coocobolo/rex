@@ -205,6 +205,36 @@ test "apply: font min_size above max_size reverts both" {
     try std.testing.expectEqual(null, a.result.set_by[keys.lookup(.font, "min_size").?]);
 }
 
+test "apply: winddown start equal to end reverts both" {
+    var a = try Applied.init(
+        \\[wellbeing.winddown]
+        \\end = 22:00
+        \\enabled = true
+        \\start = 22:00
+    );
+    defer a.deinit();
+    try a.expectErrors(&.{
+        .{ .conflicting_winddown_times, 3, "wellbeing.winddown.start equals end, so wind-down would never start; both keep their previous values" },
+    });
+    const winddown = a.config.wellbeing.winddown;
+    try std.testing.expectEqual(21 * 60, winddown.start.minutes());
+    try std.testing.expectEqual(7 * 60, winddown.end.minutes());
+    try std.testing.expect(winddown.enabled);
+    try std.testing.expectEqual(null, a.result.set_by[keys.lookup(.@"wellbeing.winddown", "end").?]);
+}
+
+test "apply: winddown times that differ apply" {
+    var a = try Applied.init(
+        \\[wellbeing.winddown]
+        \\start = 07:00
+        \\end = 21:00
+    );
+    defer a.deinit();
+    try a.expectErrors(&.{});
+    try std.testing.expectEqual(7 * 60, a.config.wellbeing.winddown.start.minutes());
+    try std.testing.expectEqual(21 * 60, a.config.wellbeing.winddown.end.minutes());
+}
+
 test "apply: font file resolves against the file's directory" {
     var a = try Applied.init(
         \\[font]

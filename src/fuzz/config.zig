@@ -108,6 +108,8 @@ const seeds = [_][]const u8{
     "[bell]\nenabled = false\nvolume = 0.25\n[modal]\ncols = 60\nbackdrop_opacity = 0.7\nborder_style = inherit\n[modal.blur]\nenabled = true\nradius = 12\n",
     "[toast]\nposition = bottom_right\nduration = 3s\nmin_cols = 20\nmax_cols = 40\n[banner]\nplacement = docked\n",
     "[wellbeing.screen_time]\ndaily_limit = none\nidle_threshold = 3m\n[wellbeing.focus]\ntask = 25m\nshort_break = 5m\nlong_break = 1h\ntasks_before_long_break = 4\n",
+    "[wellbeing.winddown]\nenabled = true\nstart = 21:30\nend = 06:00\nwarmth = 0.5\nmute_bell = false\nstart = 24:00\nend = 9:00\n",
+    "[wellbeing.winddown]\nstart = 22:00\nend = 22:00\nend = default\n",
     "[keybinds]\nctrl+shift+c = copy_selection\nctrl+shift+v = paste_clipboard\nctrl+f13 = quit\nctrl+a b = quit\nctrl+q = none\n",
     "[font]\nfile = \"~/fonts/a \\\"b\\\".ttf\"\nweight = 350\nbold_weight = 700\nfile = rel/x.ttf\n",
     "# comment\r\n[fonts]\r\nsize = 1\r\n[terminal]\r\nx = 1\r\n[font]\r\nsise = 12\r\nsize = 0\r\nsize = 99999999999999999999\r\n",

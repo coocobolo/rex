@@ -17,7 +17,9 @@ pub const TimeOfDay = struct {
 };
 
 pub const WinddownOption = struct {
-    enabled: bool = true,
+    /// Off by default: it tints the screen and mutes the bell every evening,
+    /// which only someone who asked for it expects.
+    enabled: bool = false,
     /// The window starts at `start` and ends at `end`; it crosses midnight
     /// when `end` is earlier than `start`.
     start: TimeOfDay = .{ .hour = 21, .minute = 0 },
