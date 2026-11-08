@@ -110,6 +110,108 @@ test "tracker and reminders: limits far beyond a day don't overflow" {
     try testing.expectEqual(null, rem.tick(30, false, &today));
 }
 
+test "tracker: turning the limit or the grayscale off clears grayscale" {
+    var tr = tracker.Tracker.init(.{
+        .idle_threshold_ms = std.time.ms_per_hour,
+        .daily_limit_ms = std.time.ms_per_min,
+        .grayscale_transition_ms = std.time.ms_per_s,
+        .track_foreground_apps = false,
+    });
+    var today = storage.DayRecord{};
+    _ = tr.tick(70, -1, &today);
+    try testing.expectEqual(@as(f32, 1.0), tr.grayscale_factor);
+
+    tr.option.grayscale_on_limit = false;
+    _ = tr.tick(1, -1, &today);
+    try testing.expectEqual(@as(f32, 0.0), tr.grayscale_factor);
+
+    tr.option.grayscale_on_limit = true;
+    _ = tr.tick(1, -1, &today);
+    try testing.expectEqual(@as(f32, 1.0), tr.grayscale_factor);
+
+    tr.option.daily_limit_ms = null;
+    _ = tr.tick(1, -1, &today);
+    try testing.expectEqual(@as(f32, 0.0), tr.grayscale_factor);
+    try testing.expect(!tr.limit_notified);
+}
+
+/// Options for reload tests: no idle pause, no reminders, no wind-down,
+/// so only the setting under test acts.
+fn quietOption() wellbeing.Option {
+    return .{
+        .screen_time = .{ .idle_threshold_ms = 24 * std.time.ms_per_hour, .track_foreground_apps = false },
+        .eyesight = .{ .enabled = false },
+        .movement = .{ .enabled = false },
+        .routines = .{ .hydration_interval_ms = null, .posture_interval_ms = null },
+        .winddown = .{ .enabled = false },
+    };
+}
+
+test "applyOption: reminders keep their timers and use the new interval" {
+    var option = quietOption();
+    option.eyesight = .{ .enabled = true, .interval_ms = 10 * std.time.ms_per_min };
+    var wb = wellbeing.Wellbeing.init(option);
+    const now = localAt(1000, 12, 0, 0);
+
+    _ = wb.tick(5 * std.time.ms_per_min, -1, now);
+    try testing.expectEqual(@as(u32, 300), wb.reminders_engine.eyesight_timer_s);
+
+    option.eyesight.interval_ms = 4 * std.time.ms_per_min;
+    wb.applyOption(option);
+    try testing.expectEqual(@as(u32, 300), wb.reminders_engine.eyesight_timer_s);
+    const res = wb.tick(std.time.ms_per_s, -1, now);
+    try testing.expectEqual(reminders.AlertKind.eyesight, res.alert.?.kind);
+}
+
+test "applyOption: a running focus phase keeps its remaining time" {
+    var option = quietOption();
+    option.focus = .{ .task_ms = 25 * std.time.ms_per_min, .transition_mode = .manual };
+    var wb = wellbeing.Wellbeing.init(option);
+    const now = localAt(1000, 12, 0, 0);
+
+    wb.toggleFocus();
+    _ = wb.tick(std.time.ms_per_min, -1, now);
+    try testing.expectEqual(24 * std.time.ms_per_min, wb.focus_state.remaining_ms);
+
+    option.focus.task_ms = 10 * std.time.ms_per_min;
+    wb.applyOption(option);
+    try testing.expectEqual(wellbeing.focus.Phase.task, wb.focus_state.phase);
+    try testing.expectEqual(24 * std.time.ms_per_min, wb.focus_state.remaining_ms);
+    try testing.expectEqual(10 * std.time.ms_per_min, wb.focus_state.option.task_ms);
+}
+
+test "applyOption: the configured transition mode replaces a runtime toggle" {
+    var option = quietOption();
+    option.focus = .{ .task_ms = 2000, .short_break_ms = 1000, .transition_mode = .manual };
+    var wb = wellbeing.Wellbeing.init(option);
+    const now = localAt(1000, 12, 0, 0);
+
+    wb.toggleFocusTransitionMode();
+    try testing.expectEqual(.auto, wb.focus_state.option.transition_mode);
+    wb.applyOption(option);
+    try testing.expectEqual(.manual, wb.focus_state.option.transition_mode);
+
+    // A phase waiting for confirmation starts when the config turns auto on.
+    wb.toggleFocus();
+    _ = wb.tick(2000, -1, now);
+    try testing.expect(wb.focus_state.waiting);
+    option.focus.transition_mode = .auto;
+    wb.applyOption(option);
+    try testing.expect(!wb.focus_state.waiting);
+    try testing.expectEqual(wellbeing.focus.Phase.short_break, wb.focus_state.phase);
+}
+
+test "applyOption: turning wind-down on applies on the next tick" {
+    var option = quietOption();
+    var wb = wellbeing.Wellbeing.init(option);
+    const night = localAt(1000, 22, 0, 0);
+
+    try testing.expectEqual(@as(f32, 1.0), wb.tick(1000, -1, night).tint[2]);
+    option.winddown.enabled = true;
+    wb.applyOption(option);
+    try testing.expect(wb.tick(1000, -1, night).tint[2] < 1.0);
+}
+
 test "reminders: eyesight 20-20-20 and movement triggers" {
     var rem = reminders.RemindersEngine.init(
         .{ .interval_ms = 1 * std.time.ms_per_min, .duration_ms = 20 * std.time.ms_per_s },

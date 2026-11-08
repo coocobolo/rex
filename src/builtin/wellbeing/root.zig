@@ -64,18 +64,38 @@ pub const Wellbeing = struct {
         focus_state.option = option.focus;
         focus_state.paused = true;
 
-        var tracker_opt = option.screen_time;
-        if (!option.privacy.track_foreground_apps) {
-            tracker_opt.track_foreground_apps = false;
-        }
-
         return .{
             .option = option,
-            .tracker_engine = tracker.Tracker.init(tracker_opt),
+            .tracker_engine = tracker.Tracker.init(trackerOption(option)),
             .reminders_engine = reminders.RemindersEngine.init(option.eyesight, option.movement, option.routines),
             .winddown_engine = winddown.WinddownEngine.init(option.winddown),
             .focus_state = focus_state,
         };
+    }
+
+    /// Takes reloaded settings. Running state (timers, the focus phase and
+    /// its remaining time, today's records) is kept, and each engine uses the
+    /// new settings from its next tick; a focus phase already running keeps
+    /// its remaining time. The configured transition mode replaces one
+    /// toggled at runtime.
+    pub fn applyOption(self: *Wellbeing, option: Option) void {
+        self.option = option;
+        self.tracker_engine.option = trackerOption(option);
+        self.reminders_engine.eyesight_opt = option.eyesight;
+        self.reminders_engine.movement_opt = option.movement;
+        self.reminders_engine.routines_opt = option.routines;
+        self.winddown_engine.option = option.winddown;
+        self.focus_state.option = option.focus;
+        // Starts the next phase if one is waiting and the mode is now auto.
+        self.focus_state.setTransitionMode(option.focus.transition_mode);
+    }
+
+    fn trackerOption(option: Option) tracker.TrackerOption {
+        var tracker_opt = option.screen_time;
+        if (!option.privacy.track_foreground_apps) {
+            tracker_opt.track_foreground_apps = false;
+        }
+        return tracker_opt;
     }
 
     pub fn loadState(self: *Wellbeing, io: Io, default_state_dir: []const u8) void {

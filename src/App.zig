@@ -1203,8 +1203,7 @@ pub fn reloadConfig(self: *App) void {
         self.config_banner = Banner.init(.err, "Config error", "the new font could not be loaded; the previous one stays");
     }
 
-    // Live update wellbeing tracking options
-    self.wellbeing_state.option = self.config.wellbeing;
+    self.wellbeing_state.applyOption(self.config.wellbeing);
 
     self.needs_redraw = true;
     self.notifySimple("Configuration", "Configuration reloaded", .info);

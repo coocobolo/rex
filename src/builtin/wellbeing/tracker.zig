@@ -74,7 +74,8 @@ pub const Tracker = struct {
                 }
             }
 
-            // Daily screen time limit check
+            // Daily screen time limit check. Every path sets grayscale_factor,
+            // so turning the limit or the grayscale off on reload clears it.
             if (self.option.daily_limit_ms) |limit_ms| {
                 const limit_s = secondsCeil(limit_ms);
                 if (today.active_screen_s >= limit_s) {
@@ -88,11 +89,16 @@ pub const Tracker = struct {
                         const trans = @max(secondsCeil(self.option.grayscale_transition_ms), 1);
                         const progress = @min(@as(f32, @floatFromInt(excess)) / @as(f32, @floatFromInt(trans)), 1.0);
                         self.grayscale_factor = progress;
+                    } else {
+                        self.grayscale_factor = 0.0;
                     }
                 } else {
                     self.grayscale_factor = 0.0;
                     self.limit_notified = false;
                 }
+            } else {
+                self.grayscale_factor = 0.0;
+                self.limit_notified = false;
             }
         }
 
