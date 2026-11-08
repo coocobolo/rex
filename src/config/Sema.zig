@@ -14,6 +14,7 @@ const Config = @import("Config.zig");
 const keybind = @import("keybind.zig");
 const Binding = @import("../input.zig").Binding;
 const Face = @import("../freetype/Config.zig").Face;
+const PlainVar = @import("../env/root.zig").PlainVar;
 
 pub const Error = struct {
     tag: Tag,
@@ -62,6 +63,12 @@ pub const Error = struct {
         /// Key binding syntax reserved for a future version (`none`,
         /// `action:argument`, chord sequences). Token: the value.
         reserved_keybinding,
+        /// Not a POSIX portable variable name, `[A-Za-z_][A-Za-z0-9_]*`. Token: the name.
+        invalid_env_name,
+        /// A value with a NUL byte, which can't be passed to a program. Token: the value.
+        invalid_env_value,
+        /// Bare `none`, reserved for unsetting a variable. Token: the value.
+        reserved_env_value,
     };
 };
 
@@ -90,6 +97,9 @@ pub fn apply(gpa: Allocator, tree: *const Ast, config: *Config, ctx: keys.Contex
     var bindings: std.ArrayList(Binding) = .empty;
     var binding_tokens: std.ArrayList(Ast.TokenIndex) = .empty;
     defer binding_tokens.deinit(gpa);
+    // `[env]` entries of this file, one per name (the last one wins).
+    var env: std.ArrayList(PlainVar) = .empty;
+    defer env.deinit(gpa);
     // `font.fallback` lines, in order; replaces the list if any appeared (F2).
     var fallbacks: std.ArrayList(Face) = .empty;
     defer fallbacks.deinit(gpa);
@@ -122,6 +132,10 @@ pub fn apply(gpa: Allocator, tree: *const Ast, config: *Config, ctx: keys.Contex
                 const current = section orelse continue;
                 if (current == .keybinds) {
                     try applyBinding(gpa, ctx.arena, tree, entry, &errors, &bindings, &binding_tokens);
+                    continue;
+                }
+                if (current == .env) {
+                    try applyEnv(gpa, ctx.arena, tree, entry, &errors, &env);
                     continue;
                 }
                 if (keys.retiredLookup(current, name) != null) {
@@ -166,6 +180,7 @@ pub fn apply(gpa: Allocator, tree: *const Ast, config: *Config, ctx: keys.Contex
     }
 
     if (bindings.items.len > 0) config.keymap = try mergeKeymap(ctx.arena, config.keymap, bindings.items);
+    if (env.items.len > 0) config.environments = try mergeEnv(ctx.arena, config.environments, env.items);
     if (set_by[fallback_key] != null) config.font.faces.fallbacks = try ctx.arena.dupe(Face, fallbacks.items);
     if (set_by[argument_key] != null) config.shell.arguments = try ctx.arena.dupe([:0]const u8, arguments.items);
 
@@ -291,6 +306,67 @@ fn applyBinding(
 }
 
 /// `previous` without the chords `layer` binds, then `layer`, in the arena.
+/// One `NAME = value` line of `[env]`. The name and the value are copied
+/// into `arena`, which owns them as part of the config.
+fn applyEnv(
+    gpa: Allocator,
+    arena: Allocator,
+    tree: *const Ast,
+    entry: Ast.Entry,
+    errors: *std.ArrayList(Error),
+    env: *std.ArrayList(PlainVar),
+) Allocator.Error!void {
+    const name = tree.tokenSlice(entry.name);
+    if (!isEnvName(name)) {
+        return errors.append(gpa, .{ .tag = .invalid_env_name, .token = entry.name, .section = .env });
+    }
+    const value_token = entry.value orelse {
+        return errors.append(gpa, .{ .tag = .missing_value, .token = entry.name, .section = .env });
+    };
+    const raw = tree.tokenSlice(value_token);
+    if (std.mem.eql(u8, raw, "none")) {
+        return errors.append(gpa, .{ .tag = .reserved_env_value, .token = value_token, .section = .env });
+    }
+    const text = keys.unquote(arena, raw) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => return errors.append(gpa, .{ .tag = .invalid_env_value, .token = value_token, .section = .env }),
+    };
+    if (std.mem.indexOfScalar(u8, text, 0) != null) {
+        return errors.append(gpa, .{ .tag = .invalid_env_value, .token = value_token, .section = .env });
+    }
+    const variable: PlainVar = .{ .key = try arena.dupe(u8, name), .value = try arena.dupe(u8, text) };
+    for (env.items) |*existing| {
+        if (std.mem.eql(u8, existing.key, name)) {
+            try errors.append(gpa, .{ .tag = .duplicate_key, .token = entry.name, .section = .env });
+            existing.* = variable;
+            return;
+        }
+    }
+    try env.append(gpa, variable);
+}
+
+/// POSIX portable name: a letter or '_', then letters, digits or '_'
+/// (POSIX.1-2017 XBD 8.1).
+fn isEnvName(name: []const u8) bool {
+    if (name.len == 0 or std.ascii.isDigit(name[0])) return false;
+    for (name) |c| if (!std.ascii.isAlphanumeric(c) and c != '_') return false;
+    return true;
+}
+
+/// `previous` with `layer`'s variables replacing those of the same name, and
+/// the new ones after it.
+fn mergeEnv(arena: Allocator, previous: []const PlainVar, layer: []const PlainVar) Allocator.Error![]const PlainVar {
+    var merged: std.ArrayList(PlainVar) = try .initCapacity(arena, previous.len + layer.len);
+    for (previous) |variable| {
+        const replaced = for (layer) |new| {
+            if (std.mem.eql(u8, new.key, variable.key)) break true;
+        } else false;
+        if (!replaced) merged.appendAssumeCapacity(variable);
+    }
+    merged.appendSliceAssumeCapacity(layer);
+    return merged.items;
+}
+
 fn mergeKeymap(arena: Allocator, previous: []const Binding, layer: []const Binding) Allocator.Error![]const Binding {
     var merged: std.ArrayList(Binding) = try .initCapacity(arena, previous.len + layer.len);
     for (previous) |binding| {
@@ -323,6 +399,8 @@ pub fn renderError(tree: *const Ast, err: Error, w: *std.Io.Writer) std.Io.Write
             if (err.key) |key| {
                 try w.print("{s} has no value, expected ", .{keys.qualified_names[key]});
                 try keys.writeExpected(key, w);
+            } else if (err.section == .env) {
+                try w.print("variable '{s}' has no value; write {s} = \"\" for an empty one", .{ text, text });
             } else {
                 try w.print("key binding '{s}' has no action", .{text});
             }
@@ -342,6 +420,9 @@ pub fn renderError(tree: *const Ast, err: Error, w: *std.Io.Writer) std.Io.Write
         .invalid_chord => try w.print("invalid key chord '{s}': modifiers ctrl, shift, alt, super and one key, like ctrl+shift+w", .{text}),
         .invalid_action => try w.print("unknown action '{s}'", .{text}),
         .reserved_keybinding => try w.print("key binding '{s}' uses syntax reserved for a future version", .{text}),
+        .invalid_env_name => try w.print("'{s}' is not a variable name: letters, digits and _, not starting with a digit", .{text}),
+        .invalid_env_value => try w.print("invalid value {s}: a variable can't hold a NUL byte or a malformed escape", .{text}),
+        .reserved_env_value => try w.writeAll("a bare none is reserved for unsetting a variable in a future version; write \"none\" for the text"),
     }
 }
 

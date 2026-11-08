@@ -336,6 +336,75 @@ test "apply: shell program must be absolute; keywords reset" {
     try std.testing.expectEqual(0, a.config.shell.arguments.len);
 }
 
+test "apply: env sets variables by name, the last one wins" {
+    var a = try Applied.init(
+        \\[env]
+        \\LANG = en_GB.UTF-8
+        \\EDITOR = "nvim -u NONE"
+        \\_X1 = "none"
+        \\LANG = C.UTF-8
+        \\EMPTY = ""
+    );
+    defer a.deinit();
+    try a.expectErrors(&.{
+        .{ .duplicate_key, 4, "'LANG' is set more than once; the last value is used" },
+    });
+    const env = a.config.environments;
+    try std.testing.expectEqual(4, env.len);
+    try std.testing.expectEqualStrings("LANG", env[0].key);
+    try std.testing.expectEqualStrings("C.UTF-8", env[0].value);
+    try std.testing.expectEqualStrings("nvim -u NONE", env[1].value);
+    try std.testing.expectEqualStrings("none", env[2].value);
+    try std.testing.expectEqualStrings("", env[3].value);
+}
+
+test "apply: a later file's env replaces variables by name and keeps the rest" {
+    var arena: std.heap.ArenaAllocator = .init(gpa);
+    defer arena.deinit();
+    var config = testConfig();
+    config.environments = &.{
+        .{ .key = "TERM", .value = "xterm-256color" },
+        .{ .key = "COLORTERM", .value = "truecolor" },
+    };
+    var tree = try Ast.parse(gpa,
+        \\[env]
+        \\TERM = rex
+        \\LANG = C.UTF-8
+    );
+    defer tree.deinit(gpa);
+    var result = try Sema.apply(gpa, &tree, &config, .{ .defaults = &defaults, .arena = arena.allocator(), .dir = "/", .home = null });
+    defer result.deinit(gpa);
+    try std.testing.expectEqual(0, result.errors.len);
+
+    try std.testing.expectEqual(3, config.environments.len);
+    try std.testing.expectEqualStrings("COLORTERM", config.environments[0].key);
+    try std.testing.expectEqualStrings("TERM", config.environments[1].key);
+    try std.testing.expectEqualStrings("rex", config.environments[1].value);
+    try std.testing.expectEqualStrings("LANG", config.environments[2].key);
+}
+
+test "apply: env rejects bad names, NUL bytes and a bare none" {
+    var a = try Applied.init(
+        \\[env]
+        \\1X = a
+        \\A-B = a
+        \\NUL = "a\x00b"
+        \\GONE = none
+        \\EMPTY =
+        \\OK = yes
+    );
+    defer a.deinit();
+    try a.expectErrors(&.{
+        .{ .invalid_env_name, 1, "'1X' is not a variable name: letters, digits and _, not starting with a digit" },
+        .{ .invalid_env_name, 2, "'A-B' is not a variable name: letters, digits and _, not starting with a digit" },
+        .{ .invalid_env_value, 3, "invalid value \"a\\x00b\": a variable can't hold a NUL byte or a malformed escape" },
+        .{ .reserved_env_value, 4, "a bare none is reserved for unsetting a variable in a future version; write \"none\" for the text" },
+        .{ .missing_value, 5, "variable 'EMPTY' has no value; write EMPTY = \"\" for an empty one" },
+    });
+    try std.testing.expectEqual(1, a.config.environments.len);
+    try std.testing.expectEqualStrings("OK", a.config.environments[0].key);
+}
+
 test "apply: winddown start equal to end reverts both" {
     var a = try Applied.init(
         \\[wellbeing.winddown]

@@ -43,6 +43,7 @@ pub const Section = enum {
     scroll,
     shell,
     keybinds,
+    env,
 };
 
 /// How a value is written, beyond what the field type implies.
@@ -338,6 +339,7 @@ pub fn retiredLookup(section: Section, name: []const u8) ?Retired {
 /// `Config` fields set by a whole section rather than a row.
 pub const section_fields = [_]struct { Section, []const u8 }{
     .{ .keybinds, "keymap" },
+    .{ .env, "environments" },
 };
 
 /// `Config` fields (or subtrees) deliberately not exposed as keys. The
@@ -348,7 +350,6 @@ pub const internal = [_][]const u8{
     // Startup and process settings, set by main.zig or fixed at compile time.
     "blink",
     "termio",
-    "environments",
     "terminal",
     "threading",
     // Colors and UI tokens: a `[colors]` section later (#33).
