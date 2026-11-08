@@ -31,7 +31,8 @@ pub const DefaultFocus = enum {
 
 pub const Option = struct {
     width: u16 = 46,
-    dim_alpha: u8 = 180,
+    /// Opacity of the darkened backdrop behind the dialog, 0 to 1.
+    backdrop_opacity: f32 = 180.0 / 255.0,
     blur: bool = false,
     blur_radius: u8 = 12,
     close_on_outside_click: bool = true,
@@ -40,6 +41,13 @@ pub const Option = struct {
     border_style: ?Card.BorderStyle = null,
     icon_style: Icon.IconStyle = .auto,
     default_focus: DefaultFocus = .confirm,
+
+    /// `backdrop_opacity` as the alpha byte the renderer uses; out-of-range
+    /// and non-finite values are clamped (non-finite counts as 0).
+    pub fn backdropAlpha(self: Option) u8 {
+        const opacity = if (std.math.isFinite(self.backdrop_opacity)) std.math.clamp(self.backdrop_opacity, 0, 1) else 0;
+        return @intFromFloat(@round(opacity * 255));
+    }
 };
 
 pub const Action = struct {
@@ -298,4 +306,12 @@ test "Modal: computeLayout and hitTest on centered confirmation dialog" {
 
     // Click second action row (Cancel and stay)
     try testing.expectEqual(HitResult{ .action = 1 }, hitTestLayout(layout, 25, 14));
+}
+
+test "Modal: backdropAlpha round-trips bytes and clamps" {
+    try std.testing.expectEqual(180, (Option{}).backdropAlpha());
+    try std.testing.expectEqual(10, (Option{ .backdrop_opacity = 10.0 / 255.0 }).backdropAlpha());
+    try std.testing.expectEqual(255, (Option{ .backdrop_opacity = 2 }).backdropAlpha());
+    try std.testing.expectEqual(0, (Option{ .backdrop_opacity = -1 }).backdropAlpha());
+    try std.testing.expectEqual(0, (Option{ .backdrop_opacity = std.math.nan(f32) }).backdropAlpha());
 }

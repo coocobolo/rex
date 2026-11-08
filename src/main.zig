@@ -181,7 +181,7 @@ const toast_option = rex.ui.Toast.Option{
 
 const banner_option = rex.ui.Banner.Option{
     .enabled = true,
-    .style = .floating,
+    .placement = .floating,
     .position = .top_center,
     .border_style = .semantic,
     .corner_radius = 8.0,
@@ -198,7 +198,7 @@ const icon_option = rex.ui.Icon.Option{
 
 const modal_option = rex.ui.Modal.Option{
     .width = 46,
-    .dim_alpha = 10,
+    .backdrop_opacity = 10.0 / 255.0,
     .close_on_outside_click = true,
     .default_focus = .confirm,
     .icon_style = .unicode,
@@ -243,7 +243,7 @@ const config: rex.config.Config = .{
         .icon = icon_option,
         .modal = modal_option,
         .confirm_quit = true,
-        .bell = .on,
+        .bell = .{ .enabled = true },
     },
     .environments = &.{
         .{ .key = "SHELL", .value = "/bin/bash" },

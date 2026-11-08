@@ -58,3 +58,13 @@ test "PlatformChoice: formats as the platform name for the startup log" {
     const wayland: Window.PlatformChoice = .{ .platform = c.GLFW_PLATFORM_WAYLAND, .forced = true };
     try testing.expectEqualStrings("wayland", try std.fmt.bufPrint(&buf, "{f}", .{wayland}));
 }
+
+test "Window: bellPercent clamps the volume to XBell's 0..100" {
+    try std.testing.expectEqual(0, Window.bellPercent(0));
+    try std.testing.expectEqual(50, Window.bellPercent(0.5));
+    try std.testing.expectEqual(100, Window.bellPercent(1));
+    try std.testing.expectEqual(100, Window.bellPercent(7));
+    try std.testing.expectEqual(0, Window.bellPercent(-1));
+    try std.testing.expectEqual(0, Window.bellPercent(std.math.nan(f32)));
+    try std.testing.expectEqual(0, Window.bellPercent(std.math.inf(f32)));
+}

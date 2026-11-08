@@ -50,11 +50,7 @@ tokens: ?Tokens = null,
 window: struct {
     platform: Window.Platform = .auto,
     background: Background.Option,
-    /// Rings the X bell on BEL and on pomodoro phase changes (window
-    /// attention only where there is no audible bell).
-    bell: enum { on, off } = .on,
-    /// XBell volume, as a percent of the X server bell volume.
-    bell_volume: u8 = 100,
+    bell: Bell = .{},
     scrollbar: Scrollbar.Option,
     cursor: Cursor.Option,
     /// Positions, thicknesses and looks of underline, strikethrough
@@ -128,6 +124,14 @@ pub const Font = struct {
     max_size: u32,
     /// Step of increase_font_size and decrease_font_size.
     size_step: u32 = 2,
+};
+
+/// The bell on BEL and on pomodoro phase changes: the X bell on X11, window
+/// attention only where there is no audible bell.
+pub const Bell = struct {
+    enabled: bool = true,
+    /// Fraction of the X server's bell volume, 0 to 1.
+    volume: f32 = 1.0,
 };
 
 /// Copy and labels of the quit confirmation dialog.

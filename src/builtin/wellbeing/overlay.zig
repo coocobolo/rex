@@ -566,7 +566,7 @@ pub const Overlay = struct {
                         .width = effective_border_w,
                         .style = if (self.card_opt.border_style == .semantic) .semantic else .normal,
                     },
-                    .backdrop_dim_alpha = self.modal_opt.dim_alpha,
+                    .backdrop_dim_alpha = self.modal_opt.backdropAlpha(),
                 },
                 .semantic_accent = self.tokens.accent,
                 .viewport_cols = total_cols,

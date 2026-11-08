@@ -149,7 +149,7 @@ pub const FileConfig = struct {
     toast_margin_rows: ?u16 = null,
 
     banner_enabled: ?bool = null,
-    banner_style: ?Banner.Style = null,
+    banner_style: ?Banner.Placement = null,
     banner_position: ?Banner.Position = null,
     banner_border_style: ?Toast.BorderStyle = null,
     banner_corner_radius: ?f32 = null,

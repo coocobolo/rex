@@ -101,16 +101,13 @@ pub fn applyFileConfig(target: *Config, file: *const FileConfig, allocator: Allo
     if (file.window_background_alpha) |a| target.window.background.alpha = a;
     if (file.window_confirm_quit) |cq| target.window.confirm_quit = cq;
     if (file.window_dim_alpha) |da| target.window.dim_alpha = da;
-    if (file.window_bell) |bell| target.window.bell = switch (bell) {
-        .on => .on,
-        .off => .off,
-    };
+    if (file.window_bell) |bell| target.window.bell.enabled = bell == .on;
     if (file.window_platform) |p| target.window.platform = switch (p) {
         .auto => .auto,
         .wayland => .wayland,
         .x11 => .x11,
     };
-    if (file.window_bell_volume) |vol| target.window.bell_volume = vol;
+    if (file.window_bell_volume) |vol| target.window.bell.volume = @as(f32, @floatFromInt(vol)) / 100.0;
     if (file.window_width) |w| target.window.size.width = w;
     if (file.window_height) |h| target.window.size.height = h;
 
@@ -137,7 +134,7 @@ pub fn applyFileConfig(target: *Config, file: *const FileConfig, allocator: Allo
 
     // Banner options
     if (file.banner_enabled) |en| target.window.banner.enabled = en;
-    if (file.banner_style) |st| target.window.banner.style = st;
+    if (file.banner_style) |st| target.window.banner.placement = st;
     if (file.banner_position) |pos| target.window.banner.position = pos;
     if (file.banner_border_style) |bs| target.window.banner.border_style = bs;
     if (file.banner_corner_radius) |cr| target.window.banner.corner_radius = cr;
@@ -149,7 +146,7 @@ pub fn applyFileConfig(target: *Config, file: *const FileConfig, allocator: Allo
 
     // Modal options
     if (file.modal_width) |w| target.window.modal.width = w;
-    if (file.modal_dim_alpha) |da| target.window.modal.dim_alpha = da;
+    if (file.modal_dim_alpha) |da| target.window.modal.backdrop_opacity = @as(f32, @floatFromInt(da)) / 255.0;
     if (file.modal_blur) |b| target.window.modal.blur = b;
     if (file.modal_blur_radius) |br| target.window.modal.blur_radius = br;
     if (file.modal_close_on_outside_click) |cl| target.window.modal.close_on_outside_click = cl;

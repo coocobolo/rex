@@ -776,7 +776,7 @@ fn renderFrame(self: *App) !bool {
         frame.overlay_has_modal = has_modal;
         frame.modal_blur = self.config.window.modal.blur;
         frame.modal_blur_radius = self.config.window.modal.blur_radius;
-        frame.modal_dim_alpha = self.config.window.modal.dim_alpha;
+        frame.modal_dim_alpha = self.config.window.modal.backdropAlpha();
         frame.dirty.overlay = true;
     } else if (overlay_changed) {
         frame.dirty.overlay = true;
@@ -955,9 +955,9 @@ fn updateWindowTitle(self: *App) void {
 /// Rings the X bell at the configured volume (window attention only where
 /// there is no audible bell), unless the bell is off or muted by wellbeing.
 fn ringBell(self: *App) void {
-    if (self.config.window.bell == .off) return;
+    if (!self.config.window.bell.enabled) return;
     if (self.wellbeing_state.mute_audio_bell) return;
-    self.window.ringBell(self.config.window.bell_volume);
+    self.window.ringBell(self.config.window.bell.volume);
 }
 
 pub fn handleResize(self: *App, dimension: Dimension(u16)) void {
@@ -1456,7 +1456,7 @@ fn quitConfirmModalRequest(card_opt: Card.Option, modal_opt: Modal.Option, quit_
         .actions = actions,
         .variant = .warning,
         .border_style = modal_opt.border_style orelse card_opt.border_style,
-        .dim_alpha = modal_opt.dim_alpha,
+        .dim_alpha = modal_opt.backdropAlpha(),
         .width = modal_opt.width,
         .icon_style = modal_opt.icon_style,
         .corner_radius = modal_opt.corner_radius orelse card_opt.effectiveRadius(),
@@ -2500,7 +2500,7 @@ test "App: quitConfirmModalRequest layout and hitTest" {
     // Custom configuration overrides
     var custom_actions: [2]Modal.Action = undefined;
     const custom_req = quitConfirmModalRequest(.{}, .{
-        .dim_alpha = 100,
+        .backdrop_opacity = 100.0 / 255.0,
         .width = 50,
     }, .{
         .title = "TERMINATE NOW?",

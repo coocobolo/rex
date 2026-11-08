@@ -284,16 +284,23 @@ pub fn bellKind(platform: c_int) BellKind {
     return if (has_x11 and platform == c.GLFW_PLATFORM_X11) .audible_x11 else .attention_only;
 }
 
+/// XBell's percent for a volume fraction: clamped to 0..100, so XBell never
+/// gets a value outside -100..100; a non-finite volume counts as 0.
+pub fn bellPercent(volume: f32) u8 {
+    const fraction = if (std.math.isFinite(volume)) std.math.clamp(volume, 0, 1) else 0;
+    return @intFromFloat(@round(fraction * 100));
+}
+
 /// Asks for window attention and, on X11, sounds the X bell at `volume`
-/// percent of its base volume, on GLFW's own connection. `volume` is at
-/// most 100: the config parser rejects larger values, which XBell would
-/// answer with an X error that ends the program. Where there is no
-/// audible bell, that is logged once. Call on the GLFW (main) thread.
-pub fn ringBell(self: *Window, volume: u8) void {
-    std.debug.assert(volume <= 100);
+/// (a fraction, 0 to 1) of its base volume, on GLFW's own connection.
+/// XBell answers a percent outside -100..100 with an X error that ends the
+/// program, so `volume` is clamped to 0..1 (non-finite counts as 0) before
+/// it becomes a percent. Where there is no audible bell, that is logged
+/// once. Call on the GLFW (main) thread.
+pub fn ringBell(self: *Window, volume: f32) void {
     self.requestWindowAttention();
     switch (bellKind(c.glfwGetPlatform())) {
-        .audible_x11 => if (has_x11) self.ringX11Bell(volume),
+        .audible_x11 => if (has_x11) self.ringX11Bell(bellPercent(volume)),
         .attention_only => self.logSilentBell("no audible bell on this platform"),
     }
 }

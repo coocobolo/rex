@@ -248,7 +248,7 @@ test "config: merge and applyFileConfig overrides" {
     var app_cfg: Config = undefined;
     app_cfg.window.card.corner_radius = 8.0;
     app_cfg.window.toast.duration_ms = 5000;
-    app_cfg.window.modal.dim_alpha = 180;
+    app_cfg.window.modal.backdrop_opacity = 180.0 / 255.0;
     app_cfg.keymap = &.{};
     app_cfg.font.faces.family = .{
         .variable = .{
@@ -260,7 +260,7 @@ test "config: merge and applyFileConfig overrides" {
 
     try testing.expectEqual(@as(f32, 16.0), app_cfg.window.card.corner_radius);
     try testing.expectEqual(@as(u32, 7000), app_cfg.window.toast.duration_ms);
-    try testing.expectEqual(@as(u8, 50), app_cfg.window.modal.dim_alpha);
+    try testing.expectEqual(@as(u8, 50), app_cfg.window.modal.backdropAlpha());
 }
 
 test "config: dumpDefaultConfig produces valid configuration template" {
@@ -281,7 +281,7 @@ test "config: dumpDefaultConfig produces valid configuration template" {
     try testing.expect(!diags.hasErrors());
     try testing.expectEqual(@as(f32, 8.0), cfg.card_corner_radius.?);
     try testing.expectEqual(@as(u32, 5000), cfg.toast_duration_ms.?);
-    try testing.expectEqual(Banner.Style.floating, cfg.banner_style.?);
+    try testing.expectEqual(Banner.Placement.floating, cfg.banner_style.?);
     try testing.expectEqual(Banner.Position.top_center, cfg.banner_position.?);
 }
 
@@ -333,7 +333,7 @@ test "config: dot notation with snake_case properties" {
     try testing.expectEqual(@as(u32, 20 * 60 * 1000), cfg.wellbeing_focus_long_break_ms.?);
     try testing.expectEqual(@as(u32, 5), cfg.wellbeing_tasks_before_long_break.?);
     try testing.expectEqual(true, cfg.wellbeing_lock_input_on_break.?);
-    try testing.expectEqual(Banner.Style.docked, cfg.banner_style.?);
+    try testing.expectEqual(Banner.Placement.docked, cfg.banner_style.?);
     try testing.expectEqual(Banner.Position.top_right, cfg.banner_position.?);
 }
 
@@ -359,7 +359,7 @@ test "config: banner section and options parsing" {
 
     try testing.expect(!diags.hasErrors());
     try testing.expectEqual(true, cfg.banner_enabled.?);
-    try testing.expectEqual(Banner.Style.floating, cfg.banner_style.?);
+    try testing.expectEqual(Banner.Placement.floating, cfg.banner_style.?);
     try testing.expectEqual(Banner.Position.top_center, cfg.banner_position.?);
     try testing.expectEqual(Toast.BorderStyle.semantic, cfg.banner_border_style.?);
     try testing.expectEqual(@as(f32, 6.0), cfg.banner_corner_radius.?);
@@ -380,7 +380,7 @@ test "config: banner section and options parsing" {
 
     try merge_mod.applyFileConfig(&app_cfg, &cfg, testing.allocator);
     try testing.expectEqual(true, app_cfg.window.banner.enabled);
-    try testing.expectEqual(Banner.Style.floating, app_cfg.window.banner.style);
+    try testing.expectEqual(Banner.Placement.floating, app_cfg.window.banner.placement);
     try testing.expectEqual(Banner.Position.top_center, app_cfg.window.banner.position);
     try testing.expectEqual(@as(f32, 6.0), app_cfg.window.banner.corner_radius);
     try testing.expectEqual(@as(f32, 1.5), app_cfg.window.banner.border_width);
@@ -548,7 +548,7 @@ test "config: serializeConfig produces valid re-parseable configuration" {
     try testing.expectEqual(@import("../renderer/Card.zig").BorderShape.sharp, reparsed.card_border_shape.?);
     try testing.expectEqual(false, reparsed.toast_enabled.?);
     try testing.expectEqual(@as(u32, 4000), reparsed.toast_duration_ms.?);
-    try testing.expectEqual(Banner.Style.docked, reparsed.banner_style.?);
+    try testing.expectEqual(Banner.Placement.docked, reparsed.banner_style.?);
     try testing.expectEqual(Banner.Position.top_right, reparsed.banner_position.?);
     try testing.expectEqual(@as(u16, 52), reparsed.modal_width.?);
     try testing.expectEqual(true, reparsed.modal_blur.?);

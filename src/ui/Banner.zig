@@ -25,7 +25,8 @@ pub const Level = enum {
     info,
 };
 
-pub const Style = enum {
+/// Whether the banner floats over the terminal or is docked to its edge.
+pub const Placement = enum {
     floating,
     docked,
 };
@@ -38,7 +39,7 @@ pub const Position = enum {
 
 pub const Option = struct {
     enabled: bool = true,
-    style: Style = .floating,
+    placement: Placement = .floating,
     position: Position = .top_center,
     border_style: Toast.BorderStyle = .semantic,
     corner_radius: f32 = 8.0,
@@ -121,7 +122,7 @@ pub fn computeLayout(self: *const Banner, total_cols: u16, total_rows: u16, opt:
     const icon_w = Text.measure(icon_str);
     const dismiss_w = Text.measure(opt.dismiss_str);
 
-    switch (opt.style) {
+    switch (opt.placement) {
         .docked => {
             const dismiss_col = if (total_cols > dismiss_w + 1) total_cols - dismiss_w - 1 else 0;
             const icon_col: u16 = 1;
@@ -258,7 +259,7 @@ test "Banner: init, layout computation, and message formatting" {
     try testing.expectEqualStrings("unknown key 'foo'", banner.getMessage());
 
     // Test docked style
-    const docked_opt = Option{ .style = .docked, .dismiss_str = "Dismiss [×]" };
+    const docked_opt = Option{ .placement = .docked, .dismiss_str = "Dismiss [×]" };
     const docked_layout = banner.computeLayout(80, 24, docked_opt);
     try testing.expectEqual(@as(u16, 0), docked_layout.col);
     try testing.expectEqual(@as(u16, 0), docked_layout.row);
@@ -276,7 +277,7 @@ test "Banner: init, layout computation, and message formatting" {
     try testing.expectEqual(@import("hotspot.zig").Tag.banner_dismiss, std.meta.activeTag(hit_docked.?));
 
     // Test floating toast style
-    const float_opt = Option{ .style = .floating, .position = .top_center, .margin_rows = 1 };
+    const float_opt = Option{ .placement = .floating, .position = .top_center, .margin_rows = 1 };
     const float_layout = banner.computeLayout(80, 24, float_opt);
     try testing.expect(float_layout.width >= float_opt.min_width);
     try testing.expect(float_layout.width <= float_opt.max_width);
