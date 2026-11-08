@@ -1,6 +1,5 @@
 const std = @import("std");
 const Io = std.Io;
-const focus = @import("focus.zig");
 
 pub const magic: u32 = 0x57454C4C; // "WELL"
 pub const version: u32 = 1;
@@ -107,19 +106,6 @@ pub const PersistentData = extern struct {
     _pad: [64]u8 = @splat(0),
 
     pub const empty: PersistentData = .{};
-
-    pub fn toFocusStats(self: *const PersistentData) focus.Stats {
-        return .{
-            .best_streak = self.best_streak,
-            .break_ms = @as(u64, self.today.break_s) * 1000,
-            .current_streak = self.current_streak,
-            .focus_ms = @as(u64, self.today.focus_s) * 1000,
-            .last_task_day = self.last_task_day,
-            .long_breaks_taken = self.long_breaks_taken,
-            .sessions = self.sessions,
-            .tasks_completed = self.tasks_completed,
-        };
-    }
 };
 
 const data_size = @sizeOf(PersistentData);

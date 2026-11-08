@@ -1,8 +1,6 @@
 const std = @import("std");
-const Io = std.Io;
 
 const max_u64 = std.math.maxInt(u64);
-const log = std.log.scoped(.focus);
 
 pub const Phase = enum(u8) {
     idle = 0,
@@ -39,51 +37,6 @@ pub const Option = struct {
     };
 
     pub const default: Option = .{};
-};
-
-pub const Stats = struct {
-    best_streak: u32,
-    /// total time spent in break phases
-    break_ms: u64,
-    current_streak: u32,
-    /// total time spent in task phases
-    focus_ms: u64,
-    /// days since Unix epoch; 0 = never
-    last_task_day: u32,
-    long_breaks_taken: u32,
-    /// number of times toggle() started from idle
-    sessions: u32,
-    tasks_completed: u32,
-
-    pub const empty: Stats = .{
-        .tasks_completed = 0,
-        .long_breaks_taken = 0,
-        .focus_ms = 0,
-        .break_ms = 0,
-        .sessions = 0,
-        .best_streak = 0,
-        .current_streak = 0,
-        .last_task_day = 0,
-    };
-
-    pub fn onTaskCompleted(self: *Stats, io: Io) void {
-        const now_secs = std.Io.Timestamp.now(io, .real).toSeconds();
-        const today: u32 = @intCast(@divFloor(now_secs, std.time.s_per_day));
-
-        if (today == self.last_task_day) {
-            // Already completed a task today — streak unchanged
-        } else if (today == self.last_task_day + 1) {
-            // Consecutive day
-            self.current_streak += 1;
-        } else {
-            // First ever task or A gap between, streak broken
-            self.current_streak = 1;
-        }
-
-        self.best_streak = @max(self.best_streak, self.current_streak);
-        self.tasks_completed += 1;
-        self.last_task_day = today;
-    }
 };
 
 pub const State = struct {
