@@ -301,6 +301,9 @@ test "writeExpected: describes each kind" {
         .{ .modal, "border_style", "one of: semantic, subtle, or inherit" },
         .{ .font, "weight", "a whole number from 1 to 1000" },
         .{ .@"wellbeing.winddown", "start", "a time of day from 00:00 to 23:59, like 21:30" },
+        .{ .shell, "program", "an absolute path to a program, ~/ allowed, or auto" },
+        .{ .shell, "working_directory", "a path to a directory, or inherit" },
+        .{ .shell, "argument", "a program argument, one per line, or none" },
         .{ .@"wellbeing.screen_time", "on_limit", "none, or any of grayscale, lock_input, animation separated by commas" },
         .{ .root, "theme", "a theme name: graphite" },
     };

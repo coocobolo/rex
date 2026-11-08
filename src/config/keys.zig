@@ -41,6 +41,7 @@ pub const Section = enum {
     @"wellbeing.routines",
     @"wellbeing.privacy",
     scroll,
+    shell,
     keybinds,
 };
 
@@ -73,6 +74,17 @@ pub const Kind = enum {
     /// the home directory; a relative path is relative to the directory of
     /// the file that sets it (F11).
     path,
+    /// An absolute path or a `~/` path to a program, into a `[:0]const u8`
+    /// field. Relative paths are rejected: `execve` doesn't search `PATH`,
+    /// and `zsh` resolved against the config file's directory would surprise.
+    program_path,
+    /// A directory path into a `[:0]const u8` field, resolved like `path`.
+    directory_path,
+    /// A list of program arguments, one per line, with `font_fallback`'s
+    /// rules (F2): the first line in a file replaces the lower layer's list,
+    /// `none` empties it, `default` restores the base list; a quoted value is
+    /// always a literal argument. Sema collects these rows (`isList`).
+    shell_argument,
 };
 
 /// The value that stands for null in an optional field (C9/F4).
@@ -274,6 +286,10 @@ pub const table = [_]Key{
 
     .{ .section = .scroll, .name = "step_lines", .field = "scroll.lines", .bounds = at_least_one },
     .{ .section = .scroll, .name = "wheel_lines", .field = "scroll.wheel_lines", .bounds = at_least_one },
+
+    .{ .section = .shell, .name = "program", .field = "shell.program", .kind = .program_path, .null_keyword = .auto, .reload = .restart },
+    .{ .section = .shell, .name = "argument", .field = "shell.arguments", .kind = .shell_argument, .reload = .restart },
+    .{ .section = .shell, .name = "working_directory", .field = "shell.working_directory", .kind = .directory_path, .null_keyword = .inherit, .reload = .restart },
 };
 
 /// A key that existed in a released version and is gone or renamed; Sema
@@ -455,6 +471,9 @@ fn writeExpectedKey(comptime key: Key, w: *std.Io.Writer) std.Io.Writer.Error!vo
         },
         .font_fallback => try w.writeAll("a path to a font file, one per line, or none"),
         .path => try w.writeAll("a path to a font file"),
+        .program_path => try w.writeAll("an absolute path to a program, ~/ allowed"),
+        .directory_path => try w.writeAll("a path to a directory"),
+        .shell_argument => try w.writeAll("a program argument, one per line, or none"),
     }
     if (key.null_keyword) |keyword| try w.print(", or {t}", .{keyword});
 }
@@ -519,7 +538,10 @@ pub fn lookup(section: Section, name: []const u8) ?KeyIndex {
 /// Whether the row is a list, which Sema collects line by line instead of
 /// passing to `apply`.
 pub fn isList(index: KeyIndex) bool {
-    return table[index].kind == .font_fallback;
+    return switch (table[index].kind) {
+        .font_fallback, .shell_argument => true,
+        else => false,
+    };
 }
 
 /// One line of a list row.
@@ -538,6 +560,23 @@ pub fn parseFallback(ctx: Context, text: []const u8) ApplyError!ListItem {
     return .{ .face = .static(try resolvePath(ctx, try unquote(ctx.arena, text))) };
 }
 
+/// One line of a `shell_argument` row.
+pub const ArgumentItem = union(enum) {
+    /// Empty the list.
+    none,
+    /// Back to the base list.
+    default,
+    argument: [:0]const u8,
+};
+
+/// Parses one `argument = ...` line. Only bare `none` and `default` are
+/// keywords; `"none"` is the argument "none".
+pub fn parseArgument(ctx: Context, text: []const u8) ApplyError!ArgumentItem {
+    if (std.mem.eql(u8, text, "none")) return .none;
+    if (std.mem.eql(u8, text, "default")) return .default;
+    return .{ .argument = try ctx.arena.dupeZ(u8, try unquote(ctx.arena, text)) };
+}
+
 /// Parses `text` (the raw value token, quotes included) for the row at
 /// `index` and stores it in `config`. `default` copies the field from
 /// `ctx.defaults`. The field is unchanged on error.
@@ -554,7 +593,7 @@ fn applyKey(comptime key: Key, config: *Config, ctx: Context, text: []const u8) 
     const T = FieldType(Config, key.field);
     comptime checkRow(key, T);
 
-    if (key.kind == .font_fallback) unreachable; // Sema handles list rows (isList)
+    if (key.kind == .font_fallback or key.kind == .shell_argument) unreachable; // Sema handles list rows (isList)
 
     if (std.mem.eql(u8, text, "default")) {
         fieldPtr(Config, key.field, config).* = fieldValue(Config, key.field, defaults);
@@ -570,9 +609,15 @@ fn applyKey(comptime key: Key, config: *Config, ctx: Context, text: []const u8) 
         .optional => |optional| optional.child,
         else => T,
     };
-    if (key.kind == .path) {
+    if (key.kind == .path or key.kind == .directory_path) {
         const path = try resolvePath(ctx, try unquote(ctx.arena, text));
         fieldPtr(Config, key.field, config).* = if (Value == FontConfig.Face) .static(path) else path;
+        return;
+    }
+    if (key.kind == .program_path) {
+        const path = try unquote(ctx.arena, text);
+        if (!std.fs.path.isAbsolute(path) and !std.mem.startsWith(u8, path, "~/")) return error.InvalidValue;
+        fieldPtr(Config, key.field, config).* = try resolvePath(ctx, path);
         return;
     }
     fieldPtr(Config, key.field, config).* = try parseValue(key, Value, text);
@@ -661,6 +706,8 @@ fn checkRow(comptime key: Key, comptime T: type) void {
         .theme => Value == Theme,
         .font_fallback => Value == []const FontConfig.Face,
         .path => Value == [*:0]const u8 or Value == FontConfig.Face,
+        .program_path, .directory_path => Value == [:0]const u8,
+        .shell_argument => Value == []const [:0]const u8,
     };
     if (!ok) @compileError(key.name ++ ": kind ." ++ @tagName(key.kind) ++ " doesn't fit " ++ @typeName(T));
 }
@@ -688,8 +735,8 @@ fn parseValue(comptime key: Key, comptime V: type, text: []const u8) Error!V {
             return @floatFromInt(weight);
         },
         .theme => return theme_presets.get(text) orelse error.InvalidValue,
-        .font_fallback => unreachable, // Sema handles list rows
-        .path => unreachable, // applyKey handles it
+        .font_fallback, .shell_argument => unreachable, // Sema handles list rows
+        .path, .program_path, .directory_path => unreachable, // applyKey handles them
     }
 }
 

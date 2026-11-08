@@ -289,7 +289,7 @@ pub fn init(
     var loaded = try Loaded.load(gpa, io, config, home_dir, &.{ .file(rex.config.paths.system), .file(user_cfg_path) });
     defer loaded.deinit(gpa);
     logConfigDiagnostics(gpa, &loaded);
-    const startup_banner = configBanner(&loaded);
+    var startup_banner = configBanner(&loaded);
     var config_arena = loaded.takeArena();
     errdefer config_arena.deinit();
     var active_config = loaded.config;
@@ -311,27 +311,31 @@ pub fn init(
     };
     defer block.deinit(gpa);
 
-    // Without a configured argv, the user's shell, like other terminals.
-    // The child gets its own copy at fork, so this can go after spawn.
-    const shell = try gpa.dupeZ(u8, defaultShell(envmap.get("SHELL"), passwdShell()));
-    defer gpa.free(shell);
-    const shell_argv = [_:null]?[*:0]const u8{ shell, null };
+    // Without a configured program, the user's shell, like other terminals.
+    const login_shell = try gpa.dupeZ(u8, defaultShell(envmap.get("SHELL"), passwdShell()));
+    defer gpa.free(login_shell);
 
-    var pty = try Pty.spawn(.{
-        .argv = active_config.termio.argv orelse &shell_argv,
-        .capture_stdout = active_config.termio.capture_stdout,
-        .cols = active_config.termio.cols,
-        .cwd = active_config.termio.cwd,
-        .envp = block.slice,
-        .o_flags = active_config.termio.o_flags,
-        .rows = active_config.termio.rows,
-    });
-    errdefer pty.close(io);
-
-    pty.waitForSpawn() catch |err| {
-        log.err("pty failed to spawn: {}", .{err});
-        return err;
+    // A [shell] setting that can't start (a missing program or directory)
+    // must not keep Rex from starting: fall back to the login shell in
+    // Rex's own directory, and say so.
+    var failure: ?rex.termio.pty.SpawnFailure = null;
+    var pty = spawnShell(gpa, io, active_config.termio, active_config.shell, login_shell, block.slice, &failure) catch |err| switch (err) {
+        error.SpawnFailed => if (isDefaultShell(active_config.shell)) {
+            if (failure) |f| log.err("the shell failed to start: {f}", .{f}) else log.err("the shell failed to start: {}", .{err});
+            return err;
+        } else blk: {
+            var message_buf: [256]u8 = undefined;
+            const message = if (failure) |f|
+                std.fmt.bufPrint(&message_buf, "[shell]: {f}; started {s} instead", .{ f, login_shell }) catch "[shell] failed to start; started the login shell instead"
+            else
+                "[shell] failed to start; started the login shell instead";
+            log.err("{s}", .{message});
+            startup_banner = Banner.init(.err, "Shell error", message);
+            break :blk try spawnShell(gpa, io, active_config.termio, .{}, login_shell, block.slice, &failure);
+        },
+        else => return err,
     };
+    errdefer pty.close(io);
 
     log.debug("termio.pty: {f}", .{pty});
 
@@ -1458,7 +1462,46 @@ fn snapToLiveView(self: *App) void {
     self.needs_redraw = true;
 }
 
-/// The shell to start when `termio.argv` isn't set: `$SHELL`, else the
+/// Starts `shell` in a new pty and waits until its program replaced the
+/// child, so a failed `chdir` or `execve` is `error.SpawnFailed` here, with
+/// the failed step in `failure`. The argv array is freed on return: the
+/// child got its own copy at fork.
+fn spawnShell(
+    gpa: std.mem.Allocator,
+    io: std.Io,
+    termio: rex.termio.pty.SpawnOption,
+    shell: Config.Shell,
+    login_shell: [:0]const u8,
+    envp: [*:null]const ?[*:0]const u8,
+    failure: *?rex.termio.pty.SpawnFailure,
+) !Pty {
+    const argv = try gpa.allocSentinel(?[*:0]const u8, 1 + shell.arguments.len, null);
+    defer gpa.free(argv);
+    argv[0] = shell.program orelse login_shell;
+    for (shell.arguments, argv[1..]) |argument, *slot| slot.* = argument;
+
+    var pty = try Pty.spawn(.{
+        .argv = argv.ptr,
+        .capture_stdout = termio.capture_stdout,
+        .cols = termio.cols,
+        .cwd = if (shell.working_directory) |dir| dir.ptr else null,
+        .envp = envp,
+        .o_flags = termio.o_flags,
+        .rows = termio.rows,
+    });
+    errdefer pty.close(io);
+    pty.waitForSpawn() catch |err| {
+        failure.* = pty.failure;
+        return err;
+    };
+    return pty;
+}
+
+fn isDefaultShell(shell: Config.Shell) bool {
+    return shell.program == null and shell.arguments.len == 0 and shell.working_directory == null;
+}
+
+/// The shell to start when `[shell] program` isn't set: `$SHELL`, else the
 /// user's login shell from the passwd database, else /bin/sh. A relative or
 /// empty path doesn't count.
 fn defaultShell(env_shell: ?[]const u8, passwd_shell: ?[]const u8) []const u8 {
@@ -2677,6 +2720,24 @@ test "defaultShell: $SHELL, then the passwd shell, then /bin/sh" {
     try std.testing.expectEqualStrings("/bin/bash", defaultShell("", "/bin/bash"));
     try std.testing.expectEqualStrings("/bin/sh", defaultShell(null, null));
     try std.testing.expectEqualStrings("/bin/sh", defaultShell("", ""));
+}
+
+test "spawnShell: a missing program or directory fails to spawn, the defaults start" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    const envp: [*:null]const ?[*:0]const u8 = &.{null};
+
+    var failure: ?rex.termio.pty.SpawnFailure = null;
+    try std.testing.expectError(error.SpawnFailed, spawnShell(gpa, io, .default, .{ .program = "/nonexistent/rex-test-shell" }, "/bin/sh", envp, &failure));
+    try std.testing.expectEqual(.execve, failure.?.stage);
+    try std.testing.expectError(error.SpawnFailed, spawnShell(gpa, io, .default, .{ .working_directory = "/nonexistent/rex-test-dir" }, "/bin/sh", envp, &failure));
+    try std.testing.expectEqual(.chdir, failure.?.stage);
+
+    // The fallback: no program (the login shell) and no directory.
+    var pty = try spawnShell(gpa, io, .default, .{ .arguments = &.{ "-c", "exit 0" } }, "/bin/sh", envp, &failure);
+    pty.close(io);
+    try std.testing.expect(!isDefaultShell(.{ .arguments = &.{"-l"} }));
+    try std.testing.expect(isDefaultShell(.{}));
 }
 
 test "App: a config reload starts from the defaults, in its own arena" {

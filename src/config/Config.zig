@@ -37,6 +37,7 @@ font: Font,
 keymap: []const Binding,
 wellbeing: WellbeingOption = .{},
 termio: SpawnOption,
+shell: Shell = .{},
 theme: Theme,
 /// Optional handcrafted design tokens override for custom surface and border styling.
 tokens: ?Tokens = null,
@@ -162,6 +163,17 @@ pub const SurfaceOverride = struct {
             .border_style = override.border_style orelse base.border_style,
         };
     }
+};
+
+/// What runs in the terminal (`[shell]`). Read once, when Rex starts.
+pub const Shell = struct {
+    /// An absolute path. Null starts `$SHELL`, then the login shell from
+    /// the passwd database, then /bin/sh.
+    program: ?[:0]const u8 = null,
+    /// argv[1] and on; argv[0] is the program.
+    arguments: []const [:0]const u8 = &.{},
+    /// Null: the directory Rex was started in.
+    working_directory: ?[:0]const u8 = null,
 };
 
 /// How selecting text behaves.

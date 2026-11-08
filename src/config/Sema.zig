@@ -28,8 +28,8 @@ pub const Error = struct {
     pub const Tag = enum {
         /// `[name]` that isn't a section; its keys are skipped. Token: the name.
         unknown_section,
-        /// A section reserved for a future version (`[terminal]`, `[shell]`,
-        /// `[colors]`, `[profile.*]`); its keys are skipped. Token: the name.
+        /// A section reserved for a future version (`[terminal]`, `[colors]`,
+        /// `[profile.*]`); its keys are skipped. Token: the name.
         reserved_section,
         /// Token: the key name.
         unknown_key,
@@ -93,6 +93,11 @@ pub fn apply(gpa: Allocator, tree: *const Ast, config: *Config, ctx: keys.Contex
     // `font.fallback` lines, in order; replaces the list if any appeared (F2).
     var fallbacks: std.ArrayList(Face) = .empty;
     defer fallbacks.deinit(gpa);
+    // `shell.argument` lines, the same way.
+    var arguments: std.ArrayList([:0]const u8) = .empty;
+    defer arguments.deinit(gpa);
+    const fallback_key = comptime keys.lookup(.font, "fallback").?;
+    const argument_key = comptime keys.lookup(.shell, "argument").?;
 
     const sizes_before = .{ config.font.min_size, config.font.max_size };
     const winddown_before = .{ config.wellbeing.winddown.start, config.wellbeing.winddown.end };
@@ -139,8 +144,10 @@ pub fn apply(gpa: Allocator, tree: *const Ast, config: *Config, ctx: keys.Contex
                     try errors.append(gpa, .{ .tag = .missing_value, .token = entry.name, .section = current, .key = index });
                     continue;
                 };
-                const applied = if (keys.isList(index))
+                const applied = if (index == fallback_key)
                     applyFallback(gpa, ctx, &fallbacks, tree.tokenSlice(value))
+                else if (index == argument_key)
+                    applyArgument(gpa, ctx, &arguments, tree.tokenSlice(value))
                 else
                     keys.apply(config, ctx, index, tree.tokenSlice(value));
                 applied catch |err| {
@@ -159,8 +166,8 @@ pub fn apply(gpa: Allocator, tree: *const Ast, config: *Config, ctx: keys.Contex
     }
 
     if (bindings.items.len > 0) config.keymap = try mergeKeymap(ctx.arena, config.keymap, bindings.items);
-    const fallback_key = comptime keys.lookup(.font, "fallback").?;
     if (set_by[fallback_key] != null) config.font.faces.fallbacks = try ctx.arena.dupe(Face, fallbacks.items);
+    if (set_by[argument_key] != null) config.shell.arguments = try ctx.arena.dupe([:0]const u8, arguments.items);
 
     // Only this file's settings are reverted: a conflict it didn't cause
     // (neither size set here) is left to the layer that caused it.
@@ -205,6 +212,18 @@ fn revertPair(
     set_by[b] = null;
 }
 
+/// One `argument` line onto this file's list.
+fn applyArgument(gpa: Allocator, ctx: keys.Context, list: *std.ArrayList([:0]const u8), text: []const u8) keys.ApplyError!void {
+    switch (try keys.parseArgument(ctx, text)) {
+        .none => list.clearRetainingCapacity(),
+        .default => {
+            list.clearRetainingCapacity();
+            try list.appendSlice(gpa, ctx.defaults.shell.arguments);
+        },
+        .argument => |argument| try list.append(gpa, argument),
+    }
+}
+
 /// One `fallback` line onto this file's list.
 fn applyFallback(gpa: Allocator, ctx: keys.Context, list: *std.ArrayList(Face), text: []const u8) keys.ApplyError!void {
     switch (try keys.parseFallback(ctx, text)) {
@@ -223,7 +242,7 @@ fn sectionFromName(name: []const u8) ?keys.Section {
 }
 
 fn isReservedSection(name: []const u8) bool {
-    for ([_][]const u8{ "terminal", "shell", "colors", "profile" }) |reserved| {
+    for ([_][]const u8{ "terminal", "colors", "profile" }) |reserved| {
         if (std.mem.eql(u8, name, reserved)) return true;
     }
     return std.mem.startsWith(u8, name, "profile.");

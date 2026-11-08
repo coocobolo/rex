@@ -295,6 +295,47 @@ test "apply: an invalid set keeps the previous one" {
     try std.testing.expect(a.config.wellbeing.focus.on_break.eql(BreakSet.initMany(&.{ .prompt, .animation })));
 }
 
+test "apply: shell program, arguments and working directory" {
+    var a = try Applied.init(
+        \\[shell]
+        \\program = ~/bin/fish
+        \\argument = --login
+        \\argument = "none"
+        \\argument = 'a b'
+        \\working_directory = projects/rex
+    );
+    defer a.deinit();
+    try a.expectErrors(&.{});
+    const shell = a.config.shell;
+    try std.testing.expectEqualStrings("/home/user/bin/fish", shell.program.?);
+    try std.testing.expectEqual(3, shell.arguments.len);
+    try std.testing.expectEqualStrings("--login", shell.arguments[0]);
+    try std.testing.expectEqualStrings("none", shell.arguments[1]);
+    try std.testing.expectEqualStrings("a b", shell.arguments[2]);
+    try std.testing.expectEqualStrings("/etc/rex/projects/rex", shell.working_directory.?);
+}
+
+test "apply: shell program must be absolute; keywords reset" {
+    var a = try Applied.init(
+        \\[shell]
+        \\program = /bin/zsh
+        \\program = zsh
+        \\working_directory = /tmp
+        \\working_directory = inherit
+        \\argument = -l
+        \\argument = none
+    );
+    defer a.deinit();
+    try a.expectErrors(&.{
+        .{ .duplicate_key, 2, "'program' is set more than once; the last value is used" },
+        .{ .invalid_value, 2, "invalid value 'zsh' for shell.program, expected an absolute path to a program, ~/ allowed, or auto" },
+        .{ .duplicate_key, 4, "'working_directory' is set more than once; the last value is used" },
+    });
+    try std.testing.expectEqualStrings("/bin/zsh", a.config.shell.program.?);
+    try std.testing.expectEqual(null, a.config.shell.working_directory);
+    try std.testing.expectEqual(0, a.config.shell.arguments.len);
+}
+
 test "apply: winddown start equal to end reverts both" {
     var a = try Applied.init(
         \\[wellbeing.winddown]
