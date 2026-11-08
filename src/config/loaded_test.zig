@@ -82,7 +82,7 @@ test "load: key bindings merge across layers" {
 test "load: relative paths resolve against the source's directory" {
     var loaded = try Loaded.load(gpa, io, &test_config, null, &.{text("system", "[font]\nfile = fonts/a.ttf\n")});
     defer loaded.deinit(gpa);
-    try std.testing.expectEqualStrings("/etc/rex/fonts/a.ttf", std.mem.span(loaded.config.font.faces.family.variable.upright));
+    try std.testing.expectEqualStrings("/etc/rex/fonts/a.ttf", std.mem.span(loaded.config.font.faces.regular));
 }
 
 test "load: a missing file is not a problem and changes nothing" {
@@ -106,7 +106,7 @@ test "load: reads a file, relative paths resolve against its directory" {
     try std.testing.expect(loaded.found());
     try std.testing.expectEqualStrings(path, loaded.layers[0].source.label);
     try std.testing.expectEqual(18, loaded.config.font.size);
-    const font = std.mem.span(loaded.config.font.faces.family.variable.upright);
+    const font = std.mem.span(loaded.config.font.faces.regular);
     try std.testing.expectEqualStrings(std.fs.path.dirname(path).?, std.fs.path.dirname(font).?);
 }
 
@@ -184,7 +184,7 @@ test "takeArena: the config outlives the diagnostics" {
     defer arena.deinit();
     const config = loaded.config;
     loaded.deinit(gpa);
-    try std.testing.expectEqualStrings("/etc/rex/a.ttf", std.mem.span(config.font.faces.family.variable.upright));
+    try std.testing.expectEqualStrings("/etc/rex/a.ttf", std.mem.span(config.font.faces.regular));
 }
 
 fn loadAll(allocator: std.mem.Allocator, path: []const u8) !void {
@@ -282,4 +282,18 @@ test "surfaceFor: a sharp banner has no corner radius" {
     defer loaded.deinit(gpa);
     try std.testing.expectEqual(0, loaded.config.window.surfaceFor(.banner).effectiveRadius());
     try std.testing.expectEqual(9, loaded.config.window.surfaceFor(.modal).effectiveRadius());
+}
+
+test "load: each font style file layers on its own" {
+    var loaded = try Loaded.load(gpa, io, &test_config, null, &.{
+        text("system", "[font]\nfile = /r.ttf\nbold_file = /b.ttf\nitalic_file = /i.ttf\n"),
+        text("user", "[font]\nfile = /r2.ttf\nitalic_file = none\n"),
+    });
+    defer loaded.deinit(gpa);
+    const faces = loaded.config.font.faces;
+    try std.testing.expectEqualStrings("/r2.ttf", std.mem.span(faces.regular));
+    try std.testing.expectEqualStrings("/b.ttf", std.mem.span(faces.bold.?));
+    try std.testing.expectEqual(null, faces.italic);
+    try std.testing.expectEqualStrings("/b.ttf", std.mem.span(faces.face(.bold).path));
+    try std.testing.expectEqualStrings("/r2.ttf", std.mem.span(faces.face(.bold_italic).path));
 }

@@ -188,22 +188,6 @@ test "apply: invalid, out of range and not applicable values keep the old value"
     try std.testing.expectEqual(defaults.scroll.lines, a.config.scroll.lines);
 }
 
-test "apply: a font weight for a static family is not applicable" {
-    const source = "[font]\nweight = 350\n";
-    var tree = try Ast.parse(gpa, source);
-    defer tree.deinit(gpa);
-    var config = testConfig();
-    config.font.faces.family = .{ .static = .{ .regular = "r", .bold = "b", .italic = "i", .bold_italic = "bi" } };
-    var result = try Sema.apply(gpa, &tree, &config, .{ .defaults = &defaults, .arena = std.testing.failing_allocator, .dir = "/", .home = null });
-    defer result.deinit(gpa);
-    try std.testing.expectEqual(1, result.errors.len);
-    try std.testing.expectEqual(.not_applicable, result.errors[0].tag);
-    var buf: [128]u8 = undefined;
-    var w: std.Io.Writer = .fixed(&buf);
-    try Sema.renderError(&tree, result.errors[0], &w);
-    try std.testing.expectEqualStrings("font.weight applies only to a variable font", w.buffered());
-}
-
 test "apply: font min_size above max_size reverts both" {
     var a = try Applied.init(
         \\[font]
@@ -228,7 +212,7 @@ test "apply: font file resolves against the file's directory" {
     );
     defer a.deinit();
     try a.expectErrors(&.{});
-    try std.testing.expectEqualStrings("/etc/rex/fonts/mono.ttf", std.mem.span(a.config.font.faces.family.variable.upright));
+    try std.testing.expectEqualStrings("/etc/rex/fonts/mono.ttf", std.mem.span(a.config.font.faces.regular));
 }
 
 test "apply: keybinds override the previous keymap by chord" {

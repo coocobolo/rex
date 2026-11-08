@@ -23,20 +23,20 @@ fn applyText(config: *Config, section: keys.Section, name: []const u8, text: []c
     return keys.apply(config, no_alloc_ctx, keys.lookup(section, name).?, text);
 }
 
-test "FieldType: resolves nested struct and union paths" {
+test "FieldType: resolves nested struct paths" {
     try std.testing.expect(keys.FieldType(Config, "window.dim_alpha") == f32);
     try std.testing.expect(keys.FieldType(Config, "window.toast.position") == Toast.Position);
-    try std.testing.expect(keys.FieldType(Config, "font.faces.family.variable.upright") == [*:0]const u8);
+    try std.testing.expect(keys.FieldType(Config, "font.faces.regular") == [*:0]const u8);
     try std.testing.expect(keys.FieldType(Config, "wellbeing.screen_time.daily_limit_ms") == ?u64);
 }
 
-test "fieldPtr: writes through structs and the active union field" {
+test "fieldPtr: writes through nested structs" {
     var config = testConfig();
     keys.fieldPtr(Config, "window.toast.margin_rows", &config).* = 7;
     try std.testing.expectEqual(7, config.window.toast.margin_rows);
-    keys.fieldPtr(Config, "font.faces.family.variable.regular_weight", &config).* = 350;
-    try std.testing.expectEqual(350, config.font.faces.family.variable.regular_weight);
-    try std.testing.expectEqual(350, keys.fieldValue(Config, "font.faces.family.variable.regular_weight", &config));
+    keys.fieldPtr(Config, "font.faces.regular_weight", &config).* = 350;
+    try std.testing.expectEqual(350, config.font.faces.regular_weight);
+    try std.testing.expectEqual(350, keys.fieldValue(Config, "font.faces.regular_weight", &config));
 }
 
 test "lookup: exact section and name only" {
@@ -157,19 +157,17 @@ test "apply: default resets a key to the built-in value" {
     try std.testing.expectEqual(defaults.wellbeing.screen_time.daily_limit_ms, config.wellbeing.screen_time.daily_limit_ms);
 }
 
-test "apply: font weights apply only to a variable family" {
+test "apply: font weights are whole numbers from 1 to 1000" {
     var config = testConfig();
     try applyText(&config, .font, "weight", "350");
-    try std.testing.expectEqual(350, config.font.faces.family.variable.regular_weight);
+    try std.testing.expectEqual(350, config.font.faces.regular_weight);
+    try applyText(&config, .font, "bold_weight", "1000");
+    try std.testing.expectEqual(1000, config.font.faces.bold_weight);
     try std.testing.expectError(error.OutOfRange, applyText(&config, .font, "bold_weight", "0"));
     try std.testing.expectError(error.OutOfRange, applyText(&config, .font, "bold_weight", "1001"));
     try std.testing.expectError(error.InvalidValue, applyText(&config, .font, "bold_weight", "700.5"));
-
-    var static = testConfig();
-    static.font.faces.family = .{ .static = .{ .regular = "r", .bold = "b", .italic = "i", .bold_italic = "bi" } };
-    try std.testing.expectError(error.NotApplicable, applyText(&static, .font, "weight", "350"));
-    try std.testing.expectError(error.NotApplicable, applyText(&static, .font, "weight", "default"));
-    try std.testing.expect(static.font.faces.family == .static);
+    try applyText(&config, .font, "weight", "default");
+    try std.testing.expectEqual(defaults.font.faces.regular_weight, config.font.faces.regular_weight);
 }
 
 test "apply: theme is a preset name" {
@@ -179,7 +177,7 @@ test "apply: theme is a preset name" {
     try std.testing.expectError(error.InvalidValue, applyText(&config, .root, "theme", "dark"));
 }
 
-test "apply: font file resolves its path and selects a variable family" {
+test "apply: font file resolves its path" {
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena.deinit();
     var ctx = no_alloc_ctx;
@@ -188,45 +186,38 @@ test "apply: font file resolves its path and selects a variable family" {
 
     var config = testConfig();
     try keys.apply(&config, ctx, file, "/usr/share/fonts/a.ttf");
-    try std.testing.expectEqualStrings("/usr/share/fonts/a.ttf", std.mem.span(config.font.faces.family.variable.upright));
+    try std.testing.expectEqualStrings("/usr/share/fonts/a.ttf", std.mem.span(config.font.faces.regular));
     try keys.apply(&config, ctx, file, "fonts/b.ttf");
-    try std.testing.expectEqualStrings("/etc/rex/fonts/b.ttf", std.mem.span(config.font.faces.family.variable.upright));
+    try std.testing.expectEqualStrings("/etc/rex/fonts/b.ttf", std.mem.span(config.font.faces.regular));
     try keys.apply(&config, ctx, file, "~/fonts/c.ttf");
-    try std.testing.expectEqualStrings("/home/user/fonts/c.ttf", std.mem.span(config.font.faces.family.variable.upright));
+    try std.testing.expectEqualStrings("/home/user/fonts/c.ttf", std.mem.span(config.font.faces.regular));
     try keys.apply(&config, ctx, file, "\"/my fonts/d,wght.ttf\"");
-    try std.testing.expectEqualStrings("/my fonts/d,wght.ttf", std.mem.span(config.font.faces.family.variable.upright));
-    // Weights survive a new file.
-    try keys.apply(&config, ctx, keys.lookup(.font, "weight").?, "350");
-    try keys.apply(&config, ctx, file, "/e.ttf");
-    try std.testing.expectEqual(350, config.font.faces.family.variable.regular_weight);
+    try std.testing.expectEqualStrings("/my fonts/d,wght.ttf", std.mem.span(config.font.faces.regular));
 
     var no_home = ctx;
     no_home.home = null;
     try std.testing.expectError(error.NoHome, keys.apply(&config, no_home, file, "~/x.ttf"));
     try std.testing.expectError(error.InvalidValue, keys.apply(&config, ctx, file, "\"\""));
-    try std.testing.expectEqualStrings("/e.ttf", std.mem.span(config.font.faces.family.variable.upright));
-
-    // A static family switches to a variable one (F16).
-    var static = testConfig();
-    static.font.faces.family = .{ .static = .{ .regular = "r", .bold = "b", .italic = "i", .bold_italic = "bi" } };
-    try keys.apply(&static, ctx, file, "/v.ttf");
-    try std.testing.expectEqualStrings("/v.ttf", std.mem.span(static.font.faces.family.variable.upright));
+    try std.testing.expectEqualStrings("/my fonts/d,wght.ttf", std.mem.span(config.font.faces.regular));
 }
 
-test "apply: italic and emoji files resolve their paths, none clears them" {
+test "apply: style and emoji files resolve their paths, none clears them" {
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena.deinit();
     var ctx = no_alloc_ctx;
     ctx.arena = arena.allocator();
-    const italic = keys.lookup(.font, "italic_file").?;
-    const emoji = keys.lookup(.font, "emoji_file").?;
 
     var config = testConfig();
-    try keys.apply(&config, ctx, italic, "fonts/i.ttf");
-    try std.testing.expectEqualStrings("/etc/rex/fonts/i.ttf", std.mem.span(config.font.faces.family.variable.italic.?));
-    try keys.apply(&config, ctx, italic, "none");
-    try std.testing.expectEqual(null, config.font.faces.family.variable.italic);
+    const styles = .{ .{ "bold_file", "bold" }, .{ "italic_file", "italic" }, .{ "bold_italic_file", "bold_italic" } };
+    inline for (styles) |style| {
+        const key = keys.lookup(.font, style[0]).?;
+        try keys.apply(&config, ctx, key, "fonts/s.ttf");
+        try std.testing.expectEqualStrings("/etc/rex/fonts/s.ttf", std.mem.span(@field(config.font.faces, style[1]).?));
+        try keys.apply(&config, ctx, key, "none");
+        try std.testing.expectEqual(null, @field(config.font.faces, style[1]));
+    }
 
+    const emoji = keys.lookup(.font, "emoji_file").?;
     try keys.apply(&config, ctx, emoji, "~/e.ttf");
     const face = config.font.faces.emoji.?;
     try std.testing.expectEqualStrings("/home/user/e.ttf", std.mem.span(face.path));
@@ -235,12 +226,6 @@ test "apply: italic and emoji files resolve their paths, none clears them" {
     try keys.apply(&config, ctx, emoji, "none");
     try std.testing.expectEqual(null, config.font.faces.emoji);
     try std.testing.expectError(error.InvalidValue, keys.apply(&config, ctx, emoji, "\"\""));
-
-    // The italic file belongs to a variable family.
-    var static = testConfig();
-    static.font.faces.family = .{ .static = .{ .regular = "r", .bold = "b", .italic = "i", .bold_italic = "bi" } };
-    try std.testing.expectError(error.NotApplicable, keys.apply(&static, ctx, italic, "/i.ttf"));
-    try std.testing.expectError(error.NotApplicable, keys.apply(&static, ctx, italic, "default"));
 }
 
 test "unquote: bare values are raw, quoted values take escapes" {
@@ -336,18 +321,18 @@ test "table: enum value names are pinned" {
     try std.testing.expectEqual(enum_names.len, seen);
 }
 
-test "leafPaths: walks Config, treating unions and slices as leaves" {
+test "leafPaths: walks Config, treating optionals and slices as leaves" {
     const paths = comptime keys.leafPaths(Config);
     var found_dim_alpha = false;
-    var found_family = false;
+    var found_emoji = false;
     var found_keymap = false;
     for (paths) |path| {
         if (std.mem.eql(u8, path, "window.dim_alpha")) found_dim_alpha = true;
-        if (std.mem.eql(u8, path, "font.faces.family")) found_family = true;
+        if (std.mem.eql(u8, path, "font.faces.emoji")) found_emoji = true;
         if (std.mem.eql(u8, path, "keymap")) found_keymap = true;
-        try std.testing.expect(!std.mem.startsWith(u8, path, "font.faces.family."));
+        try std.testing.expect(!std.mem.startsWith(u8, path, "font.faces.emoji."));
     }
-    try std.testing.expect(found_dim_alpha and found_family and found_keymap);
+    try std.testing.expect(found_dim_alpha and found_emoji and found_keymap);
 }
 
 test "table: every row's field resolves and qualified names are unique" {

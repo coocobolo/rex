@@ -24,26 +24,6 @@ pub fn pixelSize(size: u32, scale: f32) u32 {
 
 pub const Style = enum { regular, bold, italic, bold_italic };
 
-pub const Family = union(enum) {
-    /// A variable font family with an optional dedicated italic face. One or two variable font files.
-    /// If .italic is null, italic style is synthesized (skewed) from .upright rather than using a
-    /// real italic design.
-    variable: struct {
-        upright: [*:0]const u8,
-        italic: ?[*:0]const u8 = null,
-        regular_weight: f64 = 400,
-        bold_weight: f64 = 800,
-    },
-
-    /// A family composed of four separate static font faces.
-    static: struct {
-        regular: [*:0]const u8,
-        bold: [*:0]const u8,
-        italic: [*:0]const u8,
-        bold_italic: [*:0]const u8,
-    },
-};
-
 pub const Face = struct {
     path: [*:0]const u8,
 
@@ -79,38 +59,50 @@ fn optionalPathEql(a: ?[*:0]const u8, b: ?[*:0]const u8) bool {
 }
 
 pub const Faces = struct {
-    /// Primary typeface used for normal text.
-    family: Family,
+    /// The regular face, and the file of any style without its own.
+    regular: [*:0]const u8,
+    /// Each style's own file; null takes the next one in `face`'s order.
+    bold: ?[*:0]const u8 = null,
+    italic: ?[*:0]const u8 = null,
+    bold_italic: ?[*:0]const u8 = null,
+    /// "wght" axis values of the regular and bold styles (CSS-style, 400 is
+    /// regular). They apply to faces loaded from variable font files;
+    /// static files ignore them.
+    regular_weight: f64 = 400,
+    bold_weight: f64 = 800,
 
     /// Optional font face used for emoji glyphs.
     emoji: ?Face = null,
 
-    /// Ordered font faces searched when the primary family does not contain a requested glyph.
+    /// Ordered font faces searched when the styled faces lack a glyph.
     // FIXME! missing script-aware fallback, also the fallback algorithm is naive, eventually
     // we want font fallback happens around shaping, not merely around individual Unicode
     // codepoints.
     fallbacks: []const Face = &.{},
 
-    /// No font chosen: an empty variable-font path, which the user must set
-    /// (`[font] file`) until Rex has a default font (#20).
-    pub const default: Faces = .{ .family = .{ .variable = .{ .upright = "" } } };
+    /// No font chosen: an empty path, which the user must set (`[font]
+    /// file`) until Rex has a default font (#20).
+    pub const default: Faces = .{ .regular = "" };
+
+    /// The file and weight `style` loads: its own file, else bold and
+    /// italic take the regular file, and bold italic takes the italic file,
+    /// else the regular one. A style without its own file is not
+    /// synthesized: a static regular file renders bold text unbolded.
+    pub fn face(faces: Faces, style: Style) Face {
+        return switch (style) {
+            .regular => .variable(faces.regular, faces.regular_weight),
+            .bold => .variable(faces.bold orelse faces.regular, faces.bold_weight),
+            .italic => .variable(faces.italic orelse faces.regular, faces.regular_weight),
+            .bold_italic => .variable(faces.bold_italic orelse faces.italic orelse faces.regular, faces.bold_weight),
+        };
+    }
 
     /// Whether `a` and `b` load the same fonts the same way, so a
     /// rasterizer built for one serves the other.
     pub fn eql(a: Faces, b: Faces) bool {
-        const family = switch (a.family) {
-            .variable => |av| switch (b.family) {
-                .variable => |bv| pathEql(av.upright, bv.upright) and optionalPathEql(av.italic, bv.italic) and
-                    av.regular_weight == bv.regular_weight and av.bold_weight == bv.bold_weight,
-                .static => false,
-            },
-            .static => |as| switch (b.family) {
-                .static => |bs| pathEql(as.regular, bs.regular) and pathEql(as.bold, bs.bold) and
-                    pathEql(as.italic, bs.italic) and pathEql(as.bold_italic, bs.bold_italic),
-                .variable => false,
-            },
-        };
-        if (!family) return false;
+        if (!pathEql(a.regular, b.regular) or !optionalPathEql(a.bold, b.bold) or
+            !optionalPathEql(a.italic, b.italic) or !optionalPathEql(a.bold_italic, b.bold_italic) or
+            a.regular_weight != b.regular_weight or a.bold_weight != b.bold_weight) return false;
         if (a.emoji == null or b.emoji == null) {
             if (a.emoji != null or b.emoji != null) return false;
         } else if (!a.emoji.?.eql(b.emoji.?)) return false;

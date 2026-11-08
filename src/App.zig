@@ -1480,10 +1480,7 @@ fn passwdShell() ?[]const u8 {
 /// Whether the config names a font. The built-in defaults don't: Rex has no
 /// bundled font yet (#20).
 fn hasFontFile(font: Config.Font) bool {
-    return switch (font.faces.family) {
-        .variable => |variable| variable.upright[0] != 0,
-        .static => |static| static.regular[0] != 0,
-    };
+    return font.faces.regular[0] != 0;
 }
 
 /// Logs every config problem in full: the banner shows only the first one,
@@ -2694,7 +2691,7 @@ test "App: a config reload starts from the defaults, in its own arena" {
     const base: Config = .{
         .blink = .default,
         .font = .{
-            .faces = .{ .family = .{ .variable = .{ .upright = "/base/upright.ttf" } } },
+            .faces = .{ .regular = "/base/regular.ttf" },
             .size = 20,
             .max_size = 96,
             .min_size = 6,
@@ -2716,7 +2713,7 @@ test "App: a config reload starts from the defaults, in its own arena" {
     }});
     defer first.deinit(gpa);
     try testing.expectEqual(null, first.firstError());
-    try testing.expectEqualStrings(family, std.mem.span(first.config.font.faces.family.variable.upright));
+    try testing.expectEqualStrings(family, std.mem.span(first.config.font.faces.regular));
     var ctrl_equal_quits = false;
     for (first.config.keymap) |b| {
         if (b.key == .equal and b.mods.ctrl and !b.mods.shift) ctrl_equal_quits = b.action == .quit;
@@ -2730,6 +2727,6 @@ test "App: a config reload starts from the defaults, in its own arena" {
         .from = .{ .text = .{ .bytes = "", .dir = "/" } },
     }});
     defer second.deinit(gpa);
-    try testing.expectEqualStrings("/base/upright.ttf", std.mem.span(second.config.font.faces.family.variable.upright));
+    try testing.expectEqualStrings("/base/regular.ttf", std.mem.span(second.config.font.faces.regular));
     try testing.expectEqual(base.keymap.ptr, second.config.keymap.ptr);
 }

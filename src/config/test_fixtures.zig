@@ -4,12 +4,12 @@ const Config = @import("Config.zig");
 const Theme = @import("../color/Theme.zig");
 
 /// A complete Config for tests: the fields without defaults get minimal
-/// values, the font is a variable family at `/base/upright.ttf`, size 20,
+/// values, the font is `/base/regular.ttf`, size 20,
 /// bounds 6 to 96, and the keymap is empty.
 pub const test_config: Config = .{
     .blink = .default,
     .font = .{
-        .faces = .{ .family = .{ .variable = .{ .upright = "/base/upright.ttf" } } },
+        .faces = .{ .regular = "/base/regular.ttf" },
         .size = 20,
         .max_size = 96,
         .min_size = 6,

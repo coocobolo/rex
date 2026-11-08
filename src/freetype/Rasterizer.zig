@@ -157,23 +157,18 @@ pub const empty: Rasterizer = .{
     },
 };
 
-const VariableFontOption = struct {
-    path: [*:0]const u8,
-    height: u32,
-    weight_axis: f64,
-};
-
-fn initVariableFace(gpa: Allocator, lib: c.FT_Library, opt: VariableFontOption) !c.FT_Face {
-    const face = try ft.initFace(lib, opt.path, opt.height);
-    errdefer ft.doneFace(face) catch {};
-
-    if (ft.hasMM(face)) {
-        const mm_var = try ft.getMMVar(lib, face);
-        defer _ = c.FT_Done_MM_Var(lib, mm_var);
-        try ft.setVarAxis(gpa, face, mm_var, .{ 'w', 'g', 'h', 't' }, opt.weight_axis);
+/// Opens `face` at `height` pixels and, for a variable font, sets its
+/// weight axis.
+fn initFace(gpa: Allocator, lib: c.FT_Library, face: Config.Face, height: u32) !c.FT_Face {
+    const ft_face = try ft.initFace(lib, face.path, height);
+    if (ft.hasMM(ft_face)) {
+        if (face.weight_axis) |weight| {
+            const mm_var = try ft.getMMVar(lib, ft_face);
+            defer _ = c.FT_Done_MM_Var(lib, mm_var);
+            try ft.setVarAxis(gpa, ft_face, mm_var, .{ 'w', 'g', 'h', 't' }, weight);
+        }
     }
-
-    return face;
+    return ft_face;
 }
 
 /// Creates a Rasterizer and initializes FreeType faces for all font styles.
@@ -190,68 +185,12 @@ pub fn create(gpa: Allocator, config: Config) !Rasterizer {
     const font = config.faces;
     const height = config.height;
 
-    if (font.family == .variable) {
-        const variable_font = font.family.variable;
-        inline for (std.enums.values(Config.Style)) |style| {
-            switch (style) {
-                .regular => self.face.regular = try initVariableFace(
-                    gpa,
-                    self.library,
-                    .{
-                        .weight_axis = variable_font.regular_weight,
-                        .path = variable_font.upright,
-                        .height = height,
-                    },
-                ),
-                .bold => self.face.bold = try initVariableFace(
-                    gpa,
-                    self.library,
-                    .{
-                        .weight_axis = variable_font.bold_weight,
-                        .path = variable_font.upright,
-                        .height = height,
-                    },
-                ),
-                .italic => self.face.italic = try initVariableFace(
-                    gpa,
-                    self.library,
-                    .{
-                        .weight_axis = variable_font.regular_weight,
-                        .path = variable_font.italic orelse variable_font.upright,
-                        .height = height,
-                    },
-                ),
-                .bold_italic => self.face.bold_italic = try initVariableFace(
-                    gpa,
-                    self.library,
-                    .{
-                        .weight_axis = variable_font.bold_weight,
-                        .path = variable_font.italic orelse variable_font.upright,
-                        .height = height,
-                    },
-                ),
-            }
-        }
-    } else if (font.family == .static) {
-        const static_font = font.family.static;
-
-        self.face.regular = try ft.initFace(self.library, static_font.regular, height);
-        errdefer ft.doneFace(self.face.regular) catch {};
-
-        self.face.bold = try ft.initFace(self.library, static_font.bold, height);
-        errdefer ft.doneFace(self.face.bold) catch {};
-
-        self.face.italic = try ft.initFace(self.library, static_font.italic, height);
-        errdefer ft.doneFace(self.face.italic) catch {};
-
-        self.face.bold_italic = try ft.initFace(self.library, static_font.bold_italic, height);
-        errdefer ft.doneFace(self.face.bold_italic) catch {};
+    // No errdefer per face: on an error, the doneFreeType errdefer above
+    // closes every face the library opened (FT_Done_Library, ftobjs.c).
+    inline for (comptime std.enums.values(Config.Style)) |style| {
+        @field(self.face, @tagName(style)) = try initFace(gpa, self.library, font.face(style), height);
     }
-
-    if (font.emoji) |emoji| {
-        self.face.emoji = try ft.initFace(self.library, emoji.path, height);
-        errdefer ft.doneFace(self.face.emoji) catch {};
-    }
+    if (font.emoji) |emoji| self.face.emoji = try ft.initFace(self.library, emoji.path, height);
 
     const regular = self.face.regular.*;
     const metrics = regular.size.*.metrics;

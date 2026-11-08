@@ -76,26 +76,22 @@ fn run(src: *Source) !void {
 fn expectSetKeysInBounds(config: *const Config, result: *const Sema.Result) !void {
     @setEvalBranchQuota(keys.eval_branch_quota);
     inline for (keys.table, 0..) |key, i| {
-        if (result.set_by[i] != null and key.kind != .font_file and key.kind != .theme) {
+        if (result.set_by[i] != null and key.kind != .theme) {
             const bounds: keys.Bounds = if (key.kind == .fraction) .{ .min = 0, .max = 1 } else key.bounds;
-            // A font weight is only stored while the family is variable.
-            const readable = key.kind != .font_weight or config.font.faces.family == .variable;
-            if (readable) {
-                const value = keys.fieldValue(Config, key.field, config);
-                const present = switch (@typeInfo(@TypeOf(value))) {
-                    .optional => value,
-                    else => @as(?@TypeOf(value), value),
+            const value = keys.fieldValue(Config, key.field, config);
+            const present = switch (@typeInfo(@TypeOf(value))) {
+                .optional => value,
+                else => @as(?@TypeOf(value), value),
+            };
+            if (present) |v| {
+                const number: ?f64 = switch (@typeInfo(@TypeOf(v))) {
+                    .int => @floatFromInt(v),
+                    .float => @floatCast(v),
+                    else => null,
                 };
-                if (present) |v| {
-                    const number: ?f64 = switch (@typeInfo(@TypeOf(v))) {
-                        .int => @floatFromInt(v),
-                        .float => @floatCast(v),
-                        else => null,
-                    };
-                    if (number) |n| {
-                        errdefer std.debug.print("{s} = {d} outside [{d}, {d}]\n", .{ keys.qualified_names[i], n, bounds.min, bounds.max });
-                        try testing.expect(n >= bounds.min and n <= bounds.max);
-                    }
+                if (number) |n| {
+                    errdefer std.debug.print("{s} = {d} outside [{d}, {d}]\n", .{ keys.qualified_names[i], n, bounds.min, bounds.max });
+                    try testing.expect(n >= bounds.min and n <= bounds.max);
                 }
             }
         }
@@ -107,6 +103,7 @@ const seeds = [_][]const u8{
     "[font]\nfallback = /a.ttf\nfallback = none\nfallback = b.ttc\nfallback = default\nfallback = ~/c.ttf\n",
     "[surface]\ncorner_radius = 12\nborder_shape = sharp\n[toast]\nborder_style = subtle\ncorner_radius = inherit\n[banner]\nborder_width = default\n",
     "[font]\nitalic_file = i.ttf\nemoji_file = ~/e.ttf\nitalic_file = none\nemoji_file = default\n",
+    "[font]\nbold_file = b.ttf\nbold_italic_file = ~/bi.ttf\nfile = r.ttf\nbold_file = none\nweight = 300\n",
     "[window]\nbackground_opacity = 0.9\ndim_text_opacity = 0.5\nwidth = 800\nheight = 600\nplatform = wayland\n",
     "[bell]\nenabled = false\nvolume = 0.25\n[modal]\ncols = 60\nbackdrop_opacity = 0.7\nborder_style = inherit\n[modal.blur]\nenabled = true\nradius = 12\n",
     "[toast]\nposition = bottom_right\nduration = 3s\nmin_cols = 20\nmax_cols = 40\n[banner]\nplacement = docked\n",

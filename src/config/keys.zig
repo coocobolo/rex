@@ -45,22 +45,18 @@ pub const Kind = enum {
     fraction,
     /// An integer with a unit, stored as milliseconds in an integer field.
     duration,
-    /// A font weight: a whole number stored in a variable font's float axis.
-    /// Rejected with `NotApplicable` when the font family isn't variable.
+    /// A font weight: a whole number stored as a float "wght" axis value.
     font_weight,
     /// A theme preset name.
     theme,
-    /// A path to a variable font file (C9/F16: setting it selects a variable
-    /// family). `~/` is the home directory; a relative path is relative to
-    /// the directory of the file that sets it (F11).
-    font_file,
     /// A list of fallback font files, one path per line (F2): the first line
     /// in a file replaces the lower layer's list, `none` empties it and
-    /// `default` restores the base list. Paths resolve like `font_file`.
+    /// `default` restores the base list. Paths resolve like `path`.
     /// Sema collects these rows (`isList`); `apply` doesn't take them.
     font_fallback,
-    /// A path, resolved like `font_file`, into a NUL-terminated string field
-    /// or a static `Face`.
+    /// A path into a NUL-terminated string field or a static `Face`. `~/` is
+    /// the home directory; a relative path is relative to the directory of
+    /// the file that sets it (F11).
     path,
 };
 
@@ -130,9 +126,6 @@ pub const Error = error{
     InvalidValue,
     /// A value of the right kind, outside the bounds or the field's type.
     OutOfRange,
-    /// The key has no effect with the current settings (a font weight for a
-    /// static font family).
-    NotApplicable,
     /// A `~/` path without a known home directory.
     NoHome,
 };
@@ -152,16 +145,20 @@ const font_size: Bounds = .{ .min = 1, .max = 1000 };
 pub const table = [_]Key{
     .{ .section = .root, .name = "theme", .field = "theme", .kind = .theme },
 
-    .{ .section = .font, .name = "file", .field = "font.faces.family", .kind = .font_file },
-    .{ .section = .font, .name = "italic_file", .field = "font.faces.family.variable.italic", .kind = .path, .null_keyword = .none },
+    // One file per style; a style without one takes the next in
+    // `Faces.face`'s order (naming doc §9, superseding F16 for fonts).
+    .{ .section = .font, .name = "file", .field = "font.faces.regular", .kind = .path },
+    .{ .section = .font, .name = "bold_file", .field = "font.faces.bold", .kind = .path, .null_keyword = .none },
+    .{ .section = .font, .name = "italic_file", .field = "font.faces.italic", .kind = .path, .null_keyword = .none },
+    .{ .section = .font, .name = "bold_italic_file", .field = "font.faces.bold_italic", .kind = .path, .null_keyword = .none },
     .{ .section = .font, .name = "emoji_file", .field = "font.faces.emoji", .kind = .path, .null_keyword = .none },
     .{ .section = .font, .name = "fallback", .field = "font.faces.fallbacks", .kind = .font_fallback },
     .{ .section = .font, .name = "size", .field = "font.size", .bounds = font_size },
     .{ .section = .font, .name = "size_step", .field = "font.size_step", .bounds = font_size },
     .{ .section = .font, .name = "min_size", .field = "font.min_size", .bounds = font_size },
     .{ .section = .font, .name = "max_size", .field = "font.max_size", .bounds = font_size },
-    .{ .section = .font, .name = "weight", .field = "font.faces.family.variable.regular_weight", .kind = .font_weight, .bounds = .{ .min = 1, .max = 1000 } },
-    .{ .section = .font, .name = "bold_weight", .field = "font.faces.family.variable.bold_weight", .kind = .font_weight, .bounds = .{ .min = 1, .max = 1000 } },
+    .{ .section = .font, .name = "weight", .field = "font.faces.regular_weight", .kind = .font_weight, .bounds = .{ .min = 1, .max = 1000 } },
+    .{ .section = .font, .name = "bold_weight", .field = "font.faces.bold_weight", .kind = .font_weight, .bounds = .{ .min = 1, .max = 1000 } },
 
     .{ .section = .window, .name = "background_opacity", .field = "window.background.alpha", .kind = .fraction },
     .{ .section = .window, .name = "dim_text_opacity", .field = "window.dim_alpha", .kind = .fraction },
@@ -409,7 +406,6 @@ fn writeExpectedKey(comptime key: Key, w: *std.Io.Writer) std.Io.Writer.Error!vo
                 try w.writeAll(preset[0]);
             }
         },
-        .font_file => try w.writeAll("a path to a variable font file"),
         .font_fallback => try w.writeAll("a path to a font file, one per line, or none"),
         .path => try w.writeAll("a path to a font file"),
     }
@@ -513,14 +509,7 @@ fn applyKey(comptime key: Key, config: *Config, ctx: Context, text: []const u8) 
 
     if (key.kind == .font_fallback) unreachable; // Sema handles list rows (isList)
 
-    // Font weights and the italic file live in the variable family's
-    // payload; touching an inactive union field is illegal, so check before
-    // taking the pointer.
-    const variable_only = comptime std.mem.startsWith(u8, key.field, "font.faces.family.variable.");
-    if (variable_only and config.font.faces.family != .variable) return error.NotApplicable;
-
     if (std.mem.eql(u8, text, "default")) {
-        if (variable_only and defaults.font.faces.family != .variable) return error.NotApplicable;
         fieldPtr(Config, key.field, config).* = fieldValue(Config, key.field, defaults);
         return;
     }
@@ -529,14 +518,6 @@ fn applyKey(comptime key: Key, config: *Config, ctx: Context, text: []const u8) 
             fieldPtr(Config, key.field, config).* = null;
             return;
         }
-    }
-    if (key.kind == .font_file) {
-        const path = try resolvePath(ctx, try unquote(ctx.arena, text));
-        switch (config.font.faces.family) {
-            .variable => |*variable| variable.upright = path,
-            .static => config.font.faces.family = .{ .variable = .{ .upright = path } },
-        }
-        return;
     }
     const Value = switch (@typeInfo(T)) {
         .optional => |optional| optional.child,
@@ -629,7 +610,6 @@ fn checkRow(comptime key: Key, comptime T: type) void {
         .duration => @typeInfo(Value) == .int and @typeInfo(Value).int.signedness == .unsigned,
         .font_weight => @typeInfo(Value) == .float,
         .theme => Value == Theme,
-        .font_file => Value == FontConfig.Family,
         .font_fallback => Value == []const FontConfig.Face,
         .path => Value == [*:0]const u8 or Value == FontConfig.Face,
     };
@@ -657,7 +637,6 @@ fn parseValue(comptime key: Key, comptime V: type, text: []const u8) Error!V {
             return @floatFromInt(weight);
         },
         .theme => return theme_presets.get(text) orelse error.InvalidValue,
-        .font_file => unreachable, // applyKey handles it
         .font_fallback => unreachable, // Sema handles list rows
         .path => unreachable, // applyKey handles it
     }
