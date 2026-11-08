@@ -53,6 +53,11 @@ pub const Kind = enum {
     /// family). `~/` is the home directory; a relative path is relative to
     /// the directory of the file that sets it (F11).
     font_file,
+    /// A list of fallback font files, one path per line (F2): the first line
+    /// in a file replaces the lower layer's list, `none` empties it and
+    /// `default` restores the base list. Paths resolve like `font_file`.
+    /// Sema collects these rows (`isList`); `apply` doesn't take them.
+    font_fallback,
 };
 
 /// The value that stands for null in an optional field (C9/F4).
@@ -145,6 +150,7 @@ pub const table = [_]Key{
 
     // Font changes reach the rasterizer only with a size change (audit A2).
     .{ .section = .font, .name = "file", .field = "font.faces.family", .kind = .font_file, .reload = .restart },
+    .{ .section = .font, .name = "fallback", .field = "font.faces.fallbacks", .kind = .font_fallback, .reload = .restart },
     .{ .section = .font, .name = "size", .field = "font.size", .bounds = font_size },
     .{ .section = .font, .name = "size_step", .field = "font.size_step", .bounds = font_size },
     .{ .section = .font, .name = "min_size", .field = "font.min_size", .bounds = font_size },
@@ -272,9 +278,8 @@ pub const internal = [_][]const u8{
     "environments",
     "terminal",
     "threading",
-    // Font faces besides `file`: emoji and fallback lists (#20).
+    // The emoji face (#20).
     "font.faces.emoji",
-    "font.faces.fallbacks",
     // Colors and UI tokens: a `[colors]` section later (#33).
     "tokens",
     // Rendering details.
@@ -392,6 +397,7 @@ fn writeExpectedKey(comptime key: Key, w: *std.Io.Writer) std.Io.Writer.Error!vo
             }
         },
         .font_file => try w.writeAll("a path to a variable font file"),
+        .font_fallback => try w.writeAll("a path to a font file, one per line, or none"),
     }
     if (key.null_keyword) |keyword| try w.print(", or {t}", .{keyword});
 }
@@ -453,6 +459,28 @@ pub fn lookup(section: Section, name: []const u8) ?KeyIndex {
     return lookup_map.get(buf[0 .. prefix.len + 1 + name.len]);
 }
 
+/// Whether the row is a list, which Sema collects line by line instead of
+/// passing to `apply`.
+pub fn isList(index: KeyIndex) bool {
+    return table[index].kind == .font_fallback;
+}
+
+/// One line of a list row.
+pub const ListItem = union(enum) {
+    /// Empty the list.
+    none,
+    /// Back to the base list.
+    default,
+    face: FontConfig.Face,
+};
+
+/// Parses one `fallback = ...` line.
+pub fn parseFallback(ctx: Context, text: []const u8) ApplyError!ListItem {
+    if (std.mem.eql(u8, text, "none")) return .none;
+    if (std.mem.eql(u8, text, "default")) return .default;
+    return .{ .face = .static(try resolvePath(ctx, try unquote(ctx.arena, text))) };
+}
+
 /// Parses `text` (the raw value token, quotes included) for the row at
 /// `index` and stores it in `config`. `default` copies the field from
 /// `ctx.defaults`. The field is unchanged on error.
@@ -468,6 +496,8 @@ fn applyKey(comptime key: Key, config: *Config, ctx: Context, text: []const u8) 
     const defaults = ctx.defaults;
     const T = FieldType(Config, key.field);
     comptime checkRow(key, T);
+
+    if (key.kind == .font_fallback) unreachable; // Sema handles list rows (isList)
 
     // A font weight lives in the variable family's payload; touching an
     // inactive union field is illegal, so check before taking the pointer.
@@ -579,6 +609,7 @@ fn checkRow(comptime key: Key, comptime T: type) void {
         .font_weight => @typeInfo(Value) == .float,
         .theme => Value == Theme,
         .font_file => Value == FontConfig.Family,
+        .font_fallback => Value == []const FontConfig.Face,
     };
     if (!ok) @compileError(key.name ++ ": kind ." ++ @tagName(key.kind) ++ " doesn't fit " ++ @typeName(T));
 }
@@ -605,6 +636,7 @@ fn parseValue(comptime key: Key, comptime V: type, text: []const u8) Error!V {
         },
         .theme => return theme_presets.get(text) orelse error.InvalidValue,
         .font_file => unreachable, // applyKey handles it
+        .font_fallback => unreachable, // Sema handles list rows
     }
 }
 

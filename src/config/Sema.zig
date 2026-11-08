@@ -13,6 +13,7 @@ const keys = @import("keys.zig");
 const Config = @import("Config.zig");
 const keybind = @import("keybind.zig");
 const Binding = @import("../input.zig").Binding;
+const Face = @import("../freetype/Config.zig").Face;
 
 pub const Error = struct {
     tag: Tag,
@@ -87,6 +88,9 @@ pub fn apply(gpa: Allocator, tree: *const Ast, config: *Config, ctx: keys.Contex
     var bindings: std.ArrayList(Binding) = .empty;
     var binding_tokens: std.ArrayList(Ast.TokenIndex) = .empty;
     defer binding_tokens.deinit(gpa);
+    // `font.fallback` lines, in order; replaces the list if any appeared (F2).
+    var fallbacks: std.ArrayList(Face) = .empty;
+    defer fallbacks.deinit(gpa);
 
     const sizes_before = .{ config.font.min_size, config.font.max_size };
 
@@ -124,14 +128,19 @@ pub fn apply(gpa: Allocator, tree: *const Ast, config: *Config, ctx: keys.Contex
                     try errors.append(gpa, .{ .tag = .not_available, .token = entry.name, .section = current, .key = index });
                     continue;
                 }
-                if (set_by[index] != null) {
+                // Repeating a list key is how a list is written.
+                if (set_by[index] != null and !keys.isList(index)) {
                     try errors.append(gpa, .{ .tag = .duplicate_key, .token = entry.name, .section = current, .key = index });
                 }
                 const value = entry.value orelse {
                     try errors.append(gpa, .{ .tag = .missing_value, .token = entry.name, .section = current, .key = index });
                     continue;
                 };
-                keys.apply(config, ctx, index, tree.tokenSlice(value)) catch |err| {
+                const applied = if (keys.isList(index))
+                    applyFallback(gpa, ctx, &fallbacks, tree.tokenSlice(value))
+                else
+                    keys.apply(config, ctx, index, tree.tokenSlice(value));
+                applied catch |err| {
                     const tag: Error.Tag, const token = switch (err) {
                         error.OutOfMemory => return error.OutOfMemory,
                         error.InvalidValue => .{ .invalid_value, value },
@@ -148,6 +157,8 @@ pub fn apply(gpa: Allocator, tree: *const Ast, config: *Config, ctx: keys.Contex
     }
 
     if (bindings.items.len > 0) config.keymap = try mergeKeymap(ctx.arena, config.keymap, bindings.items);
+    const fallback_key = comptime keys.lookup(.font, "fallback").?;
+    if (set_by[fallback_key] != null) config.font.faces.fallbacks = try ctx.arena.dupe(Face, fallbacks.items);
 
     // Only this file's settings are reverted: a conflict it didn't cause
     // (neither size set here) is left to the layer that caused it.
@@ -169,6 +180,18 @@ pub fn apply(gpa: Allocator, tree: *const Ast, config: *Config, ctx: keys.Contex
         }
     }.lessThan);
     return .{ .errors = try errors.toOwnedSlice(gpa), .set_by = set_by };
+}
+
+/// One `fallback` line onto this file's list.
+fn applyFallback(gpa: Allocator, ctx: keys.Context, list: *std.ArrayList(Face), text: []const u8) keys.ApplyError!void {
+    switch (try keys.parseFallback(ctx, text)) {
+        .none => list.clearRetainingCapacity(),
+        .default => {
+            list.clearRetainingCapacity();
+            try list.appendSlice(gpa, ctx.defaults.font.faces.fallbacks);
+        },
+        .face => |face| try list.append(gpa, face),
+    }
 }
 
 fn sectionFromName(name: []const u8) ?keys.Section {

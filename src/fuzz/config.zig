@@ -104,6 +104,7 @@ fn expectSetKeysInBounds(config: *const Config, result: *const Sema.Result) !voi
 
 const seeds = [_][]const u8{
     "theme = graphite\n[font]\nsize = 16\nmin_size = 8\nmax_size = 64\n",
+    "[font]\nfallback = /a.ttf\nfallback = none\nfallback = b.ttc\nfallback = default\nfallback = ~/c.ttf\n",
     "[window]\nbackground_opacity = 0.9\ndim_text_opacity = 0.5\nwidth = 800\nheight = 600\nplatform = wayland\n",
     "[bell]\nenabled = false\nvolume = 0.25\n[modal]\ncols = 60\nbackdrop_opacity = 0.7\nborder_style = inherit\n[modal.blur]\nenabled = true\nradius = 12\n",
     "[toast]\nposition = bottom_right\nduration = 3s\nmin_cols = 20\nmax_cols = 40\n[banner]\nplacement = docked\n",

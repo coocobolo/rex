@@ -1,6 +1,7 @@
 const std = @import("std");
 const Loaded = @import("Loaded.zig");
 const keys = @import("keys.zig");
+const Config = @import("Config.zig");
 const test_config = @import("test_fixtures.zig").test_config;
 
 const gpa = std.testing.allocator;
@@ -202,4 +203,46 @@ test "load: no leaks on any allocation failure" {
     const path = try tmp.path("config");
     defer gpa.free(path);
     try std.testing.checkAllAllocationFailures(gpa, loadAll, .{path});
+}
+
+fn expectFallbacks(config: Config, expected: []const []const u8) !void {
+    const faces = config.font.faces.fallbacks;
+    try std.testing.expectEqual(expected.len, faces.len);
+    for (expected, faces) |path, face| try std.testing.expectEqualStrings(path, std.mem.span(face.path));
+}
+
+test "load: a layer's fallback lines replace the lower layer's list" {
+    var base = test_config;
+    base.font.faces.fallbacks = &.{.static("/base.ttf")};
+
+    var replaced = try Loaded.load(gpa, io, &base, null, &.{
+        text("system", "[font]\nfallback = /a.ttf\nfallback = /b.ttf\n"),
+        text("user", "[font]\nfallback = /c.ttf\n"),
+    });
+    defer replaced.deinit(gpa);
+    try expectFallbacks(replaced.config, &.{"/c.ttf"});
+
+    var kept = try Loaded.load(gpa, io, &base, null, &.{
+        text("system", "[font]\nfallback = /a.ttf\nfallback = /b.ttf\n"),
+        text("user", "[font]\nsize = 12\n"),
+    });
+    defer kept.deinit(gpa);
+    try expectFallbacks(kept.config, &.{ "/a.ttf", "/b.ttf" });
+
+    var restored = try Loaded.load(gpa, io, &base, null, &.{
+        text("system", "[font]\nfallback = /a.ttf\n"),
+        text("user", "[font]\nfallback = default\nfallback = /x.ttf\n"),
+    });
+    defer restored.deinit(gpa);
+    try expectFallbacks(restored.config, &.{ "/base.ttf", "/x.ttf" });
+}
+
+test "load: a layer whose fallback lines are all invalid keeps the lower list" {
+    var loaded = try Loaded.load(gpa, io, &test_config, null, &.{
+        text("system", "[font]\nfallback = /a.ttf\n"),
+        text("user", "[font]\nfallback = ~/b.ttf\n"),
+    });
+    defer loaded.deinit(gpa);
+    try expectFallbacks(loaded.config, &.{"/a.ttf"});
+    try std.testing.expectEqual(0, loaded.set_by[key(.font, "fallback")].layer);
 }

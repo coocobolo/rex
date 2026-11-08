@@ -298,3 +298,49 @@ test "apply: frees everything on allocation failure" {
     ;
     try std.testing.checkAllAllocationFailures(gpa, applyAndFree, .{source});
 }
+
+fn expectFallbacks(config: Config, expected: []const []const u8) !void {
+    const faces = config.font.faces.fallbacks;
+    try std.testing.expectEqual(expected.len, faces.len);
+    for (expected, faces) |path, face| {
+        try std.testing.expectEqualStrings(path, std.mem.span(face.path));
+        try std.testing.expectEqual(null, face.weight_axis);
+    }
+}
+
+test "apply: fallback lines build the list in order, a bad line is skipped" {
+    var a = try Applied.init(
+        \\[font]
+        \\fallback = /usr/share/fonts/a.ttf
+        \\fallback = fonts/b.ttc
+        \\fallback = ""
+        \\fallback = ~/c.ttf
+    );
+    defer a.deinit();
+    // Repeating the key is the list syntax: no duplicate warning.
+    try a.expectErrors(&.{
+        .{ .invalid_value, 3, "invalid value '\"\"' for font.fallback, expected a path to a font file, one per line, or none" },
+    });
+    try expectFallbacks(a.config, &.{ "/usr/share/fonts/a.ttf", "/etc/rex/fonts/b.ttc", "/home/user/c.ttf" });
+    try std.testing.expect(a.result.set_by[keys.lookup(.font, "fallback").?] != null);
+}
+
+test "apply: fallback none empties the list, later lines add to it" {
+    var a = try Applied.init(
+        \\[font]
+        \\fallback = /a.ttf
+        \\fallback = none
+        \\fallback = /b.ttf
+    );
+    defer a.deinit();
+    try a.expectErrors(&.{});
+    try expectFallbacks(a.config, &.{"/b.ttf"});
+
+    var b = try Applied.init(
+        \\[font]
+        \\fallback = /a.ttf
+        \\fallback = none
+    );
+    defer b.deinit();
+    try expectFallbacks(b.config, &.{});
+}
