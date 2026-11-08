@@ -309,7 +309,7 @@ test "writeExpected: describes each kind" {
     var buf: [128]u8 = undefined;
     const cases = [_]struct { keys.Section, []const u8, []const u8 }{
         .{ .bell, "enabled", "true or false" },
-        .{ .window, "on_close", "one of: ask, close" },
+        .{ .window, "on_close", "one of: ask, ask_if_running, close" },
         .{ .window, "platform", "one of: auto, wayland, x11" },
         .{ .window, "width", "a whole number from 1 to 65535" },
         .{ .bell, "volume", "a number from 0 to 1" },
@@ -361,7 +361,7 @@ const enum_names = [_]struct { []const u8, []const []const u8 }{
     .{ "banner.border_shape", &.{ "rounded", "sharp" } },
     .{ "banner.border_style", &.{ "semantic", "subtle" } },
     .{ "modal.default_focus", &.{ "confirm", "cancel" } },
-    .{ "window.on_close", &.{ "ask", "close" } },
+    .{ "window.on_close", &.{ "ask", "ask_if_running", "close" } },
     .{ "modal.on_outside_click", &.{ "close", "ignore" } },
     .{ "modal.border_shape", &.{ "rounded", "sharp" } },
     .{ "modal.border_style", &.{ "semantic", "subtle" } },

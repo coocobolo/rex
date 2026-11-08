@@ -655,6 +655,18 @@ pub const ExitStatus = union(enum) {
     }
 };
 
+extern "c" fn tcgetpgrp(fd: c_int) posix.pid_t;
+
+/// The terminal's foreground process group, or null when it can't be read
+/// (a closed or not-a-terminal descriptor). Comparing it with the child's
+/// pid tells whether the child (the shell) is in the foreground or a
+/// program it started is. Read-only, so safe next to the pty's reader.
+pub fn foregroundGroup(master: posix.fd_t) ?posix.pid_t {
+    if (master < 0) return null;
+    const group = tcgetpgrp(master);
+    return if (group > 0) group else null;
+}
+
 /// A setup step in the child that failed, and its errno.
 pub const SpawnFailure = struct {
     stage: ChildStage,
@@ -745,6 +757,37 @@ test "Posix: a working directory that doesn't exist is a spawn failure" {
     defer pty.close(testing.io);
     try testing.expectError(error.SpawnFailed, pty.waitForSpawn());
     try testing.expectEqual(SpawnFailure{ .stage = .chdir, .errno = .NOENT }, pty.failure.?);
+}
+
+test "foregroundGroup: the shell at its prompt, then a program it started" {
+    // An interactive shell on a pty does job control: a command it runs
+    // gets its own process group and becomes the foreground.
+    const argv = [_:null]?[*:0]const u8{ "/bin/sh", "-i", null };
+    const envp = [_:null]?[*:0]const u8{ "PS1=$ ", null };
+    var pty: Posix = try Posix.spawn(.{ .argv = &argv, .envp = &envp });
+    defer pty.close(testing.io);
+    try pty.waitForSpawn();
+
+    // The shell becomes the foreground once it has set up job control.
+    try testing.expect(waitForForeground(pty.master, pty.pid, true));
+
+    const command = "sleep 5\n";
+    try testing.expectEqual(@as(isize, command.len), system.write(pty.master, command, command.len));
+    try testing.expect(waitForForeground(pty.master, pty.pid, false));
+
+    try testing.expectEqual(null, foregroundGroup(-1));
+}
+
+/// Polls up to ~2 s until the foreground group is (or is not) `pid`.
+fn waitForForeground(master: posix.fd_t, pid: posix.pid_t, is_pid: bool) bool {
+    var rounds: usize = 0;
+    while (rounds < 200) : (rounds += 1) {
+        if (foregroundGroup(master)) |group| {
+            if ((group == pid) == is_pid) return true;
+        }
+        std.Io.sleep(testing.io, .fromMilliseconds(10), .awake) catch {};
+    }
+    return false;
 }
 
 test "Posix: the master is close-on-exec in the parent" {

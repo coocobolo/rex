@@ -1608,9 +1608,15 @@ fn quitConfirmModalRequest(surface: Config.Surface, modal_opt: Modal.Option, qui
     };
 }
 
-/// Requests closing the terminal window, opening the quit confirmation modal when `on_close` is `ask`.
+/// Requests closing the terminal window, opening the quit confirmation modal
+/// when `on_close` asks for it.
 pub fn requestQuit(self: *App) void {
-    if (self.config.window.on_close == .close or self.quit_confirm_open) {
+    const ask = switch (self.config.window.on_close) {
+        .ask => true,
+        .ask_if_running => self.programRunning(),
+        .close => false,
+    };
+    if (!ask or self.quit_confirm_open) {
         self.confirmQuit();
         return;
     }
@@ -1623,6 +1629,13 @@ pub fn requestQuit(self: *App) void {
     self.quit_confirm_open = true;
     self.frame_builder.last_generation = null;
     self.needs_redraw = true;
+}
+
+/// Whether a program other than the shell is in the terminal's foreground.
+/// When that can't be read, true: better to ask once too often.
+fn programRunning(self: *const App) bool {
+    const group = rex.termio.pty.foregroundGroup(self.driver.getMasterFd()) orelse return true;
+    return group != self.driver.getPid();
 }
 
 /// Marks the quit prompt as confirmed and signals the window to close on the next event loop iteration.

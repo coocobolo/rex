@@ -116,11 +116,14 @@ pub const Window = struct {
     /// Interactive button primitive options.
     button: Button.Option = .{},
     /// What closing the window does.
-    on_close: OnClose = .ask,
+    on_close: OnClose = .ask_if_running,
 
     pub const OnClose = enum {
         /// Show the quit dialog first.
         ask,
+        /// Show it only while a program other than the shell is in the
+        /// foreground; background jobs don't count.
+        ask_if_running,
         close,
     };
 
