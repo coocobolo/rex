@@ -155,6 +155,26 @@ test "apply: time of day is HH:MM from 00:00 to 23:59" {
     try std.testing.expectEqual(defaults.wellbeing.winddown.start, winddown.start);
 }
 
+test "apply: sets are tag names separated by commas, or none" {
+    var config = testConfig();
+    const on_limit = &config.wellbeing.screen_time.on_limit;
+    const Set = @TypeOf(on_limit.*);
+    try applyText(&config, .@"wellbeing.screen_time", "on_limit", "animation, grayscale");
+    try std.testing.expect(on_limit.eql(Set.initMany(&.{ .grayscale, .animation })));
+    try applyText(&config, .@"wellbeing.screen_time", "on_limit", "lock_input,\tgrayscale , animation");
+    try std.testing.expect(on_limit.eql(.full));
+    try applyText(&config, .@"wellbeing.screen_time", "on_limit", "none");
+    try std.testing.expect(on_limit.eql(.empty));
+    for ([_][]const u8{ "", ",", "grayscale,", ",grayscale", "grayscale,,animation", "grayscale grayscale", "grayscale, grayscale", "Grayscale", "none, grayscale", "default, grayscale" }) |text| {
+        errdefer std.debug.print("accepted '{s}'\n", .{text});
+        try std.testing.expectError(error.InvalidValue, applyText(&config, .@"wellbeing.screen_time", "on_limit", text));
+    }
+    // Rejected values leave the field as it was.
+    try std.testing.expect(on_limit.eql(.empty));
+    try applyText(&config, .@"wellbeing.screen_time", "on_limit", "default");
+    try std.testing.expect(on_limit.eql(defaults.wellbeing.screen_time.on_limit));
+}
+
 test "apply: an optional field's keyword sets null" {
     var config = testConfig();
     try applyText(&config, .@"wellbeing.screen_time", "daily_limit", "none");
@@ -281,6 +301,7 @@ test "writeExpected: describes each kind" {
         .{ .modal, "border_style", "one of: semantic, subtle, or inherit" },
         .{ .font, "weight", "a whole number from 1 to 1000" },
         .{ .@"wellbeing.winddown", "start", "a time of day from 00:00 to 23:59, like 21:30" },
+        .{ .@"wellbeing.screen_time", "on_limit", "none, or any of grayscale, lock_input, animation separated by commas" },
         .{ .root, "theme", "a theme name: graphite" },
     };
     for (cases) |case| {
@@ -300,8 +321,9 @@ test "availableOn: platform is Linux only, the rest everywhere" {
     try std.testing.expectEqual(.live, keys.table[size].reload);
 }
 
-/// The value names users write for every enum key (C9/F12). Renaming a Zig
-/// tag changes what users must write, so it fails here until it is decided.
+/// The value names users write for every enum and set key (C9/F12). Renaming
+/// a Zig tag changes what users must write, so it fails here until it is
+/// decided.
 const enum_names = [_]struct { []const u8, []const []const u8 }{
     .{ "window.platform", &.{ "auto", "wayland", "x11" } },
     .{ "surface.border_shape", &.{ "rounded", "sharp" } },
@@ -318,20 +340,31 @@ const enum_names = [_]struct { []const u8, []const []const u8 }{
     .{ "modal.default_focus", &.{ "confirm", "cancel" } },
     .{ "modal.border_shape", &.{ "rounded", "sharp" } },
     .{ "modal.border_style", &.{ "semantic", "subtle" } },
+    .{ "wellbeing.screen_time.on_limit", &.{ "grayscale", "lock_input", "animation" } },
+    .{ "wellbeing.focus.timer", &.{ "countdown", "countup" } },
+    .{ "wellbeing.focus.on_phase_end", &.{ "wait", "start_next" } },
+    .{ "wellbeing.focus.during_task", &.{"mute_bell"} },
+    .{ "wellbeing.focus.on_break", &.{ "prompt", "lock_input", "animation" } },
+    .{ "wellbeing.focus.on_alert", &.{"pause"} },
+    .{ "wellbeing.winddown.during_window", &.{ "warm_colors", "mute_bell" } },
+    .{ "wellbeing.eyesight.during_reminder", &.{"lock_input"} },
+    .{ "wellbeing.movement.during_reminder", &.{"lock_input"} },
+    .{ "wellbeing.routines.during_reminder", &.{"lock_input"} },
     .{ "wellbeing.eyesight.animation", &.{ "none", "pulse_dim", "grayscale_wave", "warm_glow" } },
     .{ "wellbeing.movement.animation", &.{ "none", "pulse_dim", "grayscale_wave", "warm_glow" } },
     .{ "wellbeing.routines.animation", &.{ "none", "pulse_dim", "grayscale_wave", "warm_glow" } },
 };
 
-test "table: enum value names are pinned" {
+test "table: enum and set value names are pinned" {
     @setEvalBranchQuota(keys.eval_branch_quota);
     var seen: usize = 0;
     inline for (keys.table) |key| {
         const T = keys.FieldType(Config, key.field);
-        const Value = switch (@typeInfo(T)) {
+        const Field = switch (@typeInfo(T)) {
             .optional => |optional| optional.child,
             else => T,
         };
+        const Value = if (key.kind == .set) Field.Key else Field;
         if (@typeInfo(Value) == .@"enum") {
             const name = @tagName(key.section) ++ "." ++ key.name;
             const expected = for (enum_names) |entry| {

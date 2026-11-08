@@ -61,7 +61,6 @@ test "tracker: daily limit triggers grayscale factor" {
     var tr = tracker.Tracker.init(.{
         .idle_threshold_ms = 300 * std.time.ms_per_s,
         .daily_limit_ms = 1 * std.time.ms_per_min, // 60 seconds
-        .grayscale_on_limit = true,
         .grayscale_transition_ms = 10 * std.time.ms_per_s,
         .track_foreground_apps = false,
     });
@@ -121,11 +120,11 @@ test "tracker: turning the limit or the grayscale off clears grayscale" {
     _ = tr.tick(70, -1, &today);
     try testing.expectEqual(@as(f32, 1.0), tr.grayscale_factor);
 
-    tr.option.grayscale_on_limit = false;
+    tr.option.on_limit.remove(.grayscale);
     _ = tr.tick(1, -1, &today);
     try testing.expectEqual(@as(f32, 0.0), tr.grayscale_factor);
 
-    tr.option.grayscale_on_limit = true;
+    tr.option.on_limit.insert(.grayscale);
     _ = tr.tick(1, -1, &today);
     try testing.expectEqual(@as(f32, 1.0), tr.grayscale_factor);
 
@@ -165,7 +164,7 @@ test "applyOption: reminders keep their timers and use the new interval" {
 
 test "applyOption: a running focus phase keeps its remaining time" {
     var option = quietOption();
-    option.focus = .{ .task_ms = 25 * std.time.ms_per_min, .transition_mode = .manual };
+    option.focus = .{ .task_ms = 25 * std.time.ms_per_min, .on_phase_end = .wait };
     var wb = wellbeing.Wellbeing.init(option);
     const now = localAt(1000, 12, 0, 0);
 
@@ -180,22 +179,22 @@ test "applyOption: a running focus phase keeps its remaining time" {
     try testing.expectEqual(10 * std.time.ms_per_min, wb.focus_state.option.task_ms);
 }
 
-test "applyOption: the configured transition mode replaces a runtime toggle" {
+test "applyOption: the configured on_phase_end replaces a runtime toggle" {
     var option = quietOption();
-    option.focus = .{ .task_ms = 2000, .short_break_ms = 1000, .transition_mode = .manual };
+    option.focus = .{ .task_ms = 2000, .short_break_ms = 1000, .on_phase_end = .wait };
     var wb = wellbeing.Wellbeing.init(option);
     const now = localAt(1000, 12, 0, 0);
 
-    wb.toggleFocusTransitionMode();
-    try testing.expectEqual(.auto, wb.focus_state.option.transition_mode);
+    wb.toggleFocusPhaseEnd();
+    try testing.expectEqual(.start_next, wb.focus_state.option.on_phase_end);
     wb.applyOption(option);
-    try testing.expectEqual(.manual, wb.focus_state.option.transition_mode);
+    try testing.expectEqual(.wait, wb.focus_state.option.on_phase_end);
 
     // A phase waiting for confirmation starts when the config turns auto on.
     wb.toggleFocus();
     _ = wb.tick(2000, -1, now);
     try testing.expect(wb.focus_state.waiting);
-    option.focus.transition_mode = .auto;
+    option.focus.on_phase_end = .start_next;
     wb.applyOption(option);
     try testing.expect(!wb.focus_state.waiting);
     try testing.expectEqual(wellbeing.focus.Phase.short_break, wb.focus_state.phase);
@@ -301,6 +300,24 @@ test "winddown: window crossing midnight includes start and excludes end" {
     try testing.expect(!wd.update(localAt(1001, 12, 0, -5)).active); // 07:00
 }
 
+test "winddown: during_window without warm_colors keeps the colors" {
+    var wd = winddown.WinddownEngine.init(.{ .enabled = true, .during_window = .initOne(.mute_bell) });
+    const res = wd.update(localAt(1000, 22, 0, 0));
+    try testing.expect(res.active);
+    try testing.expectEqual([3]f32{ 1.0, 1.0, 1.0 }, res.color_tint);
+}
+
+test "focus: on_break lock_input alone locks the break without a prompt" {
+    var option = quietOption();
+    option.focus = .{ .task_ms = 1000, .short_break_ms = 60_000, .on_phase_end = .start_next, .on_break = .initOne(.lock_input) };
+    var wb = wellbeing.Wellbeing.init(option);
+    wb.toggleFocus();
+    const res = wb.tick(1000, -1, localAt(1000, 12, 0, 0));
+    try testing.expectEqual(wellbeing.focus.Phase.short_break, wb.focus_state.phase);
+    try testing.expect(res.alert == null);
+    try testing.expect(res.input_locked);
+}
+
 test "Wellbeing service: day rolls over at local midnight" {
     var wb = wellbeing.Wellbeing.init(.{ .winddown = .{ .enabled = false } });
 
@@ -317,7 +334,7 @@ test "Wellbeing service: day rolls over at local midnight" {
 
 test "focus: streak counts local days" {
     var wb = wellbeing.Wellbeing.init(.{
-        .focus = .{ .task_ms = 1000, .transition_mode = .manual },
+        .focus = .{ .task_ms = 1000, .on_phase_end = .wait },
         .winddown = .{ .enabled = false },
     });
 
@@ -396,8 +413,7 @@ test "focus: session toggle, tick, and break prompt rotation" {
             .short_break_ms = 1000,
             .long_break_ms = 3000,
             .tasks_before_long_break = 2,
-            .transition_mode = .auto,
-            .rotate_break_prompts = true,
+            .on_phase_end = .start_next,
         },
     });
 
@@ -422,7 +438,7 @@ test "reminders: lock_input and animation wave modulation" {
             .enabled = true,
             .interval_ms = 1 * std.time.ms_per_min,
             .duration_ms = 20 * std.time.ms_per_s,
-            .lock_input = true,
+            .during_reminder = .initOne(.lock_input),
             .animation = .pulse_dim,
         },
         .winddown = .{
@@ -451,18 +467,18 @@ test "reminders: lock_input and animation wave modulation" {
     try testing.expectEqual(@as(f32, 1.0), res3.tint[0]);
 }
 
-test "focus: auto_pause_on_alert freezes task timer during locked health reminder" {
+test "focus: on_alert pause freezes task timer during locked health reminder" {
     var wb = wellbeing.Wellbeing.init(.{
         .focus = .{
             .task_ms = 30_000,
             .short_break_ms = 10_000,
-            .auto_pause_on_alert = true,
+            .on_alert = .initOne(.pause),
         },
         .eyesight = .{
             .enabled = true,
             .interval_ms = 1 * std.time.ms_per_min, // 60s
             .duration_ms = 10 * std.time.ms_per_s,
-            .lock_input = true,
+            .during_reminder = .initOne(.lock_input),
             .animation = .none,
         },
         .routines = .{

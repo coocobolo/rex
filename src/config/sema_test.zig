@@ -227,7 +227,7 @@ test "apply: reminder sections set their options" {
         \\enabled = false
         \\interval = 1h
         \\duration = 90s
-        \\lock_input = true
+        \\during_reminder = lock_input
         \\animation = warm_glow
         \\[wellbeing.routines]
         \\hydration_interval = none
@@ -239,10 +239,60 @@ test "apply: reminder sections set their options" {
     try std.testing.expect(!wb.movement.enabled);
     try std.testing.expectEqual(std.time.ms_per_hour, wb.movement.interval_ms);
     try std.testing.expectEqual(90 * std.time.ms_per_s, wb.movement.duration_ms);
-    try std.testing.expect(wb.movement.lock_input);
+    try std.testing.expect(wb.movement.during_reminder.contains(.lock_input));
     try std.testing.expectEqual(.warm_glow, wb.movement.animation);
     try std.testing.expectEqual(null, wb.routines.hydration_interval_ms);
     try std.testing.expectEqual(15 * std.time.ms_per_min, wb.routines.posture_interval_ms);
+}
+
+test "apply: actions and named states in the wellbeing sections" {
+    var a = try Applied.init(
+        \\[wellbeing.screen_time]
+        \\on_limit = lock_input,animation # no grayscale
+        \\grayscale_transition = 1m
+        \\[wellbeing.focus]
+        \\timer = countup
+        \\on_phase_end = start_next
+        \\during_task = none
+        \\on_break = lock_input
+        \\on_alert = none
+        \\[wellbeing.winddown]
+        \\during_window = mute_bell
+        \\[wellbeing.privacy]
+        \\track_foreground_apps = false
+    );
+    defer a.deinit();
+    try a.expectErrors(&.{});
+    const wb = a.config.wellbeing;
+    const LimitSet = @TypeOf(wb.screen_time.on_limit);
+    try std.testing.expect(wb.screen_time.on_limit.eql(LimitSet.initMany(&.{ .lock_input, .animation })));
+    try std.testing.expectEqual(std.time.ms_per_min, wb.screen_time.grayscale_transition_ms);
+    try std.testing.expectEqual(.countup, wb.focus.timer);
+    try std.testing.expectEqual(.start_next, wb.focus.on_phase_end);
+    try std.testing.expectEqual(0, wb.focus.during_task.count());
+    try std.testing.expect(wb.focus.on_break.contains(.lock_input) and wb.focus.on_break.count() == 1);
+    try std.testing.expectEqual(0, wb.focus.on_alert.count());
+    try std.testing.expect(wb.winddown.during_window.contains(.mute_bell) and wb.winddown.during_window.count() == 1);
+    try std.testing.expect(!wb.screen_time.track_foreground_apps);
+}
+
+test "apply: an invalid set keeps the previous one" {
+    var a = try Applied.init(
+        \\[wellbeing.focus]
+        \\on_break = prompt, prompt
+        \\on_break = prompt,,animation
+        \\on_break = nap
+    );
+    defer a.deinit();
+    // A value that fails doesn't count as set, so no duplicate warnings.
+    const expected = "expected none, or any of prompt, lock_input, animation separated by commas";
+    try a.expectErrors(&.{
+        .{ .invalid_value, 1, "invalid value 'prompt, prompt' for wellbeing.focus.on_break, " ++ expected },
+        .{ .invalid_value, 2, "invalid value 'prompt,,animation' for wellbeing.focus.on_break, " ++ expected },
+        .{ .invalid_value, 3, "invalid value 'nap' for wellbeing.focus.on_break, " ++ expected },
+    });
+    const BreakSet = @TypeOf(a.config.wellbeing.focus.on_break);
+    try std.testing.expect(a.config.wellbeing.focus.on_break.eql(BreakSet.initMany(&.{ .prompt, .animation })));
 }
 
 test "apply: winddown start equal to end reverts both" {

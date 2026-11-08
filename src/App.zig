@@ -1259,7 +1259,7 @@ fn handleAction(self: *App, action: rex.input.Action) void {
             self.updateWindowTitle();
         },
         .focus_auto_transition => {
-            self.wellbeing_state.toggleFocusTransitionMode();
+            self.wellbeing_state.toggleFocusPhaseEnd();
             self.updateWindowTitle();
         },
         .wellbeing_dashboard => {

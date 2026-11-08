@@ -16,16 +16,31 @@ pub const Option = struct {
     task_ms: u64 = 25 * 60_000,
     tasks_before_long_break: u8 = 4,
     time_fields: TimeFields = .initMany(&.{ .minute, .second }),
-    timer_mode: TimerMode = .countdown,
-    transition_mode: TransitionMode = .manual,
-    mute_notifications_in_task: bool = true,
-    rotate_break_prompts: bool = true,
-    lock_input_on_break: bool = false,
-    show_break_animation: bool = true,
-    auto_pause_on_alert: bool = true,
+    timer: Timer = .countdown,
+    on_phase_end: PhaseEnd = .wait,
+    during_task: std.EnumSet(TaskAction) = .initOne(.mute_bell),
+    on_break: std.EnumSet(BreakAction) = .initMany(&.{ .prompt, .animation }),
+    on_alert: std.EnumSet(AlertAction) = .initOne(.pause),
 
-    pub const TimerMode = enum { countup, countdown };
-    pub const TransitionMode = enum { auto, manual };
+    pub const Timer = enum { countdown, countup };
+    pub const PhaseEnd = enum {
+        /// Wait for the user to start the next phase.
+        wait,
+        start_next,
+    };
+    pub const TaskAction = enum { mute_bell };
+    pub const BreakAction = enum {
+        /// Show a break suggestion, a different one each break.
+        prompt,
+        /// Block terminal input for the whole break.
+        lock_input,
+        /// Animate the screen while the prompt is shown; shows the prompt.
+        animation,
+    };
+    pub const AlertAction = enum {
+        /// Pause a running task while a reminder blocks input.
+        pause,
+    };
     pub const TimeField = enum { hour, minute, second, millisecond };
     pub const TimeFields = std.EnumSet(TimeField);
 
@@ -79,9 +94,9 @@ pub const State = struct {
         }
     }
 
-    pub fn setTransitionMode(self: *State, mode: Option.TransitionMode) void {
-        self.option.transition_mode = mode;
-        if (self.waiting and mode == .auto) {
+    pub fn setPhaseEnd(self: *State, phase_end: Option.PhaseEnd) void {
+        self.option.on_phase_end = phase_end;
+        if (self.waiting and phase_end == .start_next) {
             self.waiting = false;
             self.advance();
         }
@@ -113,7 +128,7 @@ pub const State = struct {
 
         // In manual mode: don't auto-start the next phase.
         // Use paused=true so toggle() resumes (not advances) on next press.
-        self.paused = self.option.transition_mode == .manual;
+        self.paused = self.option.on_phase_end == .wait;
     }
 
     /// Full reset, back to idle, clears session count.
@@ -128,7 +143,7 @@ pub const State = struct {
         if (self.phase == .idle or self.paused or self.waiting) return false;
         if (dt_ms >= self.remaining_ms) {
             self.remaining_ms = 0;
-            self.waiting = self.option.transition_mode == .manual;
+            self.waiting = self.option.on_phase_end == .wait;
             return true;
         }
         self.remaining_ms -= dt_ms;
@@ -189,7 +204,7 @@ pub const State = struct {
             self.getDuration(effective_phase)
         else blk: {
             const phase_ms = self.getDuration(self.phase);
-            break :blk if (option.timer_mode == .countup) phase_ms - self.remaining_ms else self.remaining_ms;
+            break :blk if (option.timer == .countup) phase_ms - self.remaining_ms else self.remaining_ms;
         };
 
         const is_transition = display_ms == self.remaining_ms;

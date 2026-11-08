@@ -16,6 +16,12 @@ pub const TimeOfDay = struct {
     }
 };
 
+pub const WindowAction = enum {
+    /// Warm the screen colors by `warmth_factor`.
+    warm_colors,
+    mute_bell,
+};
+
 pub const WinddownOption = struct {
     /// Off by default: it tints the screen and mutes the bell every evening,
     /// which only someone who asked for it expects.
@@ -24,8 +30,9 @@ pub const WinddownOption = struct {
     /// when `end` is earlier than `start`.
     start: TimeOfDay = .{ .hour = 21, .minute = 0 },
     end: TimeOfDay = .{ .hour = 7, .minute = 0 },
+    during_window: std.EnumSet(WindowAction) = .initMany(&.{ .warm_colors, .mute_bell }),
+    /// How warm `warm_colors` makes the screen, from 0 to 1.
     warmth_factor: f32 = 0.85,
-    mute_audio_bell: bool = true,
     prompt: []const u8 = "Wind-down time. Time to wrap up work for today 🌙",
 };
 
@@ -77,7 +84,7 @@ pub const WinddownEngine = struct {
         // Neutral: (1.0, 1.0, 1.0)
         // Warm Amber: Red stays 1.0, Green ~0.90, Blue attenuated proportional to warmth
         const warmth = std.math.clamp(self.option.warmth_factor, 0.0, 1.0);
-        const color_tint: [3]f32 = if (in_window) .{
+        const color_tint: [3]f32 = if (in_window and self.option.during_window.contains(.warm_colors)) .{
             1.0,
             1.0 - (0.12 * warmth),
             1.0 - (0.35 * warmth),

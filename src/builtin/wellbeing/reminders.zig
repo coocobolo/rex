@@ -9,11 +9,16 @@ pub const AnimationKind = enum {
     warm_glow,
 };
 
+pub const ReminderAction = enum {
+    /// Block terminal input while the reminder is shown.
+    lock_input,
+};
+
 pub const EyesightOption = struct {
     enabled: bool = true,
     interval_ms: u64 = 20 * std.time.ms_per_min,
     duration_ms: u64 = 20 * std.time.ms_per_s,
-    lock_input: bool = false,
+    during_reminder: std.EnumSet(ReminderAction) = .empty,
     /// `none`: no animation.
     animation: AnimationKind = .pulse_dim,
     prompt: []const u8 = "Look at an object 20 feet away for 20 seconds.",
@@ -23,7 +28,7 @@ pub const MovementOption = struct {
     enabled: bool = true,
     interval_ms: u64 = 50 * std.time.ms_per_min,
     duration_ms: u64 = 60 * std.time.ms_per_s,
-    lock_input: bool = false,
+    during_reminder: std.EnumSet(ReminderAction) = .empty,
     /// `none`: no animation.
     animation: AnimationKind = .grayscale_wave,
     prompt: []const u8 = "Time to stand up, stretch your back, and move.",
@@ -37,7 +42,7 @@ pub const RoutinesOption = struct {
     custom_name: ?[]const u8 = null,
     custom_interval_ms: ?u64 = null,
     custom_prompt: ?[]const u8 = null,
-    lock_input: bool = false,
+    during_reminder: std.EnumSet(ReminderAction) = .empty,
     /// `none`: no animation.
     animation: AnimationKind = .none,
 };
@@ -137,7 +142,7 @@ pub const RemindersEngine = struct {
                     .kind = .custom,
                     .prompt = self.routines_opt.custom_prompt orelse "Custom routine reminder",
                     .remaining_s = 15,
-                    .lock_input = self.routines_opt.lock_input,
+                    .lock_input = self.routines_opt.during_reminder.contains(.lock_input),
                     .show_animation = self.routines_opt.animation != .none,
                     .animation = self.routines_opt.animation,
                 };
@@ -151,7 +156,7 @@ pub const RemindersEngine = struct {
                     .kind = .posture,
                     .prompt = self.routines_opt.posture_prompt,
                     .remaining_s = 10,
-                    .lock_input = self.routines_opt.lock_input,
+                    .lock_input = self.routines_opt.during_reminder.contains(.lock_input),
                     .show_animation = self.routines_opt.animation != .none,
                     .animation = self.routines_opt.animation,
                 };
@@ -166,7 +171,7 @@ pub const RemindersEngine = struct {
                     .kind = .hydration,
                     .prompt = self.routines_opt.hydration_prompt,
                     .remaining_s = 15,
-                    .lock_input = self.routines_opt.lock_input,
+                    .lock_input = self.routines_opt.during_reminder.contains(.lock_input),
                     .show_animation = self.routines_opt.animation != .none,
                     .animation = self.routines_opt.animation,
                 };
@@ -182,7 +187,7 @@ pub const RemindersEngine = struct {
                     .kind = .eyesight,
                     .prompt = self.eyesight_opt.prompt,
                     .remaining_s = remainingSeconds(self.eyesight_opt.duration_ms),
-                    .lock_input = self.eyesight_opt.lock_input,
+                    .lock_input = self.eyesight_opt.during_reminder.contains(.lock_input),
                     .show_animation = self.eyesight_opt.animation != .none,
                     .animation = self.eyesight_opt.animation,
                 };
@@ -198,7 +203,7 @@ pub const RemindersEngine = struct {
                     .kind = .movement,
                     .prompt = self.movement_opt.prompt,
                     .remaining_s = remainingSeconds(self.movement_opt.duration_ms),
-                    .lock_input = self.movement_opt.lock_input,
+                    .lock_input = self.movement_opt.during_reminder.contains(.lock_input),
                     .show_animation = self.movement_opt.animation != .none,
                     .animation = self.movement_opt.animation,
                 };

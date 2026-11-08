@@ -15,8 +15,6 @@ pub const Option = struct {
     enabled: bool = true,
 
     privacy: struct {
-        strict_local: bool = true,
-        track_foreground_apps: bool = true,
         state_dir: ?[]const u8 = null,
         state_filename: []const u8 = "wellbeing.bin",
     } = .{},
@@ -66,7 +64,7 @@ pub const Wellbeing = struct {
 
         return .{
             .option = option,
-            .tracker_engine = tracker.Tracker.init(trackerOption(option)),
+            .tracker_engine = tracker.Tracker.init(option.screen_time),
             .reminders_engine = reminders.RemindersEngine.init(option.eyesight, option.movement, option.routines),
             .winddown_engine = winddown.WinddownEngine.init(option.winddown),
             .focus_state = focus_state,
@@ -80,22 +78,14 @@ pub const Wellbeing = struct {
     /// toggled at runtime.
     pub fn applyOption(self: *Wellbeing, option: Option) void {
         self.option = option;
-        self.tracker_engine.option = trackerOption(option);
+        self.tracker_engine.option = option.screen_time;
         self.reminders_engine.eyesight_opt = option.eyesight;
         self.reminders_engine.movement_opt = option.movement;
         self.reminders_engine.routines_opt = option.routines;
         self.winddown_engine.option = option.winddown;
         self.focus_state.option = option.focus;
-        // Starts the next phase if one is waiting and the mode is now auto.
-        self.focus_state.setTransitionMode(option.focus.transition_mode);
-    }
-
-    fn trackerOption(option: Option) tracker.TrackerOption {
-        var tracker_opt = option.screen_time;
-        if (!option.privacy.track_foreground_apps) {
-            tracker_opt.track_foreground_apps = false;
-        }
-        return tracker_opt;
+        // Starts the next phase if one is waiting and phases now start on their own.
+        self.focus_state.setPhaseEnd(option.focus.on_phase_end);
     }
 
     pub fn loadState(self: *Wellbeing, io: Io, default_state_dir: []const u8) void {
@@ -146,9 +136,9 @@ pub const Wellbeing = struct {
         self.focus_state.skip();
     }
 
-    pub fn toggleFocusTransitionMode(self: *Wellbeing) void {
-        self.focus_state.setTransitionMode(
-            if (self.focus_state.option.transition_mode == .auto) .manual else .auto,
+    pub fn toggleFocusPhaseEnd(self: *Wellbeing) void {
+        self.focus_state.setPhaseEnd(
+            if (self.focus_state.option.on_phase_end == .start_next) .wait else .start_next,
         );
     }
 
@@ -226,8 +216,8 @@ pub const Wellbeing = struct {
                     .kind = .screen_limit,
                     .prompt = "Daily screen-time limit reached.",
                     .remaining_s = 20,
-                    .lock_input = self.option.screen_time.lock_input_on_limit,
-                    .show_animation = self.option.screen_time.show_limit_animation,
+                    .lock_input = self.option.screen_time.on_limit.contains(.lock_input),
+                    .show_animation = self.option.screen_time.on_limit.contains(.animation),
                     .animation = .grayscale_wave,
                 };
                 needs_redraw = true;
@@ -266,7 +256,7 @@ pub const Wellbeing = struct {
             al.lock_input
         else
             (self.current_alert.kind != .none and self.current_alert.remaining_s > 0 and self.current_alert.lock_input);
-        const pause_focus_for_alert = self.focus_state.option.auto_pause_on_alert and alert_is_locking and self.focus_state.phase == .task;
+        const pause_focus_for_alert = self.focus_state.option.on_alert.contains(.pause) and alert_is_locking and self.focus_state.phase == .task;
 
         if (self.focus_state.phase != .idle and !self.focus_state.paused and !self.focus_state.waiting and !pause_focus_for_alert) {
             const elapsed = @min(dt_ms, self.focus_state.remaining_ms);
@@ -307,13 +297,14 @@ pub const Wellbeing = struct {
                     self.data.best_streak = @max(self.data.best_streak, self.data.current_streak);
                     self.data.last_task_day = today_epoch_day;
 
-                    if (self.focus_state.option.rotate_break_prompts) {
+                    const on_break = self.focus_state.option.on_break;
+                    if (on_break.contains(.prompt) or on_break.contains(.animation)) {
                         alert_to_return = .{
                             .kind = .healthy_break,
                             .prompt = self.reminders_engine.nextBreakPrompt(),
                             .remaining_s = 30,
-                            .lock_input = self.focus_state.option.lock_input_on_break,
-                            .show_animation = self.focus_state.option.show_break_animation,
+                            .lock_input = on_break.contains(.lock_input),
+                            .show_animation = on_break.contains(.animation),
                             .animation = .pulse_dim,
                         };
                     }
@@ -322,15 +313,15 @@ pub const Wellbeing = struct {
                     self.data.long_breaks_taken +|= 1;
                 }
 
-                if (self.focus_state.option.transition_mode == .auto) {
+                if (self.focus_state.option.on_phase_end == .start_next) {
                     self.focus_state.advance();
                 }
             }
         }
 
         // Bell silencing policy
-        const in_focus_task = self.option.focus.mute_notifications_in_task and self.focus_state.phase == .task;
-        const in_winddown = wd.active and self.option.winddown.mute_audio_bell;
+        const in_focus_task = self.option.focus.during_task.contains(.mute_bell) and self.focus_state.phase == .task;
+        const in_winddown = wd.active and self.option.winddown.during_window.contains(.mute_bell);
         self.mute_audio_bell = in_focus_task or in_winddown;
 
         if (alert_to_return) |al| {
@@ -348,7 +339,7 @@ pub const Wellbeing = struct {
         const has_active_alert = self.current_alert.kind != .none and self.current_alert.remaining_s > 0;
         const in_focus_break = self.focus_state.phase == .short_break or self.focus_state.phase == .long_break;
         self.input_locked = (has_active_alert and self.current_alert.lock_input) or
-            (in_focus_break and self.focus_state.option.lock_input_on_break);
+            (in_focus_break and self.focus_state.option.on_break.contains(.lock_input));
 
         var out_grayscale = self.grayscale_factor;
         var out_tint = self.color_tint;
@@ -393,6 +384,6 @@ pub const Wellbeing = struct {
 
     pub fn isFocusPausedByAlert(self: *const Wellbeing) bool {
         const alert_is_locking = (self.current_alert.kind != .none and self.current_alert.remaining_s > 0 and self.current_alert.lock_input);
-        return self.focus_state.option.auto_pause_on_alert and alert_is_locking and self.focus_state.phase == .task;
+        return self.focus_state.option.on_alert.contains(.pause) and alert_is_locking and self.focus_state.phase == .task;
     }
 };

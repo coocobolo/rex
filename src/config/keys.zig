@@ -7,9 +7,10 @@
 //! integers are decimal digits only; floats are digits with an optional
 //! fraction; enums are their tag names exactly; durations are an integer with
 //! a unit (`ms`, `s`, `m`, `h`); a time of day is `HH:MM` on the 24-hour
-//! clock (F9); `default` resets any key to the built-in value; quoted strings
+//! clock (F9); a set is its members' tag names separated by commas, or
+//! `none`; `default` resets any key to the built-in value; quoted strings
 //! take the escapes `\\ \" \' \n \t \xHH \u{H…}`. Kinds that no row uses
-//! yet (color, list, set) are added with their first row.
+//! yet (color, list) are added with their first row.
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -38,6 +39,7 @@ pub const Section = enum {
     @"wellbeing.eyesight",
     @"wellbeing.movement",
     @"wellbeing.routines",
+    @"wellbeing.privacy",
     scroll,
     keybinds,
 };
@@ -53,6 +55,11 @@ pub const Kind = enum {
     /// `HH:MM` on the 24-hour clock, exactly two digits each, from 00:00 to
     /// 23:59, into a `TimeOfDay` field.
     time_of_day,
+    /// Tag names of a `std.EnumSet` field's enum, separated by commas, in any
+    /// order and each at most once (`grayscale, lock_input`); `none` is the
+    /// empty set. Behavior triggered by an event or state is written this way
+    /// (`on_limit`, `during_task`).
+    set,
     /// A font weight: a whole number stored as a float "wght" axis value.
     font_weight,
     /// A theme preset name.
@@ -230,34 +237,40 @@ pub const table = [_]Key{
     .{ .section = .wellbeing, .name = "enabled", .field = "wellbeing.enabled" },
     .{ .section = .@"wellbeing.screen_time", .name = "daily_limit", .field = "wellbeing.screen_time.daily_limit_ms", .kind = .duration, .bounds = at_least_one, .null_keyword = .none },
     .{ .section = .@"wellbeing.screen_time", .name = "idle_threshold", .field = "wellbeing.screen_time.idle_threshold_ms", .kind = .duration, .bounds = at_least_one },
+    .{ .section = .@"wellbeing.screen_time", .name = "on_limit", .field = "wellbeing.screen_time.on_limit", .kind = .set },
+    .{ .section = .@"wellbeing.screen_time", .name = "grayscale_transition", .field = "wellbeing.screen_time.grayscale_transition_ms", .kind = .duration, .bounds = at_least_one },
     .{ .section = .@"wellbeing.focus", .name = "task", .field = "wellbeing.focus.task_ms", .kind = .duration, .bounds = at_least_one },
     .{ .section = .@"wellbeing.focus", .name = "short_break", .field = "wellbeing.focus.short_break_ms", .kind = .duration, .bounds = at_least_one },
     .{ .section = .@"wellbeing.focus", .name = "long_break", .field = "wellbeing.focus.long_break_ms", .kind = .duration, .bounds = at_least_one },
     .{ .section = .@"wellbeing.focus", .name = "tasks_before_long_break", .field = "wellbeing.focus.tasks_before_long_break", .bounds = at_least_one },
-    .{ .section = .@"wellbeing.focus", .name = "lock_input_on_break", .field = "wellbeing.focus.lock_input_on_break" },
-    .{ .section = .@"wellbeing.focus", .name = "show_break_animation", .field = "wellbeing.focus.show_break_animation" },
-    .{ .section = .@"wellbeing.focus", .name = "mute_notifications_in_task", .field = "wellbeing.focus.mute_notifications_in_task" },
+    .{ .section = .@"wellbeing.focus", .name = "timer", .field = "wellbeing.focus.timer" },
+    .{ .section = .@"wellbeing.focus", .name = "on_phase_end", .field = "wellbeing.focus.on_phase_end" },
+    .{ .section = .@"wellbeing.focus", .name = "during_task", .field = "wellbeing.focus.during_task", .kind = .set },
+    .{ .section = .@"wellbeing.focus", .name = "on_break", .field = "wellbeing.focus.on_break", .kind = .set },
+    .{ .section = .@"wellbeing.focus", .name = "on_alert", .field = "wellbeing.focus.on_alert", .kind = .set },
     // Sema rejects `start` equal to `end`, a window that is never active.
     .{ .section = .@"wellbeing.winddown", .name = "enabled", .field = "wellbeing.winddown.enabled" },
     .{ .section = .@"wellbeing.winddown", .name = "start", .field = "wellbeing.winddown.start", .kind = .time_of_day },
     .{ .section = .@"wellbeing.winddown", .name = "end", .field = "wellbeing.winddown.end", .kind = .time_of_day },
     .{ .section = .@"wellbeing.winddown", .name = "warmth", .field = "wellbeing.winddown.warmth_factor", .kind = .fraction },
-    .{ .section = .@"wellbeing.winddown", .name = "mute_bell", .field = "wellbeing.winddown.mute_audio_bell" },
+    .{ .section = .@"wellbeing.winddown", .name = "during_window", .field = "wellbeing.winddown.during_window", .kind = .set },
     // Reminder timers count whole seconds and round an interval up.
     .{ .section = .@"wellbeing.eyesight", .name = "enabled", .field = "wellbeing.eyesight.enabled" },
     .{ .section = .@"wellbeing.eyesight", .name = "interval", .field = "wellbeing.eyesight.interval_ms", .kind = .duration, .bounds = at_least_one },
     .{ .section = .@"wellbeing.eyesight", .name = "duration", .field = "wellbeing.eyesight.duration_ms", .kind = .duration, .bounds = at_least_one },
-    .{ .section = .@"wellbeing.eyesight", .name = "lock_input", .field = "wellbeing.eyesight.lock_input" },
+    .{ .section = .@"wellbeing.eyesight", .name = "during_reminder", .field = "wellbeing.eyesight.during_reminder", .kind = .set },
     .{ .section = .@"wellbeing.eyesight", .name = "animation", .field = "wellbeing.eyesight.animation" },
     .{ .section = .@"wellbeing.movement", .name = "enabled", .field = "wellbeing.movement.enabled" },
     .{ .section = .@"wellbeing.movement", .name = "interval", .field = "wellbeing.movement.interval_ms", .kind = .duration, .bounds = at_least_one },
     .{ .section = .@"wellbeing.movement", .name = "duration", .field = "wellbeing.movement.duration_ms", .kind = .duration, .bounds = at_least_one },
-    .{ .section = .@"wellbeing.movement", .name = "lock_input", .field = "wellbeing.movement.lock_input" },
+    .{ .section = .@"wellbeing.movement", .name = "during_reminder", .field = "wellbeing.movement.during_reminder", .kind = .set },
     .{ .section = .@"wellbeing.movement", .name = "animation", .field = "wellbeing.movement.animation" },
     .{ .section = .@"wellbeing.routines", .name = "hydration_interval", .field = "wellbeing.routines.hydration_interval_ms", .kind = .duration, .bounds = at_least_one, .null_keyword = .none },
     .{ .section = .@"wellbeing.routines", .name = "posture_interval", .field = "wellbeing.routines.posture_interval_ms", .kind = .duration, .bounds = at_least_one, .null_keyword = .none },
-    .{ .section = .@"wellbeing.routines", .name = "lock_input", .field = "wellbeing.routines.lock_input" },
+    .{ .section = .@"wellbeing.routines", .name = "during_reminder", .field = "wellbeing.routines.during_reminder", .kind = .set },
     .{ .section = .@"wellbeing.routines", .name = "animation", .field = "wellbeing.routines.animation" },
+    // The tracker's field: privacy is where users look for what Rex records.
+    .{ .section = .@"wellbeing.privacy", .name = "track_foreground_apps", .field = "wellbeing.screen_time.track_foreground_apps" },
 
     .{ .section = .scroll, .name = "step_lines", .field = "scroll.lines", .bounds = at_least_one },
     .{ .section = .scroll, .name = "wheel_lines", .field = "scroll.wheel_lines", .bounds = at_least_one },
@@ -343,21 +356,13 @@ pub const internal = [_][]const u8{
     "window.quit_dialog",
     "window.button",
     // Wellbeing settings not exposed yet (some come back from keys.retired).
-    "wellbeing.privacy",
+    "wellbeing.privacy.state_dir",
+    "wellbeing.privacy.state_filename",
     "wellbeing.screen_time.proc_sample_interval_ms",
-    "wellbeing.screen_time.grayscale_on_limit",
-    "wellbeing.screen_time.grayscale_transition_ms",
-    "wellbeing.screen_time.lock_input_on_limit",
-    "wellbeing.screen_time.show_limit_animation",
-    "wellbeing.screen_time.track_foreground_apps",
     "wellbeing.eyesight.prompt",
     "wellbeing.movement.prompt",
     "wellbeing.focus.display",
     "wellbeing.focus.time_fields",
-    "wellbeing.focus.timer_mode",
-    "wellbeing.focus.transition_mode",
-    "wellbeing.focus.rotate_break_prompts",
-    "wellbeing.focus.auto_pause_on_alert",
     "wellbeing.winddown.prompt",
     "wellbeing.routines.hydration_prompt",
     "wellbeing.routines.posture_prompt",
@@ -432,6 +437,14 @@ fn writeExpectedKey(comptime key: Key, w: *std.Io.Writer) std.Io.Writer.Error!vo
         .fraction => try w.writeAll("a number from 0 to 1"),
         .duration => try w.writeAll("a duration of at least 1ms, like 500ms, 30s, 25m or 1h"),
         .time_of_day => try w.writeAll("a time of day from 00:00 to 23:59, like 21:30"),
+        .set => {
+            try w.writeAll("none, or any of ");
+            inline for (@typeInfo(Value.Key).@"enum".fields, 0..) |field, i| {
+                if (i > 0) try w.writeAll(", ");
+                try w.writeAll(field.name);
+            }
+            try w.writeAll(" separated by commas");
+        },
         .font_weight => try w.print("a whole number from {d} to {d}", .{ key.bounds.min, key.bounds.max }),
         .theme => {
             try w.writeAll("a theme name: ");
@@ -643,6 +656,7 @@ fn checkRow(comptime key: Key, comptime T: type) void {
         .fraction => @typeInfo(Value) == .float,
         .duration => @typeInfo(Value) == .int and @typeInfo(Value).int.signedness == .unsigned,
         .time_of_day => Value == TimeOfDay,
+        .set => isEnumSet(Value) and !@hasField(Value.Key, "none") and !@hasField(Value.Key, "default"),
         .font_weight => @typeInfo(Value) == .float,
         .theme => Value == Theme,
         .font_fallback => Value == []const FontConfig.Face,
@@ -667,6 +681,7 @@ fn parseValue(comptime key: Key, comptime V: type, text: []const u8) Error!V {
         .fraction => return fitFloat(V, .{ .min = 0, .max = 1 }, try parseDecimal(text)),
         .duration => return fitInt(V, key.bounds, try parseDuration(text)),
         .time_of_day => return parseTimeOfDay(text),
+        .set => return parseSet(V, text),
         .font_weight => {
             const weight = try parseDigits(text);
             if (!inBounds(key.bounds, @floatFromInt(weight))) return error.OutOfRange;
@@ -743,6 +758,25 @@ fn parseTimeOfDay(text: []const u8) Error!TimeOfDay {
     const minute = try parseDigits(text[3..5]);
     if (hour > 23 or minute > 59) return error.OutOfRange;
     return .{ .hour = @intCast(hour), .minute = @intCast(minute) };
+}
+
+fn isEnumSet(comptime T: type) bool {
+    return @typeInfo(T) == .@"struct" and @hasDecl(T, "Key") and T == std.EnumSet(T.Key);
+}
+
+/// `none`, or tag names separated by commas with optional spaces or tabs
+/// around each. An empty member or a repeated one is invalid.
+fn parseSet(comptime S: type, text: []const u8) Error!S {
+    if (std.mem.eql(u8, text, "none")) return .empty;
+    var set: S = .empty;
+    var it = std.mem.splitScalar(u8, text, ',');
+    while (it.next()) |raw| {
+        const name = std.mem.trim(u8, raw, " \t");
+        const member = std.meta.stringToEnum(S.Key, name) orelse return error.InvalidValue;
+        if (set.contains(member)) return error.InvalidValue;
+        set.insert(member);
+    }
+    return set;
 }
 
 /// Dot paths of every leaf field reachable from `T`: struct fields are entered,
