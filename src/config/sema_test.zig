@@ -152,6 +152,20 @@ test "apply: retired, duplicate and missing values" {
     try std.testing.expectEqual(3, a.tree.tokenLocation(a.result.set_by[keys.lookup(.window, "width").?].?).line);
 }
 
+test "apply: font sizes are bounded to 1 to 1000" {
+    var a = try Applied.init(
+        \\[font]
+        \\size = 1001
+        \\max_size = 1000
+    );
+    defer a.deinit();
+    try a.expectErrors(&.{
+        .{ .value_out_of_range, 1, "font.size = 1001 is out of range, expected a whole number from 1 to 1000" },
+    });
+    try std.testing.expectEqual(defaults.font.size, a.config.font.size);
+    try std.testing.expectEqual(1000, a.config.font.max_size);
+}
+
 test "apply: invalid, out of range and not applicable values keep the old value" {
     var a = try Applied.init(
         \\[bell]
@@ -166,7 +180,7 @@ test "apply: invalid, out of range and not applicable values keep the old value"
     defer a.deinit();
     try a.expectErrors(&.{
         .{ .invalid_value, 1, "invalid value 'loud' for bell.volume, expected a number from 0 to 1" },
-        .{ .value_out_of_range, 3, "scroll.step_lines = 0 is out of range, expected a whole number from 1 to 4294967295" },
+        .{ .value_out_of_range, 3, "scroll.step_lines = 0 is out of range, expected a whole number of at least 1" },
         .{ .invalid_value, 5, "invalid value '5' for toast.duration, expected a duration of at least 1ms, like 500ms, 30s, 25m or 1h" },
         .{ .invalid_value, 7, "invalid value '\"subtle\"' for modal.border_style, expected one of: semantic, subtle, or inherit" },
     });

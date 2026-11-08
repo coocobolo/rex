@@ -135,16 +135,20 @@ pub const ApplyError = Error || Allocator.Error;
 pub const eval_branch_quota = 2000 * table.len;
 
 const at_least_one: Bounds = .{ .min = 1 };
+/// Font sizes in logical pixels. The cap only rejects absurd values: the
+/// real limit is a glyph fitting the atlas texture, which depends on the GL
+/// driver and the display scale.
+const font_size: Bounds = .{ .min = 1, .max = 1000 };
 
 pub const table = [_]Key{
     .{ .section = .root, .name = "theme", .field = "theme", .kind = .theme },
 
     // Font changes reach the rasterizer only with a size change (audit A2).
     .{ .section = .font, .name = "file", .field = "font.faces.family", .kind = .font_file, .reload = .restart },
-    .{ .section = .font, .name = "size", .field = "font.size", .bounds = at_least_one },
-    .{ .section = .font, .name = "size_step", .field = "font.size_step", .bounds = at_least_one },
-    .{ .section = .font, .name = "min_size", .field = "font.min_size", .bounds = at_least_one },
-    .{ .section = .font, .name = "max_size", .field = "font.max_size", .bounds = at_least_one },
+    .{ .section = .font, .name = "size", .field = "font.size", .bounds = font_size },
+    .{ .section = .font, .name = "size_step", .field = "font.size_step", .bounds = font_size },
+    .{ .section = .font, .name = "min_size", .field = "font.min_size", .bounds = font_size },
+    .{ .section = .font, .name = "max_size", .field = "font.max_size", .bounds = font_size },
     .{ .section = .font, .name = "weight", .field = "font.faces.family.variable.regular_weight", .kind = .font_weight, .bounds = .{ .min = 1, .max = 1000 }, .reload = .restart },
     .{ .section = .font, .name = "bold_weight", .field = "font.faces.family.variable.bold_weight", .kind = .font_weight, .bounds = .{ .min = 1, .max = 1000 }, .reload = .restart },
 
@@ -363,7 +367,14 @@ fn writeExpectedKey(comptime key: Key, w: *std.Io.Writer) std.Io.Writer.Error!vo
                     try w.writeAll(field.name);
                 }
             },
-            .int => try w.print("a whole number from {d} to {d}", .{ key.bounds.min, @min(key.bounds.max, @as(f64, @floatFromInt(std.math.maxInt(Value)))) }),
+            .int => {
+                const max = @min(key.bounds.max, @as(f64, @floatFromInt(std.math.maxInt(Value))));
+                // A 32-bit or wider type's own limit is no setting's real one.
+                if (max >= std.math.maxInt(u32))
+                    try w.print("a whole number of at least {d}", .{key.bounds.min})
+                else
+                    try w.print("a whole number from {d} to {d}", .{ key.bounds.min, max });
+            },
             .float => if (key.bounds.max == std.math.inf(f64))
                 try w.print("a number of at least {d}, like 4.5", .{key.bounds.min})
             else
