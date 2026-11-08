@@ -314,14 +314,13 @@ test "focus: session toggle, tick, and break prompt rotation" {
     try testing.expectEqual(reminders.AlertKind.healthy_break, res.alert.?.kind);
 }
 
-test "reminders: lock_input and show_animation wave modulation" {
+test "reminders: lock_input and animation wave modulation" {
     var wb = wellbeing.Wellbeing.init(.{
         .eyesight = .{
             .enabled = true,
             .interval_ms = 1 * std.time.ms_per_min,
             .duration_ms = 20 * std.time.ms_per_s,
             .lock_input = true,
-            .show_animation = true,
             .animation = .pulse_dim,
         },
         .winddown = .{
@@ -362,7 +361,7 @@ test "focus: auto_pause_on_alert freezes task timer during locked health reminde
             .interval_ms = 1 * std.time.ms_per_min, // 60s
             .duration_ms = 10 * std.time.ms_per_s,
             .lock_input = true,
-            .show_animation = false,
+            .animation = .none,
         },
         .routines = .{
             .hydration_interval_ms = null,

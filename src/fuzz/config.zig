@@ -109,6 +109,7 @@ const seeds = [_][]const u8{
     "[toast]\nposition = bottom_right\nduration = 3s\nmin_cols = 20\nmax_cols = 40\n[banner]\nplacement = docked\n",
     "[wellbeing.screen_time]\ndaily_limit = none\nidle_threshold = 3m\n[wellbeing.focus]\ntask = 25m\nshort_break = 5m\nlong_break = 1h\ntasks_before_long_break = 4\n",
     "[wellbeing.winddown]\nenabled = true\nstart = 21:30\nend = 06:00\nwarmth = 0.5\nmute_bell = false\nstart = 24:00\nend = 9:00\n",
+    "[wellbeing.eyesight]\nenabled = false\ninterval = 20m\nduration = 20s\nlock_input = true\nanimation = sparkle\n[wellbeing.movement]\ninterval = 0s\nanimation = none\n[wellbeing.routines]\nhydration_interval = none\nposture_interval = default\nlock_input = false\n",
     "[wellbeing.winddown]\nstart = 22:00\nend = 22:00\nend = default\n",
     "[keybinds]\nctrl+shift+c = copy_selection\nctrl+shift+v = paste_clipboard\nctrl+f13 = quit\nctrl+a b = quit\nctrl+q = none\n",
     "[font]\nfile = \"~/fonts/a \\\"b\\\".ttf\"\nweight = 350\nbold_weight = 700\nfile = rel/x.ttf\n",

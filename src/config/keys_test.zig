@@ -318,6 +318,9 @@ const enum_names = [_]struct { []const u8, []const []const u8 }{
     .{ "modal.default_focus", &.{ "confirm", "cancel" } },
     .{ "modal.border_shape", &.{ "rounded", "sharp" } },
     .{ "modal.border_style", &.{ "semantic", "subtle" } },
+    .{ "wellbeing.eyesight.animation", &.{ "none", "pulse_dim", "grayscale_wave", "warm_glow" } },
+    .{ "wellbeing.movement.animation", &.{ "none", "pulse_dim", "grayscale_wave", "warm_glow" } },
+    .{ "wellbeing.routines.animation", &.{ "none", "pulse_dim", "grayscale_wave", "warm_glow" } },
 };
 
 test "table: enum value names are pinned" {

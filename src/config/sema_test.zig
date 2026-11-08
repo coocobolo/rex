@@ -205,6 +205,46 @@ test "apply: font min_size above max_size reverts both" {
     try std.testing.expectEqual(null, a.result.set_by[keys.lookup(.font, "min_size").?]);
 }
 
+test "apply: retired wellbeing intervals point to their new keys" {
+    var a = try Applied.init(
+        \\[wellbeing]
+        \\eyesight_interval = 10m
+        \\posture_interval = 10m
+        \\[wellbeing.eyesight]
+        \\interval = 10m
+    );
+    defer a.deinit();
+    try a.expectErrors(&.{
+        .{ .retired_key, 1, "'eyesight_interval' was renamed to 'wellbeing.eyesight.interval'" },
+        .{ .retired_key, 2, "'posture_interval' was renamed to 'wellbeing.routines.posture_interval'" },
+    });
+    try std.testing.expectEqual(10 * std.time.ms_per_min, a.config.wellbeing.eyesight.interval_ms);
+}
+
+test "apply: reminder sections set their options" {
+    var a = try Applied.init(
+        \\[wellbeing.movement]
+        \\enabled = false
+        \\interval = 1h
+        \\duration = 90s
+        \\lock_input = true
+        \\animation = warm_glow
+        \\[wellbeing.routines]
+        \\hydration_interval = none
+        \\posture_interval = 15m
+    );
+    defer a.deinit();
+    try a.expectErrors(&.{});
+    const wb = a.config.wellbeing;
+    try std.testing.expect(!wb.movement.enabled);
+    try std.testing.expectEqual(std.time.ms_per_hour, wb.movement.interval_ms);
+    try std.testing.expectEqual(90 * std.time.ms_per_s, wb.movement.duration_ms);
+    try std.testing.expect(wb.movement.lock_input);
+    try std.testing.expectEqual(.warm_glow, wb.movement.animation);
+    try std.testing.expectEqual(null, wb.routines.hydration_interval_ms);
+    try std.testing.expectEqual(15 * std.time.ms_per_min, wb.routines.posture_interval_ms);
+}
+
 test "apply: winddown start equal to end reverts both" {
     var a = try Applied.init(
         \\[wellbeing.winddown]
