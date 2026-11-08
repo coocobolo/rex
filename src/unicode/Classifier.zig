@@ -166,6 +166,8 @@ pub fn init(option: Option) InitError!Classifier {
         classifier.ascii_kind[cp] = .word;
     }
 
+    // Applied to `ascii_kind`; the caller's slice is not kept (see Option).
+    classifier.option.extra_word_chars = "";
     return classifier;
 }
 
@@ -248,6 +250,15 @@ test "Classifier: extra ASCII characters become word characters" {
 
     // Characters not included in the configuration remain punctuation.
     try testing.expectEqual(Kind.punctuation, classifier.classify('!').kind);
+}
+
+test "Classifier: init does not keep the extra_word_chars slice" {
+    var chars = "-./".*;
+    const classifier = try Classifier.init(.{ .extra_word_chars = &chars });
+    try testing.expectEqual(0, classifier.option.extra_word_chars.len);
+    // The table holds the result, so the caller may reuse its buffer.
+    chars = "abc".*;
+    try testing.expectEqual(Kind.word, classifier.classify('-').kind);
 }
 
 test "Classifier: extra word characters join word characters" {
