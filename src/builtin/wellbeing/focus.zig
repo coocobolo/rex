@@ -28,7 +28,7 @@ pub const Option = struct {
 
     pub const TimerMode = enum { countup, countdown };
     pub const TransitionMode = enum { auto, manual };
-    pub const TimeField = enum { hour, minute, second, milisecond };
+    pub const TimeField = enum { hour, minute, second, millisecond };
     pub const TimeFields = std.EnumSet(TimeField);
 
     pub const Display = struct {
@@ -231,7 +231,7 @@ pub const State = struct {
             .short_break, .long_break => .task,
         } else self.phase;
 
-        // Resolve display in milisecond
+        // Resolve display in milliseconds
         const display_ms: u64 = if (self.waiting)
             self.getDuration(effective_phase)
         else blk: {
@@ -281,7 +281,7 @@ pub const State = struct {
             first = false;
         }
 
-        if (time_fields.contains(.milisecond)) {
+        if (time_fields.contains(.millisecond)) {
             if (!first) {
                 time_buf[end] = '.';
                 end += 1;

@@ -37,11 +37,6 @@ pub const Option = struct {
         modal_enabled: bool = true,
     } = .{},
 
-    notification: struct {
-        channel: enum { title, toast, bell, desktop_osc, all } = .all,
-        visual_bell_on_muted: bool = true,
-    } = .{},
-
     pub const default: Option = .{};
 };
 

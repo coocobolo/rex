@@ -1042,8 +1042,8 @@ pub fn notifySimple(self: *App, title: []const u8, description: []const u8, vari
         .border_style = self.config.window.toast.border_style,
         .corner_radius = self.config.window.card.effectiveRadius(),
         .border_width = self.config.window.card.border_width,
-        .min_width = self.config.window.toast.min_width,
-        .max_width = self.config.window.toast.max_width,
+        .min_cols = self.config.window.toast.min_cols,
+        .max_cols = self.config.window.toast.max_cols,
         .margin_cols = self.config.window.toast.margin_cols,
         .margin_rows = self.config.window.toast.margin_rows,
         .icon_style = self.config.window.icon.style,
@@ -1457,7 +1457,7 @@ fn quitConfirmModalRequest(card_opt: Card.Option, modal_opt: Modal.Option, quit_
         .variant = .warning,
         .border_style = modal_opt.border_style orelse card_opt.border_style,
         .dim_alpha = modal_opt.backdropAlpha(),
-        .width = modal_opt.width,
+        .cols = modal_opt.cols,
         .icon_style = modal_opt.icon_style,
         .corner_radius = modal_opt.corner_radius orelse card_opt.effectiveRadius(),
         .border_width = modal_opt.border_width orelse card_opt.border_width,
@@ -2501,7 +2501,7 @@ test "App: quitConfirmModalRequest layout and hitTest" {
     var custom_actions: [2]Modal.Action = undefined;
     const custom_req = quitConfirmModalRequest(.{}, .{
         .backdrop_opacity = 100.0 / 255.0,
-        .width = 50,
+        .cols = 50,
     }, .{
         .title = "TERMINATE NOW?",
         .confirm_label = "Yes, kill it",
@@ -2511,7 +2511,7 @@ test "App: quitConfirmModalRequest layout and hitTest" {
     try testing.expectEqualStrings("Yes, kill it", custom_actions[0].label);
     try testing.expectEqualStrings("No, go back", custom_actions[1].label);
     try testing.expectEqual(@as(u8, 100), custom_req.dim_alpha);
-    try testing.expectEqual(@as(u16, 50), custom_req.width);
+    try testing.expectEqual(@as(u16, 50), custom_req.cols);
 }
 
 test "App: quit confirm modal focus cycling and hotspot routing" {

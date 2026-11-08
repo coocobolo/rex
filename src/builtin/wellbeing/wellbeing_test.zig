@@ -137,10 +137,8 @@ test "reminders: eyesight 20-20-20 and movement triggers" {
 
 test "winddown: schedule window and color warmth tint" {
     var wd = winddown.WinddownEngine.init(.{
-        .start_hour = 21,
-        .start_minute = 0,
-        .end_hour = 7,
-        .end_minute = 0,
+        .start = .{ .hour = 21, .minute = 0 },
+        .end = .{ .hour = 7, .minute = 0 },
         .warmth_factor = 0.85,
     });
 

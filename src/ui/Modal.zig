@@ -30,7 +30,8 @@ pub const DefaultFocus = enum {
 };
 
 pub const Option = struct {
-    width: u16 = 46,
+    /// Dialog width, in terminal columns.
+    cols: u16 = 46,
     /// Opacity of the darkened backdrop behind the dialog, 0 to 1.
     backdrop_opacity: f32 = 180.0 / 255.0,
     blur: bool = false,
@@ -68,7 +69,7 @@ pub const Request = struct {
     dim_alpha: u8 = 180,
     corner_radius: f32 = 8.0,
     border_width: f32 = 1.0,
-    width: u16 = 46,
+    cols: u16 = 46,
 };
 
 /// Computed cell-grid geometry and interactive action rows for a centered modal card.
@@ -104,7 +105,7 @@ pub fn computeLayout(req: Request, total_cols: u16, total_rows: u16) ?Layout {
         desired_h += 1 + @as(u16, action_count);
     }
 
-    const modal_w: u16 = if (total_cols > 6) @min(total_cols - 4, req.width) else total_cols;
+    const modal_w: u16 = if (total_cols > 6) @min(total_cols - 4, req.cols) else total_cols;
     const modal_h: u16 = if (total_rows > desired_h + 2) desired_h else @min(total_rows, desired_h);
     const center_rect = Rect.center(total_cols, total_rows, modal_w, modal_h);
 

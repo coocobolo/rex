@@ -2,15 +2,28 @@ const std = @import("std");
 
 pub const Flags = packed struct(u8) {};
 
+/// A time of day on the 24-hour clock.
+pub const TimeOfDay = struct {
+    /// 0 to 23.
+    hour: u5,
+    /// 0 to 59.
+    minute: u6,
+
+    /// Minutes since midnight.
+    pub fn minutes(self: TimeOfDay) u11 {
+        std.debug.assert(self.hour < 24 and self.minute < 60);
+        return @as(u11, self.hour) * 60 + self.minute;
+    }
+};
+
 pub const WinddownOption = struct {
     enabled: bool = true,
-    start_hour: u8 = 21,
-    start_minute: u8 = 0,
-    end_hour: u8 = 7,
-    end_minute: u8 = 0,
+    /// The window starts at `start` and ends at `end`; it crosses midnight
+    /// when `end` is earlier than `start`.
+    start: TimeOfDay = .{ .hour = 21, .minute = 0 },
+    end: TimeOfDay = .{ .hour = 7, .minute = 0 },
     warmth_factor: f32 = 0.85,
     mute_audio_bell: bool = true,
-    reduced_bell_volume: u8 = 20,
     prompt: []const u8 = "Wind-down time. Time to wrap up work for today 🌙",
 };
 
@@ -42,8 +55,8 @@ pub const WinddownEngine = struct {
         const day_seconds = @mod(now_s, std.time.s_per_day);
         const cur_minute = @divFloor(day_seconds, 60);
 
-        const start_min = @as(i64, self.option.start_hour) * 60 + self.option.start_minute;
-        const end_min = @as(i64, self.option.end_hour) * 60 + self.option.end_minute;
+        const start_min: i64 = self.option.start.minutes();
+        const end_min: i64 = self.option.end.minutes();
 
         const in_window = if (start_min <= end_min)
             (cur_minute >= start_min and cur_minute < end_min)

@@ -44,8 +44,8 @@ pub const Option = struct {
     border_style: Toast.BorderStyle = .semantic,
     corner_radius: f32 = 8.0,
     border_width: f32 = 1.0,
-    min_width: u16 = 36,
-    max_width: u16 = 72,
+    min_cols: u16 = 36,
+    max_cols: u16 = 72,
     margin_cols: u16 = 2,
     margin_rows: u16 = 1,
     dismiss_str: []const u8 = "✕",
@@ -149,8 +149,8 @@ pub fn computeLayout(self: *const Banner, total_cols: u16, total_rows: u16, opt:
 
             const content_req = icon_w + 1 + text_w + 2 + dismiss_w;
             const desired_w = content_req + 4;
-            const max_allowed = if (total_cols > 4) @min(total_cols - 2, opt.max_width) else total_cols;
-            const min_allowed = @min(opt.min_width, max_allowed);
+            const max_allowed = if (total_cols > 4) @min(total_cols - 2, opt.max_cols) else total_cols;
+            const min_allowed = @min(opt.min_cols, max_allowed);
             const banner_w = std.math.clamp(desired_w, min_allowed, max_allowed);
 
             const col: u16 = switch (opt.position) {
@@ -279,8 +279,8 @@ test "Banner: init, layout computation, and message formatting" {
     // Test floating toast style
     const float_opt = Option{ .placement = .floating, .position = .top_center, .margin_rows = 1 };
     const float_layout = banner.computeLayout(80, 24, float_opt);
-    try testing.expect(float_layout.width >= float_opt.min_width);
-    try testing.expect(float_layout.width <= float_opt.max_width);
+    try testing.expect(float_layout.width >= float_opt.min_cols);
+    try testing.expect(float_layout.width <= float_opt.max_cols);
     try testing.expectEqual(@as(u16, 3), float_layout.height);
     try testing.expectEqual(@as(u16, 1), float_layout.row);
     try testing.expectEqual(@as(u16, 2), float_layout.text_row);

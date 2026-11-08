@@ -127,8 +127,8 @@ pub fn applyFileConfig(target: *Config, file: *const FileConfig, allocator: Allo
     if (file.toast_position) |pos| target.window.toast.position = pos;
     if (file.toast_border_style) |bs| target.window.toast.border_style = bs;
     if (file.toast_duration_ms) |dur| target.window.toast.duration_ms = dur;
-    if (file.toast_min_width) |mw| target.window.toast.min_width = mw;
-    if (file.toast_max_width) |mw| target.window.toast.max_width = mw;
+    if (file.toast_min_width) |mw| target.window.toast.min_cols = mw;
+    if (file.toast_max_width) |mw| target.window.toast.max_cols = mw;
     if (file.toast_margin_cols) |mc| target.window.toast.margin_cols = mc;
     if (file.toast_margin_rows) |mr| target.window.toast.margin_rows = mr;
 
@@ -139,13 +139,13 @@ pub fn applyFileConfig(target: *Config, file: *const FileConfig, allocator: Allo
     if (file.banner_border_style) |bs| target.window.banner.border_style = bs;
     if (file.banner_corner_radius) |cr| target.window.banner.corner_radius = cr;
     if (file.banner_border_width) |bw| target.window.banner.border_width = bw;
-    if (file.banner_min_width) |mw| target.window.banner.min_width = mw;
-    if (file.banner_max_width) |mw| target.window.banner.max_width = mw;
+    if (file.banner_min_width) |mw| target.window.banner.min_cols = mw;
+    if (file.banner_max_width) |mw| target.window.banner.max_cols = mw;
     if (file.banner_margin_cols) |mc| target.window.banner.margin_cols = mc;
     if (file.banner_margin_rows) |mr| target.window.banner.margin_rows = mr;
 
     // Modal options
-    if (file.modal_width) |w| target.window.modal.width = w;
+    if (file.modal_width) |w| target.window.modal.cols = w;
     if (file.modal_dim_alpha) |da| target.window.modal.backdrop_opacity = @as(f32, @floatFromInt(da)) / 255.0;
     if (file.modal_blur) |b| target.window.modal.blur = b;
     if (file.modal_blur_radius) |br| target.window.modal.blur_radius = br;

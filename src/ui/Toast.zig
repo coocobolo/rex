@@ -52,8 +52,8 @@ pub const Option = struct {
     border_style: BorderStyle = .semantic,
     icon_style: Icon.IconStyle = .auto,
     duration_ms: u32 = 5000,
-    min_width: u16 = 32,
-    max_width: u16 = 48,
+    min_cols: u16 = 32,
+    max_cols: u16 = 48,
     margin_cols: u16 = 2,
     margin_rows: u16 = 1,
     dismiss_str: ?[]const u8 = null,
@@ -78,8 +78,8 @@ pub const Request = struct {
     border_style: BorderStyle = .semantic,
     corner_radius: f32 = 8.0,
     border_width: f32 = 1.0,
-    min_width: u16 = 32,
-    max_width: u16 = 48,
+    min_cols: u16 = 32,
+    max_cols: u16 = 48,
     margin_cols: u16 = 2,
     margin_rows: u16 = 1,
 };
@@ -154,8 +154,8 @@ pub fn computeLayout(
         @max(desc_w, action_req_w),
     ) + icon_spacing;
     const desired_w: u16 = content_req +| 6;
-    const max_allowed_w: u16 = if (total_cols > 4) @min(total_cols - 2, req.max_width) else total_cols;
-    const min_allowed_w: u16 = @min(req.min_width, max_allowed_w);
+    const max_allowed_w: u16 = if (total_cols > 4) @min(total_cols - 2, req.max_cols) else total_cols;
+    const min_allowed_w: u16 = @min(req.min_cols, max_allowed_w);
     const toast_w: u16 = std.math.clamp(desired_w, min_allowed_w, max_allowed_w);
 
     const col: u16 = switch (req.position) {
@@ -397,8 +397,8 @@ pub const Queue = struct {
         border_style: BorderStyle = .semantic,
         corner_radius: f32 = 8.0,
         border_width: f32 = 1.0,
-        min_width: u16 = 32,
-        max_width: u16 = 48,
+        min_cols: u16 = 32,
+        max_cols: u16 = 48,
         margin_cols: u16 = 2,
         margin_rows: u16 = 1,
 
@@ -422,8 +422,8 @@ pub const Queue = struct {
                 .border_style = self.border_style,
                 .corner_radius = self.corner_radius,
                 .border_width = self.border_width,
-                .min_width = self.min_width,
-                .max_width = self.max_width,
+                .min_cols = self.min_cols,
+                .max_cols = self.max_cols,
                 .margin_cols = self.margin_cols,
                 .margin_rows = self.margin_rows,
             };
@@ -468,8 +468,8 @@ pub const Queue = struct {
             .border_style = req.border_style,
             .corner_radius = req.corner_radius,
             .border_width = req.border_width,
-            .min_width = req.min_width,
-            .max_width = req.max_width,
+            .min_cols = req.min_cols,
+            .max_cols = req.max_cols,
             .margin_cols = req.margin_cols,
             .margin_rows = req.margin_rows,
         };

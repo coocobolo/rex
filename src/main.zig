@@ -115,10 +115,8 @@ const prod_wellbeing_option: rex.builtin.wellbeing.Option = .{
     },
     .winddown = .{
         .enabled = false,
-        .start_hour = 0, // 9:00 PM
-        .start_minute = 0,
-        .end_hour = 23, // 7:00 AM
-        .end_minute = 0,
+        .start = .{ .hour = 0, .minute = 0 },
+        .end = .{ .hour = 23, .minute = 0 },
         .warmth_factor = 0.85,
         .mute_audio_bell = false,
         .prompt = "Wind-down time. Time to wrap up work for today.",
@@ -173,8 +171,8 @@ const toast_option = rex.ui.Toast.Option{
     .position = .top_right,
     .border_style = .semantic,
     .duration_ms = 5000,
-    .min_width = 32,
-    .max_width = 48,
+    .min_cols = 32,
+    .max_cols = 48,
     .margin_cols = 2,
     .margin_rows = 1,
 };
@@ -186,8 +184,8 @@ const banner_option = rex.ui.Banner.Option{
     .border_style = .semantic,
     .corner_radius = 8.0,
     .border_width = 1.0,
-    .min_width = 36,
-    .max_width = 72,
+    .min_cols = 36,
+    .max_cols = 72,
     .margin_cols = 2,
     .margin_rows = 1,
 };
@@ -197,7 +195,7 @@ const icon_option = rex.ui.Icon.Option{
 };
 
 const modal_option = rex.ui.Modal.Option{
-    .width = 46,
+    .cols = 46,
     .backdrop_opacity = 10.0 / 255.0,
     .close_on_outside_click = true,
     .default_focus = .confirm,

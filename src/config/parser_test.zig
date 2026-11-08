@@ -384,8 +384,8 @@ test "config: banner section and options parsing" {
     try testing.expectEqual(Banner.Position.top_center, app_cfg.window.banner.position);
     try testing.expectEqual(@as(f32, 6.0), app_cfg.window.banner.corner_radius);
     try testing.expectEqual(@as(f32, 1.5), app_cfg.window.banner.border_width);
-    try testing.expectEqual(@as(u16, 40), app_cfg.window.banner.min_width);
-    try testing.expectEqual(@as(u16, 80), app_cfg.window.banner.max_width);
+    try testing.expectEqual(@as(u16, 40), app_cfg.window.banner.min_cols);
+    try testing.expectEqual(@as(u16, 80), app_cfg.window.banner.max_cols);
     try testing.expectEqual(@as(u16, 3), app_cfg.window.banner.margin_cols);
     try testing.expectEqual(@as(u16, 2), app_cfg.window.banner.margin_rows);
 }

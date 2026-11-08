@@ -41,9 +41,6 @@ font: Font,
 keymap: []const Binding,
 wellbeing: WellbeingOption = .{},
 termio: SpawnOption,
-/// Bytes read from the pty per read call, default 65534. Bigger
-/// reads parse long output in fewer frames; 0 is treated as 1.
-read_buffer_size: usize = std.math.maxInt(u16) - 1,
 theme: Theme,
 /// Optional handcrafted design tokens override for custom surface and border styling.
 tokens: ?Tokens = null,
