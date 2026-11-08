@@ -23,6 +23,12 @@
 # and restored, and every window this script opens is closed on exit.
 #
 # Environment:
+#   FONT           required: a variable font file. Rex has no built-in font,
+#                  so the sandbox config sets `[font] file` to it
+#   FONT_CONF      a config fragment appended to the sandbox config, such as
+#                  `[font]` fallback lines; its keys override the defaults.
+#                  Results are comparable only between runs with the same
+#                  FONT and FONT_CONF (fonts change startup time and memory)
 #   IDLE_SECONDS   idle sampling time (default 60)
 #   PASTES         number of pastes (default 20)
 #   PASTE_KIB      size of each paste in KiB (default 1024)
@@ -75,6 +81,12 @@ latency_interval_ms="${LATENCY_INTERVAL_MS:-50}"
 latency_load="${LATENCY_LOAD:-1}"
 
 die() { echo "error: $*" >&2; exit 1; }
+
+font="${FONT:-}"
+font_conf="${FONT_CONF:-}"
+[ -n "$font" ] || die "set FONT to a variable font file: Rex has no built-in font"
+[ -f "$font" ] || die "FONT: no such file: $font"
+[ -z "$font_conf" ] || [ -f "$font_conf" ] || die "FONT_CONF: no such file: $font_conf"
 
 # Latency mode also runs in a Wayland session, with Rex on XWayland.
 platform=x11
@@ -156,10 +168,20 @@ fi
 # A real config file in the sandbox, so startup and reloads go through the
 # config loading path (keymap merging and the rest), not only the defaults.
 mkdir -p "$sandbox/.config/rex"
-"$prefix/bin/rex" config dump-default > "$sandbox/.config/rex/config"
+sandbox_config="$sandbox/.config/rex/config"
+"$prefix/bin/rex" config defaults > "$sandbox_config"
+font_quoted=${font//\\/\\\\}
+font_quoted=${font_quoted//\"/\\\"}
+printf '\n[font]\nfile = "%s"\n' "$font_quoted" >> "$sandbox_config"
+if [ -n "$font_conf" ]; then
+    printf '\n' >> "$sandbox_config"
+    cat "$font_conf" >> "$sandbox_config"
+fi
+"$prefix/bin/rex" config validate "$sandbox_config" > "$out/config-validate.txt" ||
+    die "the sandbox config has errors, see $out/config-validate.txt"
 if [ "$platform" = xwayland ]; then
-    sed -i 's/^platform = auto$/platform = x11/' "$sandbox/.config/rex/config"
-    grep -q '^platform = x11$' "$sandbox/.config/rex/config" || die "couldn't set platform = x11 in the sandbox config"
+    sed -i 's/^platform = auto$/platform = x11/' "$sandbox_config"
+    grep -q '^platform = x11$' "$sandbox_config" || die "couldn't set platform = x11 in the sandbox config"
 fi
 
 # Test data, generated once and reused across runs.
@@ -197,8 +219,9 @@ launch() {
     sink_target=$2
     printf 'HISTFILE=/dev/null\nstty %s\nexec cat > %q\n' "$3" "$sink_target" > "$sandbox/.bashrc"
     # 9>&-: Rex and everything it starts must not inherit the lock.
+    # SHELL: Rex starts $SHELL, and only bash reads the sink .bashrc.
     env -u XDG_CONFIG_HOME -u XDG_DATA_HOME -u XDG_STATE_HOME -u XDG_CACHE_HOME \
-        HOME="$sandbox" "${launch_env[@]}" "$prefix/bin/rex" > "$log" 2>&1 9>&- &
+        HOME="$sandbox" SHELL=/bin/bash "${launch_env[@]}" "$prefix/bin/rex" > "$log" 2>&1 9>&- &
     rex=$!
     pts=""
     for i in $(seq 100); do

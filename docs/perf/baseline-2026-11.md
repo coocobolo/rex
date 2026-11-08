@@ -60,6 +60,13 @@ ReleaseFast, 2026-11-06 22:08-22:13). Each Rex runs in a sandbox: its own
 temporary `HOME`, so **Rex uses its default config** and none of the user's
 files are read or written, and its shell is replaced by `cat > /dev/null`.
 
+At `cc4c6b2` the default config was compiled into `main.zig` and included
+the maintainer's fonts: a variable family with its italic, an emoji face
+and seven fallback fonts. Since the config rebuild (`57587ce`) the defaults
+name no font; `perf-gui.sh` takes `FONT` (required) and `FONT_CONF` (for
+example fallback lines). Startup time and memory depend on the fonts
+loaded, so compare those numbers only with runs that load the same fonts.
+
 - **Idle:** `pidstat` over 60 s, window open, nothing changing.
 - **Pastes:** 20 pastes of 1 MiB (`Ctrl+Shift+V`, clipboard set with
   `xclip`); RSS before and after; paste write errors counted in Rex's log.
