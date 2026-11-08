@@ -96,12 +96,19 @@ pub fn build(b: *std.Build) !void {
         .root_source_file = b.path("src/root.zig"),
         .optimize = optimize,
         .target = target,
-        .link_libc = true,
-        .imports = &.{
-            .{ .name = "c", .module = c_mod },
-            .{ .name = "glfw", .module = glfw_mod },
-        },
     });
+    // Shared with the fuzz module, whose config target reaches the renderer.
+    const native: Native = .{
+        .c = c_mod,
+        .glfw = glfw_mod,
+        .freetype_include = freetype_dep.path("include"),
+        .freetype = freetype_lib,
+        .glad_include = glad_dir.path(b, "include"),
+        .glad = glad_lib,
+        .glfw_include = glfw_dep.path("include"),
+        .glfw_lib = glfw_lib,
+    };
+    native.addTo(mod);
 
     // Per-stage input latency tracing (src/driver/latency_trace.zig). Off,
     // the hooks compile to nothing.
@@ -113,22 +120,6 @@ pub fn build(b: *std.Build) !void {
     const build_options = b.addOptions();
     build_options.addOption(bool, "trace_latency", trace_latency);
     mod.addImport("build_options", build_options.createModule());
-
-    mod.addIncludePath(freetype_dep.path("include"));
-    mod.linkLibrary(freetype_lib);
-
-    // FreeType is built with:
-    //   FT_CONFIG_OPTION_USE_ZLIB
-    //   FT_CONFIG_OPTION_USE_PNG
-    // Therefore its final consumer must link these system libraries.
-    mod.linkSystemLibrary("z", .{});
-    mod.linkSystemLibrary("png", .{});
-
-    mod.addIncludePath(glad_dir.path(b, "include"));
-    mod.linkLibrary(glad_lib);
-
-    mod.addIncludePath(glfw_dep.path("include"));
-    mod.linkLibrary(glfw_lib);
 
     if (target.result.os.tag == .linux) {
         // dlopen and pthread_* are part of libc from glibc 2.34 on, so
@@ -146,7 +137,6 @@ pub fn build(b: *std.Build) !void {
 
         // No X11 library is linked: GLFW loads its X11 libraries at
         // runtime, and so does the bell (renderer/Window.zig, Xlib).
-        mod.linkSystemLibrary("m", .{});
         // Building GLFW's X11 and Wayland backends needs their development
         // headers and wayland-scanner (GLFW loads the libraries itself at
         // runtime); FreeType uses libpng and zlib. On Debian/Ubuntu:
@@ -346,6 +336,7 @@ pub fn build(b: *std.Build) !void {
         .optimize = optimize,
         .imports = test_imports,
     });
+    native.addTo(fuzz_module);
     const fuzz_all = b.step("fuzz", "Run every fuzz target (--fuzz -Dllvm to fuzz)");
     fuzz_all.dependOn(tests.run(tests.add("fuzz", fuzz_module, test_filters)));
     inline for (fuzz_targets) |name| {
@@ -400,6 +391,41 @@ pub fn build(b: *std.Build) !void {
 /// null, else only that one. Runs from the build root so suites can read
 /// their testdata by relative path, and always reruns (timings are the
 /// output, not a cacheable artifact).
+/// What a module that reaches the renderer, GLFW or FreeType needs: libc,
+/// the C translations, the headers and the libraries. The rex module and
+/// the fuzz module both take it, so they can't drift apart.
+const Native = struct {
+    c: *std.Build.Module,
+    glfw: *std.Build.Module,
+    freetype_include: std.Build.LazyPath,
+    freetype: *std.Build.Step.Compile,
+    glad_include: std.Build.LazyPath,
+    glad: *std.Build.Step.Compile,
+    glfw_include: std.Build.LazyPath,
+    glfw_lib: *std.Build.Step.Compile,
+
+    fn addTo(native: Native, m: *std.Build.Module) void {
+        m.link_libc = true;
+        m.addImport("c", native.c);
+        m.addImport("glfw", native.glfw);
+
+        m.addIncludePath(native.freetype_include);
+        m.linkLibrary(native.freetype);
+        // FreeType is built with FT_CONFIG_OPTION_USE_ZLIB and
+        // FT_CONFIG_OPTION_USE_PNG, so its final consumer links both.
+        m.linkSystemLibrary("z", .{});
+        m.linkSystemLibrary("png", .{});
+
+        m.addIncludePath(native.glad_include);
+        m.linkLibrary(native.glad);
+
+        m.addIncludePath(native.glfw_include);
+        m.linkLibrary(native.glfw_lib);
+
+        m.linkSystemLibrary("m", .{});
+    }
+};
+
 fn benchRun(b: *std.Build, bench: *std.Build.Step.Compile, comptime suite: ?[]const u8) *std.Build.Step {
     const run = b.addRunArtifact(bench);
     run.setCwd(b.path("."));
