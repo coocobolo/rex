@@ -6,6 +6,8 @@
 const std = @import("std");
 
 pub const Config = @import("Config.zig");
+/// The built-in defaults (`default.zig`).
+pub const default = @import("default.zig").default;
 
 pub const types = @import("types.zig");
 pub const FileConfig = types.FileConfig;
@@ -52,6 +54,7 @@ test {
     _ = @import("keys_test.zig");
     _ = @import("sema_test.zig");
     _ = @import("keybind_test.zig");
+    _ = @import("default_test.zig");
     _ = @import("parser_test.zig");
     _ = @import("loader_test.zig");
     std.testing.refAllDecls(@This());

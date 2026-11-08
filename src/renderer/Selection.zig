@@ -138,6 +138,8 @@ pub const Option = struct {
     /// and the bottom corners of the last row.
     /// 0.0 = sharp corners.
     radius: f32 = 3.0,
+
+    pub const default: Option = .{};
 };
 
 shader: Shader,

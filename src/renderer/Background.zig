@@ -30,6 +30,8 @@ pub const Background = @This();
 pub const Option = struct {
     /// Global background opacity multiplier (0.0-1.0).
     alpha: f32 = 1.0,
+
+    pub const default: Option = .{};
 };
 
 shader: Shader,

@@ -109,6 +109,8 @@ pub const Option = struct {
     auto_hide: bool = true,
     /// target alpha when hidden, applied only when auto_hide is enabled
     auto_hide_alpha: f32 = 0.25,
+
+    pub const default: Option = .{};
 };
 
 shader: Shader,

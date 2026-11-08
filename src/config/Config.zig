@@ -13,8 +13,9 @@ const Cursor = @import("../renderer/Cursor.zig");
 const Decoration = @import("../renderer/Decoration.zig");
 const Atlas = @import("../renderer/Atlas.zig");
 const Scrollbar = @import("../renderer/Scrollbar.zig");
-const Selection = @import("../renderer/Selection.zig");
-const Window = @import("../renderer/Window.zig");
+/// How a selection looks (`window.selection`), not how it behaves (`selection`).
+const SelectionStyle = @import("../renderer/Selection.zig");
+const Platform = @import("../renderer/Window.zig").Platform;
 const Dimension = @import("../renderer/dimension.zig").Dimension;
 const Toast = @import("../ui/Toast.zig");
 const Banner = @import("../ui/Banner.zig");
@@ -31,12 +32,7 @@ const Classifier = @import("../unicode/Classifier.zig");
 const PlainVar = @import("../env/root.zig").PlainVar;
 const TerminalOption = @import("../term/term.zig").Option;
 
-blink: struct {
-    /// Half period of SGR 5 blink, in ms. 0 turns blinking off.
-    half_period_ms: u64 = 500,
-    /// Half period of SGR 6 rapid blink, in ms. 0 turns it off.
-    rapid_half_period_ms: u64 = 250,
-},
+blink: Blink,
 font: Font,
 keymap: []const Binding,
 wellbeing: WellbeingOption = .{},
@@ -44,8 +40,44 @@ termio: SpawnOption,
 theme: Theme,
 /// Optional handcrafted design tokens override for custom surface and border styling.
 tokens: ?Tokens = null,
-window: struct {
-    platform: Window.Platform = .auto,
+window: Window,
+scroll: struct {
+    /// Lines moved by the scroll_up and scroll_down actions.
+    lines: u32 = 3,
+    /// Lines moved per mouse wheel step.
+    wheel_lines: u32 = 3,
+} = .{},
+selection: Selection,
+/// Stores list of plain environment variable using "KEY=VALUE" format
+environments: []const PlainVar,
+/// Grid limits and identity: max_rows (200), max_cols (220),
+/// tab_width (8), max_scrollback (3896), ambiguous_width (.narrow),
+/// name ("rex") and version ("0.1.0"). Rows plus scrollback should
+/// be a power of two so the ring wastes nothing, see
+/// TerminalOption.optimized.
+///
+/// These size the screen at compile time, so the types below read
+/// them from the root file: main.zig declares
+/// `pub const rex_terminal_option = config.terminal;`. App.init
+/// fails to compile when the two differ.
+terminal: TerminalOption = default_terminal,
+/// Threading configuration: .single for in-loop synchronous execution,
+/// or .multi for dedicated background worker thread with wait-free triple buffer.
+threading: Threading = .{},
+
+/// Blink timing of SGR 5 and SGR 6 text.
+pub const Blink = struct {
+    /// Half period of SGR 5 blink, in ms. 0 turns blinking off.
+    half_period_ms: u64 = 500,
+    /// Half period of SGR 6 rapid blink, in ms. 0 turns it off.
+    rapid_half_period_ms: u64 = 250,
+
+    pub const default: Blink = .{};
+};
+
+/// The window and the UI drawn in it.
+pub const Window = struct {
+    platform: Platform = .auto,
     background: Background.Option,
     bell: Bell = .{},
     scrollbar: Scrollbar.Option,
@@ -58,7 +90,7 @@ window: struct {
     /// Glyph atlas texture size, default 2048x2048. Bigger fits more
     /// distinct glyphs (emoji, CJK, large fonts) before it is full.
     atlas: Atlas.Option = .{},
-    selection: Selection.Option,
+    selection: SelectionStyle.Option,
     /// Initial window size, in logical pixels (pixels at 100% scale).
     /// On X11 the window grows by the display scale when it's created;
     /// on Wayland the compositor scales it.
@@ -81,33 +113,30 @@ window: struct {
     button: Button.Option = .{},
     /// Prompts for confirmation before closing the window while the terminal session is active.
     confirm_quit: bool = true,
-},
-scroll: struct {
-    /// Lines moved by the scroll_up and scroll_down actions.
-    lines: u32 = 3,
-    /// Lines moved per mouse wheel step.
-    wheel_lines: u32 = 3,
-} = .{},
-selection: struct {
+
+    /// Neutral values: every option's own preset.
+    pub const default: Window = .{
+        .background = .default,
+        .scrollbar = .default,
+        .cursor = .default,
+        .selection = .default,
+    };
+};
+
+/// How selecting text behaves.
+pub const Selection = struct {
     mouse_double_click_interval_ms: u32 = 500,
     classifier: Classifier.Option,
-},
-/// Stores list of plain environment variable using "KEY=VALUE" format
-environments: []const PlainVar,
-/// Grid limits and identity: max_rows (200), max_cols (220),
-/// tab_width (8), max_scrollback (3896), ambiguous_width (.narrow),
-/// name ("rex") and version ("0.1.0"). Rows plus scrollback should
-/// be a power of two so the ring wastes nothing, see
-/// TerminalOption.optimized.
-///
-/// These size the screen at compile time, so the types below read
-/// them from the root file: main.zig declares
-/// `pub const rex_terminal_option = config.terminal;`. App.init
-/// fails to compile when the two differ.
-terminal: TerminalOption = default_terminal,
-/// Threading configuration: .single for in-loop synchronous execution,
-/// or .multi for dedicated background worker thread with wait-free triple buffer.
-threading: Threading = .{},
+
+    pub const default: Selection = .{ .classifier = .default };
+};
+
+/// The terminal's identity for programs started in it; the rest of their
+/// environment is inherited.
+pub const default_environments: []const PlainVar = &.{
+    .{ .key = "TERM", .value = "xterm-256color" },
+    .{ .key = "COLORTERM", .value = "truecolor" },
+};
 
 /// The terminal font. Sizes are in logical pixels (pixels at 100% scale);
 /// the rasterizer gets `FontConfig.pixelSize(size, content_scale)` device
@@ -121,6 +150,9 @@ pub const Font = struct {
     max_size: u32,
     /// Step of increase_font_size and decrease_font_size.
     size_step: u32 = 2,
+
+    /// Neutral values; no font file is chosen until #20 (`Faces.default`).
+    pub const default: Font = .{ .faces = .default, .size = 14, .min_size = 6, .max_size = 196 };
 };
 
 /// The bell on BEL and on pomodoro phase changes: the X bell on X11, window

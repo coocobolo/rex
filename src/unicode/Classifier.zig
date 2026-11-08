@@ -106,6 +106,8 @@ pub const Option = struct {
     /// Classification policy for ASCII control characters other than
     /// newline and carriage return.
     control: ControlPolicy = .boundary,
+
+    pub const default: Option = .{};
 };
 
 const Classifier = @This();

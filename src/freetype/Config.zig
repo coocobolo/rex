@@ -76,4 +76,8 @@ pub const Faces = struct {
     // we want font fallback happens around shaping, not merely around individual Unicode
     // codepoints.
     fallbacks: []const Face = &.{},
+
+    /// No font chosen: an empty variable-font path, which the user must set
+    /// (`[font] file`) until Rex has a default font (#20).
+    pub const default: Faces = .{ .family = .{ .variable = .{ .upright = "" } } };
 };

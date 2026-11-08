@@ -63,7 +63,7 @@ const font_config: rex.config.Config.Font = .{
     },
 };
 
-const prod_wellbeing_option: rex.builtin.wellbeing.Option = .{
+const wellbeing_option: rex.builtin.wellbeing.Option = .{
     .enabled = true,
     .focus = .{
         .task_ms = 25 * std.time.ms_per_min,
@@ -202,61 +202,38 @@ const modal_option = rex.ui.Modal.Option{
     .icon_style = .unicode,
 };
 
-pub const BracketPair = struct { open: u21, close: u21 };
-
-/// Terminal limits for the screen types, which App reads at compile
-/// time. Set them in config.terminal.
-pub const rex_terminal_option = config.terminal;
-
-const config: rex.config.Config = .{
-    .blink = .{ .half_period_ms = 500, .rapid_half_period_ms = 250 },
-    .font = font_config,
-    .keymap = rex.input.default_keymap,
-    .termio = .{
-        .argv = &.{ "/bin/bash", null },
-        .envp = &.{
-            // "SHELL=/bin/bash",
-            // "TERM=xterm-256color",
-            // "LANG=en_GB.UTF-8",
-            // "TERMINFO=/usr/share/terminfo",
-            // "COLORTERM=truecolor",
-            // "HOME=/home/ozy",
-            // "XDG_SESSION_DESKTOP=ubuntu",
-            // "XDG_RUNTIME_DIR=/run/user/1000",
-        },
-        .o_flags = .{ .NONBLOCK = true, .ASYNC = false },
-        .cwd = "/home/ozy/.project/rex",
-    },
-    .theme = .graphite,
-    .wellbeing = prod_wellbeing_option,
-    .window = .{
-        .background = background_option,
-        .cursor = cursor_option,
-        .decoration = decoration_option,
-        .scrollbar = scrollbar_option,
-        .selection = selection_option,
-        .card = card_option,
-        .toast = toast_option,
-        .banner = banner_option,
-        .icon = icon_option,
-        .modal = modal_option,
-        .confirm_quit = true,
-        .bell = .{ .enabled = true },
-    },
-    .environments = &.{
+/// This machine's settings on top of the built-in defaults. They move to the
+/// user config file once it can express them (config rebuild R4).
+const config: rex.config.Config = blk: {
+    var c = rex.config.default;
+    c.font = font_config;
+    c.wellbeing = wellbeing_option;
+    c.window.background = background_option;
+    c.window.cursor = cursor_option;
+    c.window.decoration = decoration_option;
+    c.window.scrollbar = scrollbar_option;
+    c.window.selection = selection_option;
+    c.window.card = card_option;
+    c.window.toast = toast_option;
+    c.window.banner = banner_option;
+    c.window.icon = icon_option;
+    c.window.modal = modal_option;
+    c.selection.classifier.extra_word_chars = &.{ '-', '/', '~', '.', '@' };
+    c.termio.argv = &.{ "/bin/bash", null };
+    c.termio.cwd = "/home/ozy/.project/rex";
+    c.environments = &.{
         .{ .key = "SHELL", .value = "/bin/bash" },
         .{ .key = "TERM", .value = "xterm-256color" },
         .{ .key = "LANG", .value = "en_GB.UTF-8" },
         .{ .key = "TERMINFO", .value = "/usr/share/terminfo" },
         .{ .key = "COLORTERM", .value = "truecolor" },
-    },
-    .threading = .{ .mode = .multi },
-    .selection = .{
-        .classifier = .{
-            .extra_word_chars = &.{ '-', '/', '~', '.', '@' },
-        },
-    },
+    };
+    break :blk c;
 };
+
+/// Terminal limits for the screen types, which App reads at compile
+/// time. Set them in config.terminal.
+pub const rex_terminal_option = config.terminal;
 
 pub fn main(init: std.process.Init) !void {
     run(init) catch |err| switch (err) {
@@ -313,7 +290,7 @@ fn run(init: std.process.Init) !void {
             );
             defer dirs.deinit(allocator);
 
-            var wb = rex.builtin.wellbeing.Wellbeing.init(prod_wellbeing_option);
+            var wb = rex.builtin.wellbeing.Wellbeing.init(config.wellbeing);
             wb.loadState(init.io, dirs.state);
 
             if (args.next()) |action| {

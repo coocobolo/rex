@@ -63,6 +63,8 @@ pub const Option = struct {
     /// Outline width in pixels when the window is unfocused; 0 keeps the
     /// cursor filled.
     hollow_border_width: f32 = 3.0,
+
+    pub const default: Option = .{};
 };
 
 shader: Shader,

@@ -321,3 +321,35 @@ test "table: every row's field resolves and qualified names are unique" {
         try std.testing.expectEqual(i, keys.lookup(key.section, key.name).?);
     }
 }
+
+test "exposure: every Config field is a key, a section or listed as internal" {
+    @setEvalBranchQuota(100_000);
+    const leaves = comptime keys.leafPaths(Config);
+    var uncovered: usize = 0;
+    for (leaves) |leaf| {
+        const covered = for (keys.table) |key| {
+            if (keys.covers(key.field, leaf)) break true;
+        } else for (keys.section_fields) |entry| {
+            if (keys.covers(entry[1], leaf)) break true;
+        } else for (keys.internal) |prefix| {
+            if (keys.covers(prefix, leaf)) break true;
+        } else false;
+        if (!covered) {
+            std.debug.print("not a key, a section field or internal: {s}\n", .{leaf});
+            uncovered += 1;
+        }
+    }
+    try std.testing.expectEqual(0, uncovered);
+}
+
+test "exposure: every internal entry names a Config field" {
+    @setEvalBranchQuota(100_000);
+    const leaves = comptime keys.leafPaths(Config);
+    for (keys.internal) |prefix| {
+        const exists = for (leaves) |leaf| {
+            if (keys.covers(prefix, leaf)) break true;
+        } else false;
+        errdefer std.debug.print("stale internal entry: {s}\n", .{prefix});
+        try std.testing.expect(exists);
+    }
+}

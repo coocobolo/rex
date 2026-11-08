@@ -252,6 +252,76 @@ pub fn retiredLookup(section: Section, name: []const u8) ?Retired {
     return null;
 }
 
+/// `Config` fields set by a whole section rather than a row.
+pub const section_fields = [_]struct { Section, []const u8 }{
+    .{ .keybinds, "keymap" },
+};
+
+/// `Config` fields (or subtrees) deliberately not exposed as keys. The
+/// exposure test (keys_test.zig) fails for a leaf field that is neither in a
+/// row, in `section_fields` nor here, so adding a field is a decision. This
+/// list is also what could become configurable later.
+pub const internal = [_][]const u8{
+    // Startup and process settings, set by main.zig or fixed at compile time.
+    "blink",
+    "termio",
+    "environments",
+    "terminal",
+    "threading",
+    // Font faces besides `file`: emoji and fallback lists (#20).
+    "font.faces.emoji",
+    "font.faces.fallbacks",
+    // Colors and UI tokens: a `[colors]` section later (#33).
+    "tokens",
+    // Rendering details.
+    "window.scrollbar",
+    "window.cursor",
+    "window.decoration",
+    "window.atlas",
+    "window.selection",
+    "selection",
+    // UI copy, glyphs and per-component styles not exposed yet; the surface
+    // style cascade (CF11) replaces the modal's own radius and width.
+    "window.title",
+    "window.toast.icon_style",
+    "window.toast.dismiss_str",
+    "window.toast.action_prompt",
+    "window.toast.action_margin",
+    "window.banner.dismiss_str",
+    "window.icon",
+    "window.modal.corner_radius",
+    "window.modal.border_width",
+    "window.modal.icon_style",
+    "window.quit_dialog",
+    "window.button",
+    // Wellbeing settings not exposed yet (some come back from keys.retired).
+    "wellbeing.privacy",
+    "wellbeing.screen_time.proc_sample_interval_ms",
+    "wellbeing.screen_time.grayscale_on_limit",
+    "wellbeing.screen_time.grayscale_transition_ms",
+    "wellbeing.screen_time.lock_input_on_limit",
+    "wellbeing.screen_time.show_limit_animation",
+    "wellbeing.screen_time.track_foreground_apps",
+    "wellbeing.eyesight",
+    "wellbeing.movement",
+    "wellbeing.focus.display",
+    "wellbeing.focus.time_fields",
+    "wellbeing.focus.timer_mode",
+    "wellbeing.focus.transition_mode",
+    "wellbeing.focus.rotate_break_prompts",
+    "wellbeing.focus.auto_pause_on_alert",
+    "wellbeing.winddown",
+    "wellbeing.routines",
+    "wellbeing.lock_screen",
+    "wellbeing.dashboard",
+};
+
+/// Whether `leaf` is `prefix` or lies below it.
+pub fn covers(prefix: []const u8, leaf: []const u8) bool {
+    return std.mem.eql(u8, prefix, leaf) or
+        (std.mem.startsWith(u8, leaf, prefix) and leaf.len > prefix.len and leaf[prefix.len] == '.');
+}
+
 /// `section.name` (or `name` for root keys) of each row, for messages.
 pub const qualified_names = blk: {
     var names: [table.len][]const u8 = undefined;
