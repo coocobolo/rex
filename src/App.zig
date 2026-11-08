@@ -79,6 +79,8 @@ const wellbeing = rex.builtin.wellbeing;
 const max_copy_size: usize = std.math.maxInt(u16) - 1;
 
 const Config = rex.config.Config;
+const Loaded = rex.config.Loaded;
+const diagnostics = rex.config.diagnostics;
 
 /// Terminal limits the screen, frame and renderer types are built
 /// with: the root rex_terminal_option when declared, else the defaults.
@@ -129,6 +131,8 @@ config_watcher: ?rex.config.Watcher = null,
 /// The user config file: the --config path, else <config dir>/config.
 /// Owned, freed in `deinit`.
 config_path: []const u8,
+/// `$HOME`, for `~/` paths in config files. Owned, freed in `deinit`.
+home_dir: []const u8,
 background_color: [4]f32,
 
 rasterizer: Rasterizer,
@@ -250,7 +254,7 @@ pub fn init(
     log.debug("envi.block.len: {d}", .{environ.block.slice.len});
 
     const home_dir = try environ.getAlloc(gpa, "HOME");
-    defer gpa.free(home_dir);
+    errdefer gpa.free(home_dir);
     if (!std.fs.path.isAbsolute(home_dir)) {
         return error.InvalidHomeDir;
     }
@@ -277,15 +281,24 @@ pub fn init(
     const user_cfg_path: []const u8 = if (custom_config_path) |ccp|
         try gpa.dupe(u8, ccp)
     else
-        try rex.config.resolveUserConfigPath(gpa, &dirs);
+        try rex.config.paths.user(gpa, &dirs);
     errdefer gpa.free(user_cfg_path);
 
-    // At startup a file with errors still applies as far as it parsed;
-    // the banner names the first error.
-    var loaded = try rex.config.load(gpa, config, .{ .user = user_cfg_path });
-    errdefer loaded.deinit();
-    const active_config = loaded.config;
-    const startup_banner: ?Banner = if (loaded.firstError()) |d| formatDiagnosticBanner(d) else null;
+    // At startup a file with errors still applies its valid entries; the
+    // banner names the first problem (decision P4).
+    var loaded = try Loaded.load(gpa, io, config, home_dir, &.{ .file(rex.config.paths.system), .file(user_cfg_path) });
+    defer loaded.deinit(gpa);
+    logConfigDiagnostics(gpa, &loaded);
+    const startup_banner = configBanner(&loaded);
+    var config_arena = loaded.takeArena();
+    errdefer config_arena.deinit();
+    var active_config = loaded.config;
+    // Clamped like every later size change (setFontSize).
+    active_config.font.size = @max(active_config.font.min_size, @min(active_config.font.size, active_config.font.max_size));
+    if (!hasFontFile(active_config.font)) {
+        log.err("no font: set `file` in [font] of {s}; Rex has no built-in font yet", .{user_cfg_path});
+        return error.NoFontFile;
+    }
 
     // apply user's overrides environment values
     for (active_config.environments) |*envp| {
@@ -430,10 +443,11 @@ pub fn init(
         .atlas = atlas,
         .frame_builder = frame_builder,
         .config = active_config,
-        .config_arena = loaded.arena,
+        .config_arena = config_arena,
         .base_config = config,
         .config_watcher = watcher,
         .config_path = user_cfg_path,
+        .home_dir = home_dir,
         .font_size = active_config.font.size,
         .content_scale = content_scale,
         .wellbeing_state = wellbeing_state,
@@ -452,6 +466,7 @@ pub fn init(
 pub fn deinit(self: *App, gpa: std.mem.Allocator) void {
     if (self.config_watcher) |*w| w.deinit();
     gpa.free(self.config_path);
+    gpa.free(self.home_dir);
 
     self.renderer.deinit();
     self.frame_builder.deinit(gpa);
@@ -1117,7 +1132,10 @@ pub fn reloadConfig(self: *App) void {
     // Built from the defaults, not on top of the current config, so a
     // setting removed from a file falls back to its default. The current
     // config stays valid until the swap below.
-    var loaded = rex.config.load(self.allocator, self.base_config, .{ .user = self.config_path }) catch |err| {
+    var loaded = Loaded.load(self.allocator, self.io, self.base_config, self.home_dir, &.{
+        .file(rex.config.paths.system),
+        .file(self.config_path),
+    }) catch |err| {
         var err_buf: [128]u8 = undefined;
         const err_msg = std.fmt.bufPrint(&err_buf, "Failed to apply: {}", .{err}) catch "Apply failed";
         self.config_banner = Banner.init(.err, "Config error", err_msg);
@@ -1126,22 +1144,30 @@ pub fn reloadConfig(self: *App) void {
         return;
     };
 
-    if (!loaded.foundAny() and loaded.diagnosticCount() == 0) {
-        loaded.deinit();
+    defer loaded.deinit(self.allocator);
+    logConfigDiagnostics(self.allocator, &loaded);
+
+    if (!loaded.found()) {
         self.notifySimple("Configuration", "No config file found", .neutral);
         return;
     }
 
-    // A running session keeps its config when a file has errors.
-    if (loaded.firstError()) |d| {
-        self.config_banner = formatDiagnosticBanner(d);
-        loaded.deinit();
+    // A running session keeps its config when a file has errors (decision
+    // P4); a config with only warnings applies, and the banner shows the
+    // first warning. Without either, the banner goes.
+    self.config_banner = configBanner(&loaded);
+    if (loaded.firstError() != null) {
+        self.frame_builder.last_generation = null;
+        self.needs_redraw = true;
+        return;
+    }
+    if (!hasFontFile(loaded.config.font)) {
+        self.config_banner = Banner.init(.err, "Config error", "font.file is not set; Rex has no built-in font yet");
         self.frame_builder.last_generation = null;
         self.needs_redraw = true;
         return;
     }
     const new_config = loaded.config;
-    const new_arena = loaded.arena;
 
     if (new_config.window.platform != self.config.window.platform) {
         log.info("window.platform takes effect on the next start", .{});
@@ -1152,11 +1178,8 @@ pub fn reloadConfig(self: *App) void {
     // but never reads it after opening the file, so this is safe. A new
     // rasterizer (font size change below) gets the new path.
     self.config_arena.deinit();
-    self.config_arena = new_arena;
+    self.config_arena = loaded.takeArena();
     self.config = new_config;
-
-    // Successfully applied: clear any previous configuration error banner
-    self.config_banner = null;
 
     // Live update renderer background color, alpha, and terminal theme
     const bg = self.config.theme.background;
@@ -1173,6 +1196,8 @@ pub fn reloadConfig(self: *App) void {
     // Live update wellbeing overlay options and tokens
     self.wellbeing_overlay.card_opt = self.config.window.card;
     self.wellbeing_overlay.modal_opt = self.config.window.modal;
+    self.wellbeing_overlay.toast_opt = self.config.window.toast;
+    self.wellbeing_overlay.icon_opt = self.config.window.icon;
     self.wellbeing_overlay.tokens = rex.color.Tokens.fromThemeWithOverride(self.config.theme, self.config.tokens);
 
     // Live update wellbeing tracking options
@@ -1431,17 +1456,59 @@ fn snapToLiveView(self: *App) void {
     self.needs_redraw = true;
 }
 
-fn formatDiagnosticBanner(diag: *const rex.config.Diagnostic) Banner {
-    const level: Banner.Level = if (diag.severity == .err) .err else .warn;
-    const prefix: []const u8 = if (diag.severity == .err) "Config error" else "Config warning";
+/// Whether the config names a font. The built-in defaults don't: Rex has no
+/// bundled font yet (#20).
+fn hasFontFile(font: Config.Font) bool {
+    return switch (font.faces.family) {
+        .variable => |variable| variable.upright[0] != 0,
+        .static => |static| static.regular[0] != 0,
+    };
+}
+
+/// Logs every config problem in full: the banner shows only the first one,
+/// and cuts long messages.
+fn logConfigDiagnostics(gpa: std.mem.Allocator, loaded: *const Loaded) void {
+    const counts = loaded.counts();
+    if (counts.errors == 0 and counts.warnings == 0) return;
+    var out: std.Io.Writer.Allocating = .init(gpa);
+    defer out.deinit();
+    loaded.writeDiagnostics(&out.writer, .{}) catch {
+        log.warn("config: {d} errors and {d} warnings, out of memory listing them", .{ counts.errors, counts.warnings });
+        return;
+    };
+    const text = std.mem.trimEnd(u8, out.written(), "\n");
+    if (counts.errors > 0) log.err("config problems:\n{s}", .{text}) else log.warn("config warnings:\n{s}", .{text});
+}
+
+/// The banner for the first error of `loaded`, else its first warning.
+fn configBanner(loaded: *const Loaded) ?Banner {
+    if (loaded.firstError()) |problem| switch (problem) {
+        .unreadable => |u| {
+            var buf: [128]u8 = undefined;
+            const name = std.fs.path.basename(u.layer.source.label);
+            const message = std.fmt.bufPrint(&buf, "cannot read {s}: {s}", .{ name, @errorName(u.err) }) catch "cannot read a config file";
+            return Banner.init(.err, "Config error", message);
+        },
+        .syntax => |e| return diagnosticBanner(&e.layer.state.loaded, .{ .syntax = e.err }),
+    };
+    if (loaded.firstWarning()) |w| return diagnosticBanner(&w.layer.state.loaded, .{ .sema = w.err });
+    return null;
+}
+
+fn diagnosticBanner(file: *const diagnostics.File, d: diagnostics.Diagnostic) Banner {
+    const level: Banner.Level, const prefix: []const u8 = switch (d.severity()) {
+        .err => .{ .err, "Config error" },
+        .warn => .{ .warn, "Config warning" },
+    };
+    const loc = file.tree.tokenLocation(d.token());
     var title_buf: [64]u8 = undefined;
-    const title = if (diag.line > 0 and diag.col > 0)
-        std.fmt.bufPrint(&title_buf, "{s} (line {d}, col {d})", .{ prefix, diag.line, diag.col }) catch prefix
-    else if (diag.line > 0)
-        std.fmt.bufPrint(&title_buf, "{s} (line {d})", .{ prefix, diag.line }) catch prefix
-    else
-        prefix;
-    return Banner.init(level, title, diag.message());
+    const title = std.fmt.bufPrint(&title_buf, "{s} (line {d}, col {d})", .{ prefix, loc.line + 1, loc.column + 1 }) catch prefix;
+    // Banner.init copies both strings. A message longer than its buffer is
+    // cut here; the log has it in full.
+    var message_buf: [256]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&message_buf);
+    diagnostics.renderMessage(file, d, &w) catch {};
+    return Banner.init(level, title, w.buffered());
 }
 
 fn quitConfirmModalRequest(card_opt: Card.Option, modal_opt: Modal.Option, quit_opt: Config.QuitDialog, actions: *[2]Modal.Action) Modal.Request {
@@ -2633,34 +2700,28 @@ test "App: a config reload starts from the defaults, in its own arena" {
         .environments = &.{},
     };
 
-    // First load: the file sets font_family and rebinds Ctrl+= to quit.
-    var with_settings: rex.config.FileConfig = .{};
+    // First load: the file sets the font and rebinds Ctrl+= to quit.
     const family = "/user/font.ttf";
-    with_settings.font_family = @splat(0);
-    @memcpy(with_settings.font_family.?[0..family.len], family);
-    with_settings.font_family_len = family.len;
-    with_settings.keybindings[0] = .{ .key = .equal, .mods = .{ .ctrl = true }, .action = .quit };
-    with_settings.keybindings_count = 1;
-    with_settings.keybindings_specified = true;
-
-    var first_arena: std.heap.ArenaAllocator = .init(gpa);
-    defer first_arena.deinit();
-    var first: Config = base;
-    try rex.config.applyFileConfig(&first, &with_settings, first_arena.allocator());
-    try testing.expectEqualStrings(family, std.mem.span(first.font.faces.family.variable.upright));
+    var first = try Loaded.load(gpa, testing.io, &base, null, &.{.{
+        .label = "config",
+        .from = .{ .text = .{ .bytes = "[font]\nfile = " ++ family ++ "\n[keybinds]\nctrl+equal = quit\n", .dir = "/" } },
+    }});
+    defer first.deinit(gpa);
+    try testing.expectEqual(null, first.firstError());
+    try testing.expectEqualStrings(family, std.mem.span(first.config.font.faces.family.variable.upright));
     var ctrl_equal_quits = false;
-    for (first.keymap) |b| {
+    for (first.config.keymap) |b| {
         if (b.key == .equal and b.mods.ctrl and !b.mods.shift) ctrl_equal_quits = b.action == .quit;
     }
     try testing.expect(ctrl_equal_quits);
 
     // Reload: the settings were removed from the file. Built from the base
     // again, the config is back to the defaults.
-    const without_settings: rex.config.FileConfig = .{};
-    var second_arena: std.heap.ArenaAllocator = .init(gpa);
-    defer second_arena.deinit();
-    var second: Config = base;
-    try rex.config.applyFileConfig(&second, &without_settings, second_arena.allocator());
-    try testing.expectEqualStrings("/base/upright.ttf", std.mem.span(second.font.faces.family.variable.upright));
-    try testing.expectEqual(base.keymap.ptr, second.keymap.ptr);
+    var second = try Loaded.load(gpa, testing.io, &base, null, &.{.{
+        .label = "config",
+        .from = .{ .text = .{ .bytes = "", .dir = "/" } },
+    }});
+    defer second.deinit(gpa);
+    try testing.expectEqualStrings("/base/upright.ttf", std.mem.span(second.config.font.faces.family.variable.upright));
+    try testing.expectEqual(base.keymap.ptr, second.config.keymap.ptr);
 }

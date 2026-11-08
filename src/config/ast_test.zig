@@ -1,6 +1,5 @@
 const std = @import("std");
 const Ast = @import("Ast.zig");
-const merge = @import("merge.zig");
 
 const gpa = std.testing.allocator;
 
@@ -267,22 +266,6 @@ fn parseAndFree(allocator: std.mem.Allocator, source: []const u8) !void {
 test "parse: frees everything on allocation failure" {
     const source = "# c\ntheme = x\n[card\nk = \"open\n[a] b\nfoo\n= v\n[ok]\nkey value\n";
     try std.testing.checkAllAllocationFailures(gpa, parseAndFree, .{source});
-}
-
-test "parse: the canonical default config has no errors" {
-    var tree = try Ast.parse(gpa, merge.canonical_default_config);
-    defer tree.deinit(gpa);
-    try std.testing.expectEqual(0, tree.errors.len);
-
-    // Counted on the template at e766c8c (446 lines): 8 section headers and 68
-    // assignments, the same as the old lexer's section and key_value tokens. Update
-    // when the template changes.
-    var sections: usize = 0;
-    for (tree.entries) |entry| {
-        if (entry.tag == .section) sections += 1;
-    }
-    try std.testing.expectEqual(8, sections);
-    try std.testing.expectEqual(68, tree.entries.len - sections);
 }
 
 /// Bytes that change the tokenizer's state, plus one ordinary byte.

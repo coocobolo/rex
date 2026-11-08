@@ -1,255 +1,23 @@
 const std = @import("std");
 const rex = @import("rex");
-const builtin = @import("builtin");
-const native_os = builtin.os.tag;
 
 pub const std_options: std.Options = .{
     .log_level = .debug,
 };
-const log = std.log.scoped(.main);
 
-const font_config: rex.config.Config.Font = .{
-    .size = 20,
-    .min_size = 6,
-    .max_size = 196,
-    .faces = .{
-        .family = .{
-            // .static = .{
-            //     .regular = "/home/ozy/.local/share/fonts/JetBrainsMono/JetBrainsMonoNerdFontMono-Regular.ttf",
-            //     .bold = "/home/ozy/.local/share/fonts/JetBrainsMono/JetBrainsMonoNerdFontMono-Bold.ttf",
-            //     .italic = "/home/ozy/.local/share/fonts/JetBrainsMono/JetBrainsMonoNerdFontMono-Italic.ttf",
-            //     .bold_italic = "/home/ozy/.local/share/fonts/JetBrainsMono/JetBrainsMonoNerdFontMono-BoldItalic.ttf",
-            // },
-            // .static = .{
-            //     .regular = "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
-            //     .bold = "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf",
-            //     .italic = "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Oblique.ttf",
-            //     .bold_italic = "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-BoldOblique.ttf",
-            // },
-            .variable = .{
-                .upright = "/home/ozy/.local/share/fonts/GoogleSansCode-VariableFont_MONO,wght.ttf",
-                .italic = "/home/ozy/.local/share/fonts/GoogleSansCode-Italic-VariableFont_MONO,wght.ttf",
-                .bold_weight = 550,
-                .regular_weight = 400,
-            },
-        },
-        // .emoji = .static("/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf"),
-        .emoji = .static("/home/ozy/.local/share/fonts/JetBrainsMono/JetBrainsMonoNerdFontMono-Regular.ttf"),
-        .fallbacks = &.{
-            // General Latin/Greek/Cyrillic and lots of symbols
-            .static("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
-            // CJK
-            .static("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"),
-            // Symbols
-            .static("/usr/share/fonts/truetype/noto/NotoSansSymbols-Regular.ttf"),
-            .static("/usr/share/fonts/truetype/noto/NotoSansSymbols2-Regular.ttf"),
-
-            // Math
-            .static("/usr/share/fonts/truetype/noto/NotoSansMath-Regular.ttf"),
-            // Historical / niche scripts
-            .static("/usr/share/fonts/truetype/noto/NotoSansRunic-Regular.ttf"),
-
-            .static("/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf"),
-
-            // Scripts
-            // .static("/usr/share/fonts/truetype/noto/NotoSansArabic-Regular.ttf"),
-            // .static("/usr/share/fonts/truetype/noto/NotoSansHebrew-Regular.ttf"),
-            // .static("/usr/share/fonts/truetype/noto/NotoSansDevanagari-Regular.ttf"),
-            // .static("/usr/share/fonts/truetype/noto/NotoSansBengali-Regular.ttf"),
-            // .static("/usr/share/fonts/truetype/noto/NotoSansTamil-Regular.ttf"),
-            // .static("/usr/share/fonts/truetype/noto/NotoSansTelugu-Regular.ttf"),
-            // .static("/usr/share/fonts/truetype/noto/NotoSansThai-Regular.ttf"),
-        },
-    },
-};
-
-const wellbeing_option: rex.builtin.wellbeing.Option = .{
-    .enabled = true,
-    .focus = .{
-        .task_ms = 25 * std.time.ms_per_min,
-        .short_break_ms = 5 * std.time.ms_per_min,
-        .long_break_ms = 15 * std.time.ms_per_min,
-        .tasks_before_long_break = 4,
-        .timer_mode = .countdown,
-        .transition_mode = .manual,
-        .mute_notifications_in_task = true,
-        .rotate_break_prompts = true,
-        .lock_input_on_break = false, // Set to true if you want strict break enforcement
-        .show_break_animation = true,
-    },
-    .screen_time = .{
-        .daily_limit_ms = 8 * std.time.ms_per_hour,
-        .grayscale_on_limit = true,
-        .grayscale_transition_ms = std.time.ms_per_min, // smooth fade into grayscale
-        .idle_threshold_ms = 3 * std.time.ms_per_min, // idle pauses tracking
-        .proc_sample_interval_ms = 5 * std.time.ms_per_s,
-        .track_foreground_apps = true,
-        .lock_input_on_limit = false,
-        .show_limit_animation = false,
-    },
-    .eyesight = .{
-        .enabled = true,
-        .interval_ms = 20 * std.time.ms_per_min, // 20-20-20 rule
-        .duration_ms = 20 * std.time.ms_per_s,
-        .lock_input = false,
-        .show_animation = true,
-        .animation = .pulse_dim,
-        .prompt = "Look at an object 20 feet away for 20 seconds.",
-    },
-    .movement = .{
-        .enabled = true,
-        .interval_ms = 50 * std.time.ms_per_min,
-        .duration_ms = 60 * std.time.ms_per_s,
-        .lock_input = false,
-        .show_animation = true,
-        .animation = .warm_glow,
-        .prompt = "Time to stand up, stretch your back, and move.",
-    },
-    .routines = .{
-        .hydration_interval_ms = 45 * std.time.ms_per_min,
-        .hydration_prompt = "Stay hydrated: drink some fresh water.",
-        .posture_interval_ms = 30 * std.time.ms_per_min,
-        .posture_prompt = "Check posture: roll shoulders back and align neck.",
-        .lock_input = false,
-        .show_animation = false,
-    },
-    .winddown = .{
-        .enabled = false,
-        .start = .{ .hour = 0, .minute = 0 },
-        .end = .{ .hour = 23, .minute = 0 },
-        .warmth_factor = 0.85,
-        .mute_audio_bell = false,
-        .prompt = "Wind-down time. Time to wrap up work for today.",
-    },
-    .privacy = .{
-        .strict_local = true,
-        .track_foreground_apps = true,
-    },
-};
-
-const scrollbar_option = rex.renderer.Scrollbar.Option{
-    // .auto_hide_alpha = 0.4,
-    // .width = 12,
-    .auto_hide_alpha = 0,
-    .auto_hide = true,
-    // .radius = 6.0,
-    // .hover_width = 12,
-    // .track_color = .{ 15, 16, 1, 1 },
-    // .thumb_color = .{ 59, 128, 0, 1 },
-    // .thumb_hover_color = .{ 59, 128, 0, 1 },
-};
-
-const selection_option = rex.renderer.Selection.Option{
-    .border_color = .{ 0.16, 0.16, 0.16, 0.8 },
-    .border_style = .unified,
-    .border_width = 0.75,
-    .fill_color = .{ 0.2, 0.2, 0.2, 0.50 },
-    .radius = 4.0,
-};
-
-// Every field defaults to the font's own lines, see Decoration.Option.
-const decoration_option = rex.renderer.Decoration.Option{};
-
-const background_option = rex.renderer.Background.Option{
-    .alpha = 0.98,
-};
-
-const cursor_option = rex.renderer.Cursor.Option{
-    .alpha = 1.0,
-    .hollow_border_width = 3.0,
-    .radius = 4.0,
-};
-
-const card_option = rex.renderer.Card.Option{
-    .corner_radius = 8.0,
-    .border_width = 1.0,
-    .border_shape = .rounded,
-};
-
-const toast_option = rex.ui.Toast.Option{
-    .enabled = true,
-    .position = .top_right,
-    .border_style = .semantic,
-    .duration_ms = 5000,
-    .min_cols = 32,
-    .max_cols = 48,
-    .margin_cols = 2,
-    .margin_rows = 1,
-};
-
-const banner_option = rex.ui.Banner.Option{
-    .enabled = true,
-    .placement = .floating,
-    .position = .top_center,
-    .border_style = .semantic,
-    .corner_radius = 8.0,
-    .border_width = 1.0,
-    .min_cols = 36,
-    .max_cols = 72,
-    .margin_cols = 2,
-    .margin_rows = 1,
-};
-
-const icon_option = rex.ui.Icon.Option{
-    .style = .unicode,
-};
-
-const modal_option = rex.ui.Modal.Option{
-    .cols = 46,
-    .backdrop_opacity = 10.0 / 255.0,
-    .close_on_outside_click = true,
-    .default_focus = .confirm,
-    .icon_style = .unicode,
-};
-
-/// This machine's settings on top of the built-in defaults. They move to the
-/// user config file once it can express them (config rebuild R4).
-const config: rex.config.Config = blk: {
-    var c = rex.config.default;
-    c.font = font_config;
-    c.wellbeing = wellbeing_option;
-    c.window.background = background_option;
-    c.window.cursor = cursor_option;
-    c.window.decoration = decoration_option;
-    c.window.scrollbar = scrollbar_option;
-    c.window.selection = selection_option;
-    c.window.card = card_option;
-    c.window.toast = toast_option;
-    c.window.banner = banner_option;
-    c.window.icon = icon_option;
-    c.window.modal = modal_option;
-    c.selection.classifier.extra_word_chars = &.{ '-', '/', '~', '.', '@' };
-    c.termio.argv = &.{ "/bin/bash", null };
-    c.termio.cwd = "/home/ozy/.project/rex";
-    c.environments = &.{
-        .{ .key = "SHELL", .value = "/bin/bash" },
-        .{ .key = "TERM", .value = "xterm-256color" },
-        .{ .key = "LANG", .value = "en_GB.UTF-8" },
-        .{ .key = "TERMINFO", .value = "/usr/share/terminfo" },
-        .{ .key = "COLORTERM", .value = "truecolor" },
-    };
-    break :blk c;
-};
+/// The built-in defaults; config files apply on top of them.
+const config = rex.config.default;
 
 /// Terminal limits for the screen types, which App reads at compile
 /// time. Set them in config.terminal.
 pub const rex_terminal_option = config.terminal;
 
 pub fn main(init: std.process.Init) !void {
-    run(init) catch |err| switch (err) {
-        // stdout closed early, e.g. `rex config dump-default | head`:
-        // the reader has what it wanted, so this isn't a failure.
-        error.BrokenPipe => return,
-        else => return err,
-    };
-}
-
-fn run(init: std.process.Init) !void {
     // Short-lived work that runs once (argument handling, the config
     // subcommands) uses the process arena. The app itself allocates and
     // frees for as long as it runs, so it gets the general purpose
     // allocator: with the arena, its frees would never return memory.
-    const allocator = init.arena.allocator();
+    const arena = init.arena.allocator();
     const environ = init.minimal.environ;
 
     var args = init.minimal.args.iterate();
@@ -260,87 +28,31 @@ fn run(init: std.process.Init) !void {
 
     while (args.next()) |arg| {
         if (std.mem.eql(u8, arg, "-h") or std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "help")) {
-            printHelp();
-            return;
+            subcmd = "help";
+            break;
         } else if (std.mem.eql(u8, arg, "-c") or std.mem.eql(u8, arg, "--config")) {
             custom_config_path = args.next() orelse {
                 printStderr("Error: --config requires a file path argument\n");
                 std.process.exit(1);
             };
-        } else if (std.mem.eql(u8, arg, "--dump-default") or std.mem.eql(u8, arg, "dump-default")) {
-            try rex.config.dumpDefaultConfig(stdout);
-            return;
-        } else if (subcmd == null) {
+        } else {
             subcmd = arg;
             break;
         }
     }
 
     if (subcmd) |sc| {
-        if (std.mem.eql(u8, sc, "wellbeing")) {
-            const home_dir = try environ.getAlloc(allocator, "HOME");
-            defer allocator.free(home_dir);
-            var envmap = try environ.createMap(allocator);
-            defer envmap.deinit();
-            var dirs = try rex.dirs.Application.resolve(
-                allocator,
-                rex_terminal_option.name,
-                home_dir,
-                &envmap,
-            );
-            defer dirs.deinit(allocator);
-
-            var wb = rex.builtin.wellbeing.Wellbeing.init(config.wellbeing);
-            wb.loadState(init.io, dirs.state);
-
-            if (args.next()) |action| {
-                if (std.mem.eql(u8, action, "clear")) {
-                    try wb.purgeHistory(init.io, dirs.state);
-                    printStdout("Wellbeing history purged.\n");
-                    return;
-                }
-            }
-
-            var buf: [2048]u8 = undefined;
-            const card = wb.renderDashboard(&buf);
-            printStdout(card);
-            return;
-        } else if (std.mem.eql(u8, sc, "config")) {
-            const config_action = args.next() orelse "locate";
-            if (std.mem.eql(u8, config_action, "locate")) {
-                try handleConfigLocate(allocator, &environ);
-                return;
-            } else if (std.mem.eql(u8, config_action, "dump-default")) {
-                try rex.config.dumpDefaultConfig(stdout);
-                return;
-            } else if (std.mem.eql(u8, config_action, "validate") or std.mem.eql(u8, config_action, "check")) {
-                const target_path = args.next() orelse custom_config_path;
-                try handleConfigValidate(allocator, &environ, target_path);
-                return;
-            } else if (std.mem.eql(u8, config_action, "merge")) {
-                try handleConfigMerge(&args);
-                return;
-            } else if (std.mem.eql(u8, config_action, "migrate")) {
-                try handleConfigMigrate(allocator, &environ, &args, custom_config_path);
-                return;
-            } else {
-                printStderr("Unknown config command. Available: locate, dump-default, validate, merge, migrate\n");
-                std.process.exit(1);
-            }
-        } else if (std.mem.eql(u8, sc, "merge-config")) {
-            try handleConfigMerge(&args);
-            return;
-        } else if (std.mem.eql(u8, sc, "migrate-config")) {
-            try handleConfigMigrate(allocator, &environ, &args, custom_config_path);
-            return;
-        } else if (std.mem.eql(u8, sc, "check-config")) {
-            const target_path = args.next() orelse custom_config_path;
-            try handleConfigValidate(allocator, &environ, target_path);
-            return;
-        } else if (std.mem.eql(u8, sc, "dump-default") or std.mem.eql(u8, sc, "--dump-default")) {
-            try rex.config.dumpDefaultConfig(stdout);
-            return;
-        }
+        var stdout_buffer: [4096]u8 = undefined;
+        var stdout_writer = std.Io.File.stdout().writerStreaming(init.io, &stdout_buffer);
+        const out = &stdout_writer.interface;
+        runCommand(init, arena, &environ, &args, sc, custom_config_path, out) catch |err| switch (err) {
+            // stdout closed early, e.g. `rex config defaults | head`: the
+            // reader has what it wanted, so this isn't a failure.
+            error.WriteFailed => if (isBrokenPipe(stdout_writer.err)) return else return err,
+            else => return err,
+        };
+        out.flush() catch |err| if (!isBrokenPipe(stdout_writer.err)) return err;
+        return;
     }
 
     var app: rex.App = try .init(init.gpa, init.io, &environ, argv0, &config, custom_config_path);
@@ -349,202 +61,131 @@ fn run(init: std.process.Init) !void {
     try app.run();
 }
 
-/// Output of the CLI commands.
-const stdout: rex.config.FdWriter = .{ .fd = std.posix.STDOUT_FILENO };
+fn runCommand(
+    init: std.process.Init,
+    arena: std.mem.Allocator,
+    environ: *const std.process.Environ,
+    args: *std.process.Args.Iterator,
+    sc: []const u8,
+    custom_config_path: ?[]const u8,
+    out: *std.Io.Writer,
+) !void {
+    if (std.mem.eql(u8, sc, "help")) {
+        try out.writeAll(help);
+    } else if (std.mem.eql(u8, sc, "wellbeing")) {
+        const home_dir = try environ.getAlloc(arena, "HOME");
+        defer arena.free(home_dir);
+        var envmap = try environ.createMap(arena);
+        defer envmap.deinit();
+        var dirs = try rex.dirs.Application.resolve(
+            arena,
+            rex_terminal_option.name,
+            home_dir,
+            &envmap,
+        );
+        defer dirs.deinit(arena);
 
-fn printStdout(msg: []const u8) void {
-    stdout.writeAll(msg) catch {};
+        var wb = rex.builtin.wellbeing.Wellbeing.init(config.wellbeing);
+        wb.loadState(init.io, dirs.state);
+
+        if (args.next()) |action| {
+            if (std.mem.eql(u8, action, "clear")) {
+                try wb.purgeHistory(init.io, dirs.state);
+                try out.writeAll("Wellbeing history purged.\n");
+                return;
+            }
+        }
+
+        var buf: [2048]u8 = undefined;
+        const card = wb.renderDashboard(&buf);
+        try out.writeAll(card);
+        return;
+    } else if (std.mem.eql(u8, sc, "config")) {
+        const action = args.next() orelse "locate";
+        if (std.mem.eql(u8, action, "locate")) {
+            try configLocate(init.io, arena, environ, out);
+        } else if (std.mem.eql(u8, action, "defaults")) {
+            try out.writeAll(rex.config.default_text);
+        } else if (std.mem.eql(u8, action, "validate")) {
+            try configValidate(init.io, arena, environ, args.next() orelse custom_config_path, out);
+        } else {
+            printStderr("Unknown config command. Available: locate, defaults, validate\n");
+            std.process.exit(1);
+        }
+    } else {
+        printStderr("Unknown command. See rex --help\n");
+        std.process.exit(1);
+    }
+}
+
+fn isBrokenPipe(err: ?std.Io.File.Writer.Error) bool {
+    const e = err orelse return false;
+    return e == error.BrokenPipe;
 }
 
 fn printStderr(msg: []const u8) void {
     _ = std.posix.system.write(std.posix.STDERR_FILENO, msg.ptr, msg.len);
 }
 
-fn fileExists(path: []const u8) bool {
-    var path_buf: [std.fs.max_path_bytes]u8 = undefined;
-    if (path.len >= path_buf.len) return false;
-    @memcpy(path_buf[0..path.len], path);
-    path_buf[path.len] = 0;
-    const fd = std.posix.openat(std.posix.AT.FDCWD, path_buf[0..path.len :0], .{ .ACCMODE = .RDONLY, .CLOEXEC = true }, 0) catch return false;
-    _ = std.posix.system.close(fd);
+const help =
+    \\Rex - a GPU-accelerated terminal emulator
+    \\
+    \\Usage:
+    \\  rex [-c <path>]              Start Rex
+    \\  rex wellbeing [clear]        Show the wellbeing dashboard, or clear its history
+    \\  rex config locate            Show where the config files are
+    \\  rex config defaults          Print every setting with its default
+    \\  rex config validate [<path>] Check a config file (default: the user file)
+    \\
+    \\Options:
+    \\  -c, --config <path>          Use this file instead of the user config file
+    \\  -h, --help                   Show this help
+    \\
+    \\Key bindings: see [keybinds] in `rex config defaults`.
+    \\
+;
+
+fn configLocate(io: std.Io, arena: std.mem.Allocator, environ: *const std.process.Environ, out: *std.Io.Writer) !void {
+    const user_path = try rex.config.paths.userFromEnviron(arena, environ, rex_terminal_option.name);
+    const system_path = rex.config.paths.system;
+    try out.print("System config: {s} [{s}]\n", .{ system_path, if (exists(io, system_path)) "found" else "not found" });
+    try out.print("User config:   {s} [{s}]\n", .{ user_path, if (exists(io, user_path)) "found" else "not found" });
+}
+
+fn exists(io: std.Io, path: []const u8) bool {
+    std.Io.Dir.cwd().access(io, path, .{}) catch return false;
     return true;
 }
 
-fn printHelp() void {
-    printStdout(
-        \\Rex - High-Performance GPU-Accelerated Terminal Emulator
-        \\
-        \\Usage:
-        \\  rex [options]
-        \\  rex wellbeing [clear]
-        \\  rex config locate
-        \\  rex config dump-default
-        \\  rex config validate [<path>]
-        \\  rex config merge <base_file> <override_file> [-o <out_path>]
-        \\  rex config migrate [<source_config>] [-o <out_path>] [-i|--in-place]
-        \\  rex check-config [<path>]
-        \\  rex merge-config <base_file> <override_file> [-o <out_path>]
-        \\  rex migrate-config [<source_config>] [-o <out_path>] [-i|--in-place]
-        \\
-        \\Options:
-        \\  -c, --config <path>    Load configuration from custom path
-        \\  --dump-default         Print default configuration template to stdout and exit
-        \\  -h, --help             Display this help message and exit
-        \\
-        \\Hotkeys:
-        \\  Ctrl+Shift+R           Live reload configuration without dropping terminal session
-        \\  Ctrl+Shift+W           Toggle Digital Wellbeing overlay dashboard
-        \\  Ctrl+Shift+D           Dismiss active wellbeing alert
-        \\  Ctrl+Shift+P           Toggle focus timer
-        \\
-    );
-}
-
-fn handleConfigLocate(allocator: std.mem.Allocator, environ: *const std.process.Environ) !void {
-    const user_path = try rex.config.userPathFromEnviron(allocator, environ, rex_terminal_option.name);
-    defer allocator.free(user_path);
-
-    try stdout.print("System config: {s} [{s}]\n", .{
-        rex.config.system_config_path,
-        if (fileExists(rex.config.system_config_path)) "found" else "not found",
-    });
-    try stdout.print("User config:   {s} [{s}]\n", .{
-        user_path,
-        if (fileExists(user_path)) "found" else "not found",
-    });
-}
-
-fn handleConfigValidate(allocator: std.mem.Allocator, environ: *const std.process.Environ, explicit_path: ?[]const u8) !void {
-    const resolved_path = if (explicit_path) |p|
-        try allocator.dupe(u8, p)
-    else
-        try rex.config.userPathFromEnviron(allocator, environ, rex_terminal_option.name);
-    defer allocator.free(resolved_path);
-
-    if (!fileExists(resolved_path)) {
-        try stdout.print("Configuration file not found: {s}\n(system will use built-in defaults)\n", .{resolved_path});
-        return;
-    }
-
-    var file_cfg = rex.config.FileConfig{};
-    var diags = rex.config.Diagnostics{};
-
-    const loaded = rex.config.loadFile(resolved_path, &file_cfg, &diags) catch |err| {
-        try stdout.print("Failed to read configuration file: {}\n", .{err});
-        std.process.exit(1);
+/// Prints every problem of the file at `explicit_path`, or of the user file,
+/// applied on this build's defaults. Exits 1 if it has errors.
+fn configValidate(io: std.Io, arena: std.mem.Allocator, environ: *const std.process.Environ, explicit_path: ?[]const u8, out: *std.Io.Writer) !void {
+    const path = explicit_path orelse try rex.config.paths.userFromEnviron(arena, environ, rex_terminal_option.name);
+    const home: ?[]const u8 = environ.getAlloc(arena, "HOME") catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => null,
     };
 
-    if (!loaded) {
-        try stdout.print("Configuration file not found: {s}\n", .{resolved_path});
+    var loaded = try rex.config.Loaded.load(arena, io, &config, home, &.{.file(path)});
+    defer loaded.deinit(arena);
+    if (!loaded.found()) {
+        try out.print("{s}: not found; Rex uses its built-in defaults\n", .{path});
         return;
     }
-
-    if (diags.hasErrors()) {
-        try stdout.print("Validation failed for {s}:\n", .{resolved_path});
-        for (diags.items[0..diags.count]) |*diag| {
-            const prefix = if (diag.severity == .err) "ERROR" else "WARN";
-            try stdout.print("  [{s}] line {d}:{d}: {s}\n", .{ prefix, diag.line, diag.col, diag.message() });
-        }
+    try loaded.writeDiagnostics(out, .{ .source_line = true });
+    const counts = loaded.counts();
+    if (counts.errors > 0) {
+        try out.print("{s}: {d} error{s}, {d} warning{s}\n", .{ path, counts.errors, plural(counts.errors), counts.warnings, plural(counts.warnings) });
+        try out.flush();
         std.process.exit(1);
-    } else if (diags.count > 0) {
-        try stdout.print("Configuration valid with warnings for {s}:\n", .{resolved_path});
-        for (diags.items[0..diags.count]) |*diag| {
-            try stdout.print("  [WARN] line {d}:{d}: {s}\n", .{ diag.line, diag.col, diag.message() });
-        }
+    }
+    if (counts.warnings > 0) {
+        try out.print("{s}: valid with {d} warning{s}\n", .{ path, counts.warnings, plural(counts.warnings) });
     } else {
-        try stdout.print("✓ Configuration is valid: {s}\n", .{resolved_path});
+        try out.print("{s}: valid\n", .{path});
     }
 }
 
-fn handleConfigMerge(args: anytype) !void {
-    const base_path = args.next() orelse {
-        printStderr("Error: config merge requires <base_file> and <override_file>\nUsage: rex config merge <base_file> <override_file> [-o <out_path>]\n");
-        std.process.exit(1);
-    };
-    const override_path = args.next() orelse {
-        printStderr("Error: config merge requires <base_file> and <override_file>\nUsage: rex config merge <base_file> <override_file> [-o <out_path>]\n");
-        std.process.exit(1);
-    };
-
-    var out_path: ?[]const u8 = null;
-    while (args.next()) |arg| {
-        if (std.mem.eql(u8, arg, "-o") or std.mem.eql(u8, arg, "--output")) {
-            out_path = args.next() orelse {
-                printStderr("Error: -o/--output requires a file path\n");
-                std.process.exit(1);
-            };
-        } else {
-            printStderr("Error: unrecognized argument for config merge: ");
-            printStderr(arg);
-            printStderr("\n");
-            std.process.exit(1);
-        }
-    }
-
-    var diags = rex.config.Diagnostics{};
-    const ok = rex.config.mergeFiles(base_path, override_path, out_path, stdout, &diags) catch |err| {
-        if (err == error.BrokenPipe) return err;
-        printStderr("Error: failed to merge configurations: ");
-        var err_buf: [64]u8 = undefined;
-        const err_str = std.fmt.bufPrint(&err_buf, "{}\n", .{err}) catch "unknown error\n";
-        printStderr(err_str);
-        std.process.exit(1);
-    };
-
-    if (!ok) {
-        printStderr("Error: could not read configuration files\n");
-        std.process.exit(1);
-    }
-}
-
-fn handleConfigMigrate(allocator: std.mem.Allocator, environ: *const std.process.Environ, args: anytype, custom_config_path: ?[]const u8) !void {
-    var src_path: ?[]const u8 = custom_config_path;
-    var out_path: ?[]const u8 = null;
-    var in_place: bool = false;
-
-    while (args.next()) |arg| {
-        if (std.mem.eql(u8, arg, "-i") or std.mem.eql(u8, arg, "--in-place")) {
-            in_place = true;
-        } else if (std.mem.eql(u8, arg, "-o") or std.mem.eql(u8, arg, "--output")) {
-            out_path = args.next() orelse {
-                printStderr("Error: -o/--output requires a file path\n");
-                std.process.exit(1);
-            };
-        } else if (!std.mem.startsWith(u8, arg, "-")) {
-            src_path = arg;
-        } else {
-            printStderr("Error: unrecognized argument for config migrate: ");
-            printStderr(arg);
-            printStderr("\n");
-            std.process.exit(1);
-        }
-    }
-
-    if (in_place and out_path != null) {
-        printStderr("Error: cannot combine --in-place (-i) and --output (-o)\n");
-        std.process.exit(1);
-    }
-
-    const path = if (src_path) |p|
-        try allocator.dupe(u8, p)
-    else
-        try rex.config.userPathFromEnviron(allocator, environ, rex_terminal_option.name);
-    defer allocator.free(path);
-
-    var diags = rex.config.Diagnostics{};
-    const ok = rex.config.migrateConfigFile(path, out_path, in_place, stdout, &diags) catch |err| {
-        if (err == error.BrokenPipe) return err;
-        printStderr("Error: configuration migration failed: ");
-        var err_buf: [64]u8 = undefined;
-        const err_str = std.fmt.bufPrint(&err_buf, "{}\n", .{err}) catch "unknown error\n";
-        printStderr(err_str);
-        std.process.exit(1);
-    };
-
-    if (!ok) {
-        printStderr("Error: configuration file not found: ");
-        printStderr(path);
-        printStderr("\n");
-        std.process.exit(1);
-    }
+fn plural(n: usize) []const u8 {
+    return if (n == 1) "" else "s";
 }

@@ -1,7 +1,6 @@
 //! The active config built from layers: a base config with each source
 //! applied on top of the previous one, in order (system file, then user
-//! file). Startup and reload both go through `load`. Replaces `loader.zig`
-//! at the switch-over (rebuild plan §9).
+//! file). Startup and reload both go through `load` (rebuild plan §9).
 //!
 //! Two allocation scopes: `arena` owns what `config` points to beyond the
 //! base config's static data (paths, the merged keymap) and can move to the
@@ -84,6 +83,10 @@ pub const Origin = struct {
         return origin.layer != no_layer;
     }
 };
+
+/// The first warning, in layer order. Points into `layers`; valid until
+/// `deinit`.
+pub const Warning = struct { layer: *const Layer, err: Sema.Error };
 
 /// What makes a config unfit to replace a running one. Points into
 /// `layers`; valid until `deinit`.
@@ -210,4 +213,45 @@ pub fn firstError(loaded: *const Loaded) ?Problem {
         .missing, .unreadable => {},
     };
     return null;
+}
+
+pub fn firstWarning(loaded: *const Loaded) ?Warning {
+    for (loaded.layers) |*layer| switch (layer.state) {
+        .loaded => |*file| if (file.sema.errors.len > 0) {
+            return .{ .layer = layer, .err = file.sema.errors[0] };
+        },
+        .missing, .unreadable => {},
+    };
+    return null;
+}
+
+pub const Counts = struct { errors: usize = 0, warnings: usize = 0 };
+
+/// Unreadable layers and syntax errors count as errors, Sema findings as
+/// warnings.
+pub fn counts(loaded: *const Loaded) Counts {
+    var result: Counts = .{};
+    for (loaded.layers) |layer| switch (layer.state) {
+        .missing => {},
+        .unreadable => result.errors += 1,
+        .loaded => |file| {
+            result.errors += file.tree.errors.len;
+            result.warnings += file.sema.errors.len;
+        },
+    };
+    return result;
+}
+
+/// Writes every problem, one per line (plus the source line and caret with
+/// `options.source_line`): unreadable layers as `label: error: cannot read
+/// (Error)`, then each file's diagnostics in source order, layer by layer.
+pub fn writeDiagnostics(loaded: *const Loaded, w: *std.Io.Writer, options: diagnostics.FormatOptions) std.Io.Writer.Error!void {
+    for (loaded.layers) |*layer| switch (layer.state) {
+        .missing => {},
+        .unreadable => |err| try w.print("{s}: error: cannot read ({s})\n", .{ layer.source.label, @errorName(err) }),
+        .loaded => |*file| {
+            var it = file.iterator();
+            while (it.next()) |d| try diagnostics.format(file, layer.source.label, d, w, options);
+        },
+    };
 }

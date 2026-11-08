@@ -69,6 +69,14 @@ pub const Iterator = struct {
     }
 };
 
+/// Writes the message for `d`, without location or newline.
+pub fn renderMessage(file: *const File, d: Diagnostic, w: *std.Io.Writer) std.Io.Writer.Error!void {
+    switch (d) {
+        .syntax => |e| try file.tree.renderError(e, w),
+        .sema => |e| try Sema.renderError(&file.tree, e, w),
+    }
+}
+
 pub const FormatOptions = struct {
     /// Also write the source line and a caret under the reported column.
     source_line: bool = false,
@@ -86,10 +94,7 @@ pub fn format(file: *const File, label: []const u8, d: Diagnostic, w: *std.Io.Wr
         .warn => "warning",
     };
     try w.print("{s}:{d}:{d}: {s}: ", .{ label, loc.line + 1, loc.column + 1, severity });
-    switch (d) {
-        .syntax => |e| try file.tree.renderError(e, w),
-        .sema => |e| try Sema.renderError(&file.tree, e, w),
-    }
+    try renderMessage(file, d, w);
     try w.writeByte('\n');
     if (!options.source_line) return;
 

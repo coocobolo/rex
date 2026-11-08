@@ -7,9 +7,6 @@
 //! (`f1`–`f12`, `enter`, `page_up`, `minus`, `kp_add`, …); the modifier keys
 //! themselves can't be a chord's key. Actions are `input.Action` tag names;
 //! `send_to_pty` takes an argument and is reserved (F14).
-//!
-//! `keymap_parser.zig` is the lenient parser of the old pipeline and goes
-//! with it.
 
 const std = @import("std");
 const input = @import("../input.zig");
