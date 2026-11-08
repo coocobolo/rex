@@ -175,11 +175,28 @@ test "next: unclosed quote" {
     });
 }
 
-test "next: quirks kept from the old lexer" {
-    // The escape check only looks at the previous byte (spec §7).
+test "next: a backslash inside quotes escapes the next byte (D8)" {
+    // `\\` is an escaped backslash, so the quote after it closes.
     try expectTokens("k = \"a\\\\\"", &.{
-        .{ .name, "k" }, .{ .separator, "=" }, .{ .invalid, "\"a\\\\\"" },
+        .{ .name, "k" }, .{ .separator, "=" }, .{ .value, "\"a\\\\\"" },
     });
+    try expectTokens("k = \"a\\\\\" # c", &.{
+        .{ .name, "k" }, .{ .separator, "=" }, .{ .value, "\"a\\\\\"" }, .{ .comment, "# c" },
+    });
+    // Escaped backslash, then an escaped quote: still open until the last quote.
+    try expectTokens("k = \"\\\\\\\"x\"", &.{
+        .{ .name, "k" }, .{ .separator, "=" }, .{ .value, "\"\\\\\\\"x\"" },
+    });
+    // A backslash before the line end escapes nothing; the quote stays open.
+    try expectTokens("k = \"a\\\nx", &.{
+        .{ .name, "k" }, .{ .separator, "=" }, .{ .invalid, "\"a\\" }, .{ .newline, "\n" }, .{ .name, "x" },
+    });
+    try expectTokens("k = \"a\\", &.{
+        .{ .name, "k" }, .{ .separator, "=" }, .{ .invalid, "\"a\\" },
+    });
+}
+
+test "next: quirks kept from the old lexer" {
     // The space-separated form ignores quotes (spec §7).
     try expectTokens("\"a b\" c", &.{ .{ .name, "\"a" }, .{ .value, "b\" c" } });
     // An unclosed quote with no separator before it: everything before the quote is the name.

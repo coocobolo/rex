@@ -166,8 +166,9 @@ pub fn next(self: *Tokenizer) Token {
 }
 
 /// Scans the line from `index`, which is not whitespace, a line end or a
-/// line-start comment. Quotes open with '"' or '\'' and close on the same byte
-/// unless it follows a '\'; inside quotes, '#', '=' and ':' are content.
+/// line-start comment. Quotes open with '"' or '\'' and close on the same
+/// byte; inside quotes a '\' escapes the next byte (D8) and '#', '=' and ':'
+/// are content.
 fn scanLine(self: *const Tokenizer) Line {
     var line: Line = .init;
     var quote: ?u32 = null;
@@ -176,7 +177,13 @@ fn scanLine(self: *const Tokenizer) Line {
     while (i < self.src.len and !isLineEnd(self.src[i])) : (i += 1) {
         const c = self.src[i];
         if (quote) |q| {
-            if (c == self.src[q] and self.src[i - 1] != '\\') quote = null;
+            if (c == '\\') {
+                // D8: a backslash escapes the next byte, unless that byte
+                // ends the line. Sema interprets the escape.
+                if (i + 1 < self.src.len and !isLineEnd(self.src[i + 1])) i += 1;
+            } else if (c == self.src[q]) {
+                quote = null;
+            }
             continue;
         }
         switch (c) {
