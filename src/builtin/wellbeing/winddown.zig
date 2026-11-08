@@ -36,7 +36,9 @@ pub const WinddownEngine = struct {
         return .{ .option = option };
     }
 
-    pub fn update(self: *WinddownEngine, now_s: i64) struct {
+    /// `local_s` is local wall-clock seconds since the epoch (see `Clock`
+    /// in localtime.zig), so the window follows the user's time zone.
+    pub fn update(self: *WinddownEngine, local_s: i64) struct {
         active: bool,
         just_started: bool,
         color_tint: [3]f32,
@@ -50,9 +52,7 @@ pub const WinddownEngine = struct {
             };
         }
 
-        // Compute local time of day in minutes
-        // (Using standard day modulo 86400; accounts for UTC/local timestamp)
-        const day_seconds = @mod(now_s, std.time.s_per_day);
+        const day_seconds = @mod(local_s, std.time.s_per_day);
         const cur_minute = @divFloor(day_seconds, 60);
 
         const start_min: i64 = self.option.start.minutes();

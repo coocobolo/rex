@@ -5,6 +5,7 @@ pub const storage = @import("storage.zig");
 pub const tracker = @import("tracker.zig");
 pub const reminders = @import("reminders.zig");
 pub const winddown = @import("winddown.zig");
+pub const localtime = @import("localtime.zig");
 pub const dashboard = @import("dashboard.zig");
 pub const focus = @import("focus.zig");
 pub const icons = @import("icons.zig");
@@ -138,11 +139,13 @@ pub const Wellbeing = struct {
         self.anim_elapsed_ms = 0;
     }
 
+    /// `local_s` is local wall-clock seconds since the epoch (see
+    /// `localtime.Clock`); it sets the day boundary and the wind-down window.
     pub fn tick(
         self: *Wellbeing,
         dt_ms: u64,
         pty_fd: std.posix.fd_t,
-        now_secs: i64,
+        local_s: i64,
     ) struct {
         needs_redraw: bool,
         phase_changed: bool,
@@ -173,7 +176,7 @@ pub const Wellbeing = struct {
         var phase_changed = false;
 
         // Day rollover check
-        const today_epoch_day: u32 = @intCast(@divFloor(now_secs, std.time.s_per_day));
+        const today_epoch_day: u32 = @intCast(@divFloor(local_s, std.time.s_per_day));
         if (self.data.today.day == 0) {
             self.data.today.day = today_epoch_day;
         } else if (today_epoch_day > self.data.today.day) {
@@ -224,7 +227,7 @@ pub const Wellbeing = struct {
         }
 
         // Wind-Down update
-        const wd = self.winddown_engine.update(now_secs);
+        const wd = self.winddown_engine.update(local_s);
         if (wd.just_started) {
             alert_to_return = .{
                 .kind = .healthy_break,

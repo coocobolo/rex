@@ -153,6 +153,7 @@ word_classifier: unicode.Classifier,
 
 // Wellbeing & Focus state
 wellbeing_state: wellbeing.Wellbeing,
+local_clock: wellbeing.localtime.Clock = .{},
 wellbeing_overlay: wellbeing.overlay.Overlay = .{},
 toast_queue: Toast.Queue = .{},
 config_banner: ?Banner = null,
@@ -542,9 +543,9 @@ pub fn run(self: *App) !void {
         const blink_changed = self.tick(dt_clamped);
 
         const now_real = std.Io.Clock.Timestamp.now(self.io, .real);
-        const now_secs: i64 = @intCast(now_real.raw.toSeconds());
+        const local_s = self.local_clock.localSeconds(@intCast(now_real.raw.toSeconds()));
 
-        const wb_res = self.wellbeing_state.tick(dt_clamped, self.driver.getMasterFd(), now_secs);
+        const wb_res = self.wellbeing_state.tick(dt_clamped, self.driver.getMasterFd(), local_s);
         self.renderer.grayscale = wb_res.grayscale;
         self.renderer.color_tint = wb_res.tint;
         if (wb_res.needs_redraw) {

@@ -7,6 +7,7 @@ const tracker = wellbeing.tracker;
 const reminders = wellbeing.reminders;
 const winddown = wellbeing.winddown;
 const dashboard = wellbeing.dashboard;
+const localtime = wellbeing.localtime;
 
 test "storage: DayRecord addAppTime accumulates and sorts properly" {
     var record = storage.DayRecord{};
@@ -155,6 +156,91 @@ test "winddown: schedule window and color warmth tint" {
     try testing.expect(night_res.just_started);
     try testing.expectEqual(@as(f32, 1.0), night_res.color_tint[0]); // Red stays 1.0
     try testing.expect(night_res.color_tint[2] < 0.80); // Blue is attenuated
+}
+
+/// Local seconds for `hour:minute` UTC on epoch day `day` in a zone
+/// `offset_h` hours east of UTC.
+fn localAt(day: i64, hour: i64, minute: i64, offset_h: i64) i64 {
+    const utc_s = day * std.time.s_per_day + hour * std.time.s_per_hour + minute * std.time.s_per_min;
+    return utc_s + offset_h * std.time.s_per_hour;
+}
+
+test "winddown: window follows local time east and west of UTC" {
+    var wd = winddown.WinddownEngine.init(.{
+        .start = .{ .hour = 21, .minute = 0 },
+        .end = .{ .hour = 7, .minute = 0 },
+    });
+
+    // 14:30 UTC is 21:30 in UTC+7 and 09:30 in UTC-5.
+    try testing.expect(wd.update(localAt(1000, 14, 30, 7)).active);
+    try testing.expect(!wd.update(localAt(1000, 14, 30, -5)).active);
+
+    // 03:00 UTC is 10:00 in UTC+7 and 22:00 the day before in UTC-5.
+    try testing.expect(!wd.update(localAt(1000, 3, 0, 7)).active);
+    try testing.expect(wd.update(localAt(1000, 3, 0, -5)).active);
+}
+
+test "winddown: window crossing midnight includes start and excludes end" {
+    var wd = winddown.WinddownEngine.init(.{
+        .start = .{ .hour = 21, .minute = 0 },
+        .end = .{ .hour = 7, .minute = 0 },
+    });
+
+    // Local times in UTC-5: 21:00 is 02:00 UTC the next day.
+    try testing.expect(!wd.update(localAt(1001, 1, 59, -5)).active); // 20:59
+    const start = wd.update(localAt(1001, 2, 0, -5)); // 21:00
+    try testing.expect(start.active);
+    try testing.expect(start.just_started);
+    try testing.expect(wd.update(localAt(1001, 5, 0, -5)).active); // 00:00
+    try testing.expect(wd.update(localAt(1001, 11, 59, -5)).active); // 06:59
+    try testing.expect(!wd.update(localAt(1001, 12, 0, -5)).active); // 07:00
+}
+
+test "Wellbeing service: day rolls over at local midnight" {
+    var wb = wellbeing.Wellbeing.init(.{ .winddown = .{ .enabled = false } });
+
+    // In UTC+7, 16:59 UTC is 23:59 local on day 1000.
+    _ = wb.tick(1000, -1, localAt(1000, 16, 59, 7));
+    try testing.expectEqual(@as(u32, 1000), wb.data.today.day);
+
+    // 17:00 UTC is still UTC day 1000 but local midnight of day 1001.
+    _ = wb.tick(1000, -1, localAt(1000, 17, 0, 7));
+    try testing.expectEqual(@as(u32, 1001), wb.data.today.day);
+    try testing.expectEqual(@as(u32, 1), wb.data.history_count);
+    try testing.expectEqual(@as(u32, 1000), wb.data.history[0].day);
+}
+
+test "focus: streak counts local days" {
+    var wb = wellbeing.Wellbeing.init(.{
+        .focus = .{ .task_ms = 1000, .transition_mode = .manual },
+        .winddown = .{ .enabled = false },
+    });
+
+    // In UTC-5, both tasks end on UTC day 1001 but on consecutive local days:
+    // 04:30 UTC is 23:30 on local day 1000, 05:30 UTC is 00:30 on day 1001.
+    wb.toggleFocus();
+    _ = wb.tick(1000, -1, localAt(1001, 4, 30, -5));
+    try testing.expectEqual(@as(u32, 1000), wb.data.last_task_day);
+    try testing.expectEqual(@as(u32, 1), wb.data.current_streak);
+
+    wb.resetFocus();
+    wb.toggleFocus();
+    _ = wb.tick(1000, -1, localAt(1001, 5, 30, -5));
+    try testing.expectEqual(@as(u32, 1001), wb.data.last_task_day);
+    try testing.expectEqual(@as(u32, 2), wb.data.current_streak);
+}
+
+test "localtime: offset of the system zone is plausible and cached" {
+    // 2026-01-01T00:00:00Z. The value depends on the host's zone, so only
+    // the range is checked (real zones span UTC-12 to UTC+14).
+    const utc_s: i64 = 1_767_225_600;
+    const offset_s = localtime.utcOffset(utc_s) orelse return error.TestUnexpectedResult;
+    try testing.expect(offset_s >= -12 * std.time.s_per_hour);
+    try testing.expect(offset_s <= 14 * std.time.s_per_hour);
+
+    var clock: localtime.Clock = .{};
+    try testing.expectEqual(utc_s + offset_s, clock.localSeconds(utc_s));
+    try testing.expectEqual(utc_s + offset_s, clock.localSeconds(utc_s));
 }
 
 test "dashboard: renders card output cleanly" {
