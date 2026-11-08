@@ -311,8 +311,14 @@ pub fn init(
     };
     defer block.deinit(gpa);
 
+    // Without a configured argv, the user's shell, like other terminals.
+    // The child gets its own copy at fork, so this can go after spawn.
+    const shell = try gpa.dupeZ(u8, defaultShell(envmap.get("SHELL"), passwdShell()));
+    defer gpa.free(shell);
+    const shell_argv = [_:null]?[*:0]const u8{ shell, null };
+
     var pty = try Pty.spawn(.{
-        .argv = active_config.termio.argv,
+        .argv = active_config.termio.argv orelse &shell_argv,
         .capture_stdout = active_config.termio.capture_stdout,
         .cols = active_config.termio.cols,
         .cwd = active_config.termio.cwd,
@@ -1454,6 +1460,25 @@ fn snapToLiveView(self: *App) void {
     }
 
     self.needs_redraw = true;
+}
+
+/// The shell to start when `termio.argv` isn't set: `$SHELL`, else the
+/// user's login shell from the passwd database, else /bin/sh. A relative or
+/// empty path doesn't count.
+fn defaultShell(env_shell: ?[]const u8, passwd_shell: ?[]const u8) []const u8 {
+    for ([_]?[]const u8{ env_shell, passwd_shell }) |candidate| {
+        const path = candidate orelse continue;
+        if (std.fs.path.isAbsolute(path)) return path;
+    }
+    return "/bin/sh";
+}
+
+/// The current user's login shell, or null. Points into libc's static
+/// passwd entry: valid until the next getpw* call, so copy it before then.
+fn passwdShell() ?[]const u8 {
+    if (!is_posix) return null;
+    const entry = std.c.getpwuid(std.c.getuid()) orelse return null;
+    return std.mem.span(entry.shell orelse return null);
 }
 
 /// Whether the config names a font. The built-in defaults don't: Rex has no
@@ -2672,6 +2697,15 @@ test "App: routeKeyToUi unified dispatcher consumes modal keys and suppresses te
         char_sent = true;
     }
     try testing.expect(char_sent);
+}
+
+test "defaultShell: $SHELL, then the passwd shell, then /bin/sh" {
+    try std.testing.expectEqualStrings("/bin/zsh", defaultShell("/bin/zsh", "/bin/bash"));
+    try std.testing.expectEqualStrings("/bin/bash", defaultShell(null, "/bin/bash"));
+    try std.testing.expectEqualStrings("/bin/bash", defaultShell("zsh", "/bin/bash"));
+    try std.testing.expectEqualStrings("/bin/bash", defaultShell("", "/bin/bash"));
+    try std.testing.expectEqualStrings("/bin/sh", defaultShell(null, null));
+    try std.testing.expectEqualStrings("/bin/sh", defaultShell("", ""));
 }
 
 test "App: a config reload starts from the defaults, in its own arena" {

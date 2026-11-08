@@ -568,8 +568,9 @@ pub const SpawnOption = struct {
     // shell_integration: ?
 
     /// What Rex's drivers spawn with: like `.{}`, but the master fd is
-    /// non-blocking, because the drivers poll it. No argv starts /bin/sh; a
-    /// null cwd inherits the parent's.
+    /// non-blocking, because the drivers poll it. No argv makes App start
+    /// the user's shell (`$SHELL`, then passwd); a null cwd inherits the
+    /// parent's.
     pub const default: SpawnOption = .{ .o_flags = .{ .NONBLOCK = true, .ASYNC = false } };
 
     pub fn format(self: SpawnOption, writer: *std.Io.Writer) std.Io.Writer.Error!void {
