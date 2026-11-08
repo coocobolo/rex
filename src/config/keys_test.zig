@@ -213,6 +213,36 @@ test "apply: font file resolves its path and selects a variable family" {
     try std.testing.expectEqualStrings("/v.ttf", std.mem.span(static.font.faces.family.variable.upright));
 }
 
+test "apply: italic and emoji files resolve their paths, none clears them" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    var ctx = no_alloc_ctx;
+    ctx.arena = arena.allocator();
+    const italic = keys.lookup(.font, "italic_file").?;
+    const emoji = keys.lookup(.font, "emoji_file").?;
+
+    var config = testConfig();
+    try keys.apply(&config, ctx, italic, "fonts/i.ttf");
+    try std.testing.expectEqualStrings("/etc/rex/fonts/i.ttf", std.mem.span(config.font.faces.family.variable.italic.?));
+    try keys.apply(&config, ctx, italic, "none");
+    try std.testing.expectEqual(null, config.font.faces.family.variable.italic);
+
+    try keys.apply(&config, ctx, emoji, "~/e.ttf");
+    const face = config.font.faces.emoji.?;
+    try std.testing.expectEqualStrings("/home/user/e.ttf", std.mem.span(face.path));
+    try std.testing.expectEqual(null, face.weight_axis);
+    try std.testing.expectEqual(0, face.index);
+    try keys.apply(&config, ctx, emoji, "none");
+    try std.testing.expectEqual(null, config.font.faces.emoji);
+    try std.testing.expectError(error.InvalidValue, keys.apply(&config, ctx, emoji, "\"\""));
+
+    // The italic file belongs to a variable family.
+    var static = testConfig();
+    static.font.faces.family = .{ .static = .{ .regular = "r", .bold = "b", .italic = "i", .bold_italic = "bi" } };
+    try std.testing.expectError(error.NotApplicable, keys.apply(&static, ctx, italic, "/i.ttf"));
+    try std.testing.expectError(error.NotApplicable, keys.apply(&static, ctx, italic, "default"));
+}
+
 test "unquote: bare values are raw, quoted values take escapes" {
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena.deinit();
