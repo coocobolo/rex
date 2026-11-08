@@ -111,6 +111,7 @@ Fuzz targets live in `src/fuzz/`, one per file:
 
 | Target | Feeds | Checks |
 | --- | --- | --- |
+| `config` | random bytes to the config `Ast` and `Sema` | no panic or leak; tokens and errors in bounds; every key the file set within its bounds; every message renders |
 | `parser` | random bytes to the VT parser | whole, bytewise and split feeds give the same events and state |
 | `terminal` | feed, resize, end, drain and viewport ops to a `Terminal` | invariants on both screens; a twin fed in one chunk shows the same screen |
 | `strings` | OSC and DCS with random payloads and terminators | invariants; BEL/ST end in ground; a dropped OSC 0/1/2 keeps the title |

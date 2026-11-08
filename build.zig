@@ -339,7 +339,7 @@ pub fn build(b: *std.Build) !void {
     //     and seeded mutations (also part of `zig build test`);
     //     `zig build fuzz-<name>` runs one target.
     //   - Add `--fuzz -Dllvm` to fuzz until stopped, or `--fuzz=<runs>`.
-    const fuzz_targets = .{ "grapheme", "parser", "strings", "terminal", "utf8", "wcwidth" };
+    const fuzz_targets = .{ "config", "grapheme", "parser", "strings", "terminal", "utf8", "wcwidth" };
     const fuzz_module = b.createModule(.{
         .root_source_file = b.path("src/fuzz_tests.zig"),
         .target = target,

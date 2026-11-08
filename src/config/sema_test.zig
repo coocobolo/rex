@@ -3,8 +3,8 @@ const Ast = @import("Ast.zig");
 const Sema = @import("Sema.zig");
 const keys = @import("keys.zig");
 const Config = @import("Config.zig");
-const Theme = @import("../color/Theme.zig");
 const Binding = @import("../input.zig").Binding;
+const test_config = @import("test_fixtures.zig").test_config;
 
 const gpa = std.testing.allocator;
 
@@ -13,22 +13,11 @@ const base_keymap = [_]Binding{
     .{ .key = .v, .mods = .{ .ctrl = true, .shift = true }, .action = .paste_clipboard },
 };
 
+/// The shared test config with a two-binding keymap to override.
 fn testConfig() Config {
-    return .{
-        .blink = .{},
-        .font = .{
-            .faces = .{ .family = .{ .variable = .{ .upright = "/base/upright.ttf" } } },
-            .size = 20,
-            .max_size = 96,
-            .min_size = 6,
-        },
-        .keymap = &base_keymap,
-        .termio = .{},
-        .theme = Theme.graphite,
-        .window = .{ .background = .{}, .scrollbar = .{}, .cursor = .{}, .selection = .{} },
-        .selection = .{ .classifier = .{} },
-        .environments = &.{},
-    };
+    var config = test_config;
+    config.keymap = &base_keymap;
+    return config;
 }
 
 const defaults = testConfig();

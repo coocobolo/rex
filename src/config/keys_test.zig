@@ -1,26 +1,11 @@
 const std = @import("std");
 const keys = @import("keys.zig");
 const Config = @import("Config.zig");
-const Theme = @import("../color/Theme.zig");
 const Toast = @import("../ui/Toast.zig");
+const test_config = @import("test_fixtures.zig").test_config;
 
-/// A complete Config for tests; the fields without defaults get minimal values.
 fn testConfig() Config {
-    return .{
-        .blink = .{},
-        .font = .{
-            .faces = .{ .family = .{ .variable = .{ .upright = "/base/upright.ttf" } } },
-            .size = 20,
-            .max_size = 96,
-            .min_size = 6,
-        },
-        .keymap = &.{},
-        .termio = .{},
-        .theme = Theme.graphite,
-        .window = .{ .background = .{}, .scrollbar = .{}, .cursor = .{}, .selection = .{} },
-        .selection = .{ .classifier = .{} },
-        .environments = &.{},
-    };
+    return test_config;
 }
 
 const defaults = testConfig();

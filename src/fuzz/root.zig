@@ -7,6 +7,7 @@
 //! below and one row in `fuzz_targets` in build.zig.
 
 test {
+    _ = @import("config.zig");
     _ = @import("grapheme.zig");
     _ = @import("parser.zig");
     _ = @import("strings.zig");
