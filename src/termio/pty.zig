@@ -64,6 +64,10 @@ pub const Posix = struct {
     /// Consumed and closed by waitForSpawn().
     error_read_fd: posix.fd_t,
 
+    /// The setup step the child reported failing; set when waitForSpawn()
+    /// returns error.SpawnFailed, for the caller to report.
+    failure: ?SpawnFailure = null,
+
     /// An inactive pty with no process and no open fds.
     /// Every field holds its "unused" sentinel (-1).
     /// Safe to call close()/isAlive()/wait() on; all become no-ops or report "not alive".
@@ -287,7 +291,14 @@ pub const Posix = struct {
     /// the forked child, so it neither allocates nor logs.
     fn closeOnExecFrom3() void {
         if (native_os == .linux) {
-            const rc = std.os.linux.close_range(3, std.math.maxInt(posix.fd_t), .{ .UNSHARE = false, .CLOEXEC = true });
+            // Zig 0.16.0's std.os.linux.CLOSE_RANGE has CLOEXEC at bit 1, but
+            // the kernel's CLOSE_RANGE_CLOEXEC is 1 << 2 and bit 1 is
+            // CLOSE_RANGE_UNSHARE (include/uapi/linux/close_range.h), so the
+            // std flags close the descriptors, the error pipe included, and
+            // every setup failure looks like a successful exec. Pass the
+            // kernel value.
+            const close_range_cloexec: usize = 1 << 2;
+            const rc = std.os.linux.syscall3(.close_range, 3, std.math.maxInt(posix.fd_t), close_range_cloexec);
             if (posix.errno(rc) == .SUCCESS) return;
             // ENOSYS or EINVAL before Linux 5.11: fall through.
         }
@@ -339,8 +350,7 @@ pub const Posix = struct {
             // as an actual spawn failure.
             const stage: ChildStage = @enumFromInt(buf[0]);
             const err_no: u16 = std.mem.readInt(u16, buf[1..3], .little);
-
-            log.err("pty child setup failed: stage={s} errno={}", .{ @tagName(stage), err_no });
+            self.failure = .{ .stage = stage, .errno = @enumFromInt(err_no) };
 
             var status: c_int = undefined;
             _ = system.waitpid(self.pid, &status, 0);
@@ -645,9 +655,28 @@ pub const ExitStatus = union(enum) {
     }
 };
 
+/// A setup step in the child that failed, and its errno.
+pub const SpawnFailure = struct {
+    stage: ChildStage,
+    errno: posix.E,
+
+    /// "cannot run the program (NOENT)", for logs and messages.
+    pub fn format(failure: SpawnFailure, w: *std.Io.Writer) std.Io.Writer.Error!void {
+        switch (failure.stage) {
+            .chdir => try w.writeAll("cannot change to the working directory"),
+            .execve => try w.writeAll("cannot run the program"),
+            else => |stage| try w.print("pty setup failed at {t}", .{stage}),
+        }
+        if (std.enums.tagName(posix.E, failure.errno)) |name|
+            try w.print(" ({s})", .{name})
+        else
+            try w.print(" (errno {d})", .{@intFromEnum(failure.errno)});
+    }
+};
+
 /// Identifies exactly which setup step failed in the forked child, so the
 /// parent can produce a precise diagnostic without guessing from errno alone.
-const ChildStage = enum(u8) {
+pub const ChildStage = enum(u8) {
     setsid = 1,
     ioctl_tiocsctty = 2,
     dup2_stdin = 3,
@@ -699,6 +728,23 @@ test "Posix: spawn, with stdout capture" {
     try testing.expect(pty.master > 0);
     try testing.expect(pty.stdout_read_fd >= 0);
     try testing.expect(pty.pid > 0);
+}
+
+test "Posix: a program that can't be executed is a spawn failure" {
+    const argv = [_:null]?[*:0]const u8{ "/nonexistent/rex-test-program", null };
+    var pty: Posix = try Posix.spawn(.{ .argv = &argv });
+    defer pty.close(testing.io);
+    try testing.expectError(error.SpawnFailed, pty.waitForSpawn());
+    try testing.expectEqual(SpawnFailure{ .stage = .execve, .errno = .NOENT }, pty.failure.?);
+    var buf: [64]u8 = undefined;
+    try testing.expectEqualStrings("cannot run the program (NOENT)", try std.fmt.bufPrint(&buf, "{f}", .{pty.failure.?}));
+}
+
+test "Posix: a working directory that doesn't exist is a spawn failure" {
+    var pty: Posix = try Posix.spawn(.{ .cwd = "/nonexistent/rex-test-dir" });
+    defer pty.close(testing.io);
+    try testing.expectError(error.SpawnFailed, pty.waitForSpawn());
+    try testing.expectEqual(SpawnFailure{ .stage = .chdir, .errno = .NOENT }, pty.failure.?);
 }
 
 test "Posix: the master is close-on-exec in the parent" {
