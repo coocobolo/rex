@@ -595,7 +595,7 @@ pub const canonical_default_config: []const u8 =
     \\# Supported Keys:
     \\#   Letters: a..z
     \\#   Numbers: 0..9
-    \\#   Function keys: f1..f25
+    \\#   Function keys: f1..f12
     \\#   Punctuation / Symbols: minus (-), plus / equal (=, +), left_bracket ([), right_bracket (]),
     \\#                          backslash (\), semicolon (;), apostrophe ('), comma (,), period (.),
     \\#                          slash (/), grave (`)
@@ -1492,7 +1492,7 @@ pub fn serializeConfig(config: *const FileConfig, writer: anytype) !void {
         \\# Supported Keys:
         \\#   Letters: a..z
         \\#   Numbers: 0..9
-        \\#   Function keys: f1..f25
+        \\#   Function keys: f1..f12
         \\#   Punctuation / Symbols: minus (-), plus / equal (=, +), left_bracket ([), right_bracket (]),
         \\#                          backslash (\), semicolon (;), apostrophe ('), comma (,), period (.),
         \\#                          slash (/), grave (`)

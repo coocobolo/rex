@@ -681,3 +681,11 @@ test "config: applyFileConfig takes font bounds only as an ordered pair" {
     try testing.expectEqual(6, app_cfg.font.min_size);
     try testing.expectEqual(48, app_cfg.font.max_size);
 }
+
+test "config: keymap function keys stop at f12" {
+    try testing.expectEqual(.f12, keymap_parser.parseKey("f12").?);
+    // f13 used to become the letter a: the Key tags after f12 are letters.
+    try testing.expectEqual(null, keymap_parser.parseKey("f13"));
+    try testing.expectEqual(null, keymap_parser.parseKey("f25"));
+    try testing.expectEqual(null, keymap_parser.parseBinding("ctrl+f13", "quit"));
+}

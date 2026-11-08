@@ -67,10 +67,12 @@ pub fn parseKey(str: []const u8) ?Key {
         };
     }
 
-    // Function keys (f1..f25)
+    // Function keys f1..f12: Key has no f13 and up, and the tags after f12
+    // are the letters, so a larger number must not reach @enumFromInt.
     if ((str[0] == 'f' or str[0] == 'F') and str.len >= 2 and str.len <= 3) {
         const num = std.fmt.parseInt(u8, str[1..], 10) catch 0;
-        if (num >= 1 and num <= 25) {
+        const count = @intFromEnum(Key.f12) - @intFromEnum(Key.f1) + 1;
+        if (num >= 1 and num <= count) {
             return @enumFromInt(@as(u16, @intFromEnum(Key.f1)) + (num - 1));
         }
     }
