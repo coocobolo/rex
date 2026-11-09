@@ -466,7 +466,9 @@ pub const Posix = struct {
     }
 
     /// Sets the pty's window size (TIOCSWINSZ). Returns error.PtyClosed if the pty has no
-    /// master fd (e.g. after close()), error.ResizeFailed for any other ioctl failure.
+    /// master fd (e.g. after close(), expected once the child exited; not logged), and
+    /// error.ResizeFailed for any other ioctl failure, which is logged here with its errno,
+    /// so callers need not log it again.
     pub fn resize(self: *Posix, rows: u16, cols: u16, x: u16, y: u16) !void {
         if (self.master <= 0) return error.PtyClosed;
 
@@ -480,7 +482,10 @@ pub const Posix = struct {
         const rc = system.ioctl(self.master, posix.T.IOCSWINSZ, &ws);
         return switch (posix.errno(rc)) {
             .SUCCESS => {},
-            else => return error.ResizeFailed,
+            else => |e| {
+                log.warn("cannot resize the pty to {d}x{d}: TIOCSWINSZ failed ({t}); the child keeps its old size", .{ cols, rows, e });
+                return error.ResizeFailed;
+            },
         };
     }
 

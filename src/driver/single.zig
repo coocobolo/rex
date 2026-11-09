@@ -260,9 +260,11 @@ pub fn Driver(comptime option: Option) type {
                     if (self.terminal.mode.column_132) {
                         const deccolm_cols = self.terminal.active().active_cols;
                         self.terminal.resize(ev.rows, deccolm_cols);
+                        // A failure is logged by Posix.resize.
                         self.pty.resize(ev.rows, deccolm_cols, ev.pixel_width, ev.pixel_height) catch {};
                     } else {
                         self.terminal.resize(ev.rows, ev.cols);
+                        // A failure is logged by Posix.resize.
                         self.pty.resize(ev.rows, ev.cols, ev.pixel_width, ev.pixel_height) catch {};
                     }
                     self.terminal.active().dirty_rows = .full;

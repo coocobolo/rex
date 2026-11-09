@@ -453,9 +453,11 @@ pub fn Driver(comptime option: Option) type {
                     if (terminal.mode.column_132) {
                         const deccolm_cols = terminal.active().active_cols;
                         terminal.resize(rev.rows, deccolm_cols);
+                        // A failure is logged by Posix.resize.
                         self.pty.resize(rev.rows, deccolm_cols, rev.pixel_width, rev.pixel_height) catch {};
                     } else {
                         terminal.resize(rev.rows, rev.cols);
+                        // A failure is logged by Posix.resize.
                         self.pty.resize(rev.rows, rev.cols, rev.pixel_width, rev.pixel_height) catch {};
                     }
                     terminal.active().dirty_rows = .full;

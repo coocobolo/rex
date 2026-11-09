@@ -133,3 +133,19 @@ test "Posix: the child gets only stdin, stdout and stderr" {
     }
     try testing.expectEqualStrings("0\n1\n2\n", out[0..len]);
 }
+
+test "Posix: resizing a closed pty is PtyClosed" {
+    var pty: Posix = .inactive;
+    try testing.expectError(error.PtyClosed, pty.resize(24, 80, 0, 0));
+}
+
+test "Posix: resizing something that is not a tty is ResizeFailed" {
+    // /dev/null as the master: TIOCSWINSZ fails with ENOTTY, which resize
+    // logs (a warning) and reports.
+    const fd = system.open("/dev/null", .{ .ACCMODE = .RDONLY }, @as(posix.mode_t, 0));
+    try testing.expectEqual(posix.E.SUCCESS, posix.errno(fd));
+    defer _ = system.close(@intCast(fd));
+    var pty: Posix = .inactive;
+    pty.master = @intCast(fd);
+    try testing.expectError(error.ResizeFailed, pty.resize(24, 80, 0, 0));
+}

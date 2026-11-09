@@ -1296,15 +1296,15 @@ fn handleAction(self: *App, action: rex.input.Action) void {
             }
         },
         .scroll_up => {
-            self.driver.sendInput(.{
+            self.sendViewportInput(.{
                 .viewport_scroll = .{ .lines = -@as(i32, @intCast(self.config.scroll.lines)) },
-            }) catch {};
+            });
             self.needs_redraw = true;
         },
         .scroll_down => {
-            self.driver.sendInput(.{
+            self.sendViewportInput(.{
                 .viewport_scroll = .{ .lines = @as(i32, @intCast(self.config.scroll.lines)) },
-            }) catch {};
+            });
             self.needs_redraw = true;
         },
         .increase_font_size => {
@@ -1529,7 +1529,7 @@ fn snapToLiveView(self: *App) void {
     const frame = self.driver.getFrame();
     if (!frame.is_alternate and frame.viewport_offset > 0) {
         self.selection = .empty;
-        self.driver.sendInput(.{ .set_viewport_offset = 0 }) catch {};
+        self.sendViewportInput(.{ .set_viewport_offset = 0 });
     }
 
     self.needs_redraw = true;
@@ -2294,7 +2294,7 @@ fn handleScrollbarClick(self: *App) bool {
     } else {
         const new_top = std.math.clamp(mouse_y - thumb.height / 2.0, 0.0, thumb.travel(frame_height));
         const target = self.viewportOffsetAt(thumb.topFracAt(frame_height, new_top));
-        self.driver.sendInput(.{ .set_viewport_offset = target }) catch {};
+        self.sendViewportInput(.{ .set_viewport_offset = target });
 
         // Drag from where the cursor sits on the moved thumb: its centre,
         // unless the thumb was clamped at either end of the track.
@@ -2318,7 +2318,7 @@ fn handleScrollbarDrag(self: *App) bool {
     const target = self.viewportOffsetAt(thumb.topFracAt(frame_height, top));
     if (target == frame.viewport_offset) return true; // nothing moved, so no redraw
 
-    self.driver.sendInput(.{ .set_viewport_offset = target }) catch {};
+    self.sendViewportInput(.{ .set_viewport_offset = target });
     self.needs_redraw = true;
     return true;
 }
@@ -2371,8 +2371,17 @@ fn flushScroll(self: *App) void {
             .button = button,
             .steps = abs_steps,
         },
-    }) catch {};
+    }) catch |err| {
+        log.err("flushScroll: sendInput failed: {}", .{err});
+    };
     self.needs_redraw = true;
+}
+
+/// Sends a viewport scroll or offset to the driver. When the input queue is
+/// full the event is dropped on purpose: it only moves the view, and the next
+/// keystroke, wheel step or drag sends a fresh one.
+fn sendViewportInput(self: *App, event: InputEvent) void {
+    self.driver.sendInput(event) catch {};
 }
 
 const scrollCb: c.GLFWscrollfun = struct {
