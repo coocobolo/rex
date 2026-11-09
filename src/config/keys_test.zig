@@ -374,10 +374,8 @@ const enum_names = [_]struct { []const u8, []const []const u8 }{
     .{ "wellbeing.winddown.during_window", &.{ "warm_colors", "mute_bell" } },
     .{ "wellbeing.eyesight.during_reminder", &.{"lock_input"} },
     .{ "wellbeing.movement.during_reminder", &.{"lock_input"} },
-    .{ "wellbeing.routines.during_reminder", &.{"lock_input"} },
     .{ "wellbeing.eyesight.animation", &.{ "none", "pulse_dim", "grayscale_wave", "warm_glow" } },
     .{ "wellbeing.movement.animation", &.{ "none", "pulse_dim", "grayscale_wave", "warm_glow" } },
-    .{ "wellbeing.routines.animation", &.{ "none", "pulse_dim", "grayscale_wave", "warm_glow" } },
 };
 
 test "table: enum and set value names are pinned" {

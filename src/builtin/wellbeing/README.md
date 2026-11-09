@@ -10,7 +10,7 @@ The module lives in `src/builtin/wellbeing/` and is reached as `rex.builtin.well
 | --- | --- | --- |
 | Focus timer | Task, short break and long break phases; waits for the user or starts the next phase (`on_phase_end`); mutes the bell during a task; prompts, locks input or animates at a break. Shared by all windows. | `[wellbeing.focus]` |
 | Screen time | Counts active time (input within `idle_threshold`) in the focused window; per-app time from the pty's foreground process; a daily limit (off by default) that fades to grayscale, locks input or animates. | `[wellbeing.screen_time]`, `[wellbeing.privacy]` |
-| Reminders | Eyesight (20-20-20), movement, hydration and posture reminders with optional input lock and animation. Per window for now (#40). | `[wellbeing.eyesight]`, `[wellbeing.movement]`, `[wellbeing.routines]` |
+| Reminders | Eyesight (20-20-20) and movement reminders with optional input lock and animation. Per window for now (#40). | `[wellbeing.eyesight]`, `[wellbeing.movement]` |
 | Wind-down | An evening window (local time) that warms the screen colors and can mute the bell. Off by default. | `[wellbeing.winddown]` |
 | Dashboard | Overlay with overview, pomodoro and activity tabs; `rex wellbeing` prints a text card. | `[wellbeing]` |
 

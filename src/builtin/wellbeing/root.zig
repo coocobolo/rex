@@ -27,7 +27,6 @@ pub const Option = struct {
     movement: reminders.MovementOption = .{},
     focus: focus.Option = .default,
     winddown: winddown.WinddownOption = .{},
-    routines: reminders.RoutinesOption = .{},
 
     // Domain-specific UI behaviors
     lock_screen: struct {
@@ -91,7 +90,7 @@ pub const Wellbeing = struct {
         return .{
             .option = option,
             .tracker_engine = tracker.Tracker.init(option.screen_time),
-            .reminders_engine = reminders.RemindersEngine.init(option.eyesight, option.movement, option.routines),
+            .reminders_engine = reminders.RemindersEngine.init(option.eyesight, option.movement),
             .winddown_engine = winddown.WinddownEngine.init(option.winddown),
             .focus_state = focus_state,
         };
@@ -107,7 +106,6 @@ pub const Wellbeing = struct {
         self.tracker_engine.option = option.screen_time;
         self.reminders_engine.eyesight_opt = option.eyesight;
         self.reminders_engine.movement_opt = option.movement;
-        self.reminders_engine.routines_opt = option.routines;
         self.winddown_engine.option = option.winddown;
         self.focus_state.option = option.focus;
         // A waiting phase starts on the next tick if phases now start on

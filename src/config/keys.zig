@@ -282,10 +282,6 @@ pub const table = [_]Key{
     .{ .section = .@"wellbeing.movement", .name = "duration", .field = "wellbeing.movement.duration_ms", .kind = .duration, .bounds = at_least_one },
     .{ .section = .@"wellbeing.movement", .name = "during_reminder", .field = "wellbeing.movement.during_reminder", .kind = .set },
     .{ .section = .@"wellbeing.movement", .name = "animation", .field = "wellbeing.movement.animation" },
-    .{ .section = .@"wellbeing.routines", .name = "hydration_interval", .field = "wellbeing.routines.hydration_interval_ms", .kind = .duration, .bounds = at_least_one, .null_keyword = .none },
-    .{ .section = .@"wellbeing.routines", .name = "posture_interval", .field = "wellbeing.routines.posture_interval_ms", .kind = .duration, .bounds = at_least_one, .null_keyword = .none },
-    .{ .section = .@"wellbeing.routines", .name = "during_reminder", .field = "wellbeing.routines.during_reminder", .kind = .set },
-    .{ .section = .@"wellbeing.routines", .name = "animation", .field = "wellbeing.routines.animation" },
     // The tracker's field: privacy is where users look for what Rex records.
     .{ .section = .@"wellbeing.privacy", .name = "track_foreground_apps", .field = "wellbeing.screen_time.track_foreground_apps" },
 
@@ -310,15 +306,19 @@ pub const Retired = struct {
     },
 };
 
-/// Keys the old parser read but never applied (rebuild plan C8). They come
-/// back as real keys when implemented.
+/// Keys the old parser read but never applied (rebuild plan C8) come back as
+/// real keys when implemented; the others belong to removed features (#47).
 pub const retired = [_]Retired{
     .{ .section = .window, .name = "background_blur", .fate = .{ .removed = "not implemented yet" } },
     .{ .section = .window, .name = "title", .fate = .{ .removed = "not implemented yet" } },
     .{ .section = .wellbeing, .name = "eyesight_interval", .fate = .{ .renamed = "wellbeing.eyesight.interval" } },
     .{ .section = .wellbeing, .name = "movement_interval", .fate = .{ .renamed = "wellbeing.movement.interval" } },
-    .{ .section = .wellbeing, .name = "hydration_interval", .fate = .{ .renamed = "wellbeing.routines.hydration_interval" } },
-    .{ .section = .wellbeing, .name = "posture_interval", .fate = .{ .renamed = "wellbeing.routines.posture_interval" } },
+    .{ .section = .wellbeing, .name = "hydration_interval", .fate = .{ .removed = "hydration and posture reminders were removed" } },
+    .{ .section = .wellbeing, .name = "posture_interval", .fate = .{ .removed = "hydration and posture reminders were removed" } },
+    .{ .section = .@"wellbeing.routines", .name = "hydration_interval", .fate = .{ .removed = "hydration and posture reminders were removed" } },
+    .{ .section = .@"wellbeing.routines", .name = "posture_interval", .fate = .{ .removed = "hydration and posture reminders were removed" } },
+    .{ .section = .@"wellbeing.routines", .name = "during_reminder", .fate = .{ .removed = "hydration and posture reminders were removed" } },
+    .{ .section = .@"wellbeing.routines", .name = "animation", .fate = .{ .removed = "hydration and posture reminders were removed" } },
 };
 
 /// Whether the row at `index` has an effect on `os` (F17).
@@ -390,11 +390,6 @@ pub const internal = [_][]const u8{
     "wellbeing.focus.display",
     "wellbeing.focus.time_fields",
     "wellbeing.winddown.prompt",
-    "wellbeing.routines.hydration_prompt",
-    "wellbeing.routines.posture_prompt",
-    "wellbeing.routines.custom_name",
-    "wellbeing.routines.custom_interval_ms",
-    "wellbeing.routines.custom_prompt",
     "wellbeing.lock_screen",
     "wellbeing.dashboard",
 };

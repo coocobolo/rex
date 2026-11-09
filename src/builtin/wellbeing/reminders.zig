@@ -34,26 +34,10 @@ pub const MovementOption = struct {
     prompt: []const u8 = "Time to stand up, stretch your back, and move.",
 };
 
-pub const RoutinesOption = struct {
-    hydration_interval_ms: ?u64 = 45 * std.time.ms_per_min,
-    hydration_prompt: []const u8 = "Stay hydrated: drink some fresh water.",
-    posture_interval_ms: ?u64 = 30 * std.time.ms_per_min,
-    posture_prompt: []const u8 = "Check posture: roll shoulders back and align neck.",
-    custom_name: ?[]const u8 = null,
-    custom_interval_ms: ?u64 = null,
-    custom_prompt: ?[]const u8 = null,
-    during_reminder: std.EnumSet(ReminderAction) = .empty,
-    /// `none`: no animation.
-    animation: AnimationKind = .none,
-};
-
 pub const AlertKind = enum {
     none,
     eyesight,
     movement,
-    hydration,
-    posture,
-    custom,
     healthy_break,
     screen_limit,
 };
@@ -79,7 +63,6 @@ pub const break_prompts: []const []const u8 = &.{
 pub const RemindersEngine = struct {
     eyesight_opt: EyesightOption,
     movement_opt: MovementOption,
-    routines_opt: RoutinesOption,
 
     eyesight_timer_s: u32 = 0,
     eyesight_active_s: u32 = 0,
@@ -87,22 +70,13 @@ pub const RemindersEngine = struct {
     movement_timer_s: u32 = 0,
     movement_active_s: u32 = 0,
 
-    hydration_timer_s: u32 = 0,
-    posture_timer_s: u32 = 0,
-    custom_timer_s: u32 = 0,
-
     break_prompt_idx: usize = 0,
     current_alert: Alert = .{},
 
-    pub fn init(
-        eyesight: EyesightOption,
-        movement: MovementOption,
-        routines: RoutinesOption,
-    ) RemindersEngine {
+    pub fn init(eyesight: EyesightOption, movement: MovementOption) RemindersEngine {
         return .{
             .eyesight_opt = eyesight,
             .movement_opt = movement,
-            .routines_opt = routines,
         };
     }
 
@@ -129,54 +103,8 @@ pub const RemindersEngine = struct {
         // Advance all enabled timers first
         if (self.eyesight_opt.enabled) self.eyesight_timer_s +|= dt_s;
         if (self.movement_opt.enabled) self.movement_timer_s +|= dt_s;
-        if (self.routines_opt.hydration_interval_ms != null) self.hydration_timer_s +|= dt_s;
-        if (self.routines_opt.posture_interval_ms != null) self.posture_timer_s +|= dt_s;
-        if (self.routines_opt.custom_interval_ms != null) self.custom_timer_s +|= dt_s;
 
         var triggered: ?Alert = null;
-
-        if (self.routines_opt.custom_interval_ms) |interval| {
-            if (self.custom_timer_s >= secondsCeil(interval)) {
-                self.custom_timer_s = 0;
-                triggered = .{
-                    .kind = .custom,
-                    .prompt = self.routines_opt.custom_prompt orelse "Custom routine reminder",
-                    .remaining_s = 15,
-                    .lock_input = self.routines_opt.during_reminder.contains(.lock_input),
-                    .show_animation = self.routines_opt.animation != .none,
-                    .animation = self.routines_opt.animation,
-                };
-            }
-        }
-
-        if (self.routines_opt.posture_interval_ms) |interval| {
-            if (self.posture_timer_s >= secondsCeil(interval)) {
-                self.posture_timer_s = 0;
-                triggered = .{
-                    .kind = .posture,
-                    .prompt = self.routines_opt.posture_prompt,
-                    .remaining_s = 10,
-                    .lock_input = self.routines_opt.during_reminder.contains(.lock_input),
-                    .show_animation = self.routines_opt.animation != .none,
-                    .animation = self.routines_opt.animation,
-                };
-            }
-        }
-
-        if (self.routines_opt.hydration_interval_ms) |interval| {
-            if (self.hydration_timer_s >= secondsCeil(interval)) {
-                self.hydration_timer_s = 0;
-                today.hydration_count +|= 1;
-                triggered = .{
-                    .kind = .hydration,
-                    .prompt = self.routines_opt.hydration_prompt,
-                    .remaining_s = 15,
-                    .lock_input = self.routines_opt.during_reminder.contains(.lock_input),
-                    .show_animation = self.routines_opt.animation != .none,
-                    .animation = self.routines_opt.animation,
-                };
-            }
-        }
 
         if (self.eyesight_opt.enabled) {
             const threshold = secondsCeil(self.eyesight_opt.interval_ms);

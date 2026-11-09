@@ -81,16 +81,6 @@ pub fn alertToToast(alert: reminders.Alert) struct { variant: ToastVariant, icon
             .icon_id = .walk,
             .title = "Stretch and move",
         },
-        .hydration => .{
-            .variant = .info,
-            .icon_id = .water,
-            .title = "Hydration check",
-        },
-        .posture => .{
-            .variant = .warning,
-            .icon_id = .warning,
-            .title = "Posture check",
-        },
         .healthy_break => .{
             .variant = .healthy_break,
             .icon_id = .coffee,
@@ -100,11 +90,6 @@ pub fn alertToToast(alert: reminders.Alert) struct { variant: ToastVariant, icon
             .variant = .critical,
             .icon_id = .error_icon,
             .title = "Screen limit reached",
-        },
-        .custom => .{
-            .variant = .info,
-            .icon_id = .info,
-            .title = "Health reminder",
         },
         .none => .{
             .variant = .info,
@@ -804,8 +789,8 @@ pub const Overlay = struct {
         if (r <= max_row) {
             const health_line = std.fmt.bufPrint(
                 &fmt_buf,
-                "Eye Pauses: {d}  |  Posture Checks: {d}  |  Hydration: {d}",
-                .{ wellbeing.data.today.eyesight_breaks, wellbeing.data.today.movement_breaks, wellbeing.data.today.hydration_count },
+                "Eye Pauses: {d}  |  Movement Breaks: {d}",
+                .{ wellbeing.data.today.eyesight_breaks, wellbeing.data.today.movement_breaks },
             ) catch "";
             _ = Text.drawEllipsis(drawer, content_col, r, health_line, self.tokens.secondary, 255, max_content_col, "…");
             r += 2;

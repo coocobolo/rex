@@ -718,7 +718,6 @@ test "tracker and reminders: limits far beyond a day don't overflow" {
     var rem = reminders.RemindersEngine.init(
         .{ .interval_ms = std.math.maxInt(u64), .duration_ms = std.math.maxInt(u64) },
         .{ .interval_ms = std.math.maxInt(u64) },
-        .{ .hydration_interval_ms = std.math.maxInt(u64), .posture_interval_ms = std.math.maxInt(u64) },
     );
     try testing.expectEqual(null, rem.tick(30, false, &today));
 }
@@ -755,7 +754,6 @@ fn quietOption() wellbeing.Option {
         .screen_time = .{ .idle_threshold_ms = 24 * std.time.ms_per_hour, .track_foreground_apps = false },
         .eyesight = .{ .enabled = false },
         .movement = .{ .enabled = false },
-        .routines = .{ .hydration_interval_ms = null, .posture_interval_ms = null },
         .winddown = .{ .enabled = false },
     };
 }
@@ -831,7 +829,6 @@ test "reminders: eyesight 20-20-20 and movement triggers" {
     var rem = reminders.RemindersEngine.init(
         .{ .interval_ms = 1 * std.time.ms_per_min, .duration_ms = 20 * std.time.ms_per_s },
         .{ .interval_ms = 2 * std.time.ms_per_min, .duration_ms = 60 * std.time.ms_per_s },
-        .{ .hydration_interval_ms = 3 * std.time.ms_per_min },
     );
 
     var today = storage.DayRecord{};
@@ -1135,10 +1132,6 @@ test "reminders: lock_input and animation wave modulation" {
         .winddown = .{
             .enabled = false,
         },
-        .routines = .{
-            .hydration_interval_ms = null,
-            .posture_interval_ms = null,
-        },
     });
 
     const day1_s: i64 = 1000 * std.time.s_per_day + 3600;
@@ -1171,10 +1164,6 @@ test "focus: on_alert pause holds the task during a locking reminder and moves i
             .duration_ms = 10 * std.time.ms_per_s,
             .during_reminder = .initOne(.lock_input),
             .animation = .none,
-        },
-        .routines = .{
-            .hydration_interval_ms = null,
-            .posture_interval_ms = null,
         },
         .winddown = .{ .enabled = false },
     });

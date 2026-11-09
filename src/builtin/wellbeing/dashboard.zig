@@ -80,8 +80,8 @@ pub fn render(
     const focus_str = fmtDuration(data.today.focus_s, &focus_buf);
     const break_str = fmtDuration(data.today.break_s, &break_buf);
 
-    if (!appendFmt(buf, &pos, "  │ Focus: {s:<8} Break: {s:<8} Completed Tasks: {d:<4} │\n", .{ focus_str, break_str, data.today.tasks_completed })) return buf[0..0];
-    if (!appendFmt(buf, &pos, "  │ Eyesight Rests: {d:<4}  Movement Breaks: {d:<4} Hydration: {d:<3}  │\n", .{ data.today.eyesight_breaks, data.today.movement_breaks, data.today.hydration_count })) return buf[0..0];
+    if (!appendFmt(buf, &pos, "  │ Focus: {s:<8} Break: {s:<8} Completed Tasks: {d:<4}  │\n", .{ focus_str, break_str, data.today.tasks_completed })) return buf[0..0];
+    if (!appendFmt(buf, &pos, "  │ Eyesight Rests: {d:<4}  Movement Breaks: {d:<4}            │\n", .{ data.today.eyesight_breaks, data.today.movement_breaks })) return buf[0..0];
     if (!appendStr(buf, &pos, "  ├────────────────────────────────────────────────────────┤\n")) return buf[0..0];
 
     // Top Apps Today

@@ -205,7 +205,7 @@ test "apply: font min_size above max_size reverts both" {
     try std.testing.expectEqual(null, a.result.set_by[keys.lookup(.font, "min_size").?]);
 }
 
-test "apply: retired wellbeing intervals point to their new keys" {
+test "apply: retired wellbeing intervals report their fate" {
     var a = try Applied.init(
         \\[wellbeing]
         \\eyesight_interval = 10m
@@ -216,7 +216,7 @@ test "apply: retired wellbeing intervals point to their new keys" {
     defer a.deinit();
     try a.expectErrors(&.{
         .{ .retired_key, 1, "'eyesight_interval' was renamed to 'wellbeing.eyesight.interval'" },
-        .{ .retired_key, 2, "'posture_interval' was renamed to 'wellbeing.routines.posture_interval'" },
+        .{ .retired_key, 2, "'posture_interval' was removed: hydration and posture reminders were removed" },
     });
     try std.testing.expectEqual(10 * std.time.ms_per_min, a.config.wellbeing.eyesight.interval_ms);
 }
@@ -229,9 +229,6 @@ test "apply: reminder sections set their options" {
         \\duration = 90s
         \\during_reminder = lock_input
         \\animation = warm_glow
-        \\[wellbeing.routines]
-        \\hydration_interval = none
-        \\posture_interval = 15m
     );
     defer a.deinit();
     try a.expectErrors(&.{});
@@ -241,8 +238,23 @@ test "apply: reminder sections set their options" {
     try std.testing.expectEqual(90 * std.time.ms_per_s, wb.movement.duration_ms);
     try std.testing.expect(wb.movement.during_reminder.contains(.lock_input));
     try std.testing.expectEqual(.warm_glow, wb.movement.animation);
-    try std.testing.expectEqual(null, wb.routines.hydration_interval_ms);
-    try std.testing.expectEqual(15 * std.time.ms_per_min, wb.routines.posture_interval_ms);
+}
+
+test "apply: the removed routines section reports its keys as retired" {
+    var a = try Applied.init(
+        \\[wellbeing.routines]
+        \\hydration_interval = none
+        \\posture_interval = 15m
+        \\during_reminder = lock_input
+        \\animation = none
+    );
+    defer a.deinit();
+    try a.expectErrors(&.{
+        .{ .retired_key, 1, "'hydration_interval' was removed: hydration and posture reminders were removed" },
+        .{ .retired_key, 2, "'posture_interval' was removed: hydration and posture reminders were removed" },
+        .{ .retired_key, 3, "'during_reminder' was removed: hydration and posture reminders were removed" },
+        .{ .retired_key, 4, "'animation' was removed: hydration and posture reminders were removed" },
+    });
 }
 
 test "apply: actions and named states in the wellbeing sections" {
