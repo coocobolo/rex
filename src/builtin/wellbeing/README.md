@@ -10,7 +10,7 @@ The module lives in `src/builtin/wellbeing/` and is reached as `rex.builtin.well
 | --- | --- | --- |
 | Focus timer | Task, short break and long break phases; waits for the user or starts the next phase (`on_phase_end`); mutes the bell during a task; prompts, locks input or animates at a break. Shared by all windows. | `[wellbeing.focus]` |
 | Screen time | Counts active time (input within `idle_threshold`) in the focused window; per-app time from the pty's foreground process; a daily limit (off by default) that fades to grayscale, locks input or animates. | `[wellbeing.screen_time]`, `[wellbeing.privacy]` |
-| Reminders | Eyesight (20-20-20) and movement reminders with optional input lock and animation. Per window for now (#40). | `[wellbeing.eyesight]`, `[wellbeing.movement]` |
+| Reminders | Eyesight (20-20-20) and movement reminders on the shared active-time clock. The focused window fires each one once. Optional input lock and animation. | `[wellbeing.eyesight]`, `[wellbeing.movement]` |
 | Wind-down | An evening window (local time) that warms the screen colors and can mute the bell. Off by default. | `[wellbeing.winddown]` |
 | Dashboard | Overlay with overview, pomodoro and activity tabs; `rex wellbeing` prints a text card. | `[wellbeing]` |
 
@@ -27,7 +27,7 @@ Default keys: `ctrl+shift+p` start, pause or resume the focus timer; `ctrl+shift
 | `merge.zig` | Pure functions: `rebase` replays one process's changes onto a newer file version; `rollover`, `recordTaskDay`, `localDay`. |
 | `focus.zig` | The focus timer: `Timer` (stored), pure transitions returning a `Tally`, and `State`, the read-only view the UI reads. |
 | `tracker.zig` | Screen time, idle detection, foreground-app sampling (`tcgetpgrp`, `/proc/<pgrp>/comm`), the daily limit. |
-| `reminders.zig` | Reminder engines, the `Alert` type, break prompts. |
+| `reminders.zig` | Reminder engines and the `Alert` type. Due points live in the state file. |
 | `winddown.zig` | The wind-down window and its color tint. |
 | `localtime.zig` | UTC to local seconds via `localtime_r`, with a `tzset` once per minute so zone changes apply while Rex runs. |
 | `dashboard.zig` | The text card (`rex wellbeing`, copy to clipboard). |
@@ -38,13 +38,13 @@ Default keys: `ctrl+shift+p` start, pause or resume the focus timer; `ctrl+shift
 
 `App.run` calls, in this order:
 
-1. `tick(dt_ms, pty_fd, local_s, utc_ms)`: day rollover, screen time (focused window only), reminders, wind-down, the focus timer (phase end, `on_alert = pause`, break prompt), bell muting and input lock. It returns redraw, alert, grayscale and tint for the renderer.
+1. `tick(dt_ms, pty_fd, local_s, utc_ms)`: day rollover, screen time (focused window only), reminders (focused window, on the shared active clock, and not over an alert already on screen), wind-down, the focus timer (phase end, `on_alert = pause`, break prompt), bell muting and input lock. It returns redraw, alert, grayscale and tint for the renderer.
 2. `syncWellbeing` → `sync(.poll)`: exchanges changes with the state file, at most once per second unless a merge is due.
 3. The event loop waits at most until `msUntilSync` (the next second), so a sleeping window still notices another window's timer.
 
-Input callbacks call `recordActivity`; the GLFW focus callback calls `windowFocusChanged`; focus actions call `toggleFocus`, `skipFocus`, `resetFocus` with wall-clock milliseconds. At exit `App` merges with `sync(.merge)` and then calls `close`.
+Input callbacks call `recordActivity`; the GLFW focus callback calls `windowFocusChanged`; focus actions call `toggleFocus`, `skipFocus`, `resetFocus` with wall-clock milliseconds. After installing the focus callback, `App` reads GLFW's focus once, because a window can open unfocused and never receive a focus event. At exit `App` merges with `sync(.merge)` and then calls `close`.
 
-Two clocks are in play: `dt_ms` from the monotonic clock drives screen time and reminders; wall-clock time (`utc_ms`, `local_s`) drives the focus timer, days and wind-down.
+Two clocks are in play: `dt_ms` from the monotonic clock drives screen time, and reminders follow that shared active time; wall-clock time (`utc_ms`, `local_s`) drives the focus timer, days and wind-down.
 
 ## Shared state across windows
 
@@ -74,6 +74,7 @@ Each process keeps two copies of `PersistentData`:
 - every 60 s (either direction, so a clock set back does not postpone it);
 - on a local day change;
 - when the focus timer changed here (`timerPending`);
+- when a reminder due point moved, so another window sees it on its next poll;
 - when this window lost focus with unmerged screen time, so only the focused window ever holds unmerged time.
 
 A due poll uses `tryLockWrite` and never blocks the main thread; if another process holds the lock, it polls instead and stays due. `sync(.merge)` (exit, and the restart in `open`) and `purgeHistory` wait for the lock and flush their save to disk. A merge writes only when the result differs from the file, so an idle window never rewrites it.
@@ -106,9 +107,17 @@ When `open` finds no other window alive and a phase still running, the phase was
 
 Only the focused window runs the tracker; the window manager focuses one window at a time, so adding the windows' times is exact. Gaining focus counts as activity. The limit compares `data.today`, the file's time plus this window's, so it covers every window that has merged. Each window shows the limit alert once (its own `limit_notified`).
 
+### Reminders
+
+`eyesight_due_s` and `movement_due_s` are the shared active clock (`total_active_screen_s + today.active_screen_s`) at which that reminder was last due. Rollover moves today's time into the total, so a new day does not move the clock. A value of 0 means not started: the first time the focused window sees it, the due point becomes the current clock and nothing fires. An upgraded file, a new file and a purge therefore do not burst.
+
+Only the focused window evaluates them. A reminder is due when the clock reaches the due point plus the interval. The due point then snaps to the latest grid point at or before the clock, and several missed intervals fire once. It does not fire while any alert is on screen; it stays due and fires when that alert ends. Movement is checked first, so two reminders due together show one after the other.
+
+The break is added in the merge, on the file's current day, when the due point moves forward from a non-zero value. The same due point from two windows counts once. Moving off 0 is not a break. Several fires between two merges count as one, which only an interval shorter than a merge round trip can cause. Idle time pauses reminders because the clock stops.
+
 ## State file format
 
-`PersistentData` is an `extern struct` written as raw bytes in native byte order, 2,920 bytes, with no implicit padding (a test checks the field sizes add up). The header holds `magic` ("WELL"), `version` (3), `generation`, `timer_rev`, `last_write_utc_s` and the 16-byte `Timer`; then the totals and statistics, `history_count`, 14 days of `DayRecord` (184 bytes each), `today`, and `reserved`.
+`PersistentData` is an `extern struct` written as raw bytes in native byte order, 2,920 bytes, with no implicit padding (a test checks the field sizes add up). The header holds `magic` ("WELL"), `version` (3), `generation`, `timer_rev`, `last_write_utc_s` and the 16-byte `Timer`; then the totals and statistics, `history_count`, 14 days of `DayRecord` (184 bytes each), `today`, `eyesight_due_s`, `movement_due_s` (taken from the old `reserved`; 0 means not started) and 64 bytes of `reserved`.
 
 `decode` accepts only the exact size, the magic and the current version, and rejects a `history_count` above 14, so a damaged file cannot index past `history`. Until the first release, a layout change bumps `version` and older files are rejected (`error.InvalidStateFile`), not migrated; the first merge then replaces the file.
 
@@ -131,7 +140,8 @@ Check every change against these:
 - **Counters only grow between purges.** `rebase` depends on it; a decrease must go through a purge (generation bump).
 - **A timer change counts once.** Tallies are added only by the write that bumps `timer_rev`; never add timer statistics to `data` directly in a shared process.
 - **Screen time is counted by the focused window only.**
-- **Wall clock for the timer and days, monotonic `dt` for durations.**
+- **A reminder fires in the focused window only, and its break is counted once.** The due point lives in the file. Moving off 0 starts the reminder and is not a break.
+- **Wall clock for the timer and days, monotonic `dt` for durations.** Reminders follow the shared active clock, not their own timer.
 - **No allocation** in the module's own code for `tick`, `sync` or the merge: file contents, names and stamps use fixed buffers. (Whether std's `Io` allocates inside file operations is not verified.)
 
 ## Ownership and lifetimes
@@ -156,14 +166,15 @@ An unreadable file found by a poll is logged once per file version and left for 
 ## Testing
 
 ```sh
-zig build test -Dtest-filter=storage -Dtest-filter=merge -Dtest-filter=sync -Dtest-filter=focus -Dtest-filter="screen time"
+zig build test -Dtest-filter=storage -Dtest-filter=merge -Dtest-filter=sync -Dtest-filter=focus -Dtest-filter="screen time" -Dtest-filter=reminder
 ```
 
-All tests are in `wellbeing_test.zig`. The shared-state tests run two `Wellbeing` values against one temporary directory (`StateTmp`, `openShared`, `openFocus`) and drive time explicitly: `tick` and the focus actions take wall-clock milliseconds, and `sync` takes wall-clock seconds.
+All tests are in `wellbeing_test.zig`. The shared-state tests run two `Wellbeing` values against one temporary directory (`StateTmp`, `openShared`, `openFocus`, `openReminders`) and drive time explicitly: `tick` and the focus actions take wall-clock milliseconds, and `sync` takes wall-clock seconds.
 
 ## Known limits and follow-ups
 
-- **Reminders are per window** (#40): each window reminds and counts its own eyesight and movement breaks. #40 drives them from the shared screen-time counter; it also closes the `on_alert = pause` gap, where another window can end the phase while a reminder holds it in one window (fallback considered: turn `on_alert = pause` off until reminders are shared).
+- **`on_alert = pause` holds the task only in the window showing the alert.** Another window can still end the phase. This needs `during_reminder = lock_input` as well, and that is off by default. Pushing the shared end later from the focused window does not close the race, and it would drop the hold for the screen-limit alert, so the hold stays local.
+- A wind-down that starts in the same tick, or a focus phase that ends in the same tick, can replace a reminder after its due point has already moved. The reminder is counted and not shown again until the next interval. An alert already on screen does not have this hole: the reminder stays due.
 - A window that picks up a running timer and passes its end time in the same loop iteration does not show the break prompt; the phase end is still counted once.
 - A button press in one window that races a phase end recorded by another is dropped.
 - Each window shows the screen-limit alert once.
