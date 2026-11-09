@@ -77,6 +77,10 @@ test {
 
 - **Add a test file:** create `foo_test.zig` and add one
   `_ = @import("foo_test.zig");` line to that folder's `root.zig`.
+- **Keep tests out of implementation files,** `test {}` blocks that
+  import test files included: a file's tests travel with every import
+  of it, into that module's unfiltered test builds (see Fuzzing for the
+  module this protects).
 - **Add a suite:** add one row to `suites` in `build.zig`. Its root must
   not import above its own directory; `src/term_tests.zig` exists only
   because `term/` imports `../vt`, `../unicode` and others.
@@ -140,8 +144,10 @@ it:
 
     taskset -c 0-3 zig build fuzz-terminal -Dllvm -j4 --fuzz
 
-A crash fails the step and saves its input to `.zig-cache/f/crash`.
-The fuzzer's corpus is kept under `.zig-cache/f/`. Stopping the run
+A crash saves its input to `.zig-cache/f/crash` and prints "input
+saved to …". With `--fuzz=<runs>`, zig 0.16.0 still exits 0 after a
+crash, so check for that file rather than the exit status. The
+fuzzer's corpus is kept under `.zig-cache/f/`. Stopping the run
 by killing it also reports "terminated with signal KILL; input saved";
 that input is not a crash, so replay it before promoting it. To keep
 a real crash:
@@ -157,15 +163,23 @@ Seeds are plain byte strings: `harness.fuzz` wraps each one as the
 target's first `chunk`, and `harness.seeded` mutates them.
 
 CI fuzzes every target too (`.github/workflows/fuzz.yml`): one
-million runs per target on each push and fifty million nightly, with
-the corpus cached between runs. A crash fails the job and its input
-is uploaded as the `crash-<target>` artifact; promote it as above.
+million runs per target on each push and fifty million nightly (GitHub
+runs the nightly only from the default branch, `develop`). The corpus
+is cached between runs: each run reloads the saved inputs, and only
+the coverage numbers start over when the code changes. The job fails
+when the fuzzer saves a crash file, and the input is uploaded as the
+`crash-<target>` artifact; promote it as above.
 
 To add a target, create `src/fuzz/<name>.zig` with a `run(*Source)`
 function and the two tests (`fuzz <name>` and
 `fuzz <name>: seeded mutations`), import it in `src/fuzz/root.zig`,
 and add its name to `fuzz_targets` in `build.zig` and to the
 matrix in `.github/workflows/fuzz.yml`.
+
+The fuzz module links no native code, so a target must not reach libc,
+the C modules, GLFW, FreeType or GL, and neither may any inline `test`
+block in a file it imports. The unfiltered `zig build fuzz` step inside
+`zig build test` fails if one does.
 
 ## Generated code
 
