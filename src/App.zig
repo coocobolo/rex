@@ -2487,6 +2487,7 @@ const windowFocusCb: c.GLFWwindowfocusfun = struct {
         const app: *App = @ptrCast(@alignCast(c.glfwGetWindowUserPointer(handle) orelse return));
         const is_focused = (focused != 0);
         app.window_focused = is_focused;
+        app.wellbeing_state.windowFocusChanged(is_focused);
         const modes = app.driver.getModes();
         if (!modes.focus_events) return;
         app.driver.sendInput(.{ .focus = is_focused }) catch |err| {

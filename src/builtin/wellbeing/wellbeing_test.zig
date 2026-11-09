@@ -390,6 +390,68 @@ test "focus: a phase that ran out while every window was closed comes back waiti
     try testing.expectEqual(0, file.tasks_completed);
 }
 
+test "screen time: only the focused window counts" {
+    var t: StateTmp = .init();
+    defer t.deinit();
+    var a = try openShared(&t);
+    defer a.close(testing.io);
+    var b = try openShared(&t);
+    defer b.close(testing.io);
+    const day_s = localAt(1000, 12, 0, 0);
+
+    b.windowFocusChanged(false);
+    for (0..60) |_| {
+        a.recordActivity();
+        b.recordActivity();
+        _ = a.tick(1000, -1, day_s, 0);
+        _ = b.tick(1000, -1, day_s, 0);
+    }
+    try testing.expectEqual(60, a.data.today.active_screen_s);
+    try testing.expectEqual(0, b.data.today.active_screen_s);
+    try a.sync(testing.io, "unused", 1000, .merge);
+    try b.sync(testing.io, "unused", 1000, .merge);
+    try testing.expectEqual(60, (try storage.load(testing.io, try t.path(""), "wb.bin")).today.active_screen_s);
+}
+
+test "screen time: the daily limit counts every window's time" {
+    var t: StateTmp = .init();
+    defer t.deinit();
+    var a = try openShared(&t);
+    defer a.close(testing.io);
+    var b = try openShared(&t);
+    defer b.close(testing.io);
+    a.option.screen_time.daily_limit_ms = 2 * std.time.ms_per_min;
+    a.tracker_engine.option = a.option.screen_time;
+    b.option.screen_time.daily_limit_ms = 2 * std.time.ms_per_min;
+    b.tracker_engine.option = b.option.screen_time;
+    const day_s = localAt(1000, 12, 0, 0);
+
+    // 90 s in A, which merges when it loses focus.
+    b.windowFocusChanged(false);
+    _ = a.tick(90_000, -1, day_s, 0);
+    a.windowFocusChanged(false);
+    try a.sync(testing.io, "unused", 1000, .merge);
+
+    // B picks that up; 30 s of its own reach the 2-minute limit.
+    b.windowFocusChanged(true);
+    try b.sync(testing.io, "unused", 1001, .poll);
+    try testing.expectEqual(90, b.data.today.active_screen_s);
+    const res = b.tick(30_000, -1, day_s, 0);
+    try testing.expect(res.alert != null);
+    try testing.expectEqual(reminders.AlertKind.screen_limit, res.alert.?.kind);
+}
+
+test "screen time: gaining focus counts as activity" {
+    var option = quietOption();
+    option.screen_time.idle_threshold_ms = std.time.ms_per_min;
+    var wb = wellbeing.Wellbeing.init(option);
+    _ = wb.tick(60_000, -1, localAt(1000, 12, 0, 0), 0);
+    try testing.expect(wb.tracker_engine.is_idle);
+    wb.windowFocusChanged(false);
+    wb.windowFocusChanged(true);
+    try testing.expect(!wb.tracker_engine.is_idle);
+}
+
 test "sync: two windows' changes both reach the file and each other" {
     var t: StateTmp = .init();
     defer t.deinit();

@@ -77,6 +77,10 @@ pub const Wellbeing = struct {
     /// Wall-clock ms at which a reminder began blocking input during a
     /// running task (`on_alert = pause`); 0 when none does.
     alert_pause_start_ms: i64 = 0,
+    /// Screen time counts only in the focused window: the window manager
+    /// focuses one window at a time, so windows never count the same
+    /// second twice and adding their times is exact.
+    window_focused: bool = true,
 
     pub fn init(option: Option) Wellbeing {
         var focus_state = focus.State.idle;
@@ -333,6 +337,14 @@ pub const Wellbeing = struct {
         self.tracker_engine.recordActivity();
     }
 
+    /// The window gained or lost focus. Gaining it (a click, alt-tab) is
+    /// user activity. While unfocused the screen-time tracker does not run:
+    /// no active time, no foreground-app samples, no limit check.
+    pub fn windowFocusChanged(self: *Wellbeing, focused: bool) void {
+        self.window_focused = focused;
+        if (focused) self.tracker_engine.recordActivity();
+    }
+
     /// Start, pause, resume, or confirm the next phase. `now_ms` is
     /// wall-clock milliseconds since the epoch.
     pub fn toggleFocus(self: *Wellbeing, now_ms: i64) void {
@@ -418,8 +430,10 @@ pub const Wellbeing = struct {
         const today_epoch_day = merge.localDay(local_s);
         if (merge.rollover(&self.data, today_epoch_day)) needs_redraw = true;
 
-        // Screen-time tracker tick
-        if (dt_s > 0) {
+        // Screen-time tracker tick. `data.today` holds the file's time plus
+        // this window's, so the daily limit sees every window's time once
+        // the others have merged.
+        if (dt_s > 0 and self.window_focused) {
             const tr = self.tracker_engine.tick(dt_s, pty_fd, &self.data.today);
             if (tr.limit_reached) {
                 alert_to_return = .{
