@@ -8,10 +8,12 @@
 //! `flock` locks (std `File.tryLock`), which the kernel releases when the
 //! process exits, crashes included.
 //!
-//! No `fsync` before the rename: a power loss can lose the latest save,
-//! or on some filesystems leave an empty file (ext4's default
-//! `auto_da_alloc` flushes a file that replaces another by rename). The
-//! data is statistics, and an fsync on the main thread would stall frames.
+//! Saves during a session are not flushed (`Durability.buffered`): a power
+//! loss can lose the latest one, or on some filesystems leave an empty file
+//! (ext4's default `auto_da_alloc` flushes a file that replaces another by
+//! rename). An fsync costs about 1 ms with spikes past 10 ms (measured on
+//! ext4), too much for the frame path. The exit save and a purge use
+//! `Durability.synced`.
 
 const std = @import("std");
 const Io = std.Io;
@@ -152,7 +154,16 @@ pub fn decode(bytes: []const u8) error{InvalidStateFile}!PersistentData {
 }
 
 pub const SaveError = Io.Dir.CreateDirPathOpenError || Io.Dir.CreateFileAtomicError ||
-    Io.File.WritePositionalError || Io.File.Atomic.ReplaceError;
+    Io.File.WritePositionalError || Io.File.Atomic.ReplaceError || Io.File.SyncError;
+
+pub const Durability = enum {
+    /// Done once the rename is; a power loss can lose this save.
+    buffered,
+    /// Flushes the file before the rename and the directory after it, so
+    /// the save (and, for a purge, the removal of the old data) survives a
+    /// power loss. Only off the frame path.
+    synced,
+};
 
 /// Writes `data` to `state_dir/filename`, creating the directory if needed.
 /// The new file replaces the old one atomically; a crash before the rename
@@ -162,14 +173,27 @@ pub fn save(
     data: *const PersistentData,
     state_dir: []const u8,
     filename: []const u8,
+    durability: Durability,
 ) SaveError!void {
-    const dir = try std.Io.Dir.createDirPathOpen(.cwd(), io, state_dir, .{});
+    // On Linux std opens a directory with O_PATH unless `iterate` is set,
+    // and fsync(2) on an O_PATH descriptor fails with EBADF.
+    const dir = try std.Io.Dir.createDirPathOpen(.cwd(), io, state_dir, .{
+        .open_options = .{ .iterate = durability == .synced },
+    });
     defer dir.close(io);
 
     var atomic = try dir.createFileAtomic(io, filename, .{ .replace = true });
     defer atomic.deinit(io);
     try atomic.file.writePositionalAll(io, std.mem.asBytes(data), 0);
+    if (durability == .synced) try atomic.file.sync(io);
     try atomic.replace(io);
+    if (durability == .synced) {
+        // The rename lives in the directory, which `File.sync` does not
+        // flush; fsync(2) on the directory's descriptor does. std 0.16.0
+        // has no `Dir.sync`, so the handle is wrapped in a `File` for it.
+        const dir_file: Io.File = .{ .handle = dir.handle, .flags = .{ .nonblocking = false } };
+        try dir_file.sync(io);
+    }
 }
 
 pub const LoadError = Io.Dir.OpenError || Io.File.OpenError || Io.File.ReadPositionalError ||

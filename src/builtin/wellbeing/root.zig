@@ -124,7 +124,9 @@ pub const Wellbeing = struct {
         /// Re-read the file when another process saved it, and merge when a
         /// merge is due and the write lock is free.
         poll,
-        /// Merge now, waiting for the write lock if another process holds it.
+        /// Merge now, waiting for the write lock if another process holds it,
+        /// and flush the save to disk (`Durability.synced`). For the exit
+        /// save and the restart in `open`, off the frame path.
         merge,
     };
 
@@ -240,7 +242,7 @@ pub const Wellbeing = struct {
         };
         if (lock) |held| {
             defer held.release(io);
-            try self.mergeLocked(io, dir, name, utc_s);
+            try self.mergeLocked(io, dir, name, utc_s, if (mode == .merge) .synced else .buffered);
         } else {
             try self.poll(io, dir, name);
         }
@@ -281,7 +283,14 @@ pub const Wellbeing = struct {
     /// otherwise it and its statistics are dropped and the file's timer
     /// wins. Writes only when the result differs from the file, so an idle
     /// process does not rewrite it every minute.
-    fn mergeLocked(self: *Wellbeing, io: Io, dir: []const u8, name: []const u8, utc_s: i64) SyncError!void {
+    fn mergeLocked(
+        self: *Wellbeing,
+        io: Io,
+        dir: []const u8,
+        name: []const u8,
+        utc_s: i64,
+        durability: storage.Durability,
+    ) SyncError!void {
         // Set first: a failed merge is retried after the interval, not on
         // every poll.
         self.last_merge_utc_s = utc_s;
@@ -301,7 +310,7 @@ pub const Wellbeing = struct {
         }
         if (!std.mem.eql(u8, std.mem.asBytes(&merged), std.mem.asBytes(&fresh))) {
             merged.last_write_utc_s = utc_s;
-            try storage.save(io, &merged, dir, name);
+            try storage.save(io, &merged, dir, name, durability);
             self.stamp = try storage.stamp(io, dir, name);
         }
         self.adopt(&merged, &merged);
@@ -336,7 +345,8 @@ pub const Wellbeing = struct {
 
     /// Clears the history for every process: writes an empty file with the
     /// next generation, which makes the others drop what they have not
-    /// merged. Memory is cleared only once the file is written.
+    /// merged. The save is flushed, so the old data does not come back
+    /// after a power loss. Memory is cleared only once the file is written.
     pub fn purgeHistory(self: *Wellbeing, io: Io, default_state_dir: []const u8, utc_s: i64) SyncError!void {
         const dir = self.stateDir(default_state_dir);
         const name = self.option.privacy.state_filename;
@@ -349,7 +359,7 @@ pub const Wellbeing = struct {
         var cleared: storage.PersistentData = .empty;
         cleared.generation = fresh.generation +% 1;
         cleared.last_write_utc_s = utc_s;
-        try storage.save(io, &cleared, dir, name);
+        try storage.save(io, &cleared, dir, name, .synced);
         self.stamp = try storage.stamp(io, dir, name);
         self.base = cleared;
         self.data = cleared;

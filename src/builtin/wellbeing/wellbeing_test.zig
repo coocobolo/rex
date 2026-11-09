@@ -36,10 +36,15 @@ test "storage: save then load returns the same data" {
     data.current_streak = 5;
     data.today.focus_s = 1234;
 
-    try storage.save(testing.io, &data, try t.path("state"), "wb.bin");
+    try storage.save(testing.io, &data, try t.path("state"), "wb.bin", .buffered);
     const loaded = try storage.load(testing.io, try t.path("state"), "wb.bin");
     try testing.expectEqual(5, loaded.current_streak);
     try testing.expectEqual(1234, loaded.today.focus_s);
+
+    // A flushed save (file and directory fsync) reads back the same.
+    data.current_streak = 6;
+    try storage.save(testing.io, &data, try t.path("state"), "wb.bin", .synced);
+    try testing.expectEqual(6, (try storage.load(testing.io, try t.path("state"), "wb.bin")).current_streak);
 }
 
 test "storage: a missing directory or file loads as empty" {
@@ -60,7 +65,7 @@ test "storage: a short file or a wrong magic is InvalidStateFile" {
 
     var data: storage.PersistentData = .empty;
     data.magic = 0;
-    try storage.save(testing.io, &data, try t.path(""), "magic.bin");
+    try storage.save(testing.io, &data, try t.path(""), "magic.bin", .buffered);
     try testing.expectError(error.InvalidStateFile, storage.load(testing.io, try t.path(""), "magic.bin"));
 }
 
@@ -118,10 +123,10 @@ test "storage: save replaces the file and leaves no temporary file" {
     var t: StateTmp = .init();
     defer t.deinit();
     var data: storage.PersistentData = .empty;
-    try storage.save(testing.io, &data, try t.path(""), "wb.bin");
+    try storage.save(testing.io, &data, try t.path(""), "wb.bin", .buffered);
     const first = try storage.stamp(testing.io, try t.path(""), "wb.bin");
     data.current_streak = 7;
-    try storage.save(testing.io, &data, try t.path(""), "wb.bin");
+    try storage.save(testing.io, &data, try t.path(""), "wb.bin", .buffered);
     const second = try storage.stamp(testing.io, try t.path(""), "wb.bin");
 
     try testing.expect(!first.eql(second));
@@ -177,7 +182,7 @@ test "storage: save reports an unusable state directory" {
     // unlike a read-only directory.
     try t.tmp.dir.writeFile(testing.io, .{ .sub_path = "file", .data = "" });
     const data: storage.PersistentData = .empty;
-    if (storage.save(testing.io, &data, try t.path("file"), "wb.bin")) |_| {
+    if (storage.save(testing.io, &data, try t.path("file"), "wb.bin", .buffered)) |_| {
         return error.TestUnexpectedResult;
     } else |_| {}
 }
