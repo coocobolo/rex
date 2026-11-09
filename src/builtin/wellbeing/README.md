@@ -1,6 +1,6 @@
 # Wellbeing
 
-Digital wellbeing built into Rex: a focus timer (pomodoro), screen time with a daily limit, eyesight, movement and routine reminders, an evening wind-down, and a dashboard. Everything stays on the machine; nothing is sent anywhere.
+Digital wellbeing built into Rex: a focus timer (pomodoro), screen time with an optional daily limit, eyesight and movement reminders, an evening wind-down, and a dashboard. Everything stays on the machine; nothing is sent anywhere.
 
 The module lives in `src/builtin/wellbeing/` and is reached as `rex.builtin.wellbeing`. `App.zig` owns one `Wellbeing` per process and drives it from the main loop. Rex runs **one process per window** (`new_window` starts the executable again), so several windows share one person's state through a file, described under [Shared state](#shared-state-across-windows).
 
