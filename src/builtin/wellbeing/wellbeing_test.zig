@@ -452,6 +452,65 @@ test "screen time: gaining focus counts as activity" {
     try testing.expect(!wb.tracker_engine.is_idle);
 }
 
+test "sync: a poll runs once per second unless a merge is due" {
+    var t: StateTmp = .init();
+    defer t.deinit();
+    var a = try openShared(&t);
+    defer a.close(testing.io);
+    var b = try openShared(&t);
+    defer b.close(testing.io);
+
+    try a.sync(testing.io, "unused", 1000, .poll);
+    b.data.today.focus_s = 50;
+    try b.sync(testing.io, "unused", 1000, .merge);
+    try a.sync(testing.io, "unused", 1000, .poll);
+    try testing.expectEqual(0, a.data.today.focus_s);
+    try a.sync(testing.io, "unused", 1001, .poll);
+    try testing.expectEqual(50, a.data.today.focus_s);
+
+    // A timer change is due at once, within the same second.
+    a.toggleFocus(1_001_500);
+    try a.sync(testing.io, "unused", 1001, .poll);
+    const file = try storage.load(testing.io, try t.path(""), "wb.bin");
+    try testing.expectEqual(@intFromEnum(wellbeing.focus.Run.running), file.timer.run);
+}
+
+test "sync: losing focus makes unmerged screen time due" {
+    var t: StateTmp = .init();
+    defer t.deinit();
+    var a = try openShared(&t);
+    defer a.close(testing.io);
+
+    try a.sync(testing.io, "unused", 1000, .poll); // first merge
+    _ = a.tick(10_000, -1, localAt(1000, 12, 0, 0), 0);
+    try a.sync(testing.io, "unused", 1001, .poll);
+    try testing.expectEqual(0, (try storage.load(testing.io, try t.path(""), "wb.bin")).today.active_screen_s);
+    a.windowFocusChanged(false);
+    try a.sync(testing.io, "unused", 1002, .poll);
+    try testing.expectEqual(10, (try storage.load(testing.io, try t.path(""), "wb.bin")).today.active_screen_s);
+}
+
+test "sync: nothing happens while wellbeing is disabled" {
+    var t: StateTmp = .init();
+    defer t.deinit();
+    var option = quietOption();
+    option.enabled = false;
+    option.privacy.state_dir = try t.path("");
+    option.privacy.state_filename = "wb.bin";
+    var wb = wellbeing.Wellbeing.init(option);
+    wb.data.today = .{ .day = 1000, .focus_s = 10 };
+    try wb.sync(testing.io, "unused", 1000, .merge);
+    try testing.expect((try storage.stamp(testing.io, try t.path(""), "wb.bin")).eql(.none));
+    try testing.expectEqual(std.math.maxInt(u64), wb.msUntilSync(1_000_250));
+}
+
+test "sync: the event loop waits at most until the next second" {
+    const wb = wellbeing.Wellbeing.init(quietOption());
+    try testing.expectEqual(750, wb.msUntilSync(1_000_250));
+    try testing.expectEqual(1000, wb.msUntilSync(1_000_000));
+    try testing.expectEqual(1, wb.msUntilSync(-1));
+}
+
 test "sync: two windows' changes both reach the file and each other" {
     var t: StateTmp = .init();
     defer t.deinit();

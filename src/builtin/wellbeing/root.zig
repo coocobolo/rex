@@ -53,6 +53,8 @@ pub const Wellbeing = struct {
     stamp: storage.Stamp = .none,
     /// Wall-clock second of the last merge attempt.
     last_merge_utc_s: i64 = 0,
+    /// Wall-clock second of the last poll; polls run at most once a second.
+    last_poll_utc_s: i64 = 0,
     /// Held from `open` to `close`; null in a process that never opened the
     /// shared state (tests, `rex wellbeing`).
     presence: ?storage.Presence = null,
@@ -159,6 +161,14 @@ pub const Wellbeing = struct {
         try self.sync(io, default_state_dir, @divFloor(utc_ms, std.time.ms_per_s), .merge);
     }
 
+    /// Milliseconds until the next poll second, for the event loop's wait:
+    /// a sleeping window still notices another window's timer within a
+    /// second. No deadline while wellbeing is disabled.
+    pub fn msUntilSync(self: *const Wellbeing, utc_ms: i64) u64 {
+        if (!self.option.enabled) return std.math.maxInt(u64);
+        return @intCast(std.time.ms_per_s - @mod(utc_ms, std.time.ms_per_s));
+    }
+
     /// Releases the presence lock. Merge before, so nothing is lost.
     pub fn close(self: *Wellbeing, io: Io) void {
         if (self.presence) |presence| presence.release(io);
@@ -212,8 +222,16 @@ pub const Wellbeing = struct {
     }
 
     /// Exchanges changes with the state file: picks up other processes'
-    /// saves and, when due (or asked), merges this process's changes.
+    /// saves and, when due (or asked), merges this process's changes. A
+    /// poll does nothing more than once per wall-clock second unless a
+    /// merge is due, so the caller may call it every frame. Nothing happens
+    /// while wellbeing is disabled.
     pub fn sync(self: *Wellbeing, io: Io, default_state_dir: []const u8, utc_s: i64, mode: SyncMode) SyncError!void {
+        if (!self.option.enabled) return;
+        if (mode == .poll) {
+            if (utc_s == self.last_poll_utc_s and !self.mergeDue(utc_s)) return;
+            self.last_poll_utc_s = utc_s;
+        }
         const dir = self.stateDir(default_state_dir);
         const name = self.option.privacy.state_filename;
         const lock: ?storage.WriteLock = switch (mode) {
@@ -228,8 +246,13 @@ pub const Wellbeing = struct {
         }
     }
 
+    /// A merge is due on a day change, a timer change, screen time left
+    /// unmerged in a window that lost focus (so only the focused window
+    /// holds unmerged time and the shared limit stays exact), or after
+    /// `merge_interval_s`.
     fn mergeDue(self: *const Wellbeing, utc_s: i64) bool {
         if (self.data.today.day != self.base.today.day or self.timerPending()) return true;
+        if (!self.window_focused and self.data.today.active_screen_s != self.base.today.active_screen_s) return true;
         const elapsed_s = std.math.sub(i64, utc_s, self.last_merge_utc_s) catch return true;
         return @abs(elapsed_s) >= merge_interval_s;
     }

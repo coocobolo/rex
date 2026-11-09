@@ -209,6 +209,9 @@ blink_rapid: PeriodicTimer,
 // Frame timing, focus and size tracking
 last_frame: std.Io.Clock.Timestamp,
 window_focused: bool = true,
+/// The last wellbeing sync error, so a failure that repeats every second is
+/// reported once and its end is reported too; null while syncs succeed.
+wellbeing_sync_error: ?wellbeing.Wellbeing.SyncError = null,
 frame_buffer_size: Dimension(u16),
 last_title: std.Io.Clock.Timestamp,
 
@@ -561,8 +564,8 @@ pub fn run(self: *App) !void {
             self.frame_builder.last_generation = null;
             self.needs_redraw = true;
         }
+        self.syncWellbeing(@intCast(now_real.raw.toSeconds()));
         if (wb_res.phase_changed) {
-            self.wellbeing_state.sync(self.io, self.dirs.state, @intCast(now_real.raw.toSeconds()), .merge) catch |err| self.reportWellbeingError("save", err);
             self.ringBell();
             self.last_title = now;
             self.updateWindowTitle();
@@ -844,7 +847,10 @@ fn waitForNextEvent(self: *App, had_data: bool) void {
         self.blink.remaining(),
         @min(
             self.blink_rapid.remaining(),
-            @min(self.wellbeing_state.focus_state.msUntilTick(), self.toast_queue.msUntilNextTick()),
+            @min(
+                @min(self.wellbeing_state.focus_state.msUntilTick(), self.toast_queue.msUntilNextTick()),
+                self.wellbeing_state.msUntilSync(self.wallMs()),
+            ),
         ),
     );
     if (animating) ms = @min(ms, 33);
@@ -1042,6 +1048,23 @@ pub fn notifyToast(self: *App, req: Toast.Request) u64 {
     const id = self.toast_queue.push(req, self.config.window.toast.duration_ms);
     self.needs_redraw = true;
     return id;
+}
+
+/// Polls the shared wellbeing state (at most once a second, see
+/// `Wellbeing.sync`). A failure is reported when it starts or changes, not
+/// on every retry, and the return to working is reported too.
+fn syncWellbeing(self: *App, utc_s: i64) void {
+    if (self.wellbeing_state.sync(self.io, self.dirs.state, utc_s, .poll)) |_| {
+        if (self.wellbeing_sync_error != null) {
+            log.info("wellbeing state in {s} is saved again", .{self.wellbeing_state.stateDir(self.dirs.state)});
+            self.notifySimple("Wellbeing data", "Saved again", .success);
+        }
+        self.wellbeing_sync_error = null;
+    } else |err| {
+        const changed = if (self.wellbeing_sync_error) |previous| previous != err else true;
+        if (changed) self.reportWellbeingError("save", err);
+        self.wellbeing_sync_error = err;
+    }
 }
 
 /// Clears the wellbeing data and deletes its state file. Returns false and
