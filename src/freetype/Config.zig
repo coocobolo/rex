@@ -80,8 +80,8 @@ pub const Faces = struct {
     // codepoints.
     fallbacks: []const Face = &.{},
 
-    /// No font chosen: an empty path, which the user must set (`[font]
-    /// file`) until Rex has a default font (#20).
+    /// Empty path. Startup fills an omitted `[font] file` from the faces
+    /// installed next to the executable.
     pub const default: Faces = .{ .regular = "" };
 
     /// The file and weight `style` loads: its own file, else bold and

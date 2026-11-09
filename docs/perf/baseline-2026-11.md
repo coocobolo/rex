@@ -62,10 +62,13 @@ files are read or written, and its shell is replaced by `cat > /dev/null`.
 
 At `cc4c6b2` the default config was compiled into `main.zig` and included
 the maintainer's fonts: a variable family with its italic, an emoji face
-and seven fallback fonts. Since the config rebuild (`57587ce`) the defaults
-name no font; `perf-gui.sh` takes `FONT` (required) and `FONT_CONF` (for
-example fallback lines). Startup time and memory depend on the fonts
-loaded, so compare those numbers only with runs that load the same fonts.
+and seven fallback fonts. The config rebuild (`57587ce`) left the defaults
+with no font file. Since `6d13682` an omitted `font.file` uses the faces
+installed next to the executable. `perf-gui.sh` still requires `FONT` and
+accepts `FONT_CONF` (for example fallback lines), and writes them into the
+sandbox config, so a run names the faces it measured. Startup time and
+memory depend on the fonts loaded, so compare those numbers only with runs
+that load the same fonts.
 
 - **Idle:** `pidstat` over 60 s, window open, nothing changing.
 - **Pastes:** 20 pastes of 1 MiB (`Ctrl+Shift+V`, clipboard set with

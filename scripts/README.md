@@ -13,8 +13,9 @@ the benchmark binary itself is `zig-out/bin/benchmark` (sources in `bench/`).
 
 Requirements: `perf`, `zig`, `taskset`, `awk`. `jq` is needed by `perf-compare.sh` and `perf-md.sh`.
 `perf-gui.sh` needs an X11 session and `xdotool`, `xclip`, `pidstat`, `bc`, and
-`FONT=<variable font file>` (Rex has no built-in font; `FONT_CONF` adds config lines such as
-fallbacks); it takes over the keyboard focus while it runs (see the script header).
+`FONT=<variable font file>` (required, so a run names the face it measured;
+`FONT_CONF` adds config lines such as fallbacks); it takes over the keyboard
+focus while it runs (see the script header).
 With `LATENCY_KEYS=N` it only measures input latency, quiet and under output load, with a
 `-Dtrace-latency` build; that mode also runs in a Wayland session, with Rex on XWayland.
 

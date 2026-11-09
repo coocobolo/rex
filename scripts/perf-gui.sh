@@ -23,8 +23,8 @@
 # and restored, and every window this script opens is closed on exit.
 #
 # Environment:
-#   FONT           required: a variable font file. Rex has no built-in font,
-#                  so the sandbox config sets `[font] file` to it
+#   FONT           required: a variable font file. The sandbox config sets
+#                  `[font] file` to it, so the run does not use the installed faces
 #   FONT_CONF      a config fragment appended to the sandbox config, such as
 #                  `[font]` fallback lines; its keys override the defaults.
 #                  Results are comparable only between runs with the same
@@ -84,7 +84,7 @@ die() { echo "error: $*" >&2; exit 1; }
 
 font="${FONT:-}"
 font_conf="${FONT_CONF:-}"
-[ -n "$font" ] || die "set FONT to a variable font file: Rex has no built-in font"
+[ -n "$font" ] || die "set FONT to a variable font file"
 [ -f "$font" ] || die "FONT: no such file: $font"
 [ -z "$font_conf" ] || [ -f "$font_conf" ] || die "FONT_CONF: no such file: $font_conf"
 

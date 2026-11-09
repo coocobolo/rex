@@ -32,11 +32,11 @@ libpng, libm and libc only; Debug builds also keep zlib.
 Running Rex needs an X11 or Wayland session and an OpenGL 3.3 core
 driver. On Wayland it runs natively;
 `window.platform = auto|wayland|x11` in the config overrides the
-choice (ADR 0001). The default fonts in `src/main.zig` are the
-maintainer's: the upright and italic faces and the emoji font must
-exist, or Rex stops at startup, while missing fallbacks are skipped.
-`font_family` replaces only the upright face (a file path); change the
-other paths in `src/main.zig` locally.
+choice (ADR 0001). `zig build` installs Google Sans Code and Noto
+Color Emoji under `share/rex/fonts`, beside `bin/rex`. An omitted
+`font.file`, `italic_file`, or `emoji_file` uses those faces. A path
+or `none` in the config stays as written. With the faces missing and
+`font.file` unset, Rex stops at startup. Missing fallbacks are skipped.
 
 ## Code style
 
