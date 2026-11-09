@@ -64,6 +64,112 @@ test "storage: a short file or a wrong magic is InvalidStateFile" {
     try testing.expectError(error.InvalidStateFile, storage.load(testing.io, try t.path(""), "magic.bin"));
 }
 
+test "storage: version 2 has no implicit padding" {
+    inline for (.{ storage.Timer, storage.PersistentData }) |T| {
+        comptime var sum: usize = 0;
+        inline for (std.meta.fields(T)) |f| sum += @sizeOf(f.type);
+        try testing.expectEqual(sum, @sizeOf(T));
+    }
+}
+
+test "storage: a saved waiting phase loads as waiting, not counted twice" {
+    var t: StateTmp = .init();
+    defer t.deinit();
+    var option = quietOption();
+    option.focus = .{ .task_ms = 1000, .on_phase_end = .wait };
+    option.privacy.state_dir = try t.path("");
+    option.privacy.state_filename = "wb.bin";
+
+    var before = wellbeing.Wellbeing.init(option);
+    before.toggleFocus();
+    _ = before.tick(1000, -1, localAt(1000, 12, 0, 0));
+    try testing.expect(before.focus_state.waiting);
+    try testing.expectEqual(1, before.data.tasks_completed);
+    try before.saveState(testing.io, "unused");
+
+    var after = wellbeing.Wellbeing.init(option);
+    try after.loadState(testing.io, "unused");
+    try testing.expect(after.focus_state.waiting);
+    try testing.expect(!after.focus_state.paused);
+
+    // Confirming starts the break; the task that ended before the restart
+    // is not counted again.
+    after.toggleFocus();
+    _ = after.tick(1000, -1, localAt(1000, 12, 1, 0));
+    try testing.expectEqual(wellbeing.focus.Phase.short_break, after.focus_state.phase);
+    try testing.expectEqual(1, after.data.tasks_completed);
+}
+
+test "storage: decode rejects a wrong size, an older version and a bad history_count" {
+    const data: storage.PersistentData = .empty;
+    const bytes = std.mem.asBytes(&data);
+    try testing.expectError(error.InvalidStateFile, storage.decode(bytes[0 .. bytes.len - 1]));
+
+    var other = data;
+    other.version = 1;
+    try testing.expectError(error.InvalidStateFile, storage.decode(std.mem.asBytes(&other)));
+
+    var bad = data;
+    bad.history_count = storage.max_history_days + 1;
+    try testing.expectError(error.InvalidStateFile, storage.decode(std.mem.asBytes(&bad)));
+}
+
+test "storage: save replaces the file and leaves no temporary file" {
+    var t: StateTmp = .init();
+    defer t.deinit();
+    var data: storage.PersistentData = .empty;
+    try storage.save(testing.io, &data, try t.path(""), "wb.bin");
+    const first = (try storage.stamp(testing.io, try t.path(""), "wb.bin")).?;
+    data.current_streak = 7;
+    try storage.save(testing.io, &data, try t.path(""), "wb.bin");
+    const second = (try storage.stamp(testing.io, try t.path(""), "wb.bin")).?;
+
+    try testing.expect(first.inode != second.inode or first.mtime_ns != second.mtime_ns);
+    try testing.expectEqual(7, (try storage.load(testing.io, try t.path(""), "wb.bin")).current_streak);
+    const dir = try t.tmp.dir.openDir(testing.io, ".", .{ .iterate = true });
+    defer dir.close(testing.io);
+    var it = dir.iterate();
+    var count: usize = 0;
+    while (try it.next(testing.io)) |_| count += 1;
+    try testing.expectEqual(1, count);
+}
+
+test "storage: stamp of a missing file is null" {
+    var t: StateTmp = .init();
+    defer t.deinit();
+    try testing.expectEqual(null, try storage.stamp(testing.io, try t.path("missing"), "wb.bin"));
+    try testing.expectEqual(null, try storage.stamp(testing.io, try t.path(""), "wb.bin"));
+}
+
+// flock locks belong to an open file description, so two opens in one
+// process conflict like two processes do (Linux flock(2), macOS flock(2)).
+test "storage: the write lock is exclusive until released" {
+    var t: StateTmp = .init();
+    defer t.deinit();
+    const first = (try storage.tryLockWrite(testing.io, try t.path(""), "wb.bin")).?;
+    try testing.expectEqual(null, try storage.tryLockWrite(testing.io, try t.path(""), "wb.bin"));
+    first.release(testing.io);
+    const again = (try storage.tryLockWrite(testing.io, try t.path(""), "wb.bin")).?;
+    again.release(testing.io);
+}
+
+test "storage: presence tells the first process it is alone" {
+    var t: StateTmp = .init();
+    defer t.deinit();
+    const a = try storage.acquirePresence(testing.io, try t.path(""), "wb.bin");
+    try testing.expect(a.alone);
+    const b = try storage.acquirePresence(testing.io, try t.path(""), "wb.bin");
+    try testing.expect(!b.alone);
+    a.presence.release(testing.io);
+    const c = try storage.acquirePresence(testing.io, try t.path(""), "wb.bin");
+    try testing.expect(!c.alone);
+    b.presence.release(testing.io);
+    c.presence.release(testing.io);
+    const d = try storage.acquirePresence(testing.io, try t.path(""), "wb.bin");
+    try testing.expect(d.alone);
+    d.presence.release(testing.io);
+}
+
 test "storage: save reports an unusable state directory" {
     var t: StateTmp = .init();
     defer t.deinit();

@@ -99,19 +99,28 @@ pub const Wellbeing = struct {
     pub fn loadState(self: *Wellbeing, io: Io, default_state_dir: []const u8) storage.LoadError!void {
         self.data = try storage.load(io, self.stateDir(default_state_dir), self.option.privacy.state_filename);
 
-        if (std.enums.fromInt(focus.Phase, self.data.focus_phase)) |phase| {
+        const timer = self.data.timer;
+        if (std.enums.fromInt(focus.Phase, timer.phase)) |phase| {
             self.focus_state.phase = phase;
-            self.focus_state.remaining_ms = self.data.focus_remaining_ms;
-            self.focus_state.tasks_in_cycle = self.data.tasks_in_cycle;
-            self.focus_state.paused = true;
-            self.focus_state.waiting = false;
+            self.focus_state.remaining_ms = std.math.cast(u64, timer.ms) orelse 0;
+            self.focus_state.tasks_in_cycle = timer.tasks_in_cycle;
+            // A phase that had ended still waits for the user; anything
+            // else comes back paused.
+            const waiting = timer.run == @intFromEnum(storage.Run.waiting);
+            self.focus_state.waiting = waiting;
+            self.focus_state.paused = !waiting;
         }
     }
 
     pub fn saveState(self: *Wellbeing, io: Io, default_state_dir: []const u8) storage.SaveError!void {
-        self.data.focus_phase = @intFromEnum(self.focus_state.phase);
-        self.data.focus_remaining_ms = self.focus_state.remaining_ms;
-        self.data.tasks_in_cycle = self.focus_state.tasks_in_cycle;
+        // Until the shared timer lands, a running phase is saved paused
+        // with the time left, as version 1 did.
+        self.data.timer = .{
+            .ms = std.math.cast(i64, self.focus_state.remaining_ms) orelse std.math.maxInt(i64),
+            .phase = @intFromEnum(self.focus_state.phase),
+            .run = @intFromEnum(if (self.focus_state.waiting) storage.Run.waiting else storage.Run.paused),
+            .tasks_in_cycle = self.focus_state.tasks_in_cycle,
+        };
         try storage.save(io, &self.data, self.stateDir(default_state_dir), self.option.privacy.state_filename);
     }
 
