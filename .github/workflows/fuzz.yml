@@ -23,7 +23,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [parser, terminal, strings, utf8, grapheme, wcwidth]
+        target: [config, parser, terminal, strings, utf8, grapheme, wcwidth]
     env:
       # About 1 minute per target on push, about an hour nightly.
       RUNS: ${{ github.event_name == 'push' && '1000000' || inputs.runs || '50000000' }}
@@ -36,6 +36,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             libx11-dev libxrandr-dev libxi-dev libxcursor-dev \
             libxinerama-dev libxext-dev libgl-dev libegl-dev \
+            libwayland-dev libwayland-bin libxkbcommon-dev \
             libpng-dev zlib1g-dev
 
       - uses: mlugg/setup-zig@v2.2.1
@@ -47,11 +48,23 @@ jobs:
           key: fuzz-${{ matrix.target }}-${{ github.run_id }}
           restore-keys: fuzz-${{ matrix.target }}-
 
+      # The Zig cache restored by setup-zig is shared by all targets and
+      # may hold another run's crash file; drop it so an upload below is
+      # always this run's.
+      - name: Remove stale crash
+        run: rm -f .zig-cache/f/crash
+
+      # Build and replay seeds and regressions first, so a build error
+      # fails here and is not mistaken for a fuzzer crash.
+      - name: Build and replay ${{ matrix.target }}
+        run: zig build fuzz-${{ matrix.target }} -Dllvm
+
       - name: Fuzz ${{ matrix.target }}
+        id: fuzz
         run: zig build fuzz-${{ matrix.target }} -Dllvm --fuzz=$RUNS
 
       - name: Upload crash
-        if: failure()
+        if: failure() && steps.fuzz.outcome == 'failure'
         uses: actions/upload-artifact@v7
         with:
           name: crash-${{ matrix.target }}
