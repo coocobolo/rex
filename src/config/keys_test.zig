@@ -195,10 +195,10 @@ test "apply: word characters are printable ASCII" {
 
 test "apply: an optional field's keyword sets null" {
     var config = testConfig();
-    try applyText(&config, .@"wellbeing.screen_time", "daily_limit", "none");
-    try std.testing.expectEqual(null, config.wellbeing.screen_time.daily_limit_ms);
     try applyText(&config, .@"wellbeing.screen_time", "daily_limit", "6h");
     try std.testing.expectEqual(6 * std.time.ms_per_hour, config.wellbeing.screen_time.daily_limit_ms);
+    try applyText(&config, .@"wellbeing.screen_time", "daily_limit", "none");
+    try std.testing.expectEqual(null, config.wellbeing.screen_time.daily_limit_ms);
 
     try applyText(&config, .modal, "border_style", "subtle");
     try std.testing.expectEqual(.subtle, config.window.surfaces.modal.border_style);
@@ -214,7 +214,7 @@ test "apply: default resets a key to the built-in value" {
     try applyText(&config, .window, "dim_text_opacity", "0.1");
     try applyText(&config, .window, "dim_text_opacity", "default");
     try std.testing.expectEqual(defaults.window.dim_alpha, config.window.dim_alpha);
-    try applyText(&config, .@"wellbeing.screen_time", "daily_limit", "none");
+    try applyText(&config, .@"wellbeing.screen_time", "daily_limit", "6h");
     try applyText(&config, .@"wellbeing.screen_time", "daily_limit", "default");
     try std.testing.expectEqual(defaults.wellbeing.screen_time.daily_limit_ms, config.wellbeing.screen_time.daily_limit_ms);
 }

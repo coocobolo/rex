@@ -23,7 +23,7 @@ pub const LimitAction = enum {
 pub const TrackerOption = struct {
     idle_threshold_ms: u64 = 3 * std.time.ms_per_min,
     /// null: no daily limit.
-    daily_limit_ms: ?u64 = 8 * std.time.ms_per_hour,
+    daily_limit_ms: ?u64 = null,
     proc_sample_interval_ms: u64 = 5 * std.time.ms_per_s,
     /// What happens once the daily limit is reached.
     on_limit: std.EnumSet(LimitAction) = .initOne(.grayscale),
