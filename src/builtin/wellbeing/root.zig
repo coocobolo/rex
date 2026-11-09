@@ -2,6 +2,7 @@ const std = @import("std");
 const Io = std.Io;
 
 pub const storage = @import("storage.zig");
+pub const merge = @import("merge.zig");
 pub const tracker = @import("tracker.zig");
 pub const reminders = @import("reminders.zig");
 pub const winddown = @import("winddown.zig");
@@ -10,6 +11,8 @@ pub const dashboard = @import("dashboard.zig");
 pub const focus = @import("focus.zig");
 pub const icons = @import("icons.zig");
 pub const overlay = @import("overlay.zig");
+
+const log = std.log.scoped(.wellbeing);
 
 pub const Option = struct {
     enabled: bool = true,
@@ -41,7 +44,18 @@ pub const Option = struct {
 
 pub const Wellbeing = struct {
     option: Option,
+    /// What the engines read and update: `base` plus this process's changes.
     data: storage.PersistentData = .empty,
+    /// The state file version `data` was derived from (see merge.zig).
+    base: storage.PersistentData = .empty,
+    /// Identifies the file version in `base`, to notice other processes'
+    /// saves with one `stat`.
+    stamp: storage.Stamp = .none,
+    /// Wall-clock second of the last merge attempt.
+    last_merge_utc_s: i64 = 0,
+    /// Held from `open` to `close`; null in a process that never opened the
+    /// shared state (tests, `rex wellbeing`).
+    presence: ?storage.Presence = null,
     tracker_engine: tracker.Tracker,
     reminders_engine: reminders.RemindersEngine,
     winddown_engine: winddown.WinddownEngine,
@@ -94,10 +108,44 @@ pub const Wellbeing = struct {
         return self.option.privacy.state_dir orelse default_state_dir;
     }
 
-    /// Restores saved data and the focus phase. On error the current data
-    /// is kept.
+    pub const SyncMode = enum {
+        /// Re-read the file when another process saved it, and merge when a
+        /// merge is due and the write lock is free.
+        poll,
+        /// Merge now, waiting for the write lock if another process holds it.
+        merge,
+    };
+
+    /// A poll merges when this long has passed since the last merge (either
+    /// way, so a clock set back does not postpone it) or the day changed.
+    pub const merge_interval_s = 60;
+
+    pub const OpenError = storage.LockError || storage.StampError || storage.LoadError;
+    pub const SyncError = storage.LockError || storage.StampError || storage.LoadError || storage.SaveError;
+
+    /// Joins the shared state as a running window: takes the presence lock,
+    /// then loads the file. On a load error the presence stays held, the
+    /// data stays empty, and the first merge replaces the file; call `close`
+    /// in every case.
+    pub fn open(self: *Wellbeing, io: Io, default_state_dir: []const u8) OpenError!void {
+        const dir = self.stateDir(default_state_dir);
+        const name = self.option.privacy.state_filename;
+        self.presence = (try storage.acquirePresence(io, dir, name)).presence;
+        self.stamp = try storage.stamp(io, dir, name);
+        try self.loadState(io, default_state_dir);
+    }
+
+    /// Releases the presence lock. Merge before, so nothing is lost.
+    pub fn close(self: *Wellbeing, io: Io) void {
+        if (self.presence) |presence| presence.release(io);
+        self.presence = null;
+    }
+
+    /// Restores saved data and the focus phase without joining the shared
+    /// state (for `rex wellbeing`). On error the current data is kept.
     pub fn loadState(self: *Wellbeing, io: Io, default_state_dir: []const u8) storage.LoadError!void {
         self.data = try storage.load(io, self.stateDir(default_state_dir), self.option.privacy.state_filename);
+        self.base = self.data;
 
         const timer = self.data.timer;
         if (std.enums.fromInt(focus.Phase, timer.phase)) |phase| {
@@ -112,25 +160,115 @@ pub const Wellbeing = struct {
         }
     }
 
-    pub fn saveState(self: *Wellbeing, io: Io, default_state_dir: []const u8) storage.SaveError!void {
-        // Until the shared timer lands, a running phase is saved paused
-        // with the time left, as version 1 did.
+    /// Exchanges changes with the state file: picks up other processes'
+    /// saves and, when due (or asked), merges this process's changes.
+    pub fn sync(self: *Wellbeing, io: Io, default_state_dir: []const u8, utc_s: i64, mode: SyncMode) SyncError!void {
+        const dir = self.stateDir(default_state_dir);
+        const name = self.option.privacy.state_filename;
+        const lock: ?storage.WriteLock = switch (mode) {
+            .merge => try storage.lockWrite(io, dir, name),
+            .poll => if (self.mergeDue(utc_s)) try storage.tryLockWrite(io, dir, name) else null,
+        };
+        if (lock) |held| {
+            defer held.release(io);
+            try self.mergeLocked(io, dir, name, utc_s);
+        } else {
+            try self.poll(io, dir, name);
+        }
+    }
+
+    fn mergeDue(self: *const Wellbeing, utc_s: i64) bool {
+        if (self.data.today.day != self.base.today.day) return true;
+        const elapsed_s = std.math.sub(i64, utc_s, self.last_merge_utc_s) catch return true;
+        return @abs(elapsed_s) >= merge_interval_s;
+    }
+
+    /// Re-reads the file when its stamp changed and replays this process's
+    /// changes on top. An unreadable file is logged once per version and
+    /// left for the next merge to replace.
+    fn poll(self: *Wellbeing, io: Io, dir: []const u8, name: []const u8) SyncError!void {
+        const current = try storage.stamp(io, dir, name);
+        if (current.eql(self.stamp)) return;
+        self.stamp = current;
+        if (current.eql(.none)) return;
+        const fresh = storage.load(io, dir, name) catch |err| switch (err) {
+            error.InvalidStateFile => {
+                log.warn("ignoring the unreadable wellbeing state in {s} until the next save", .{dir});
+                return;
+            },
+            else => |e| return e,
+        };
+        const view = merge.rebase(&self.data, &self.base, &fresh);
+        self.adopt(&fresh, &view);
+    }
+
+    /// Merges with the write lock held. Writes only when the result differs
+    /// from the file, so an idle process does not rewrite it every minute.
+    fn mergeLocked(self: *Wellbeing, io: Io, dir: []const u8, name: []const u8, utc_s: i64) SyncError!void {
+        // Set first: a failed merge is retried after the interval, not on
+        // every poll.
+        self.last_merge_utc_s = utc_s;
+        self.storeTimer();
+        const fresh = storage.load(io, dir, name) catch |err| switch (err) {
+            error.InvalidStateFile => blk: {
+                log.warn("replacing the unreadable wellbeing state in {s}", .{dir});
+                break :blk self.base;
+            },
+            else => |e| return e,
+        };
+        var merged = merge.rebase(&self.data, &self.base, &fresh);
+        // Until the shared timer lands, the last writer's timer wins, as
+        // before; a purge since `base` resets it.
+        if (fresh.generation == self.base.generation) merged.timer = self.data.timer;
+        if (!std.mem.eql(u8, std.mem.asBytes(&merged), std.mem.asBytes(&fresh))) {
+            merged.last_write_utc_s = utc_s;
+            try storage.save(io, &merged, dir, name);
+            self.stamp = try storage.stamp(io, dir, name);
+        }
+        self.adopt(&merged, &merged);
+    }
+
+    /// Takes `file` as the new base and `view` as the data. A purge in
+    /// another process (newer generation) also resets the focus timer.
+    fn adopt(self: *Wellbeing, file: *const storage.PersistentData, view: *const storage.PersistentData) void {
+        const purged = file.generation != self.base.generation;
+        const timer = self.data.timer;
+        self.base = file.*;
+        self.data = view.*;
+        if (purged) self.focus_state.reset() else self.data.timer = timer;
+    }
+
+    /// Writes the focus state into `data.timer`. Until the shared timer
+    /// lands, a running phase is stored paused with the time left.
+    fn storeTimer(self: *Wellbeing) void {
         self.data.timer = .{
             .ms = std.math.cast(i64, self.focus_state.remaining_ms) orelse std.math.maxInt(i64),
             .phase = @intFromEnum(self.focus_state.phase),
             .run = @intFromEnum(if (self.focus_state.waiting) storage.Run.waiting else storage.Run.paused),
             .tasks_in_cycle = self.focus_state.tasks_in_cycle,
         };
-        try storage.save(io, &self.data, self.stateDir(default_state_dir), self.option.privacy.state_filename);
     }
 
-    /// Clears the data in memory, then deletes the state file. When the
-    /// delete fails, the memory is already clear and the next save
-    /// overwrites the file.
-    pub fn purgeHistory(self: *Wellbeing, io: Io, default_state_dir: []const u8) storage.PurgeError!void {
-        self.data = .empty;
+    /// Clears the history for every process: writes an empty file with the
+    /// next generation, which makes the others drop what they have not
+    /// merged. Memory is cleared only once the file is written.
+    pub fn purgeHistory(self: *Wellbeing, io: Io, default_state_dir: []const u8, utc_s: i64) SyncError!void {
+        const dir = self.stateDir(default_state_dir);
+        const name = self.option.privacy.state_filename;
+        const lock = try storage.lockWrite(io, dir, name);
+        defer lock.release(io);
+        const fresh = storage.load(io, dir, name) catch |err| switch (err) {
+            error.InvalidStateFile => storage.PersistentData.empty,
+            else => |e| return e,
+        };
+        var cleared: storage.PersistentData = .empty;
+        cleared.generation = fresh.generation +% 1;
+        cleared.last_write_utc_s = utc_s;
+        try storage.save(io, &cleared, dir, name);
+        self.stamp = try storage.stamp(io, dir, name);
+        self.base = cleared;
+        self.data = cleared;
         self.focus_state.reset();
-        try storage.purge(io, self.stateDir(default_state_dir), self.option.privacy.state_filename);
     }
 
     pub fn recordActivity(self: *Wellbeing) void {
@@ -202,30 +340,8 @@ pub const Wellbeing = struct {
         var needs_redraw = false;
         var phase_changed = false;
 
-        // Day rollover check. A clock before 1970 (local_s < 0, e.g. booted
-        // at the epoch in a zone west of UTC) gives day 0, the "unset" day,
-        // so day tracking waits for a real clock instead of panicking.
-        const today_epoch_day = std.math.cast(u32, @divFloor(local_s, std.time.s_per_day)) orelse 0;
-        if (self.data.today.day == 0) {
-            self.data.today.day = today_epoch_day;
-        } else if (today_epoch_day > self.data.today.day) {
-            // Push today to history
-            if (self.data.history_count < storage.max_history_days) {
-                self.data.history[self.data.history_count] = self.data.today;
-                self.data.history_count += 1;
-            } else {
-                // Shift history
-                for (0..storage.max_history_days - 1) |i| {
-                    self.data.history[i] = self.data.history[i + 1];
-                }
-                self.data.history[storage.max_history_days - 1] = self.data.today;
-            }
-
-            self.data.total_active_screen_s +|= self.data.today.active_screen_s;
-            self.data.total_focus_s +|= self.data.today.focus_s;
-            self.data.today = .{ .day = today_epoch_day };
-            needs_redraw = true;
-        }
+        const today_epoch_day = merge.localDay(local_s);
+        if (merge.rollover(&self.data, today_epoch_day)) needs_redraw = true;
 
         // Screen-time tracker tick
         if (dt_s > 0) {
@@ -305,19 +421,7 @@ pub const Wellbeing = struct {
                     self.data.today.tasks_completed +|= 1;
                     self.data.tasks_completed +|= 1;
 
-                    // Update streak. A local day earlier than the last
-                    // task's (zone change westward, clock set back) counts
-                    // as the same day, so the streak and last_task_day
-                    // never move backwards.
-                    if (today_epoch_day <= self.data.last_task_day) {
-                        // same day
-                    } else if (today_epoch_day == self.data.last_task_day + 1) {
-                        self.data.current_streak += 1;
-                    } else {
-                        self.data.current_streak = 1;
-                    }
-                    self.data.best_streak = @max(self.data.best_streak, self.data.current_streak);
-                    self.data.last_task_day = @max(self.data.last_task_day, today_epoch_day);
+                    merge.recordTaskDay(&self.data, today_epoch_day);
 
                     const on_break = self.focus_state.option.on_break;
                     if (on_break.contains(.prompt) or on_break.contains(.animation)) {

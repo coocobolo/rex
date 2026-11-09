@@ -89,7 +89,8 @@ fn runCommand(
 
         if (args.next()) |action| {
             if (std.mem.eql(u8, action, "clear")) {
-                wb.purgeHistory(init.io, dirs.state) catch |err| {
+                const now_s: i64 = @intCast(std.Io.Clock.Timestamp.now(init.io, .real).raw.toSeconds());
+                wb.purgeHistory(init.io, dirs.state, now_s) catch |err| {
                     std.log.err("cannot delete wellbeing state in {s}: {t}", .{ wb.stateDir(dirs.state), err });
                     return err;
                 };

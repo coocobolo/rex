@@ -387,7 +387,7 @@ pub fn init(
     errdefer renderer.deinit();
 
     var wellbeing_state = wellbeing.Wellbeing.init(active_config.wellbeing);
-    wellbeing_state.loadState(io, dirs.state) catch |err| {
+    wellbeing_state.open(io, dirs.state) catch |err| {
         log.warn("cannot read wellbeing state in {s}: {t}; starting empty", .{ wellbeing_state.stateDir(dirs.state), err });
     };
 
@@ -493,9 +493,10 @@ pub fn deinit(self: *App, gpa: std.mem.Allocator) void {
     self.wellbeing_overlay.deinit(gpa);
 
     // No toast: the window is closing.
-    self.wellbeing_state.saveState(self.io, self.dirs.state) catch |err| {
+    self.wellbeing_state.sync(self.io, self.dirs.state, self.wallSeconds(), .merge) catch |err| {
         log.err("cannot save wellbeing state in {s}: {t}", .{ self.wellbeing_state.stateDir(self.dirs.state), err });
     };
+    self.wellbeing_state.close(self.io);
     self.dirs.deinit(gpa);
     // Last: the window, rasterizer and driver above were set up from config
     // values that live here.
@@ -560,7 +561,7 @@ pub fn run(self: *App) !void {
             self.needs_redraw = true;
         }
         if (wb_res.phase_changed) {
-            self.wellbeing_state.saveState(self.io, self.dirs.state) catch |err| self.reportWellbeingError("save", err);
+            self.wellbeing_state.sync(self.io, self.dirs.state, @intCast(now_real.raw.toSeconds()), .merge) catch |err| self.reportWellbeingError("save", err);
             self.ringBell();
             self.last_title = now;
             self.updateWindowTitle();
@@ -1045,14 +1046,17 @@ pub fn notifyToast(self: *App, req: Toast.Request) u64 {
 /// Clears the wellbeing data and deletes its state file. Returns false and
 /// reports the error when the file could not be deleted.
 fn purgeWellbeingHistory(self: *App) bool {
-    self.wellbeing_state.purgeHistory(self.io, self.dirs.state) catch |err| {
+    self.wellbeing_state.purgeHistory(self.io, self.dirs.state, self.wallSeconds()) catch |err| {
         self.reportWellbeingError("delete", err);
         return false;
     };
     return true;
 }
 
-const WellbeingWriteError = wellbeing.storage.SaveError || wellbeing.storage.PurgeError;
+/// Wall-clock seconds since the epoch, for the wellbeing state file.
+fn wallSeconds(self: *const App) i64 {
+    return @intCast(std.Io.Clock.Timestamp.now(self.io, .real).raw.toSeconds());
+}
 
 /// Logs a failed write of the wellbeing state file and shows it as a toast,
 /// so the user learns that their data was not written. The error name
@@ -1060,7 +1064,7 @@ const WellbeingWriteError = wellbeing.storage.SaveError || wellbeing.storage.Pur
 fn reportWellbeingError(
     self: *App,
     action: []const u8,
-    err: WellbeingWriteError,
+    err: wellbeing.Wellbeing.SyncError,
 ) void {
     const dir = self.wellbeing_state.stateDir(self.dirs.state);
     log.err("cannot {s} wellbeing state in {s}: {t}", .{ action, dir, err });

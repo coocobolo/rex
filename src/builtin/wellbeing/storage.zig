@@ -3,7 +3,7 @@
 //!
 //! `save` replaces the file atomically (temporary file plus rename), so a
 //! reader always sees one complete version and needs no lock. Writers that
-//! read, modify and write take `tryLockWrite` first. `acquirePresence` tells
+//! read, modify and write take `tryLockWrite` or `lockWrite` first. `acquirePresence` tells
 //! a starting process whether any other one is alive. All locks are
 //! `flock` locks (std `File.tryLock`), which the kernel releases when the
 //! process exits, crashes included.
@@ -210,46 +210,32 @@ pub fn load(
     return decode(buf[0..n]);
 }
 
-pub const PurgeError = Io.Dir.OpenError || Io.Dir.DeleteFileError;
-
-/// Deletes `state_dir/filename`. A missing directory or file counts as
-/// already purged.
-pub fn purge(
-    io: Io,
-    state_dir: []const u8,
-    filename: []const u8,
-) PurgeError!void {
-    const dir = std.Io.Dir.openDir(.cwd(), io, state_dir, .{}) catch |err| switch (err) {
-        error.FileNotFound => return,
-        else => |e| return e,
-    };
-    defer dir.close(io);
-
-    dir.deleteFile(io, filename) catch |err| switch (err) {
-        error.FileNotFound => {},
-        else => |e| return e,
-    };
-}
-
 /// Identifies one version of the state file. Every save creates a new file,
 /// so the inode changes; the mtime covers a freed inode being reused. Both
 /// are only compared, so the mtime is truncated to 64 bits.
 pub const Stamp = struct {
     inode: Io.File.INode,
     mtime_ns: i64,
+
+    /// No file. Inode 0 is never a real inode on Linux or macOS.
+    pub const none: Stamp = .{ .inode = 0, .mtime_ns = 0 };
+
+    pub fn eql(a: Stamp, b: Stamp) bool {
+        return a.inode == b.inode and a.mtime_ns == b.mtime_ns;
+    }
 };
 
 pub const StampError = Io.Dir.OpenError || Io.Dir.StatFileError;
 
-/// The stamp of `state_dir/filename`, or null when it does not exist.
-pub fn stamp(io: Io, state_dir: []const u8, filename: []const u8) StampError!?Stamp {
+/// The stamp of `state_dir/filename`, or `Stamp.none` when it does not exist.
+pub fn stamp(io: Io, state_dir: []const u8, filename: []const u8) StampError!Stamp {
     const dir = std.Io.Dir.openDir(.cwd(), io, state_dir, .{}) catch |err| switch (err) {
-        error.FileNotFound => return null,
+        error.FileNotFound => return .none,
         else => |e| return e,
     };
     defer dir.close(io);
     const st = dir.statFile(io, filename, .{}) catch |err| switch (err) {
-        error.FileNotFound => return null,
+        error.FileNotFound => return .none,
         else => |e| return e,
     };
     return .{ .inode = st.inode, .mtime_ns = @truncate(st.mtime.nanoseconds) };
@@ -269,6 +255,15 @@ pub const WriteLock = struct {
         self.file.close(io);
     }
 };
+
+/// Takes the write lock, waiting while another process holds it. For the
+/// exit save and a purge, where waiting a few milliseconds is fine.
+pub fn lockWrite(io: Io, state_dir: []const u8, filename: []const u8) LockError!WriteLock {
+    const file = try openSideFile(io, state_dir, filename, ".lock");
+    errdefer file.close(io);
+    try file.lock(io, .exclusive);
+    return .{ .file = file };
+}
 
 /// Takes the write lock without blocking, or returns null when another
 /// process (or another open of the lock file) holds it.

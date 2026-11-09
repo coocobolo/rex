@@ -85,7 +85,7 @@ test "storage: a saved waiting phase loads as waiting, not counted twice" {
     _ = before.tick(1000, -1, localAt(1000, 12, 0, 0));
     try testing.expect(before.focus_state.waiting);
     try testing.expectEqual(1, before.data.tasks_completed);
-    try before.saveState(testing.io, "unused");
+    try before.sync(testing.io, "unused", 0, .merge);
 
     var after = wellbeing.Wellbeing.init(option);
     try after.loadState(testing.io, "unused");
@@ -119,12 +119,12 @@ test "storage: save replaces the file and leaves no temporary file" {
     defer t.deinit();
     var data: storage.PersistentData = .empty;
     try storage.save(testing.io, &data, try t.path(""), "wb.bin");
-    const first = (try storage.stamp(testing.io, try t.path(""), "wb.bin")).?;
+    const first = try storage.stamp(testing.io, try t.path(""), "wb.bin");
     data.current_streak = 7;
     try storage.save(testing.io, &data, try t.path(""), "wb.bin");
-    const second = (try storage.stamp(testing.io, try t.path(""), "wb.bin")).?;
+    const second = try storage.stamp(testing.io, try t.path(""), "wb.bin");
 
-    try testing.expect(first.inode != second.inode or first.mtime_ns != second.mtime_ns);
+    try testing.expect(!first.eql(second));
     try testing.expectEqual(7, (try storage.load(testing.io, try t.path(""), "wb.bin")).current_streak);
     const dir = try t.tmp.dir.openDir(testing.io, ".", .{ .iterate = true });
     defer dir.close(testing.io);
@@ -134,11 +134,11 @@ test "storage: save replaces the file and leaves no temporary file" {
     try testing.expectEqual(1, count);
 }
 
-test "storage: stamp of a missing file is null" {
+test "storage: stamp of a missing file is none" {
     var t: StateTmp = .init();
     defer t.deinit();
-    try testing.expectEqual(null, try storage.stamp(testing.io, try t.path("missing"), "wb.bin"));
-    try testing.expectEqual(null, try storage.stamp(testing.io, try t.path(""), "wb.bin"));
+    try testing.expect((try storage.stamp(testing.io, try t.path("missing"), "wb.bin")).eql(.none));
+    try testing.expect((try storage.stamp(testing.io, try t.path(""), "wb.bin")).eql(.none));
 }
 
 // flock locks belong to an open file description, so two opens in one
@@ -182,24 +182,229 @@ test "storage: save reports an unusable state directory" {
     } else |_| {}
 }
 
-test "storage: purge deletes the file, and missing counts as purged" {
-    var t: StateTmp = .init();
-    defer t.deinit();
-    try storage.purge(testing.io, try t.path("missing"), "wb.bin");
-    try storage.purge(testing.io, try t.path(""), "wb.bin");
+const merge = wellbeing.merge;
 
+/// A state with `today` on `day` and the given active seconds.
+fn dataOn(day: u32, active_s: u32) storage.PersistentData {
     var data: storage.PersistentData = .empty;
-    data.current_streak = 3;
-    try storage.save(testing.io, &data, try t.path(""), "wb.bin");
-    try storage.purge(testing.io, try t.path(""), "wb.bin");
-    try testing.expectEqual(0, (try storage.load(testing.io, try t.path(""), "wb.bin")).current_streak);
+    data.today = .{ .day = day, .active_screen_s = active_s };
+    return data;
 }
 
-test "storage: purge reports an unusable state directory" {
+test "merge: the changes of two processes add up" {
+    const base = dataOn(1000, 100);
+    var view = base;
+    view.today.active_screen_s += 30;
+    view.today.tasks_completed += 1;
+    view.tasks_completed += 1;
+    // Another process merged first and added 50 s.
+    var fresh = base;
+    fresh.today.active_screen_s += 50;
+
+    const out = merge.rebase(&view, &base, &fresh);
+    try testing.expectEqual(180, out.today.active_screen_s);
+    try testing.expectEqual(1, out.today.tasks_completed);
+    try testing.expectEqual(1, out.tasks_completed);
+}
+
+test "merge: a purge since base drops the changes" {
+    const base = dataOn(1000, 100);
+    var view = base;
+    view.today.active_screen_s += 30;
+    var fresh: storage.PersistentData = .empty;
+    fresh.generation = base.generation + 1;
+
+    const out = merge.rebase(&view, &base, &fresh);
+    try testing.expectEqual(0, out.today.active_screen_s);
+    try testing.expectEqual(fresh.generation, out.generation);
+}
+
+test "merge: changes across midnight land on their own days" {
+    const base = dataOn(1000, 10);
+    // This process rolled over: day 1000 ended at 30 s, day 1001 has 5 s.
+    var view = base;
+    view.today.active_screen_s = 30;
+    _ = merge.rollover(&view, 1001);
+    view.today.active_screen_s = 5;
+    const fresh = base;
+
+    const out = merge.rebase(&view, &base, &fresh);
+    try testing.expectEqual(1001, out.today.day);
+    try testing.expectEqual(5, out.today.active_screen_s);
+    try testing.expectEqual(1, out.history_count);
+    try testing.expectEqual(1000, out.history[0].day);
+    try testing.expectEqual(30, out.history[0].active_screen_s);
+    try testing.expectEqual(30, out.total_active_screen_s);
+}
+
+test "merge: changes to a day another process already rolled over reach history and totals" {
+    const base = dataOn(1000, 10);
+    var view = base;
+    view.today.active_screen_s += 20;
+    var fresh = base;
+    _ = merge.rollover(&fresh, 1001);
+
+    const out = merge.rebase(&view, &base, &fresh);
+    try testing.expectEqual(1001, out.today.day);
+    try testing.expectEqual(30, out.history[0].active_screen_s);
+    try testing.expectEqual(30, out.total_active_screen_s);
+}
+
+test "merge: a task on the same day in two processes counts the streak once" {
+    var base = dataOn(1000, 0);
+    base.last_task_day = 999;
+    base.current_streak = 3;
+    var a = base;
+    merge.recordTaskDay(&a, 1000);
+    var b = base;
+    merge.recordTaskDay(&b, 1000);
+
+    const after_a = merge.rebase(&a, &base, &base);
+    const out = merge.rebase(&b, &base, &after_a);
+    try testing.expectEqual(4, out.current_streak);
+    try testing.expectEqual(1000, out.last_task_day);
+}
+
+test "merge: app seconds add as differences" {
+    var base = dataOn(1000, 0);
+    base.today.addAppTime("nvim", 100);
+    var view = base;
+    view.today.addAppTime("nvim", 20);
+    view.today.addAppTime("zsh", 5);
+    var fresh = base;
+    fresh.today.addAppTime("nvim", 40);
+
+    const out = merge.rebase(&view, &base, &fresh);
+    try testing.expectEqual(160, out.today.top_apps[0].seconds);
+    try testing.expectEqualStrings("zsh", out.today.top_apps[1].getName());
+    try testing.expectEqual(5, out.today.top_apps[1].seconds);
+}
+
+test "merge: rollover keeps the last max_history_days days" {
+    var data = dataOn(1000, 1);
+    for (1001..1001 + storage.max_history_days + 2) |day| _ = merge.rollover(&data, @intCast(day));
+    try testing.expectEqual(storage.max_history_days, data.history_count);
+    try testing.expectEqual(1000 + storage.max_history_days + 2, data.today.day);
+    try testing.expectEqual(1002, data.history[0].day);
+}
+
+/// A `Wellbeing` sharing `t`'s directory, as one window would, on local
+/// day 1000 as its first tick would set.
+fn openShared(t: *StateTmp) !wellbeing.Wellbeing {
+    var option = quietOption();
+    option.privacy.state_dir = try t.path("");
+    option.privacy.state_filename = "wb.bin";
+    var wb = wellbeing.Wellbeing.init(option);
+    try wb.open(testing.io, "unused");
+    _ = merge.rollover(&wb.data, 1000);
+    return wb;
+}
+
+test "sync: two windows' changes both reach the file and each other" {
     var t: StateTmp = .init();
     defer t.deinit();
-    try t.tmp.dir.writeFile(testing.io, .{ .sub_path = "file", .data = "" });
-    try testing.expectError(error.NotDir, storage.purge(testing.io, try t.path("file"), "wb.bin"));
+    var a = try openShared(&t);
+    defer a.close(testing.io);
+    var b = try openShared(&t);
+    defer b.close(testing.io);
+
+    a.data.today.focus_s += 100;
+    b.data.today.focus_s += 50;
+    try a.sync(testing.io, "unused", 0, .merge);
+    try b.sync(testing.io, "unused", 0, .merge);
+    try testing.expectEqual(150, (try storage.load(testing.io, try t.path(""), "wb.bin")).today.focus_s);
+
+    // A sees B's save on its next poll, before its next merge is due.
+    a.data.today.focus_s += 1;
+    try a.sync(testing.io, "unused", 10, .poll);
+    try testing.expectEqual(151, a.data.today.focus_s);
+    try testing.expectEqual(150, a.base.today.focus_s);
+}
+
+test "sync: a purge in one window is not undone by another" {
+    var t: StateTmp = .init();
+    defer t.deinit();
+    var a = try openShared(&t);
+    defer a.close(testing.io);
+    var b = try openShared(&t);
+    defer b.close(testing.io);
+
+    a.data.today.focus_s = 100;
+    try a.sync(testing.io, "unused", 0, .merge);
+    try b.sync(testing.io, "unused", 0, .merge);
+    b.data.today.focus_s += 30;
+    try a.purgeHistory(testing.io, "unused", 1);
+    try b.sync(testing.io, "unused", 2, .merge);
+
+    const file = try storage.load(testing.io, try t.path(""), "wb.bin");
+    try testing.expectEqual(0, file.today.focus_s);
+    try testing.expectEqual(1, file.generation);
+    try testing.expectEqual(0, b.data.today.focus_s);
+}
+
+test "sync: a poll merges only when the interval passed" {
+    var t: StateTmp = .init();
+    defer t.deinit();
+    var a = try openShared(&t);
+    defer a.close(testing.io);
+
+    a.data.today.focus_s = 10;
+    try a.sync(testing.io, "unused", 1000, .poll); // never merged: due
+    a.data.today.focus_s = 20;
+    try a.sync(testing.io, "unused", 1000 + 59, .poll);
+    try testing.expectEqual(10, (try storage.load(testing.io, try t.path(""), "wb.bin")).today.focus_s);
+    try a.sync(testing.io, "unused", 1000 + 60, .poll);
+    try testing.expectEqual(20, (try storage.load(testing.io, try t.path(""), "wb.bin")).today.focus_s);
+    // A clock set back by the interval is due too.
+    a.data.today.focus_s = 30;
+    try a.sync(testing.io, "unused", 1000, .poll);
+    try testing.expectEqual(30, (try storage.load(testing.io, try t.path(""), "wb.bin")).today.focus_s);
+}
+
+test "sync: a held write lock makes a due poll wait instead of blocking" {
+    var t: StateTmp = .init();
+    defer t.deinit();
+    var a = try openShared(&t);
+    defer a.close(testing.io);
+
+    const other = (try storage.tryLockWrite(testing.io, try t.path(""), "wb.bin")).?;
+    a.data.today.focus_s = 10;
+    try a.sync(testing.io, "unused", 1000, .poll);
+    try testing.expect((try storage.stamp(testing.io, try t.path(""), "wb.bin")).eql(.none));
+    other.release(testing.io);
+    try a.sync(testing.io, "unused", 1001, .poll);
+    try testing.expectEqual(10, (try storage.load(testing.io, try t.path(""), "wb.bin")).today.focus_s);
+}
+
+test "sync: a merge without changes does not rewrite the file" {
+    var t: StateTmp = .init();
+    defer t.deinit();
+    var a = try openShared(&t);
+    defer a.close(testing.io);
+
+    a.data.today.focus_s = 10;
+    try a.sync(testing.io, "unused", 1000, .merge);
+    const before = try storage.stamp(testing.io, try t.path(""), "wb.bin");
+    try a.sync(testing.io, "unused", 2000, .merge);
+    try testing.expect(before.eql(try storage.stamp(testing.io, try t.path(""), "wb.bin")));
+}
+
+test "sync: an unreadable file is replaced by the next merge" {
+    var t: StateTmp = .init();
+    defer t.deinit();
+    try t.tmp.dir.writeFile(testing.io, .{ .sub_path = "wb.bin", .data = "junk" });
+    var option = quietOption();
+    option.privacy.state_dir = try t.path("");
+    option.privacy.state_filename = "wb.bin";
+    var a = wellbeing.Wellbeing.init(option);
+    try testing.expectError(error.InvalidStateFile, a.open(testing.io, "unused"));
+    defer a.close(testing.io);
+    try testing.expect(a.presence != null);
+
+    _ = merge.rollover(&a.data, 1000);
+    a.data.today.focus_s = 10;
+    try a.sync(testing.io, "unused", 1000, .merge);
+    try testing.expectEqual(10, (try storage.load(testing.io, try t.path(""), "wb.bin")).today.focus_s);
 }
 
 test "storage: DayRecord addAppTime accumulates and sorts properly" {
