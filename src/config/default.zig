@@ -8,8 +8,10 @@ const Config = @import("Config.zig");
 const default_keymap = @import("../input.zig").default_keymap;
 
 /// The documented default config file: every key with the value in
-/// `default` (checked by default_test.zig), except `[font] file`, which has
-/// no default yet. `rex config dump-default` prints it.
+/// `default` (checked by default_test.zig), except `[font] file`,
+/// `italic_file` and `emoji_file`. Those stay unset so startup can point
+/// them at the faces installed next to the executable. `rex config defaults`
+/// prints this file.
 pub const text = @embedFile("default.conf");
 
 pub const default: Config = .{

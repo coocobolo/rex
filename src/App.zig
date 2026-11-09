@@ -292,6 +292,14 @@ pub fn init(
     var loaded = try Loaded.load(gpa, io, config, home_dir, &.{ .file(rex.config.paths.system), .file(user_cfg_path) });
     defer loaded.deinit(gpa);
     logConfigDiagnostics(gpa, &loaded);
+    // Before takeArena: the filled paths live in this arena.
+    useBuiltinFonts(io, loaded.arena.allocator(), &loaded, argv0) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        error.BadExePath, error.BuiltinFontMissing => {
+            log.err("no font: set `file` in [font] of {s}; the built-in face was not found next to this executable", .{user_cfg_path});
+            return error.NoFontFile;
+        },
+    };
     var startup_banner = configBanner(&loaded);
     var config_arena = loaded.takeArena();
     errdefer config_arena.deinit();
@@ -299,7 +307,7 @@ pub fn init(
     // Clamped like every later size change (setFontSize).
     active_config.font.size = @max(active_config.font.min_size, @min(active_config.font.size, active_config.font.max_size));
     if (!hasFontFile(active_config.font)) {
-        log.err("no font: set `file` in [font] of {s}; Rex has no built-in font yet", .{user_cfg_path});
+        log.err("no font: set `file` in [font] of {s}", .{user_cfg_path});
         return error.NoFontFile;
     }
 
@@ -1239,8 +1247,22 @@ pub fn reloadConfig(self: *App) void {
         self.needs_redraw = true;
         return;
     }
+    useBuiltinFonts(self.io, loaded.arena.allocator(), &loaded, self.argv0) catch |err| switch (err) {
+        error.OutOfMemory => {
+            self.config_banner = Banner.init(.err, "Config error", "Out of memory");
+            self.frame_builder.last_generation = null;
+            self.needs_redraw = true;
+            return;
+        },
+        error.BadExePath, error.BuiltinFontMissing => {
+            self.config_banner = Banner.init(.err, "Config error", "font.file is not set, and the built-in face is not installed next to this executable");
+            self.frame_builder.last_generation = null;
+            self.needs_redraw = true;
+            return;
+        },
+    };
     if (!hasFontFile(loaded.config.font)) {
-        self.config_banner = Banner.init(.err, "Config error", "font.file is not set; Rex has no built-in font yet");
+        self.config_banner = Banner.init(.err, "Config error", "font.file is not set");
         self.frame_builder.last_generation = null;
         self.needs_redraw = true;
         return;
@@ -1563,6 +1585,17 @@ fn passwdShell() ?[]const u8 {
 /// bundled font yet (#20).
 fn hasFontFile(font: Config.Font) bool {
     return font.faces.regular[0] != 0;
+}
+
+/// Points faces the config left unset at the faces installed next to
+/// this executable. A key the config set, including `none`, stays.
+fn useBuiltinFonts(io: std.Io, arena: std.mem.Allocator, loaded: *rex.config.Loaded, argv0: []const u8) !void {
+    var exe_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const exe: []const u8 = if (std.process.executablePath(io, &exe_buf)) |len|
+        exe_buf[0..len]
+    else |_|
+        argv0;
+    try rex.config.builtin_font.apply(io, arena, loaded, exe);
 }
 
 /// Logs every config problem in full: the banner shows only the first one,

@@ -13,6 +13,7 @@ pub const default_text = @import("default.zig").text;
 pub const Loaded = @import("Loaded.zig");
 pub const diagnostics = @import("diagnostics.zig");
 pub const paths = @import("paths.zig");
+pub const builtin_font = @import("builtin_font.zig");
 
 pub const watcher = @import("watcher.zig");
 pub const Watcher = watcher.Watcher;
@@ -26,5 +27,6 @@ test {
     _ = @import("default_test.zig");
     _ = @import("diagnostics_test.zig");
     _ = @import("loaded_test.zig");
+    _ = @import("builtin_font.zig");
     std.testing.refAllDecls(@This());
 }

@@ -9,6 +9,7 @@ zig-pkg
 !scripts/README.md
 !src/driver/README.md
 !src/builtin/wellbeing/README.md
+!testdata/font/README.md
 !docs/**/*.md
 
 # bench

@@ -23,7 +23,11 @@ fn renderAll(tree: *const Ast, result: *const Sema.Result) void {
 
 /// Keys default.conf leaves unset because they have no default yet.
 const unset_keys = [_][]const u8{
-    "font.file", // no default font (#20)
+    // Startup fills an omitted key from share/rex/fonts (#20). `none` in a
+    // user file turns that fill off. There is no single path to print here.
+    "font.file",
+    "font.italic_file",
+    "font.emoji_file",
 };
 
 fn isUnsetKey(name: []const u8) bool {

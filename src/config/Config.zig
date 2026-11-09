@@ -213,7 +213,8 @@ pub const Font = struct {
     /// Step of increase_font_size and decrease_font_size.
     size_step: u32 = 2,
 
-    /// Neutral values; no font file is chosen until #20 (`Faces.default`).
+    /// Neutral values. An omitted `file` is filled at startup from the
+    /// faces installed next to the executable (`builtin_font.zig`).
     pub const default: Font = .{ .faces = .default, .size = 14, .min_size = 6, .max_size = 196 };
 };
 
