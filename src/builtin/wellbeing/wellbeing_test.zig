@@ -365,6 +365,46 @@ test "localtime: offset of the system zone is plausible and cached" {
     try testing.expectEqual(utc_s + offset_s, clock.localSeconds(utc_s));
 }
 
+extern "c" fn setenv(name: [*:0]const u8, value: [*:0]const u8, overwrite: c_int) c_int;
+extern "c" fn unsetenv(name: [*:0]const u8) c_int;
+
+test "localtime: Clock notices a changed TZ in the next minute" {
+    // `TZ` is process-wide; the test runner runs tests one at a time.
+    var saved_buf: [256]u8 = undefined;
+    const saved: ?[:0]const u8 = if (std.c.getenv("TZ")) |value| blk: {
+        const len = std.mem.len(value);
+        if (len >= saved_buf.len) return error.SkipZigTest;
+        @memcpy(saved_buf[0..len], value[0..len]);
+        saved_buf[len] = 0;
+        break :blk saved_buf[0..len :0];
+    } else null;
+    defer {
+        if (saved) |value| {
+            _ = setenv("TZ", value.ptr, 1);
+        } else {
+            _ = unsetenv("TZ");
+        }
+        // A fresh Clock calls tzset on its first conversion, so libc goes
+        // back to the host's zone for the tests that follow.
+        var restore: localtime.Clock = .{};
+        _ = restore.localSeconds(0);
+    }
+
+    const utc_s: i64 = 1_767_225_600; // 2026-01-01T00:00:00Z
+    try testing.expectEqual(0, setenv("TZ", "UTC0", 1));
+    var clock: localtime.Clock = .{};
+    try testing.expectEqual(utc_s, clock.localSeconds(utc_s));
+
+    try testing.expectEqual(0, setenv("TZ", "<+05>-5", 1));
+    const later_s = utc_s + std.time.s_per_min;
+    try testing.expectEqual(later_s + 5 * std.time.s_per_hour, clock.localSeconds(later_s));
+
+    // A wall clock set back an hour is also due for a check.
+    try testing.expectEqual(0, setenv("TZ", "UTC0", 1));
+    const earlier_s = later_s - std.time.s_per_hour;
+    try testing.expectEqual(earlier_s, clock.localSeconds(earlier_s));
+}
+
 test "dashboard: renders card output cleanly" {
     var data = storage.PersistentData{};
     data.today.active_screen_s = 7200; // 2 hours
