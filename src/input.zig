@@ -405,7 +405,6 @@ pub const Action = union(enum) {
     wellbeing_dashboard, // show Digital Wellbeing dashboard
     wellbeing_clear, // clear Digital Wellbeing history
     wellbeing_dismiss, // dismiss active wellbeing alert / unlock input
-    wellbeing_toast_toggle, // toggle toast notification for debugging
 
     // Toast notifications
     toast_dismiss,
@@ -413,9 +412,6 @@ pub const Action = union(enum) {
 
     scroll_up,
     scroll_down,
-
-    // global debugging stats, option, etc.
-    debug,
 
     // Configuration
     reload_config,
@@ -436,7 +432,6 @@ pub const default_keymap: []const Binding = &.{
     .{ .key = .c, .mods = .{ .ctrl = true, .shift = true }, .action = .copy_selection },
     .{ .key = .d, .mods = .{ .ctrl = true, .shift = true }, .action = .wellbeing_dismiss },
     .{ .key = .equal, .mods = .{ .ctrl = true }, .action = .increase_font_size },
-    .{ .key = .f6, .mods = .{ .ctrl = true, .shift = true }, .action = .debug },
     .{ .key = .j, .mods = .{ .ctrl = true, .shift = true }, .action = .scroll_down },
     .{ .key = .k, .mods = .{ .ctrl = true, .shift = true }, .action = .scroll_up },
     .{ .key = .minus, .mods = .{ .ctrl = true }, .action = .decrease_font_size },
@@ -445,7 +440,6 @@ pub const default_keymap: []const Binding = &.{
     .{ .key = .q, .mods = .{ .ctrl = true, .shift = true }, .action = .quit },
     .{ .key = .f5, .mods = .{ .ctrl = true, .shift = true }, .action = .reload_config },
     .{ .key = .right_bracket, .mods = .{ .ctrl = true, .shift = true }, .action = .focus_skip },
-    .{ .key = .t, .mods = .{ .ctrl = true, .shift = true }, .action = .wellbeing_toast_toggle },
     .{ .key = .v, .mods = .{ .ctrl = true, .shift = true }, .action = .paste_clipboard },
     .{ .key = .w, .mods = .{ .ctrl = true, .shift = true }, .action = .wellbeing_dashboard },
 };

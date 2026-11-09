@@ -1397,47 +1397,6 @@ fn handleAction(self: *App, action: rex.input.Action) void {
                 self.needs_redraw = true;
             }
         },
-        .wellbeing_toast_toggle => {
-            const current = self.wellbeing_state.current_alert;
-            const next_alert: wellbeing.reminders.Alert = switch (current.kind) {
-                .none => .{
-                    .kind = .healthy_break,
-                    .prompt = "Time for a healthy break: step away and relax.",
-                    .remaining_s = 60,
-                },
-                .healthy_break => .{
-                    .kind = .hydration,
-                    .prompt = "Stay hydrated: drink some fresh water.",
-                    .remaining_s = 60,
-                },
-                .hydration => .{
-                    .kind = .posture,
-                    .prompt = "Check posture: roll shoulders back and align neck.",
-                    .remaining_s = 60,
-                },
-                .posture => .{
-                    .kind = .screen_limit,
-                    .prompt = "Daily screen-time limit reached.",
-                    .remaining_s = 60,
-                },
-                else => .{
-                    .kind = .none,
-                    .prompt = "",
-                    .remaining_s = 0,
-                },
-            };
-            if (next_alert.kind == .none) {
-                self.wellbeing_state.dismissAlert();
-            } else {
-                self.wellbeing_state.current_alert = next_alert;
-            }
-            self.frame_builder.last_generation = null;
-            self.needs_redraw = true;
-            self.updateWindowTitle();
-        },
-        .debug => {
-            log.debug("wellbeing_data={any}", .{self.wellbeing_state.data});
-        },
         .reload_config => self.reloadConfig(),
         .send_to_pty => |seq| {
             self.driver.sendBytes(seq) catch |err| {
