@@ -141,11 +141,15 @@ test "Posix: resizing a closed pty is PtyClosed" {
 
 test "Posix: resizing something that is not a tty is ResizeFailed" {
     // /dev/null as the master: TIOCSWINSZ fails with ENOTTY, which resize
-    // logs (a warning) and reports.
+    // logs and reports. That warning is expected here; an unexpected one
+    // must still reach the build runner.
     const fd = system.open("/dev/null", .{ .ACCMODE = .RDONLY }, @as(posix.mode_t, 0));
     try testing.expectEqual(posix.E.SUCCESS, posix.errno(fd));
     defer _ = system.close(@intCast(fd));
     var pty: Posix = .inactive;
     pty.master = @intCast(fd);
+    const shown = testing.log_level;
+    testing.log_level = .err;
+    defer testing.log_level = shown;
     try testing.expectError(error.ResizeFailed, pty.resize(24, 80, 0, 0));
 }

@@ -719,6 +719,11 @@ test "sync: an unreadable file is replaced by the next merge" {
 
     _ = merge.rollover(&a.data, 1000);
     a.data.today.focus_s = 10;
+    // Replacing the junk file logs a warning. That warning is expected
+    // here; an unexpected one must still reach the build runner.
+    const shown = testing.log_level;
+    testing.log_level = .err;
+    defer testing.log_level = shown;
     try a.sync(testing.io, "unused", 1000, .merge);
     try testing.expectEqual(10, (try storage.load(testing.io, try t.path(""), "wb.bin")).today.focus_s);
 }
