@@ -185,8 +185,10 @@ pub const Wellbeing = struct {
         var needs_redraw = false;
         var phase_changed = false;
 
-        // Day rollover check
-        const today_epoch_day: u32 = @intCast(@divFloor(local_s, std.time.s_per_day));
+        // Day rollover check. A clock before 1970 (local_s < 0, e.g. booted
+        // at the epoch in a zone west of UTC) gives day 0, the "unset" day,
+        // so day tracking waits for a real clock instead of panicking.
+        const today_epoch_day = std.math.cast(u32, @divFloor(local_s, std.time.s_per_day)) orelse 0;
         if (self.data.today.day == 0) {
             self.data.today.day = today_epoch_day;
         } else if (today_epoch_day > self.data.today.day) {
@@ -286,8 +288,11 @@ pub const Wellbeing = struct {
                     self.data.today.tasks_completed +|= 1;
                     self.data.tasks_completed +|= 1;
 
-                    // Update streak
-                    if (today_epoch_day == self.data.last_task_day) {
+                    // Update streak. A local day earlier than the last
+                    // task's (zone change westward, clock set back) counts
+                    // as the same day, so the streak and last_task_day
+                    // never move backwards.
+                    if (today_epoch_day <= self.data.last_task_day) {
                         // same day
                     } else if (today_epoch_day == self.data.last_task_day + 1) {
                         self.data.current_streak += 1;
@@ -295,7 +300,7 @@ pub const Wellbeing = struct {
                         self.data.current_streak = 1;
                     }
                     self.data.best_streak = @max(self.data.best_streak, self.data.current_streak);
-                    self.data.last_task_day = today_epoch_day;
+                    self.data.last_task_day = @max(self.data.last_task_day, today_epoch_day);
 
                     const on_break = self.focus_state.option.on_break;
                     if (on_break.contains(.prompt) or on_break.contains(.animation)) {

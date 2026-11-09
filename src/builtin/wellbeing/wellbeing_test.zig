@@ -352,6 +352,41 @@ test "focus: streak counts local days" {
     try testing.expectEqual(@as(u32, 2), wb.data.current_streak);
 }
 
+test "focus: a task on an earlier local day keeps the streak" {
+    var wb = wellbeing.Wellbeing.init(.{
+        .focus = .{ .task_ms = 1000, .on_phase_end = .wait },
+        .winddown = .{ .enabled = false },
+    });
+    wb.data.current_streak = 3;
+    wb.data.last_task_day = 999;
+
+    // A task on day 1000 in UTC+9, then the zone moves to UTC-8 and the next
+    // task lands on local day 999.
+    wb.toggleFocus();
+    _ = wb.tick(1000, -1, localAt(1000, 0, 0, 9));
+    try testing.expectEqual(@as(u32, 1000), wb.data.last_task_day);
+    try testing.expectEqual(@as(u32, 4), wb.data.current_streak);
+
+    wb.resetFocus();
+    wb.toggleFocus();
+    _ = wb.tick(1000, -1, localAt(1000, 1, 0, -8));
+    try testing.expectEqual(@as(u32, 1000), wb.data.last_task_day);
+    try testing.expectEqual(@as(u32, 4), wb.data.current_streak);
+}
+
+test "Wellbeing service: a clock before 1970 does not track days" {
+    var wb = wellbeing.Wellbeing.init(.{
+        .focus = .{ .task_ms = 1000, .on_phase_end = .wait },
+        .winddown = .{ .enabled = false },
+    });
+
+    // 1970-01-01T00:00Z in UTC-5 is local second -18000.
+    wb.toggleFocus();
+    _ = wb.tick(1000, -1, -5 * std.time.s_per_hour);
+    try testing.expectEqual(@as(u32, 0), wb.data.today.day);
+    try testing.expectEqual(@as(u32, 0), wb.data.last_task_day);
+}
+
 test "localtime: offset of the system zone is plausible and cached" {
     // 2026-01-01T00:00:00Z. The value depends on the host's zone, so only
     // the range is checked (real zones span UTC-12 to UTC+14).

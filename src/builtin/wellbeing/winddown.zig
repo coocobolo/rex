@@ -1,7 +1,5 @@
 const std = @import("std");
 
-pub const Flags = packed struct(u8) {};
-
 /// A time of day on the 24-hour clock.
 pub const TimeOfDay = struct {
     /// 0 to 23.
@@ -39,7 +37,6 @@ pub const WinddownOption = struct {
 pub const WinddownEngine = struct {
     option: WinddownOption,
     is_active: bool = false,
-    alerted_today: bool = false,
 
     pub fn init(option: WinddownOption) WinddownEngine {
         return .{ .option = option };
