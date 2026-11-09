@@ -92,7 +92,6 @@ pub const Timer = struct {
 pub const Tally = struct {
     tasks: u32 = 0,
     long_breaks: u32 = 0,
-    sessions: u32 = 0,
     focus_ms: u64 = 0,
     break_ms: u64 = 0,
 
@@ -101,7 +100,6 @@ pub const Tally = struct {
     pub fn add(self: *Tally, other: Tally) void {
         self.tasks +|= other.tasks;
         self.long_breaks +|= other.long_breaks;
-        self.sessions +|= other.sessions;
         self.focus_ms +|= other.focus_ms;
         self.break_ms +|= other.break_ms;
     }
@@ -168,7 +166,6 @@ pub fn toggle(timer: Timer, option: Option, now_ms: i64) Change {
     return switch (timer.phase) {
         .idle => .{
             .timer = .{ .phase = .task, .run = .running, .ms = msFrom(now_ms, option.task_ms) },
-            .tally = .{ .sessions = 1 },
         },
         .task, .short_break, .long_break => switch (timer.run) {
             .waiting => .{ .timer = next(timer, option, now_ms, .running) },

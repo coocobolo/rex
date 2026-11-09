@@ -967,8 +967,8 @@ pub const Overlay = struct {
         if (r <= max_row) {
             const summary = std.fmt.bufPrint(
                 &info_buf,
-                "Completed: {d} tasks  |  Sessions: {d}",
-                .{ wellbeing.data.today.tasks_completed, wellbeing.data.sessions },
+                "Completed today: {d} tasks",
+                .{wellbeing.data.today.tasks_completed},
             ) catch "";
             _ = Text.draw(drawer, right_col, r, summary, self.tokens.secondary, 255, max_content_col);
             r += 2;

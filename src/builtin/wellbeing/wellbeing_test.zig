@@ -69,8 +69,8 @@ test "storage: a short file or a wrong magic is InvalidStateFile" {
     try testing.expectError(error.InvalidStateFile, storage.load(testing.io, try t.path(""), "magic.bin"));
 }
 
-test "storage: version 2 has no implicit padding" {
-    inline for (.{ storage.Timer, storage.PersistentData }) |T| {
+test "storage: the state file has no implicit padding" {
+    inline for (.{ storage.Timer, storage.DayRecord, storage.PersistentData }) |T| {
         comptime var sum: usize = 0;
         inline for (std.meta.fields(T)) |f| sum += @sizeOf(f.type);
         try testing.expectEqual(sum, @sizeOf(T));
@@ -345,7 +345,6 @@ test "focus: a phase end two windows notice counts once" {
     try testing.expectEqual(1, file.tasks_completed);
     try testing.expectEqual(1, file.today.tasks_completed);
     try testing.expectEqual(60, file.today.focus_s);
-    try testing.expectEqual(1, file.sessions);
     try testing.expectEqual(@intFromEnum(wellbeing.focus.Run.waiting), file.timer.run);
     try testing.expect(std.meta.eql(file.timer, b.data.timer));
 }
@@ -1108,7 +1107,6 @@ test "focus: session toggle, tick, and break prompt rotation" {
     try testing.expectEqual(wellbeing.focus.Phase.idle, wb.focus_state.phase);
     wb.toggleFocus(0);
     try testing.expectEqual(wellbeing.focus.Phase.task, wb.focus_state.phase);
-    try testing.expectEqual(@as(u32, 1), wb.data.sessions);
 
     const day1_s: i64 = 1000 * std.time.s_per_day + 3600;
     const res = wb.tick(2000, -1, day1_s, 2000);

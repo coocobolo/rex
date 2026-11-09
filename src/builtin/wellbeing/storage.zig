@@ -21,7 +21,7 @@ const Io = std.Io;
 pub const magic: u32 = 0x57454C4C; // "WELL"
 /// Until the first release, a layout change bumps `version` and older files
 /// are rejected (`error.InvalidStateFile`) instead of converted.
-pub const version: u32 = 2;
+pub const version: u32 = 3;
 
 pub const max_history_days: usize = 14;
 pub const max_top_apps: usize = 8;
@@ -51,7 +51,8 @@ pub const DayRecord = extern struct {
     tasks_completed: u16 = 0,
     eyesight_breaks: u16 = 0,
     movement_breaks: u16 = 0,
-    hydration_count: u16 = 0,
+    /// Keeps `top_apps` at a 4-byte offset without implicit padding.
+    reserved: [2]u8 = @splat(0),
     top_apps: [max_top_apps]AppUsage = [_]AppUsage{.{}} ** max_top_apps,
 
     pub fn addAppTime(self: *DayRecord, comm: []const u8, seconds: u32) void {
@@ -103,7 +104,7 @@ pub const Timer = extern struct {
     reserved: [5]u8 = @splat(0),
 };
 
-/// Version 2 of the state file, written as raw bytes in native byte order.
+/// Version 3 of the state file, written as raw bytes in native byte order.
 /// Field order leaves no implicit padding (checked in a test).
 pub const PersistentData = extern struct {
     magic: u32 = magic,
@@ -116,19 +117,16 @@ pub const PersistentData = extern struct {
     last_write_utc_s: i64 = 0,
     timer: Timer = .{},
 
-    // Statistics
-    tasks_completed: u32 = 0,
-    long_breaks_taken: u32 = 0,
-    sessions: u32 = 0,
-    current_streak: u32 = 0,
-    best_streak: u32 = 0,
-    last_task_day: u32 = 0,
-
     // Aggregates
     total_active_screen_s: u64 = 0,
     total_focus_s: u64 = 0,
-    total_eyesight_breaks: u32 = 0,
-    total_movement_breaks: u32 = 0,
+
+    // Statistics
+    tasks_completed: u32 = 0,
+    long_breaks_taken: u32 = 0,
+    current_streak: u32 = 0,
+    best_streak: u32 = 0,
+    last_task_day: u32 = 0,
 
     // Active Day and History
     history_count: u32 = 0,
@@ -136,12 +134,12 @@ pub const PersistentData = extern struct {
     today: DayRecord = .{},
 
     /// Space for later versions; sized so the struct needs no tail padding.
-    reserved: [68]u8 = @splat(0),
+    reserved: [80]u8 = @splat(0),
 
     pub const empty: PersistentData = .{};
 };
 
-/// Decodes a version 2 state file. The file must have exactly the size of
+/// Decodes a version 3 state file. The file must have exactly the size of
 /// `PersistentData`, and `history_count` is bounded so a damaged file
 /// cannot index past `history`.
 pub fn decode(bytes: []const u8) error{InvalidStateFile}!PersistentData {

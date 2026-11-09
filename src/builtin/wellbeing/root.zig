@@ -337,7 +337,6 @@ pub const Wellbeing = struct {
         data.today.tasks_completed +|= std.math.cast(u16, tally.tasks) orelse std.math.maxInt(u16);
         data.tasks_completed +|= tally.tasks;
         data.long_breaks_taken +|= tally.long_breaks;
-        data.sessions +|= tally.sessions;
         if (tally.tasks > 0) merge.recordTaskDay(data, data.today.day);
     }
 

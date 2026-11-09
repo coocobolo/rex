@@ -72,7 +72,6 @@ pub fn rebase(view: *const PersistentData, base: *const PersistentData, fresh: *
 
     out.tasks_completed +|= view.tasks_completed -| base.tasks_completed;
     out.long_breaks_taken +|= view.long_breaks_taken -| base.long_breaks_taken;
-    out.sessions +|= view.sessions -| base.sessions;
     if (view.last_task_day > base.last_task_day) recordTaskDay(&out, view.last_task_day);
     return out;
 }
@@ -93,7 +92,6 @@ fn addDayDelta(out: *PersistentData, now: *const DayRecord, before: *const DayRe
     target.tasks_completed +|= now.tasks_completed -| before.tasks_completed;
     target.eyesight_breaks +|= now.eyesight_breaks -| before.eyesight_breaks;
     target.movement_breaks +|= now.movement_breaks -| before.movement_breaks;
-    target.hydration_count +|= now.hydration_count -| before.hydration_count;
     for (&now.top_apps) |*app| {
         if (app.seconds == 0) continue;
         const delta_s = app.seconds -| appSeconds(before, app.getName());

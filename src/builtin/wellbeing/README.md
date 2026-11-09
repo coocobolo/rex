@@ -23,7 +23,7 @@ Default keys: `ctrl+shift+p` start, pause or resume the focus timer; `ctrl+shift
 | File | Role |
 | --- | --- |
 | `root.zig` | `Wellbeing`: options, engines, the per-frame `tick`, focus actions, and the shared-state protocol (`open`, `sync`, `purgeHistory`, `close`). |
-| `storage.zig` | The state file format (`PersistentData`, version 2), atomic save, `decode`, file stamps, and the `flock` side files. |
+| `storage.zig` | The state file format (`PersistentData`, version 3), atomic save, `decode`, file stamps, and the `flock` side files. |
 | `merge.zig` | Pure functions: `rebase` replays one process's changes onto a newer file version; `rollover`, `recordTaskDay`, `localDay`. |
 | `focus.zig` | The focus timer: `Timer` (stored), pure transitions returning a `Tally`, and `State`, the read-only view the UI reads. |
 | `tracker.zig` | Screen time, idle detection, foreground-app sampling (`tcgetpgrp`, `/proc/<pgrp>/comm`), the daily limit. |
@@ -88,7 +88,7 @@ The timer (`focus.Timer`) is stored in the file as a phase, a `Run` state and on
 | `running` | the wall-clock time at which the phase ends |
 | `waiting` | unused: the phase ended and waits for the user |
 
-Every window derives the same time left from its own clock, and nothing is written while the timer runs. Transitions (`toggle`, `skip`, `reset`, `endIfDue`, `applyPhaseEnd`, `extend`) are pure functions that return the new timer and a `Tally` (tasks, long breaks, sessions, focus and break time).
+Every window derives the same time left from its own clock, and nothing is written while the timer runs. Transitions (`toggle`, `skip`, `reset`, `endIfDue`, `applyPhaseEnd`, `extend`) are pure functions that return the new timer and a `Tally` (tasks, long breaks, focus and break time).
 
 A change is written, and its tally added, only if `timer_rev` in the file is still the one this process read; the write bumps it. Otherwise another window changed the timer first: the file's timer wins and the local change and its tally are dropped. So a phase end that several windows notice is counted once. Every window still shows the break prompt, because `tick` compares the timer with `seen_timer` and treats a running phase whose end time passed as ended, wherever it was recorded.
 
@@ -108,7 +108,7 @@ Only the focused window runs the tracker; the window manager focuses one window 
 
 ## State file format
 
-`PersistentData` is an `extern struct` written as raw bytes in native byte order, 2,920 bytes, with no implicit padding (a test checks the field sizes add up). The header holds `magic` ("WELL"), `version` (2), `generation`, `timer_rev`, `last_write_utc_s` and the 16-byte `Timer`; then the statistics and totals, `history_count`, 14 days of `DayRecord` (184 bytes each), `today`, and `reserved`.
+`PersistentData` is an `extern struct` written as raw bytes in native byte order, 2,920 bytes, with no implicit padding (a test checks the field sizes add up). The header holds `magic` ("WELL"), `version` (3), `generation`, `timer_rev`, `last_write_utc_s` and the 16-byte `Timer`; then the totals and statistics, `history_count`, 14 days of `DayRecord` (184 bytes each), `today`, and `reserved`.
 
 `decode` accepts only the exact size, the magic and the current version, and rejects a `history_count` above 14, so a damaged file cannot index past `history`. Until the first release, a layout change bumps `version` and older files are rejected (`error.InvalidStateFile`), not migrated; the first merge then replaces the file.
 
@@ -167,6 +167,5 @@ All tests are in `wellbeing_test.zig`. The shared-state tests run two `Wellbeing
 - A window that picks up a running timer and passes its end time in the same loop iteration does not show the break prompt; the phase end is still counted once.
 - A button press in one window that races a phase end recorded by another is dropped.
 - Each window shows the screen-limit alert once.
-- `total_eyesight_breaks` and `total_movement_breaks` are never written.
 - Per-app time reads `/proc/<pgrp>/comm`, which exists only on Linux.
 - The overlay builds on the provisional `src/ui/`, which allocates per frame and will be redesigned.
