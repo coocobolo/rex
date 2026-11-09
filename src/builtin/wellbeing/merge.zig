@@ -6,7 +6,9 @@
 //! processes can add to the same file without losing each other's work.
 //! Every counter only grows between purges, so the difference is a
 //! saturating subtraction; a purge bumps `generation`, and a view whose base
-//! has an older generation is dropped. These functions do no I/O.
+//! has an older generation is dropped. Reminder breaks are the exception:
+//! they follow the reminders' due points (`mergeReminder`), so a reminder
+//! that two processes fired counts once. These functions do no I/O.
 
 const std = @import("std");
 const storage = @import("storage.zig");
@@ -73,7 +75,21 @@ pub fn rebase(view: *const PersistentData, base: *const PersistentData, fresh: *
     out.tasks_completed +|= view.tasks_completed -| base.tasks_completed;
     out.long_breaks_taken +|= view.long_breaks_taken -| base.long_breaks_taken;
     if (view.last_task_day > base.last_task_day) recordTaskDay(&out, view.last_task_day);
+    mergeReminder(&out.eyesight_due_s, &out.today.eyesight_breaks, view.eyesight_due_s);
+    mergeReminder(&out.movement_due_s, &out.today.movement_breaks, view.movement_due_s);
     return out;
+}
+
+/// Takes `view_due` when it is later than the file's `due` and counts one
+/// break on the file's current day. Due points lie on the interval grid of
+/// the shared active clock, so processes that fired the same reminder
+/// record the same value and the break counts once. Moving off 0 starts the
+/// reminder and is not a break. Several fires between two merges count as
+/// one, which only an interval shorter than a merge round trip can cause.
+fn mergeReminder(due: *u64, breaks: *u16, view_due: u64) void {
+    if (view_due <= due.*) return;
+    if (due.* != 0) breaks.* +|= 1;
+    due.* = view_due;
 }
 
 /// Adds `now - before` for one day to `out`'s record of that day. A day
@@ -90,8 +106,6 @@ fn addDayDelta(out: *PersistentData, now: *const DayRecord, before: *const DayRe
     target.focus_s +|= focus_s;
     target.break_s +|= now.break_s -| before.break_s;
     target.tasks_completed +|= now.tasks_completed -| before.tasks_completed;
-    target.eyesight_breaks +|= now.eyesight_breaks -| before.eyesight_breaks;
-    target.movement_breaks +|= now.movement_breaks -| before.movement_breaks;
     for (&now.top_apps) |*app| {
         if (app.seconds == 0) continue;
         const delta_s = app.seconds -| appSeconds(before, app.getName());

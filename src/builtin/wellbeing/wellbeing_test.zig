@@ -212,6 +212,90 @@ test "merge: the changes of two processes add up" {
     try testing.expectEqual(1, out.tasks_completed);
 }
 
+test "merge: a reminder fired in two processes counts once" {
+    var base = dataOn(1000, 100);
+    base.eyesight_due_s = 1200;
+    // Both processes fired the reminder due at 2400 s of active time.
+    var view = base;
+    view.eyesight_due_s = 2400;
+    view.today.eyesight_breaks += 1;
+    var fresh = base;
+    fresh.eyesight_due_s = 2400;
+    fresh.today.eyesight_breaks += 1;
+
+    const out = merge.rebase(&view, &base, &fresh);
+    try testing.expectEqual(2400, out.eyesight_due_s);
+    try testing.expectEqual(1, out.today.eyesight_breaks);
+}
+
+test "merge: a later due point counts one break, an earlier one none" {
+    var base = dataOn(1000, 100);
+    base.movement_due_s = 3000;
+    var view = base;
+    view.movement_due_s = 6000;
+    view.today.movement_breaks += 1;
+    const fresh = base;
+
+    const out = merge.rebase(&view, &base, &fresh);
+    try testing.expectEqual(6000, out.movement_due_s);
+    try testing.expectEqual(1, out.today.movement_breaks);
+
+    // The file moved past this view's due point: the file wins, and the
+    // view's own count is not added on top.
+    var newer = base;
+    newer.movement_due_s = 9000;
+    newer.today.movement_breaks += 2;
+    const kept = merge.rebase(&view, &base, &newer);
+    try testing.expectEqual(9000, kept.movement_due_s);
+    try testing.expectEqual(2, kept.today.movement_breaks);
+}
+
+test "merge: starting a reminder from 0 is not a break" {
+    const base = dataOn(1000, 100);
+    var view = base;
+    view.eyesight_due_s = 100;
+    const out = merge.rebase(&view, &base, &base);
+    try testing.expectEqual(100, out.eyesight_due_s);
+    try testing.expectEqual(0, out.today.eyesight_breaks);
+}
+
+test "merge: a purge since base drops a reminder due point" {
+    var base = dataOn(1000, 100);
+    base.eyesight_due_s = 1200;
+    var view = base;
+    view.eyesight_due_s = 2400;
+    view.today.eyesight_breaks += 1;
+    var fresh: storage.PersistentData = .empty;
+    fresh.generation = base.generation + 1;
+
+    const out = merge.rebase(&view, &base, &fresh);
+    try testing.expectEqual(0, out.eyesight_due_s);
+    try testing.expectEqual(0, out.today.eyesight_breaks);
+}
+
+test "merge: a break fired before midnight and merged after counts on the file's day" {
+    var base = dataOn(1000, 100);
+    base.eyesight_due_s = 1200;
+    var view = base;
+    view.eyesight_due_s = 2400;
+    view.today.eyesight_breaks += 1;
+    _ = merge.rollover(&view, 1001);
+
+    const out = merge.rebase(&view, &base, &base);
+    try testing.expectEqual(1001, out.today.day);
+    try testing.expectEqual(1, out.today.eyesight_breaks);
+    try testing.expectEqual(0, out.history[0].eyesight_breaks);
+}
+
+test "storage: the active clock survives a rollover" {
+    var data = dataOn(1000, 500);
+    data.total_active_screen_s = 7000;
+    const before = data.activeClock();
+    _ = merge.rollover(&data, 1001);
+    try testing.expectEqual(before, data.activeClock());
+    try testing.expectEqual(0, data.today.active_screen_s);
+}
+
 test "merge: a purge since base drops the changes" {
     const base = dataOn(1000, 100);
     var view = base;

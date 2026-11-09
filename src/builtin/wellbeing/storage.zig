@@ -133,8 +133,21 @@ pub const PersistentData = extern struct {
     history: [max_history_days]DayRecord = [_]DayRecord{.{}} ** max_history_days,
     today: DayRecord = .{},
 
+    // Reminders. The value of the shared active clock (`activeClock`) at
+    // which each reminder was last due; 0 means not started yet. Taken
+    // from `reserved` in version 3, where older files hold zeros.
+    eyesight_due_s: u64 = 0,
+    movement_due_s: u64 = 0,
+
     /// Space for later versions; sized so the struct needs no tail padding.
-    reserved: [80]u8 = @splat(0),
+    reserved: [64]u8 = @splat(0),
+
+    /// Active screen time of the person across all windows and days:
+    /// rollover moves today's time into the total, so the sum only grows
+    /// until a purge clears both.
+    pub fn activeClock(self: *const PersistentData) u64 {
+        return self.total_active_screen_s +| self.today.active_screen_s;
+    }
 
     pub const empty: PersistentData = .{};
 };

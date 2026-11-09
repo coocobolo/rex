@@ -246,12 +246,14 @@ pub const Wellbeing = struct {
         }
     }
 
-    /// A merge is due on a day change, a timer change, screen time left
+    /// A merge is due on a day change, a timer change, a reminder due point
+    /// moved (so other windows see it within a poll), screen time left
     /// unmerged in a window that lost focus (so only the focused window
     /// holds unmerged time and the shared limit stays exact), or after
     /// `merge_interval_s`.
     fn mergeDue(self: *const Wellbeing, utc_s: i64) bool {
         if (self.data.today.day != self.base.today.day or self.timerPending()) return true;
+        if (self.data.eyesight_due_s != self.base.eyesight_due_s or self.data.movement_due_s != self.base.movement_due_s) return true;
         if (!self.window_focused and self.data.today.active_screen_s != self.base.today.active_screen_s) return true;
         const elapsed_s = std.math.sub(i64, utc_s, self.last_merge_utc_s) catch return true;
         return @abs(elapsed_s) >= merge_interval_s;
