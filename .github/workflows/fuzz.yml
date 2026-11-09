@@ -1,9 +1,10 @@
 name: fuzz
 
-# Short runs on every push, a long run nightly. The corpus is cached
-# per target so each run continues from the last. A crash fails the
-# job and uploads the input as an artifact; to keep it, see the
-# fuzzing section of CONTRIBUTING.md.
+# Short runs on every push, a long run nightly (GitHub runs `schedule`
+# only from the default branch). The corpus is cached per target so each
+# run continues from the last. A crash fails the job and uploads the
+# input as an artifact; to keep it, see the fuzzing section of
+# CONTRIBUTING.md.
 
 on:
   push:
@@ -59,9 +60,17 @@ jobs:
       - name: Build and replay ${{ matrix.target }}
         run: zig build fuzz-${{ matrix.target }} -Dllvm
 
+      # zig 0.16.0's build runner exits 0 when a limited --fuzz run finds a
+      # crash (it only prints "input saved"), so the crash file is what
+      # fails the step; the stale one was removed above.
       - name: Fuzz ${{ matrix.target }}
         id: fuzz
-        run: zig build fuzz-${{ matrix.target }} -Dllvm --fuzz=$RUNS
+        run: |
+          zig build fuzz-${{ matrix.target }} -Dllvm --fuzz=$RUNS
+          if [ -e .zig-cache/f/crash ]; then
+            echo "::error::fuzz-${{ matrix.target }} found a crash; the input is in the crash-${{ matrix.target }} artifact"
+            exit 1
+          fi
 
       - name: Upload crash
         if: failure() && steps.fuzz.outcome == 'failure'
