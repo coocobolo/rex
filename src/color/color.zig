@@ -36,9 +36,3 @@ pub const Color = union(enum) {
 comptime {
     std.debug.assert(4 == @sizeOf(Color));
 }
-
-test "Color: fromRgb and sizeOf" {
-    const c = Color.fromRgb(10, 20, 30);
-    try std.testing.expectEqual(Color{ .rgb = .{ .r = 10, .g = 20, .b = 30 } }, c);
-    try std.testing.expectEqual(4, @sizeOf(Color));
-}

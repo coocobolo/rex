@@ -11,10 +11,10 @@ pub const Tokens = @import("Tokens.zig").Tokens;
 pub const xterm256 = ansi.xterm256;
 
 test {
-    _ = @import("color.zig");
-    _ = @import("Rgb.zig");
-    _ = @import("ansi.zig");
+    _ = @import("color_test.zig");
+    _ = @import("rgb_test.zig");
+    _ = @import("ansi_test.zig");
     _ = @import("x11.zig");
     _ = @import("theme_test.zig");
-    _ = @import("Tokens.zig");
+    _ = @import("tokens_test.zig");
 }
