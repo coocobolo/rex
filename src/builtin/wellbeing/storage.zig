@@ -110,12 +110,16 @@ pub const PersistentData = extern struct {
 
 const data_size = @sizeOf(PersistentData);
 
+pub const SaveError = Io.Dir.CreateDirPathOpenError || Io.File.OpenError || Io.File.WritePositionalError;
+
+/// Writes `data` to `state_dir/filename`, creating the directory if needed.
+/// The file is truncated and rewritten in place.
 pub fn save(
     io: Io,
     data: *const PersistentData,
     state_dir: []const u8,
     filename: []const u8,
-) !void {
+) SaveError!void {
     const dir = try std.Io.Dir.createDirPathOpen(.cwd(), io, state_dir, .{});
     defer dir.close(io);
 
@@ -125,33 +129,56 @@ pub fn save(
     try file.writePositionalAll(io, std.mem.asBytes(data), 0);
 }
 
+pub const LoadError = Io.Dir.OpenError || Io.File.OpenError || Io.File.ReadPositionalError || error{
+    /// The file is too short or has the wrong magic or version.
+    InvalidStateFile,
+};
+
+/// Reads `state_dir/filename`. A missing directory or file means nothing
+/// was saved yet and gives `.empty`; every other failure is an error.
 pub fn load(
     io: Io,
     state_dir: []const u8,
     filename: []const u8,
-) PersistentData {
-    const dir = std.Io.Dir.openDir(.cwd(), io, state_dir, .{}) catch return .empty;
+) LoadError!PersistentData {
+    const dir = std.Io.Dir.openDir(.cwd(), io, state_dir, .{}) catch |err| switch (err) {
+        error.FileNotFound => return .empty,
+        else => |e| return e,
+    };
     defer dir.close(io);
 
-    const file = dir.openFile(io, filename, .{ .mode = .read_only }) catch return .empty;
+    const file = dir.openFile(io, filename, .{ .mode = .read_only }) catch |err| switch (err) {
+        error.FileNotFound => return .empty,
+        else => |e| return e,
+    };
     defer file.close(io);
 
     var data: PersistentData = undefined;
-    const n = file.readPositionalAll(io, std.mem.asBytes(&data), 0) catch return .empty;
+    const n = try file.readPositionalAll(io, std.mem.asBytes(&data), 0);
     if (n != data_size or data.magic != magic or data.version != version) {
-        return .empty;
+        return error.InvalidStateFile;
     }
 
     return data;
 }
 
+pub const PurgeError = Io.Dir.OpenError || Io.Dir.DeleteFileError;
+
+/// Deletes `state_dir/filename`. A missing directory or file counts as
+/// already purged.
 pub fn purge(
     io: Io,
     state_dir: []const u8,
     filename: []const u8,
-) !void {
-    const dir = std.Io.Dir.openDir(.cwd(), io, state_dir, .{}) catch return;
+) PurgeError!void {
+    const dir = std.Io.Dir.openDir(.cwd(), io, state_dir, .{}) catch |err| switch (err) {
+        error.FileNotFound => return,
+        else => |e| return e,
+    };
     defer dir.close(io);
 
-    dir.deleteFile(io, filename) catch {};
+    dir.deleteFile(io, filename) catch |err| switch (err) {
+        error.FileNotFound => {},
+        else => |e| return e,
+    };
 }

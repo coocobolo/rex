@@ -88,9 +88,16 @@ pub const Wellbeing = struct {
         self.focus_state.setPhaseEnd(option.focus.on_phase_end);
     }
 
-    pub fn loadState(self: *Wellbeing, io: Io, default_state_dir: []const u8) void {
-        const dir = self.option.privacy.state_dir orelse default_state_dir;
-        self.data = storage.load(io, dir, self.option.privacy.state_filename);
+    /// The directory holding the state file: `privacy.state_dir` if set,
+    /// otherwise `default_state_dir`.
+    pub fn stateDir(self: *const Wellbeing, default_state_dir: []const u8) []const u8 {
+        return self.option.privacy.state_dir orelse default_state_dir;
+    }
+
+    /// Restores saved data and the focus phase. On error the current data
+    /// is kept.
+    pub fn loadState(self: *Wellbeing, io: Io, default_state_dir: []const u8) storage.LoadError!void {
+        self.data = try storage.load(io, self.stateDir(default_state_dir), self.option.privacy.state_filename);
 
         if (std.enums.fromInt(focus.Phase, self.data.focus_phase)) |phase| {
             self.focus_state.phase = phase;
@@ -101,19 +108,20 @@ pub const Wellbeing = struct {
         }
     }
 
-    pub fn saveState(self: *Wellbeing, io: Io, default_state_dir: []const u8) !void {
-        const dir = self.option.privacy.state_dir orelse default_state_dir;
+    pub fn saveState(self: *Wellbeing, io: Io, default_state_dir: []const u8) storage.SaveError!void {
         self.data.focus_phase = @intFromEnum(self.focus_state.phase);
         self.data.focus_remaining_ms = self.focus_state.remaining_ms;
         self.data.tasks_in_cycle = self.focus_state.tasks_in_cycle;
-        try storage.save(io, &self.data, dir, self.option.privacy.state_filename);
+        try storage.save(io, &self.data, self.stateDir(default_state_dir), self.option.privacy.state_filename);
     }
 
-    pub fn purgeHistory(self: *Wellbeing, io: Io, default_state_dir: []const u8) !void {
-        const dir = self.option.privacy.state_dir orelse default_state_dir;
+    /// Clears the data in memory, then deletes the state file. When the
+    /// delete fails, the memory is already clear and the next save
+    /// overwrites the file.
+    pub fn purgeHistory(self: *Wellbeing, io: Io, default_state_dir: []const u8) storage.PurgeError!void {
         self.data = .empty;
         self.focus_state.reset();
-        try storage.purge(io, dir, self.option.privacy.state_filename);
+        try storage.purge(io, self.stateDir(default_state_dir), self.option.privacy.state_filename);
     }
 
     pub fn recordActivity(self: *Wellbeing) void {

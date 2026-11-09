@@ -9,6 +9,93 @@ const winddown = wellbeing.winddown;
 const dashboard = wellbeing.dashboard;
 const localtime = wellbeing.localtime;
 
+/// A temporary directory with paths relative to the working directory,
+/// which is how `storage` opens files.
+const StateTmp = struct {
+    tmp: testing.TmpDir,
+    buf: [128]u8 = undefined,
+
+    fn init() StateTmp {
+        return .{ .tmp = testing.tmpDir(.{}) };
+    }
+
+    fn deinit(t: *StateTmp) void {
+        t.tmp.cleanup();
+    }
+
+    /// Valid until the next call.
+    fn path(t: *StateTmp, name: []const u8) ![]const u8 {
+        return std.fmt.bufPrint(&t.buf, ".zig-cache/tmp/{s}/{s}", .{ &t.tmp.sub_path, name });
+    }
+};
+
+test "storage: save then load returns the same data" {
+    var t: StateTmp = .init();
+    defer t.deinit();
+    var data: storage.PersistentData = .empty;
+    data.current_streak = 5;
+    data.today.focus_s = 1234;
+
+    try storage.save(testing.io, &data, try t.path("state"), "wb.bin");
+    const loaded = try storage.load(testing.io, try t.path("state"), "wb.bin");
+    try testing.expectEqual(5, loaded.current_streak);
+    try testing.expectEqual(1234, loaded.today.focus_s);
+}
+
+test "storage: a missing directory or file loads as empty" {
+    var t: StateTmp = .init();
+    defer t.deinit();
+    const no_dir = try storage.load(testing.io, try t.path("missing"), "wb.bin");
+    try testing.expectEqual(storage.magic, no_dir.magic);
+    try testing.expectEqual(0, no_dir.current_streak);
+    const no_file = try storage.load(testing.io, try t.path(""), "wb.bin");
+    try testing.expectEqual(0, no_file.current_streak);
+}
+
+test "storage: a short file or a wrong magic is InvalidStateFile" {
+    var t: StateTmp = .init();
+    defer t.deinit();
+    try t.tmp.dir.writeFile(testing.io, .{ .sub_path = "short.bin", .data = "WELL" });
+    try testing.expectError(error.InvalidStateFile, storage.load(testing.io, try t.path(""), "short.bin"));
+
+    var data: storage.PersistentData = .empty;
+    data.magic = 0;
+    try storage.save(testing.io, &data, try t.path(""), "magic.bin");
+    try testing.expectError(error.InvalidStateFile, storage.load(testing.io, try t.path(""), "magic.bin"));
+}
+
+test "storage: save reports an unusable state directory" {
+    var t: StateTmp = .init();
+    defer t.deinit();
+    // A regular file where the directory should be fails even for root,
+    // unlike a read-only directory.
+    try t.tmp.dir.writeFile(testing.io, .{ .sub_path = "file", .data = "" });
+    const data: storage.PersistentData = .empty;
+    if (storage.save(testing.io, &data, try t.path("file"), "wb.bin")) |_| {
+        return error.TestUnexpectedResult;
+    } else |_| {}
+}
+
+test "storage: purge deletes the file, and missing counts as purged" {
+    var t: StateTmp = .init();
+    defer t.deinit();
+    try storage.purge(testing.io, try t.path("missing"), "wb.bin");
+    try storage.purge(testing.io, try t.path(""), "wb.bin");
+
+    var data: storage.PersistentData = .empty;
+    data.current_streak = 3;
+    try storage.save(testing.io, &data, try t.path(""), "wb.bin");
+    try storage.purge(testing.io, try t.path(""), "wb.bin");
+    try testing.expectEqual(0, (try storage.load(testing.io, try t.path(""), "wb.bin")).current_streak);
+}
+
+test "storage: purge reports an unusable state directory" {
+    var t: StateTmp = .init();
+    defer t.deinit();
+    try t.tmp.dir.writeFile(testing.io, .{ .sub_path = "file", .data = "" });
+    try testing.expectError(error.NotDir, storage.purge(testing.io, try t.path("file"), "wb.bin"));
+}
+
 test "storage: DayRecord addAppTime accumulates and sorts properly" {
     var record = storage.DayRecord{};
 

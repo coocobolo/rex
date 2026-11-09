@@ -387,7 +387,9 @@ pub fn init(
     errdefer renderer.deinit();
 
     var wellbeing_state = wellbeing.Wellbeing.init(active_config.wellbeing);
-    wellbeing_state.loadState(io, dirs.state);
+    wellbeing_state.loadState(io, dirs.state) catch |err| {
+        log.warn("cannot read wellbeing state in {s}: {t}; starting empty", .{ wellbeing_state.stateDir(dirs.state), err });
+    };
 
     // Created before the driver, which writes to it, and destroyed after it.
     const latency: latency_trace.Handle = if (latency_trace.enabled) try latency_trace.Trace.create(gpa) else {};
@@ -490,8 +492,9 @@ pub fn deinit(self: *App, gpa: std.mem.Allocator) void {
     }
     self.wellbeing_overlay.deinit(gpa);
 
+    // No toast: the window is closing.
     self.wellbeing_state.saveState(self.io, self.dirs.state) catch |err| {
-        log.err("failed to save wellbeing stats: {any}", .{err});
+        log.err("cannot save wellbeing state in {s}: {t}", .{ self.wellbeing_state.stateDir(self.dirs.state), err });
     };
     self.dirs.deinit(gpa);
     // Last: the window, rasterizer and driver above were set up from config
@@ -557,7 +560,7 @@ pub fn run(self: *App) !void {
             self.needs_redraw = true;
         }
         if (wb_res.phase_changed) {
-            self.wellbeing_state.saveState(self.io, self.dirs.state) catch {};
+            self.wellbeing_state.saveState(self.io, self.dirs.state) catch |err| self.reportWellbeingError("save", err);
             self.ringBell();
             self.last_title = now;
             self.updateWindowTitle();
@@ -1039,6 +1042,35 @@ pub fn notifyToast(self: *App, req: Toast.Request) u64 {
     return id;
 }
 
+/// Clears the wellbeing data and deletes its state file. Returns false and
+/// reports the error when the file could not be deleted.
+fn purgeWellbeingHistory(self: *App) bool {
+    self.wellbeing_state.purgeHistory(self.io, self.dirs.state) catch |err| {
+        self.reportWellbeingError("delete", err);
+        return false;
+    };
+    return true;
+}
+
+const WellbeingWriteError = wellbeing.storage.SaveError || wellbeing.storage.PurgeError;
+
+/// Logs a failed write of the wellbeing state file and shows it as a toast,
+/// so the user learns that their data was not written. The error name
+/// comes first because the toast truncates long descriptions.
+fn reportWellbeingError(
+    self: *App,
+    action: []const u8,
+    err: WellbeingWriteError,
+) void {
+    const dir = self.wellbeing_state.stateDir(self.dirs.state);
+    log.err("cannot {s} wellbeing state in {s}: {t}", .{ action, dir, err });
+    var title_buf: [64]u8 = undefined;
+    const title = std.fmt.bufPrint(&title_buf, "Couldn't {s} wellbeing data", .{action}) catch "Wellbeing data error";
+    var desc_buf: [256]u8 = undefined;
+    const desc = std.fmt.bufPrint(&desc_buf, "{t} in {s}", .{ err, dir }) catch @errorName(err);
+    self.notifySimple(title, desc, .critical);
+}
+
 /// Pushes a concise toast notification with the configured toast surface, toast and icon options.
 pub fn notifySimple(self: *App, title: []const u8, description: []const u8, variant: Toast.Variant) void {
     if (!self.config.window.toast.enabled) return;
@@ -1293,12 +1325,13 @@ fn handleAction(self: *App, action: rex.input.Action) void {
             }
         },
         .wellbeing_clear => {
-            self.wellbeing_state.purgeHistory(self.io, self.dirs.state) catch {};
-            self.wellbeing_state.current_alert = .{
-                .kind = .healthy_break,
-                .prompt = "Wellbeing history cleared.",
-                .remaining_s = 10,
-            };
+            if (self.purgeWellbeingHistory()) {
+                self.wellbeing_state.current_alert = .{
+                    .kind = .healthy_break,
+                    .prompt = "Wellbeing history cleared.",
+                    .remaining_s = 10,
+                };
+            }
             self.updateWindowTitle();
         },
         .wellbeing_dismiss => {
@@ -1783,7 +1816,7 @@ fn handleDashboardKey(self: *App, k: rex.input.Key) void {
                 self.wellbeing_state.resetFocus();
                 self.updateWindowTitle();
             } else {
-                self.wellbeing_state.purgeHistory(self.io, self.dirs.state) catch {};
+                _ = self.purgeWellbeingHistory();
             }
             self.frame_builder.last_generation = null;
             self.needs_redraw = true;
@@ -2111,7 +2144,7 @@ fn handleOverlayClick(self: *App, col: u16, row: u16) bool {
                             self.needs_redraw = true;
                         },
                         .purge_history => {
-                            self.wellbeing_state.purgeHistory(self.io, self.dirs.state) catch {};
+                            _ = self.purgeWellbeingHistory();
                             self.frame_builder.last_generation = null;
                             self.needs_redraw = true;
                         },

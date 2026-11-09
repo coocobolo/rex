@@ -86,15 +86,22 @@ fn runCommand(
         defer dirs.deinit(arena);
 
         var wb = rex.builtin.wellbeing.Wellbeing.init(config.wellbeing);
-        wb.loadState(init.io, dirs.state);
 
         if (args.next()) |action| {
             if (std.mem.eql(u8, action, "clear")) {
-                try wb.purgeHistory(init.io, dirs.state);
+                wb.purgeHistory(init.io, dirs.state) catch |err| {
+                    std.log.err("cannot delete wellbeing state in {s}: {t}", .{ wb.stateDir(dirs.state), err });
+                    return err;
+                };
                 try out.writeAll("Wellbeing history purged.\n");
                 return;
             }
         }
+
+        wb.loadState(init.io, dirs.state) catch |err| {
+            std.log.err("cannot read wellbeing state in {s}: {t}", .{ wb.stateDir(dirs.state), err });
+            return err;
+        };
 
         var buf: [2048]u8 = undefined;
         const card = wb.renderDashboard(&buf);
