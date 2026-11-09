@@ -407,7 +407,3 @@ pub fn draw(
     metrics.apply(self.shader);
     self.buffer.draw(instance_length);
 }
-
-test {
-    _ = @import("decoration_test.zig");
-}

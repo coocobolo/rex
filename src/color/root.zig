@@ -15,6 +15,6 @@ test {
     _ = @import("Rgb.zig");
     _ = @import("ansi.zig");
     _ = @import("x11.zig");
-    _ = @import("Theme.zig");
+    _ = @import("theme_test.zig");
     _ = @import("Tokens.zig");
 }

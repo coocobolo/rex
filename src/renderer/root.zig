@@ -22,6 +22,8 @@ pub const DirtyFlags = @import("dirty.zig").DirtyFlags;
 
 test {
     _ = @import("atlas_test.zig");
+    _ = @import("card_test.zig");
+    _ = @import("decoration_test.zig");
     _ = @import("frame_test.zig");
     _ = @import("scrollbar_test.zig");
     _ = @import("shader_test.zig");

@@ -86,11 +86,11 @@ test {
     _ = @import("Kbd.zig");
     _ = @import("hotspot.zig");
     _ = @import("focus.zig");
-    _ = @import("Button.zig");
-    _ = @import("Modal.zig");
-    _ = @import("Toast.zig");
-    _ = @import("Banner.zig");
-    _ = @import("Icon.zig");
+    _ = @import("button_test.zig");
+    _ = @import("modal_test.zig");
+    _ = @import("toast_test.zig");
+    _ = @import("banner_test.zig");
+    _ = @import("icon_test.zig");
     _ = @import("Text.zig");
     _ = @import("ProgressBar.zig");
     _ = @import("RingGauge.zig");

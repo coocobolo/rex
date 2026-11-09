@@ -97,7 +97,7 @@ pub fn build(b: *std.Build) !void {
         .optimize = optimize,
         .target = target,
     });
-    // Shared with the fuzz module, whose config target reaches the renderer.
+    // Only the rex module links native code; the fuzz module must not need it.
     const native: Native = .{
         .c = c_mod,
         .glfw = glfw_mod,
@@ -336,7 +336,9 @@ pub fn build(b: *std.Build) !void {
         .optimize = optimize,
         .imports = test_imports,
     });
-    native.addTo(fuzz_module);
+    // No native dependencies: what the targets reach (term, vt, unicode,
+    // config) must not need C, GLFW, FreeType or GL, inline tests
+    // included. The unfiltered `fuzz` step in `zig build test` enforces it.
     const fuzz_all = b.step("fuzz", "Run every fuzz target (--fuzz -Dllvm to fuzz)");
     fuzz_all.dependOn(tests.run(tests.add("fuzz", fuzz_module, test_filters)));
     inline for (fuzz_targets) |name| {
@@ -392,8 +394,8 @@ pub fn build(b: *std.Build) !void {
 /// their testdata by relative path, and always reruns (timings are the
 /// output, not a cacheable artifact).
 /// What a module that reaches the renderer, GLFW or FreeType needs: libc,
-/// the C translations, the headers and the libraries. The rex module and
-/// the fuzz module both take it, so they can't drift apart.
+/// the C translations, the headers and the libraries. Only the rex module
+/// takes it; the fuzz module builds without native code.
 const Native = struct {
     c: *std.Build.Module,
     glfw: *std.Build.Module,
