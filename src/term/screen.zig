@@ -2049,6 +2049,12 @@ pub fn Screen(comptime option: Option) type {
             var new_saved_col: usize = 0;
             var dst_row: usize = 0;
             var dst_col: usize = 0;
+            // Where the right half of the last wide character was written. A
+            // cursor on a right half maps there: once the pair ends a
+            // destination row, the row has already wrapped and `dst_col - 1`
+            // would point before column 0.
+            var right_half_row: usize = 0;
+            var right_half_col: usize = 0;
 
             // Lazily clear the first row in scratch
             @memset(scratch[0..max_cols], Cell{});
@@ -2087,16 +2093,22 @@ pub fn Screen(comptime option: Option) type {
 
                 // Stream cells into scratch buffer
                 for (src_row_cells[0..valid_cols], 0..) |c, src_col| {
-                    // Skip wide_right placeholder since it's already written with wide_left
+                    // Skip wide_right placeholder since it's already written with
+                    // wide_left. A right half without its left half before it
+                    // breaks the pair invariant; a cursor on it maps to the
+                    // next free position instead of trusting the record.
                     if (c.kind == .wide_right) {
+                        const paired = src_col > 0 and src_row_cells[src_col - 1].kind.isWideLeft();
+                        const half_row = if (paired) right_half_row else dst_row;
+                        const half_col = if (paired) right_half_col else dst_col;
                         if (is_cursor_row and src_col == self.cursor.col) {
-                            new_cursor_row = dst_row;
-                            new_cursor_col = dst_col - 1;
+                            new_cursor_row = half_row;
+                            new_cursor_col = half_col;
                             cursor_tracked = true;
                         }
                         if (is_saved_row and src_col == self.saved_cursor.col) {
-                            new_saved_row = dst_row;
-                            new_saved_col = dst_col - 1;
+                            new_saved_row = half_row;
+                            new_saved_col = half_col;
                             saved_cursor_tracked = true;
                         }
                         continue;
@@ -2131,6 +2143,8 @@ pub fn Screen(comptime option: Option) type {
                     scratch[(dst_row & ring_mask) * max_cols + dst_col] = cell_to_write;
 
                     if (is_wide) {
+                        right_half_row = dst_row;
+                        right_half_col = dst_col + 1;
                         scratch[(dst_row & ring_mask) * max_cols + dst_col + 1] = Cell{
                             .codepoint = 0,
                             .kind = .wide_right,

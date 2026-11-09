@@ -2263,6 +2263,36 @@ test "reflowBuffer: wide character at margin wraps with spacer cell" {
     try testing.expectEqual(11, s.cursor.col);
 }
 
+test "reflowBuffer: a cursor on the right half of a wide character that ends a row stays on it" {
+    const alloc = testing.allocator;
+    var s = try primaryScreen(alloc);
+    defer s.destroy(alloc);
+
+    s.setActive(6, 6);
+
+    // "ab中x": narrowing to 4 columns puts 中 exactly at the end of row 0,
+    // so the row wraps before the right half's source cell is reached.
+    s.setCell(0, 0, .{ .codepoint = 'a', .kind = .narrow });
+    s.setCell(0, 1, .{ .codepoint = 'b', .kind = .narrow });
+    s.setCell(0, 2, .{ .codepoint = 0x4E2D, .kind = .wide_left });
+    s.setCell(0, 3, .{ .codepoint = 0, .kind = .wide_right });
+    s.setCell(0, 4, .{ .codepoint = 'x', .kind = .narrow });
+    s.cursor.row = 0;
+    s.cursor.col = 3;
+    s.saved_cursor.row = 0;
+    s.saved_cursor.col = 3;
+
+    s.reflowBuffer(6, 4);
+
+    try testing.expectEqual(.wide_left, s.cellAt(0, 2).kind);
+    try testing.expectEqual(.wide_right, s.cellAt(0, 3).kind);
+    try testing.expectEqual(@as(u21, 'x'), s.cellAt(1, 0).codepoint);
+    try testing.expectEqual(0, s.cursor.row);
+    try testing.expectEqual(3, s.cursor.col);
+    try testing.expectEqual(0, s.saved_cursor.row);
+    try testing.expectEqual(3, s.saved_cursor.col);
+}
+
 test "reflowBuffer: hard break lines are never joined" {
     const alloc = testing.allocator;
     var s = try primaryScreen(alloc);
