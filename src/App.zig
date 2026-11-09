@@ -387,7 +387,8 @@ pub fn init(
     errdefer renderer.deinit();
 
     var wellbeing_state = wellbeing.Wellbeing.init(active_config.wellbeing);
-    wellbeing_state.open(io, dirs.state) catch |err| {
+    const open_ms: i64 = @intCast(std.Io.Clock.Timestamp.now(io, .real).raw.toMilliseconds());
+    wellbeing_state.open(io, dirs.state, open_ms) catch |err| {
         log.warn("cannot read wellbeing state in {s}: {t}; starting empty", .{ wellbeing_state.stateDir(dirs.state), err });
     };
 
@@ -553,7 +554,7 @@ pub fn run(self: *App) !void {
         const now_real = std.Io.Clock.Timestamp.now(self.io, .real);
         const local_s = self.local_clock.localSeconds(@intCast(now_real.raw.toSeconds()));
 
-        const wb_res = self.wellbeing_state.tick(dt_clamped, self.driver.getMasterFd(), local_s);
+        const wb_res = self.wellbeing_state.tick(dt_clamped, self.driver.getMasterFd(), local_s, @intCast(now_real.raw.toMilliseconds()));
         self.renderer.grayscale = wb_res.grayscale;
         self.renderer.color_tint = wb_res.tint;
         if (wb_res.needs_redraw) {
@@ -1058,6 +1059,11 @@ fn wallSeconds(self: *const App) i64 {
     return @intCast(std.Io.Clock.Timestamp.now(self.io, .real).raw.toSeconds());
 }
 
+/// Wall-clock milliseconds since the epoch, for the shared focus timer.
+fn wallMs(self: *const App) i64 {
+    return @intCast(std.Io.Clock.Timestamp.now(self.io, .real).raw.toMilliseconds());
+}
+
 /// Logs a failed write of the wellbeing state file and shows it as a toast,
 /// so the user learns that their data was not written. The error name
 /// comes first because the toast truncates long descriptions.
@@ -1292,16 +1298,16 @@ fn handleAction(self: *App, action: rex.input.Action) void {
         .new_window => self.openNewWindow(),
         .quit => self.requestQuit(),
         .focus_toggle => {
-            self.wellbeing_state.toggleFocus();
+            self.wellbeing_state.toggleFocus(self.wallMs());
             self.ringBell();
             self.updateWindowTitle();
         },
         .focus_reset => {
-            self.wellbeing_state.resetFocus();
+            self.wellbeing_state.resetFocus(self.wallMs());
             self.updateWindowTitle();
         },
         .focus_skip => {
-            self.wellbeing_state.skipFocus();
+            self.wellbeing_state.skipFocus(self.wallMs());
             self.ringBell();
             self.updateWindowTitle();
         },
@@ -1362,7 +1368,7 @@ fn handleAction(self: *App, action: rex.input.Action) void {
                 _ = self.toast_queue.dismiss(id);
                 self.needs_redraw = true;
             } else if (self.wellbeing_state.current_alert.kind != .none) {
-                self.wellbeing_state.skipFocus();
+                self.wellbeing_state.skipFocus(self.wallMs());
                 self.ringBell();
                 self.updateWindowTitle();
                 self.needs_redraw = true;
@@ -1817,7 +1823,7 @@ fn handleDashboardKey(self: *App, k: rex.input.Key) void {
         },
         .r => {
             if (self.wellbeing_overlay.active_tab == .pomodoro) {
-                self.wellbeing_state.resetFocus();
+                self.wellbeing_state.resetFocus(self.wallMs());
                 self.updateWindowTitle();
             } else {
                 _ = self.purgeWellbeingHistory();
@@ -1826,13 +1832,13 @@ fn handleDashboardKey(self: *App, k: rex.input.Key) void {
             self.needs_redraw = true;
         },
         .p => {
-            self.wellbeing_state.toggleFocus();
+            self.wellbeing_state.toggleFocus(self.wallMs());
             self.updateWindowTitle();
             self.frame_builder.last_generation = null;
             self.needs_redraw = true;
         },
         .s => {
-            self.wellbeing_state.skipFocus();
+            self.wellbeing_state.skipFocus(self.wallMs());
             self.updateWindowTitle();
             self.frame_builder.last_generation = null;
             self.needs_redraw = true;
@@ -2130,19 +2136,19 @@ fn handleOverlayClick(self: *App, col: u16, row: u16) bool {
                             self.updateWindowTitle();
                         },
                         .toggle_focus => {
-                            self.wellbeing_state.toggleFocus();
+                            self.wellbeing_state.toggleFocus(self.wallMs());
                             self.updateWindowTitle();
                             self.frame_builder.last_generation = null;
                             self.needs_redraw = true;
                         },
                         .skip_focus => {
-                            self.wellbeing_state.skipFocus();
+                            self.wellbeing_state.skipFocus(self.wallMs());
                             self.updateWindowTitle();
                             self.frame_builder.last_generation = null;
                             self.needs_redraw = true;
                         },
                         .reset_focus => {
-                            self.wellbeing_state.resetFocus();
+                            self.wellbeing_state.resetFocus(self.wallMs());
                             self.updateWindowTitle();
                             self.frame_builder.last_generation = null;
                             self.needs_redraw = true;

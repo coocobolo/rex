@@ -81,8 +81,8 @@ test "storage: a saved waiting phase loads as waiting, not counted twice" {
     option.privacy.state_filename = "wb.bin";
 
     var before = wellbeing.Wellbeing.init(option);
-    before.toggleFocus();
-    _ = before.tick(1000, -1, localAt(1000, 12, 0, 0));
+    before.toggleFocus(0);
+    _ = before.tick(1000, -1, localAt(1000, 12, 0, 0), 1000);
     try testing.expect(before.focus_state.waiting);
     try testing.expectEqual(1, before.data.tasks_completed);
     try before.sync(testing.io, "unused", 0, .merge);
@@ -94,8 +94,8 @@ test "storage: a saved waiting phase loads as waiting, not counted twice" {
 
     // Confirming starts the break; the task that ended before the restart
     // is not counted again.
-    after.toggleFocus();
-    _ = after.tick(1000, -1, localAt(1000, 12, 1, 0));
+    after.toggleFocus(60_000);
+    _ = after.tick(1000, -1, localAt(1000, 12, 1, 0), 61_000);
     try testing.expectEqual(wellbeing.focus.Phase.short_break, after.focus_state.phase);
     try testing.expectEqual(1, after.data.tasks_completed);
 }
@@ -295,9 +295,99 @@ fn openShared(t: *StateTmp) !wellbeing.Wellbeing {
     option.privacy.state_dir = try t.path("");
     option.privacy.state_filename = "wb.bin";
     var wb = wellbeing.Wellbeing.init(option);
-    try wb.open(testing.io, "unused");
+    try wb.open(testing.io, "unused", 0);
     _ = merge.rollover(&wb.data, 1000);
     return wb;
+}
+
+/// Like `openShared`, with a one-minute focus task and phases that wait.
+fn openFocus(t: *StateTmp, utc_ms: i64) !wellbeing.Wellbeing {
+    var option = quietOption();
+    option.focus = .{ .task_ms = 60_000, .short_break_ms = 10_000, .on_phase_end = .wait };
+    option.privacy.state_dir = try t.path("");
+    option.privacy.state_filename = "wb.bin";
+    var wb = wellbeing.Wellbeing.init(option);
+    try wb.open(testing.io, "unused", utc_ms);
+    return wb;
+}
+
+test "focus: a phase end two windows notice counts once" {
+    var t: StateTmp = .init();
+    defer t.deinit();
+    var a = try openFocus(&t, 1_000_000);
+    defer a.close(testing.io);
+    var b = try openFocus(&t, 1_000_000);
+    defer b.close(testing.io);
+    const day_s = localAt(1000, 12, 0, 0);
+
+    a.toggleFocus(1_000_000);
+    try a.sync(testing.io, "unused", 1000, .merge);
+    try b.sync(testing.io, "unused", 1000, .poll);
+    try testing.expectEqual(wellbeing.focus.Run.running, b.timer().run);
+
+    // Both tick while the task runs, then reach the end time and end the
+    // phase themselves.
+    _ = a.tick(1000, -1, day_s, 1_030_000);
+    _ = b.tick(1000, -1, day_s, 1_030_000);
+    const res_a = a.tick(1000, -1, day_s, 1_060_000);
+    const res_b = b.tick(1000, -1, day_s, 1_060_000);
+    try testing.expect(res_a.phase_changed and res_b.phase_changed);
+    try testing.expect(res_a.alert != null and res_b.alert != null);
+    try a.sync(testing.io, "unused", 1060, .merge);
+    try b.sync(testing.io, "unused", 1060, .merge);
+
+    const file = try storage.load(testing.io, try t.path(""), "wb.bin");
+    try testing.expectEqual(1, file.tasks_completed);
+    try testing.expectEqual(1, file.today.tasks_completed);
+    try testing.expectEqual(60, file.today.focus_s);
+    try testing.expectEqual(1, file.sessions);
+    try testing.expectEqual(@intFromEnum(wellbeing.focus.Run.waiting), file.timer.run);
+    try testing.expect(std.meta.eql(file.timer, b.data.timer));
+}
+
+test "focus: a second window joins a running timer" {
+    var t: StateTmp = .init();
+    defer t.deinit();
+    var a = try openFocus(&t, 1_000_000);
+    defer a.close(testing.io);
+    a.toggleFocus(1_000_000);
+    try a.sync(testing.io, "unused", 1000, .merge);
+
+    var b = try openFocus(&t, 1_030_000);
+    defer b.close(testing.io);
+    try testing.expectEqual(wellbeing.focus.Run.running, b.timer().run);
+    try testing.expectEqual(1_060_000, b.timer().ms);
+}
+
+test "focus: a restart with no other window brings a running phase back paused" {
+    var t: StateTmp = .init();
+    defer t.deinit();
+    var a = try openFocus(&t, 1_000_000);
+    a.toggleFocus(1_000_000);
+    try a.sync(testing.io, "unused", 1010, .merge); // last save 50 s before the end
+    a.close(testing.io);
+
+    var c = try openFocus(&t, 2_000_000);
+    defer c.close(testing.io);
+    try testing.expectEqual(wellbeing.focus.Run.paused, c.timer().run);
+    try testing.expectEqual(50_000, c.timer().ms);
+    const file = try storage.load(testing.io, try t.path(""), "wb.bin");
+    try testing.expectEqual(@intFromEnum(wellbeing.focus.Run.paused), file.timer.run);
+}
+
+test "focus: a phase that ran out while every window was closed comes back waiting, not counted" {
+    var t: StateTmp = .init();
+    defer t.deinit();
+    var a = try openFocus(&t, 1_000_000);
+    a.toggleFocus(1_000_000);
+    try a.sync(testing.io, "unused", 1070, .merge); // saved after the end, never ticked
+    a.close(testing.io);
+
+    var c = try openFocus(&t, 2_000_000);
+    defer c.close(testing.io);
+    try testing.expectEqual(wellbeing.focus.Run.waiting, c.timer().run);
+    const file = try storage.load(testing.io, try t.path(""), "wb.bin");
+    try testing.expectEqual(0, file.tasks_completed);
 }
 
 test "sync: two windows' changes both reach the file and each other" {
@@ -397,7 +487,7 @@ test "sync: an unreadable file is replaced by the next merge" {
     option.privacy.state_dir = try t.path("");
     option.privacy.state_filename = "wb.bin";
     var a = wellbeing.Wellbeing.init(option);
-    try testing.expectError(error.InvalidStateFile, a.open(testing.io, "unused"));
+    try testing.expectError(error.InvalidStateFile, a.open(testing.io, "unused", 0));
     defer a.close(testing.io);
     try testing.expect(a.presence != null);
 
@@ -550,13 +640,13 @@ test "applyOption: reminders keep their timers and use the new interval" {
     var wb = wellbeing.Wellbeing.init(option);
     const now = localAt(1000, 12, 0, 0);
 
-    _ = wb.tick(5 * std.time.ms_per_min, -1, now);
+    _ = wb.tick(5 * std.time.ms_per_min, -1, now, 0);
     try testing.expectEqual(@as(u32, 300), wb.reminders_engine.eyesight_timer_s);
 
     option.eyesight.interval_ms = 4 * std.time.ms_per_min;
     wb.applyOption(option);
     try testing.expectEqual(@as(u32, 300), wb.reminders_engine.eyesight_timer_s);
-    const res = wb.tick(std.time.ms_per_s, -1, now);
+    const res = wb.tick(std.time.ms_per_s, -1, now, 0);
     try testing.expectEqual(reminders.AlertKind.eyesight, res.alert.?.kind);
 }
 
@@ -566,8 +656,8 @@ test "applyOption: a running focus phase keeps its remaining time" {
     var wb = wellbeing.Wellbeing.init(option);
     const now = localAt(1000, 12, 0, 0);
 
-    wb.toggleFocus();
-    _ = wb.tick(std.time.ms_per_min, -1, now);
+    wb.toggleFocus(0);
+    _ = wb.tick(std.time.ms_per_min, -1, now, std.time.ms_per_min);
     try testing.expectEqual(24 * std.time.ms_per_min, wb.focus_state.remaining_ms);
 
     option.focus.task_ms = 10 * std.time.ms_per_min;
@@ -588,12 +678,14 @@ test "applyOption: the configured on_phase_end replaces a runtime toggle" {
     wb.applyOption(option);
     try testing.expectEqual(.wait, wb.focus_state.option.on_phase_end);
 
-    // A phase waiting for confirmation starts when the config turns auto on.
-    wb.toggleFocus();
-    _ = wb.tick(2000, -1, now);
+    // A phase waiting for confirmation starts on the next tick once the
+    // config turns auto on.
+    wb.toggleFocus(0);
+    _ = wb.tick(2000, -1, now, 2000);
     try testing.expect(wb.focus_state.waiting);
     option.focus.on_phase_end = .start_next;
     wb.applyOption(option);
+    _ = wb.tick(10, -1, now, 2010);
     try testing.expect(!wb.focus_state.waiting);
     try testing.expectEqual(wellbeing.focus.Phase.short_break, wb.focus_state.phase);
 }
@@ -603,10 +695,10 @@ test "applyOption: turning wind-down on applies on the next tick" {
     var wb = wellbeing.Wellbeing.init(option);
     const night = localAt(1000, 22, 0, 0);
 
-    try testing.expectEqual(@as(f32, 1.0), wb.tick(1000, -1, night).tint[2]);
+    try testing.expectEqual(@as(f32, 1.0), wb.tick(1000, -1, night, 0).tint[2]);
     option.winddown.enabled = true;
     wb.applyOption(option);
-    try testing.expect(wb.tick(1000, -1, night).tint[2] < 1.0);
+    try testing.expect(wb.tick(1000, -1, night, 0).tint[2] < 1.0);
 }
 
 test "reminders: eyesight 20-20-20 and movement triggers" {
@@ -709,8 +801,8 @@ test "focus: on_break lock_input alone locks the break without a prompt" {
     var option = quietOption();
     option.focus = .{ .task_ms = 1000, .short_break_ms = 60_000, .on_phase_end = .start_next, .on_break = .initOne(.lock_input) };
     var wb = wellbeing.Wellbeing.init(option);
-    wb.toggleFocus();
-    const res = wb.tick(1000, -1, localAt(1000, 12, 0, 0));
+    wb.toggleFocus(0);
+    const res = wb.tick(1000, -1, localAt(1000, 12, 0, 0), 1000);
     try testing.expectEqual(wellbeing.focus.Phase.short_break, wb.focus_state.phase);
     try testing.expect(res.alert == null);
     try testing.expect(res.input_locked);
@@ -720,11 +812,11 @@ test "Wellbeing service: day rolls over at local midnight" {
     var wb = wellbeing.Wellbeing.init(.{ .winddown = .{ .enabled = false } });
 
     // In UTC+7, 16:59 UTC is 23:59 local on day 1000.
-    _ = wb.tick(1000, -1, localAt(1000, 16, 59, 7));
+    _ = wb.tick(1000, -1, localAt(1000, 16, 59, 7), 0);
     try testing.expectEqual(@as(u32, 1000), wb.data.today.day);
 
     // 17:00 UTC is still UTC day 1000 but local midnight of day 1001.
-    _ = wb.tick(1000, -1, localAt(1000, 17, 0, 7));
+    _ = wb.tick(1000, -1, localAt(1000, 17, 0, 7), 0);
     try testing.expectEqual(@as(u32, 1001), wb.data.today.day);
     try testing.expectEqual(@as(u32, 1), wb.data.history_count);
     try testing.expectEqual(@as(u32, 1000), wb.data.history[0].day);
@@ -738,14 +830,14 @@ test "focus: streak counts local days" {
 
     // In UTC-5, both tasks end on UTC day 1001 but on consecutive local days:
     // 04:30 UTC is 23:30 on local day 1000, 05:30 UTC is 00:30 on day 1001.
-    wb.toggleFocus();
-    _ = wb.tick(1000, -1, localAt(1001, 4, 30, -5));
+    wb.toggleFocus(0);
+    _ = wb.tick(1000, -1, localAt(1001, 4, 30, -5), 1000);
     try testing.expectEqual(@as(u32, 1000), wb.data.last_task_day);
     try testing.expectEqual(@as(u32, 1), wb.data.current_streak);
 
-    wb.resetFocus();
-    wb.toggleFocus();
-    _ = wb.tick(1000, -1, localAt(1001, 5, 30, -5));
+    wb.resetFocus(2000);
+    wb.toggleFocus(2000);
+    _ = wb.tick(1000, -1, localAt(1001, 5, 30, -5), 3000);
     try testing.expectEqual(@as(u32, 1001), wb.data.last_task_day);
     try testing.expectEqual(@as(u32, 2), wb.data.current_streak);
 }
@@ -760,14 +852,14 @@ test "focus: a task on an earlier local day keeps the streak" {
 
     // A task on day 1000 in UTC+9, then the zone moves to UTC-8 and the next
     // task lands on local day 999.
-    wb.toggleFocus();
-    _ = wb.tick(1000, -1, localAt(1000, 0, 0, 9));
+    wb.toggleFocus(0);
+    _ = wb.tick(1000, -1, localAt(1000, 0, 0, 9), 1000);
     try testing.expectEqual(@as(u32, 1000), wb.data.last_task_day);
     try testing.expectEqual(@as(u32, 4), wb.data.current_streak);
 
-    wb.resetFocus();
-    wb.toggleFocus();
-    _ = wb.tick(1000, -1, localAt(1000, 1, 0, -8));
+    wb.resetFocus(2000);
+    wb.toggleFocus(2000);
+    _ = wb.tick(1000, -1, localAt(1000, 1, 0, -8), 3000);
     try testing.expectEqual(@as(u32, 1000), wb.data.last_task_day);
     try testing.expectEqual(@as(u32, 4), wb.data.current_streak);
 }
@@ -779,8 +871,8 @@ test "Wellbeing service: a clock before 1970 does not track days" {
     });
 
     // 1970-01-01T00:00Z in UTC-5 is local second -18000.
-    wb.toggleFocus();
-    _ = wb.tick(1000, -1, -5 * std.time.s_per_hour);
+    wb.toggleFocus(0);
+    _ = wb.tick(1000, -1, -5 * std.time.s_per_hour, 1000);
     try testing.expectEqual(@as(u32, 0), wb.data.today.day);
     try testing.expectEqual(@as(u32, 0), wb.data.last_task_day);
 }
@@ -862,7 +954,7 @@ test "Wellbeing service: day rollover and streaks" {
 
     // Day 1000
     const day1_s: i64 = 1000 * std.time.s_per_day + 3600;
-    _ = wb.tick(1000, -1, day1_s);
+    _ = wb.tick(1000, -1, day1_s, 0);
     try testing.expectEqual(@as(u32, 1000), wb.data.today.day);
 
     wb.data.today.tasks_completed = 2;
@@ -870,7 +962,7 @@ test "Wellbeing service: day rollover and streaks" {
 
     // Day 1001 (rollover)
     const day2_s: i64 = 1001 * std.time.s_per_day + 3600;
-    _ = wb.tick(1000, -1, day2_s);
+    _ = wb.tick(1000, -1, day2_s, 0);
 
     try testing.expectEqual(@as(u32, 1001), wb.data.today.day);
     try testing.expectEqual(@as(u32, 1), wb.data.history_count);
@@ -891,12 +983,12 @@ test "focus: session toggle, tick, and break prompt rotation" {
     });
 
     try testing.expectEqual(wellbeing.focus.Phase.idle, wb.focus_state.phase);
-    wb.toggleFocus();
+    wb.toggleFocus(0);
     try testing.expectEqual(wellbeing.focus.Phase.task, wb.focus_state.phase);
     try testing.expectEqual(@as(u32, 1), wb.data.sessions);
 
     const day1_s: i64 = 1000 * std.time.s_per_day + 3600;
-    const res = wb.tick(2000, -1, day1_s);
+    const res = wb.tick(2000, -1, day1_s, 2000);
     try testing.expect(res.phase_changed);
     try testing.expectEqual(wellbeing.focus.Phase.short_break, wb.focus_state.phase);
     try testing.expectEqual(@as(u16, 1), wb.data.today.tasks_completed);
@@ -924,32 +1016,32 @@ test "reminders: lock_input and animation wave modulation" {
     });
 
     const day1_s: i64 = 1000 * std.time.s_per_day + 3600;
-    const res1 = wb.tick(60_000, -1, day1_s);
+    const res1 = wb.tick(60_000, -1, day1_s, 0);
     try testing.expect(res1.alert != null);
     try testing.expect(res1.input_locked);
 
     // Tick 2000ms (peak of 4000ms cosine wave -> dim factor applied to tint)
-    const res2 = wb.tick(2000, -1, day1_s);
+    const res2 = wb.tick(2000, -1, day1_s, 0);
     try testing.expect(res2.input_locked);
     try testing.expect(res2.tint[0] < 0.70);
 
     // Dismiss alert unlocks input and restores normal tint
     wb.dismissAlert();
-    const res3 = wb.tick(100, -1, day1_s);
+    const res3 = wb.tick(100, -1, day1_s, 0);
     try testing.expect(!res3.input_locked);
     try testing.expectEqual(@as(f32, 1.0), res3.tint[0]);
 }
 
-test "focus: on_alert pause freezes task timer during locked health reminder" {
+test "focus: on_alert pause holds the task during a locking reminder and moves its end" {
     var wb = wellbeing.Wellbeing.init(.{
         .focus = .{
-            .task_ms = 30_000,
+            .task_ms = 120_000,
             .short_break_ms = 10_000,
             .on_alert = .initOne(.pause),
         },
         .eyesight = .{
             .enabled = true,
-            .interval_ms = 1 * std.time.ms_per_min, // 60s
+            .interval_ms = 1 * std.time.ms_per_min,
             .duration_ms = 10 * std.time.ms_per_s,
             .during_reminder = .initOne(.lock_input),
             .animation = .none,
@@ -960,34 +1052,28 @@ test "focus: on_alert pause freezes task timer during locked health reminder" {
         },
         .winddown = .{ .enabled = false },
     });
-
-    // Start focus session (30s task)
-    wb.toggleFocus();
-    try testing.expectEqual(wellbeing.focus.Phase.task, wb.focus_state.phase);
-    try testing.expectEqual(@as(u64, 30_000), wb.focus_state.remaining_ms);
-
     const day1_s: i64 = 1000 * std.time.s_per_day + 3600;
 
-    // Tick 10s of active work -> remaining_ms decrements to 20_000
-    _ = wb.tick(10_000, -1, day1_s);
-    try testing.expectEqual(@as(u64, 20_000), wb.focus_state.remaining_ms);
+    wb.toggleFocus(0);
+    try testing.expectEqual(@as(u64, 120_000), wb.focus_state.remaining_ms);
+    _ = wb.tick(10_000, -1, day1_s, 10_000);
+    try testing.expectEqual(@as(u64, 110_000), wb.focus_state.remaining_ms);
 
-    // Tick another 50s -> total 60s active time triggers 1-min eyesight reminder with lock_input
-    const res_alert = wb.tick(50_000, -1, day1_s);
+    // 60 s of activity brings the eyesight reminder, which blocks input:
+    // the display holds at the time left when it appeared.
+    const res_alert = wb.tick(50_000, -1, day1_s, 60_000);
     try testing.expect(res_alert.alert != null);
     try testing.expect(res_alert.input_locked);
     try testing.expect(wb.isFocusPausedByAlert());
+    _ = wb.tick(5_000, -1, day1_s, 65_000);
+    try testing.expectEqual(@as(u64, 60_000), wb.focus_state.remaining_ms);
 
-    // While locked by the eyesight alert, tick 5 seconds: focus task must remain frozen at 20_000ms!
-    _ = wb.tick(5_000, -1, day1_s);
-    try testing.expect(wb.isFocusPausedByAlert());
-    try testing.expectEqual(@as(u64, 20_000), wb.focus_state.remaining_ms);
-
-    // Dismiss alert -> focus task unfreezes and resumes countdown
+    // Closed after 10 s: the end moves 10 s later, so 60 s are still left.
     wb.dismissAlert();
     try testing.expect(!wb.isFocusPausedByAlert());
-    _ = wb.tick(5_000, -1, day1_s);
-    try testing.expectEqual(@as(u64, 15_000), wb.focus_state.remaining_ms);
+    _ = wb.tick(5_000, -1, day1_s, 70_000);
+    try testing.expectEqual(@as(u64, 60_000), wb.focus_state.remaining_ms);
+    try testing.expectEqual(130_000, wb.timer().ms);
 }
 
 test "overlay: state flags and active detection" {

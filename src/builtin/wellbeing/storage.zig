@@ -90,23 +90,13 @@ pub const DayRecord = extern struct {
     }
 };
 
-/// How a focus phase is stored in `Timer.run`.
-pub const Run = enum(u8) {
-    /// `Timer.ms` is the time left.
-    paused = 0,
-    /// `Timer.ms` is the wall-clock time, in milliseconds since the epoch,
-    /// at which the phase ends.
-    running = 1,
-    /// The phase ended and waits for the user; `Timer.ms` is unused.
-    waiting = 2,
-};
-
-/// The shared focus timer. `phase` holds a `focus.Phase` and `run` a `Run`
-/// as raw bytes, because the file may hold any value; readers validate them.
+/// The shared focus timer (`focus.Timer`) as stored. `phase` holds a
+/// `focus.Phase` and `run` a `focus.Run` as raw bytes, because the file may
+/// hold any value; readers validate them.
 pub const Timer = extern struct {
     ms: i64 = 0,
     phase: u8 = 0,
-    run: u8 = @intFromEnum(Run.paused),
+    run: u8 = 0,
     tasks_in_cycle: u8 = 0,
     reserved: [5]u8 = @splat(0),
 };

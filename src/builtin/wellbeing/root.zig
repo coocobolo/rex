@@ -68,13 +68,19 @@ pub const Wellbeing = struct {
     input_locked: bool = false,
     anim_elapsed_ms: u64 = 0,
     accum_ms: u64 = 0,
-    focus_accum_ms: u64 = 0,
-    break_accum_ms: u64 = 0,
+    /// Statistics of timer changes not written yet; added to the file only
+    /// if the change wins (see `mergeLocked`).
+    tally: focus.Tally = .empty,
+    /// The timer as the last `tick` saw it, to notice a phase end that
+    /// another window recorded.
+    seen_timer: focus.Timer = .{},
+    /// Wall-clock ms at which a reminder began blocking input during a
+    /// running task (`on_alert = pause`); 0 when none does.
+    alert_pause_start_ms: i64 = 0,
 
     pub fn init(option: Option) Wellbeing {
         var focus_state = focus.State.idle;
         focus_state.option = option.focus;
-        focus_state.paused = true;
 
         return .{
             .option = option,
@@ -98,8 +104,8 @@ pub const Wellbeing = struct {
         self.reminders_engine.routines_opt = option.routines;
         self.winddown_engine.option = option.winddown;
         self.focus_state.option = option.focus;
-        // Starts the next phase if one is waiting and phases now start on their own.
-        self.focus_state.setPhaseEnd(option.focus.on_phase_end);
+        // A waiting phase starts on the next tick if phases now start on
+        // their own (`focus.applyPhaseEnd`).
     }
 
     /// The directory holding the state file: `privacy.state_dir` if set,
@@ -127,12 +133,26 @@ pub const Wellbeing = struct {
     /// then loads the file. On a load error the presence stays held, the
     /// data stays empty, and the first merge replaces the file; call `close`
     /// in every case.
-    pub fn open(self: *Wellbeing, io: Io, default_state_dir: []const u8) OpenError!void {
+    ///
+    /// When no other window is alive, a running phase was left behind by
+    /// windows that closed: it comes back paused with the time it had left
+    /// at the last save, or waiting (and not counted) if that had run out.
+    /// This is written at once, so a window opening next does not join it.
+    pub fn open(self: *Wellbeing, io: Io, default_state_dir: []const u8, utc_ms: i64) (OpenError || SyncError)!void {
         const dir = self.stateDir(default_state_dir);
         const name = self.option.privacy.state_filename;
-        self.presence = (try storage.acquirePresence(io, dir, name)).presence;
+        const acquired = try storage.acquirePresence(io, dir, name);
+        self.presence = acquired.presence;
         self.stamp = try storage.stamp(io, dir, name);
         try self.loadState(io, default_state_dir);
+
+        var left_behind = self.timer();
+        if (!acquired.alone or left_behind.run != .running) return;
+        const left_ms = left_behind.ms -| (self.data.last_write_utc_s *| std.time.ms_per_s);
+        left_behind.run = if (left_ms > 0) .paused else .waiting;
+        left_behind.ms = @max(left_ms, 0);
+        self.data.timer = rawTimer(left_behind);
+        try self.sync(io, default_state_dir, @divFloor(utc_ms, std.time.ms_per_s), .merge);
     }
 
     /// Releases the presence lock. Merge before, so nothing is lost.
@@ -146,18 +166,45 @@ pub const Wellbeing = struct {
     pub fn loadState(self: *Wellbeing, io: Io, default_state_dir: []const u8) storage.LoadError!void {
         self.data = try storage.load(io, self.stateDir(default_state_dir), self.option.privacy.state_filename);
         self.base = self.data;
+        self.seen_timer = self.timer();
+        self.focus_state = .view(self.seen_timer, self.option.focus, 0);
+    }
 
-        const timer = self.data.timer;
-        if (std.enums.fromInt(focus.Phase, timer.phase)) |phase| {
-            self.focus_state.phase = phase;
-            self.focus_state.remaining_ms = std.math.cast(u64, timer.ms) orelse 0;
-            self.focus_state.tasks_in_cycle = timer.tasks_in_cycle;
-            // A phase that had ended still waits for the user; anything
-            // else comes back paused.
-            const waiting = timer.run == @intFromEnum(storage.Run.waiting);
-            self.focus_state.waiting = waiting;
-            self.focus_state.paused = !waiting;
+    /// The timer this process wants, which `mergeLocked` writes if no
+    /// other process changed the timer first. An invalid stored phase or
+    /// run reads as idle.
+    pub fn timer(self: *const Wellbeing) focus.Timer {
+        const raw = self.data.timer;
+        const phase = std.enums.fromInt(focus.Phase, raw.phase) orelse return .{};
+        const run = std.enums.fromInt(focus.Run, raw.run) orelse return .{};
+        return .{ .phase = phase, .run = run, .ms = raw.ms, .tasks_in_cycle = raw.tasks_in_cycle };
+    }
+
+    fn rawTimer(t: focus.Timer) storage.Timer {
+        return .{ .ms = t.ms, .phase = @intFromEnum(t.phase), .run = @intFromEnum(t.run), .tasks_in_cycle = t.tasks_in_cycle };
+    }
+
+    /// Takes a timer change. Its statistics wait in `tally` for the write,
+    /// except in a process that never joined the shared state, which has no
+    /// other writer and records them at once.
+    fn applyChange(self: *Wellbeing, change: focus.Change) void {
+        self.data.timer = rawTimer(change.timer);
+        if (self.presence == null) {
+            applyTally(&self.data, change.tally);
+        } else {
+            self.tally.add(change.tally);
         }
+    }
+
+    fn timerPending(self: *const Wellbeing) bool {
+        return !std.meta.eql(self.data.timer, self.base.timer) or !self.tally.isEmpty();
+    }
+
+    /// Ends a phase whose end time passed before a user action, so the
+    /// action applies to the phase that follows it.
+    fn catchUp(self: *Wellbeing, now_ms: i64) void {
+        if (self.alert_pause_start_ms != 0) return;
+        if (focus.endIfDue(self.timer(), self.option.focus, now_ms)) |change| self.applyChange(change);
     }
 
     /// Exchanges changes with the state file: picks up other processes'
@@ -178,7 +225,7 @@ pub const Wellbeing = struct {
     }
 
     fn mergeDue(self: *const Wellbeing, utc_s: i64) bool {
-        if (self.data.today.day != self.base.today.day) return true;
+        if (self.data.today.day != self.base.today.day or self.timerPending()) return true;
         const elapsed_s = std.math.sub(i64, utc_s, self.last_merge_utc_s) catch return true;
         return @abs(elapsed_s) >= merge_interval_s;
     }
@@ -202,13 +249,15 @@ pub const Wellbeing = struct {
         self.adopt(&fresh, &view);
     }
 
-    /// Merges with the write lock held. Writes only when the result differs
-    /// from the file, so an idle process does not rewrite it every minute.
+    /// Merges with the write lock held. A timer change is written only when
+    /// no other process changed the timer since `base` (`timer_rev`);
+    /// otherwise it and its statistics are dropped and the file's timer
+    /// wins. Writes only when the result differs from the file, so an idle
+    /// process does not rewrite it every minute.
     fn mergeLocked(self: *Wellbeing, io: Io, dir: []const u8, name: []const u8, utc_s: i64) SyncError!void {
         // Set first: a failed merge is retried after the interval, not on
         // every poll.
         self.last_merge_utc_s = utc_s;
-        self.storeTimer();
         const fresh = storage.load(io, dir, name) catch |err| switch (err) {
             error.InvalidStateFile => blk: {
                 log.warn("replacing the unreadable wellbeing state in {s}", .{dir});
@@ -217,9 +266,12 @@ pub const Wellbeing = struct {
             else => |e| return e,
         };
         var merged = merge.rebase(&self.data, &self.base, &fresh);
-        // Until the shared timer lands, the last writer's timer wins, as
-        // before; a purge since `base` resets it.
-        if (fresh.generation == self.base.generation) merged.timer = self.data.timer;
+        const purged = fresh.generation != self.base.generation;
+        if (!purged and fresh.timer_rev == self.base.timer_rev and self.timerPending()) {
+            merged.timer = self.data.timer;
+            merged.timer_rev +%= 1;
+            applyTally(&merged, self.tally);
+        }
         if (!std.mem.eql(u8, std.mem.asBytes(&merged), std.mem.asBytes(&fresh))) {
             merged.last_write_utc_s = utc_s;
             try storage.save(io, &merged, dir, name);
@@ -228,25 +280,31 @@ pub const Wellbeing = struct {
         self.adopt(&merged, &merged);
     }
 
-    /// Takes `file` as the new base and `view` as the data. A purge in
-    /// another process (newer generation) also resets the focus timer.
+    /// Takes `file` as the new base and `view` as the data. When another
+    /// process changed the timer (`timer_rev`) or purged (generation), this
+    /// process's pending timer change and statistics are dropped; a purge
+    /// also clears the timer.
     fn adopt(self: *Wellbeing, file: *const storage.PersistentData, view: *const storage.PersistentData) void {
-        const purged = file.generation != self.base.generation;
-        const timer = self.data.timer;
+        const replaced = file.generation != self.base.generation or file.timer_rev != self.base.timer_rev;
+        const pending = self.data.timer;
         self.base = file.*;
         self.data = view.*;
-        if (purged) self.focus_state.reset() else self.data.timer = timer;
+        if (replaced) {
+            self.tally = .empty;
+        } else {
+            self.data.timer = pending;
+        }
     }
 
-    /// Writes the focus state into `data.timer`. Until the shared timer
-    /// lands, a running phase is stored paused with the time left.
-    fn storeTimer(self: *Wellbeing) void {
-        self.data.timer = .{
-            .ms = std.math.cast(i64, self.focus_state.remaining_ms) orelse std.math.maxInt(i64),
-            .phase = @intFromEnum(self.focus_state.phase),
-            .run = @intFromEnum(if (self.focus_state.waiting) storage.Run.waiting else storage.Run.paused),
-            .tasks_in_cycle = self.focus_state.tasks_in_cycle,
-        };
+    /// Adds a timer change's statistics to `data`'s current day.
+    fn applyTally(data: *storage.PersistentData, tally: focus.Tally) void {
+        data.today.focus_s +|= std.math.cast(u32, tally.focus_ms / std.time.ms_per_s) orelse std.math.maxInt(u32);
+        data.today.break_s +|= std.math.cast(u32, tally.break_ms / std.time.ms_per_s) orelse std.math.maxInt(u32);
+        data.today.tasks_completed +|= std.math.cast(u16, tally.tasks) orelse std.math.maxInt(u16);
+        data.tasks_completed +|= tally.tasks;
+        data.long_breaks_taken +|= tally.long_breaks;
+        data.sessions +|= tally.sessions;
+        if (tally.tasks > 0) merge.recordTaskDay(data, data.today.day);
     }
 
     /// Clears the history for every process: writes an empty file with the
@@ -268,33 +326,47 @@ pub const Wellbeing = struct {
         self.stamp = try storage.stamp(io, dir, name);
         self.base = cleared;
         self.data = cleared;
-        self.focus_state.reset();
+        self.tally = .empty;
     }
 
     pub fn recordActivity(self: *Wellbeing) void {
         self.tracker_engine.recordActivity();
     }
 
-    pub fn toggleFocus(self: *Wellbeing) void {
-        const was_idle = self.focus_state.phase == .idle;
-        self.focus_state.toggle();
-        if (was_idle and self.focus_state.phase == .task) {
-            self.data.sessions +|= 1;
-        }
+    /// Start, pause, resume, or confirm the next phase. `now_ms` is
+    /// wall-clock milliseconds since the epoch.
+    pub fn toggleFocus(self: *Wellbeing, now_ms: i64) void {
+        self.catchUp(now_ms);
+        self.applyChange(focus.toggle(self.timer(), self.option.focus, now_ms));
+        self.showAction(now_ms);
     }
 
-    pub fn resetFocus(self: *Wellbeing) void {
-        self.focus_state.reset();
+    pub fn resetFocus(self: *Wellbeing, now_ms: i64) void {
+        self.catchUp(now_ms);
+        self.applyChange(focus.reset(self.timer(), self.option.focus, now_ms));
+        self.showAction(now_ms);
     }
 
-    pub fn skipFocus(self: *Wellbeing) void {
-        self.focus_state.skip();
+    pub fn skipFocus(self: *Wellbeing, now_ms: i64) void {
+        self.catchUp(now_ms);
+        if (focus.skip(self.timer(), self.option.focus, now_ms)) |change| self.applyChange(change);
+        self.showAction(now_ms);
     }
 
+    /// Shows a timer change made here. It also becomes `seen_timer`: `tick`
+    /// treats only changes it has not seen as phase ends to announce.
+    fn showAction(self: *Wellbeing, now_ms: i64) void {
+        self.seen_timer = self.timer();
+        self.focus_state = .view(self.seen_timer, self.option.focus, now_ms);
+    }
+
+    /// Switches between waiting for the user and starting the next phase on
+    /// its own, until the next config reload. A waiting phase starts on the
+    /// next tick.
     pub fn toggleFocusPhaseEnd(self: *Wellbeing) void {
-        self.focus_state.setPhaseEnd(
-            if (self.focus_state.option.on_phase_end == .start_next) .wait else .start_next,
-        );
+        const focus_option = &self.option.focus;
+        focus_option.on_phase_end = if (focus_option.on_phase_end == .start_next) .wait else .start_next;
+        self.focus_state.option = focus_option.*;
     }
 
     pub fn dismissAlert(self: *Wellbeing) void {
@@ -306,11 +378,14 @@ pub const Wellbeing = struct {
 
     /// `local_s` is local wall-clock seconds since the epoch (see
     /// `localtime.Clock`); it sets the day boundary and the wind-down window.
+    /// `utc_ms` is wall-clock milliseconds since the epoch, for the focus
+    /// timer.
     pub fn tick(
         self: *Wellbeing,
         dt_ms: u64,
         pty_fd: std.posix.fd_t,
         local_s: i64,
+        utc_ms: i64,
     ) struct {
         needs_redraw: bool,
         phase_changed: bool,
@@ -386,64 +461,53 @@ pub const Wellbeing = struct {
             needs_redraw = true;
         }
 
-        // Focus session tick
+        // Focus timer. A reminder blocking input during a running task
+        // (`on_alert = pause`) holds the phase end in this window and, once
+        // it closes, moves the end later by how long it was shown. Another
+        // window does not see the reminder and may end the phase meanwhile;
+        // then the task is no longer running and nothing is moved.
+        const focus_option = self.option.focus;
         const alert_is_locking = if (alert_to_return) |al|
             al.lock_input
         else
             (self.current_alert.kind != .none and self.current_alert.remaining_s > 0 and self.current_alert.lock_input);
-        const pause_focus_for_alert = self.focus_state.option.on_alert.contains(.pause) and alert_is_locking and self.focus_state.phase == .task;
-
-        if (self.focus_state.phase != .idle and !self.focus_state.paused and !self.focus_state.waiting and !pause_focus_for_alert) {
-            const elapsed = @min(dt_ms, self.focus_state.remaining_ms);
-            switch (self.focus_state.phase) {
-                .task => {
-                    self.focus_accum_ms +|= elapsed;
-                    const add_s: u32 = @intCast(self.focus_accum_ms / 1000);
-                    self.focus_accum_ms %= 1000;
-                    self.data.today.focus_s +|= add_s;
-                },
-                .short_break, .long_break => {
-                    self.break_accum_ms +|= elapsed;
-                    const add_s: u32 = @intCast(self.break_accum_ms / 1000);
-                    self.break_accum_ms %= 1000;
-                    self.data.today.break_s +|= add_s;
-                },
-                .idle => {},
-            }
-
-            if (self.focus_state.tick(dt_ms)) {
-                needs_redraw = true;
-                phase_changed = true;
-                const was_task = self.focus_state.phase == .task;
-                const was_long_break = self.focus_state.phase == .long_break;
-
-                if (was_task) {
-                    self.data.today.tasks_completed +|= 1;
-                    self.data.tasks_completed +|= 1;
-
-                    merge.recordTaskDay(&self.data, today_epoch_day);
-
-                    const on_break = self.focus_state.option.on_break;
-                    if (on_break.contains(.prompt) or on_break.contains(.animation)) {
-                        alert_to_return = .{
-                            .kind = .healthy_break,
-                            .prompt = self.reminders_engine.nextBreakPrompt(),
-                            .remaining_s = 30,
-                            .lock_input = on_break.contains(.lock_input),
-                            .show_animation = on_break.contains(.animation),
-                            .animation = .pulse_dim,
-                        };
-                    }
-                }
-                if (was_long_break) {
-                    self.data.long_breaks_taken +|= 1;
-                }
-
-                if (self.focus_state.option.on_phase_end == .start_next) {
-                    self.focus_state.advance();
-                }
-            }
+        const running_task = self.timer().phase == .task and self.timer().run == .running;
+        if (focus_option.on_alert.contains(.pause) and alert_is_locking and running_task) {
+            if (self.alert_pause_start_ms == 0) self.alert_pause_start_ms = utc_ms;
+        } else if (self.alert_pause_start_ms != 0) {
+            const shown_ms = std.math.cast(u64, utc_ms -| self.alert_pause_start_ms) orelse 0;
+            self.alert_pause_start_ms = 0;
+            if (focus.extend(self.timer(), shown_ms)) |change| self.applyChange(change);
         }
+        if (self.alert_pause_start_ms == 0) {
+            if (focus.endIfDue(self.timer(), focus_option, utc_ms)) |change| self.applyChange(change);
+        }
+        if (focus.applyPhaseEnd(self.timer(), focus_option, utc_ms)) |change| self.applyChange(change);
+
+        // A phase that ran out, ended here or by another window, shows the
+        // break prompt in every window.
+        const current = self.timer();
+        const seen = self.seen_timer;
+        if (!std.meta.eql(current, seen)) {
+            needs_redraw = true;
+            if (seen.phase != .idle and seen.run == .running and utc_ms >= seen.ms) {
+                phase_changed = true;
+                const on_break = focus_option.on_break;
+                if (seen.phase == .task and (on_break.contains(.prompt) or on_break.contains(.animation))) {
+                    alert_to_return = .{
+                        .kind = .healthy_break,
+                        .prompt = self.reminders_engine.nextBreakPrompt(),
+                        .remaining_s = 30,
+                        .lock_input = on_break.contains(.lock_input),
+                        .show_animation = on_break.contains(.animation),
+                        .animation = .pulse_dim,
+                    };
+                }
+            }
+            self.seen_timer = current;
+        }
+        const view_ms = if (self.alert_pause_start_ms != 0) self.alert_pause_start_ms else utc_ms;
+        self.focus_state = .view(current, focus_option, view_ms);
 
         // Bell silencing policy
         const in_focus_task = self.option.focus.during_task.contains(.mute_bell) and self.focus_state.phase == .task;

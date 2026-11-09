@@ -16,13 +16,14 @@ pub const Option = struct {
     task_ms: u64 = 25 * 60_000,
     tasks_before_long_break: u8 = 4,
     time_fields: TimeFields = .initMany(&.{ .minute, .second }),
-    timer: Timer = .countdown,
+    timer: Count = .countdown,
     on_phase_end: PhaseEnd = .wait,
     during_task: std.EnumSet(TaskAction) = .initOne(.mute_bell),
     on_break: std.EnumSet(BreakAction) = .initMany(&.{ .prompt, .animation }),
     on_alert: std.EnumSet(AlertAction) = .initOne(.pause),
 
-    pub const Timer = enum { countdown, countup };
+    /// Whether the timer shows the time left or the time spent.
+    pub const Count = enum { countdown, countup };
     pub const PhaseEnd = enum {
         /// Wait for the user to start the next phase.
         wait,
@@ -54,14 +55,194 @@ pub const Option = struct {
     pub const default: Option = .{};
 };
 
+/// How a phase of the shared timer is kept (stored as `storage.Timer.run`).
+pub const Run = enum(u8) {
+    /// `Timer.ms` is the time left.
+    paused = 0,
+    /// `Timer.ms` is the wall-clock time, in milliseconds since the epoch,
+    /// at which the phase ends.
+    running = 1,
+    /// The phase ended and waits for the user; `Timer.ms` is unused.
+    waiting = 2,
+};
+
+/// The focus timer shared by all windows. It holds an absolute end time
+/// while running, so every process derives the same time left from its own
+/// clock and nothing is written while it runs. Setting the wall clock moves
+/// a running phase; suspend counts as elapsed time.
+pub const Timer = struct {
+    phase: Phase = .idle,
+    run: Run = .paused,
+    ms: i64 = 0,
+    /// Tasks completed since the last long break.
+    tasks_in_cycle: u8 = 0,
+
+    pub fn remainingMs(self: Timer, now_ms: i64) u64 {
+        return switch (self.run) {
+            .paused => std.math.cast(u64, self.ms) orelse 0,
+            .running => std.math.cast(u64, self.ms -| now_ms) orelse 0,
+            .waiting => 0,
+        };
+    }
+};
+
+/// What a transition adds to the statistics. It is recorded only when the
+/// transition wins the write (see `Wellbeing.sync`), so a phase end that
+/// several windows notice counts once.
+pub const Tally = struct {
+    tasks: u32 = 0,
+    long_breaks: u32 = 0,
+    sessions: u32 = 0,
+    focus_ms: u64 = 0,
+    break_ms: u64 = 0,
+
+    pub const empty: Tally = .{};
+
+    pub fn add(self: *Tally, other: Tally) void {
+        self.tasks +|= other.tasks;
+        self.long_breaks +|= other.long_breaks;
+        self.sessions +|= other.sessions;
+        self.focus_ms +|= other.focus_ms;
+        self.break_ms +|= other.break_ms;
+    }
+
+    pub fn isEmpty(self: Tally) bool {
+        return std.meta.eql(self, empty);
+    }
+};
+
+pub const Change = struct {
+    timer: Timer,
+    tally: Tally = .empty,
+};
+
+pub fn durationMs(option: Option, phase: Phase) u64 {
+    return switch (phase) {
+        .task => option.task_ms,
+        .short_break => option.short_break_ms,
+        .long_break => option.long_break_ms,
+        .idle => 0,
+    };
+}
+
+fn msFrom(now_ms: i64, duration_ms: u64) i64 {
+    return now_ms +| (std.math.cast(i64, duration_ms) orelse std.math.maxInt(i64));
+}
+
+/// The phase after `timer`'s, starting at `now_ms` (running) or waiting for
+/// a resume (paused). A task counts toward the long break.
+fn next(timer: Timer, option: Option, now_ms: i64, run: Run) Timer {
+    var out = timer;
+    switch (timer.phase) {
+        .task => {
+            out.tasks_in_cycle +|= 1;
+            if (out.tasks_in_cycle >= option.tasks_before_long_break) {
+                out.tasks_in_cycle = 0;
+                out.phase = .long_break;
+            } else {
+                out.phase = .short_break;
+            }
+        },
+        .short_break, .long_break, .idle => out.phase = .task,
+    }
+    const duration_ms = durationMs(option, out.phase);
+    out.run = run;
+    out.ms = if (run == .running) msFrom(now_ms, duration_ms) else std.math.cast(i64, duration_ms) orelse std.math.maxInt(i64);
+    return out;
+}
+
+/// Time spent in the current phase when it is left early (skip, reset),
+/// counted as focus or break time. A waiting phase was counted when it ended.
+fn spent(timer: Timer, option: Option, now_ms: i64) Tally {
+    if (timer.run == .waiting) return .empty;
+    const ms = durationMs(option, timer.phase) -| timer.remainingMs(now_ms);
+    return switch (timer.phase) {
+        .task => .{ .focus_ms = ms },
+        .short_break, .long_break => .{ .break_ms = ms },
+        .idle => .empty,
+    };
+}
+
+/// Start (from idle), pause, resume, or confirm the next phase (waiting).
+pub fn toggle(timer: Timer, option: Option, now_ms: i64) Change {
+    return switch (timer.phase) {
+        .idle => .{
+            .timer = .{ .phase = .task, .run = .running, .ms = msFrom(now_ms, option.task_ms) },
+            .tally = .{ .sessions = 1 },
+        },
+        .task, .short_break, .long_break => switch (timer.run) {
+            .waiting => .{ .timer = next(timer, option, now_ms, .running) },
+            .running => .{ .timer = .{
+                .phase = timer.phase,
+                .run = .paused,
+                .ms = std.math.cast(i64, timer.remainingMs(now_ms)) orelse 0,
+                .tasks_in_cycle = timer.tasks_in_cycle,
+            } },
+            .paused => .{ .timer = .{
+                .phase = timer.phase,
+                .run = .running,
+                .ms = msFrom(now_ms, timer.remainingMs(now_ms)),
+                .tasks_in_cycle = timer.tasks_in_cycle,
+            } },
+        },
+    };
+}
+
+/// Leaves the current phase for the next one. With `on_phase_end = wait`
+/// the next phase starts paused, so a toggle resumes it.
+pub fn skip(timer: Timer, option: Option, now_ms: i64) ?Change {
+    if (timer.phase == .idle) return null;
+    const run: Run = if (option.on_phase_end == .wait) .paused else .running;
+    return .{ .timer = next(timer, option, now_ms, run), .tally = spent(timer, option, now_ms) };
+}
+
+/// Back to idle; the time spent in the current phase still counts.
+pub fn reset(timer: Timer, option: Option, now_ms: i64) Change {
+    return .{ .timer = .{}, .tally = spent(timer, option, now_ms) };
+}
+
+/// The phase end, once a running phase reaches its end time: counts the
+/// whole phase, then waits or starts the next phase per `on_phase_end`.
+pub fn endIfDue(timer: Timer, option: Option, now_ms: i64) ?Change {
+    if (timer.phase == .idle or timer.run != .running or now_ms < timer.ms) return null;
+    const duration_ms = durationMs(option, timer.phase);
+    const tally: Tally = switch (timer.phase) {
+        .task => .{ .tasks = 1, .focus_ms = duration_ms },
+        .short_break => .{ .break_ms = duration_ms },
+        .long_break => .{ .long_breaks = 1, .break_ms = duration_ms },
+        .idle => unreachable,
+    };
+    const after: Timer = switch (option.on_phase_end) {
+        .wait => .{ .phase = timer.phase, .run = .waiting, .tasks_in_cycle = timer.tasks_in_cycle },
+        .start_next => next(timer, option, now_ms, .running),
+    };
+    return .{ .timer = after, .tally = tally };
+}
+
+/// Starts the waiting next phase when phases now start on their own.
+pub fn applyPhaseEnd(timer: Timer, option: Option, now_ms: i64) ?Change {
+    if (timer.run != .waiting or option.on_phase_end != .start_next) return null;
+    return .{ .timer = next(timer, option, now_ms, .running) };
+}
+
+/// Moves a running task's end later by `by_ms`, for the time a reminder
+/// blocked input (`on_alert = pause`).
+pub fn extend(timer: Timer, by_ms: u64) ?Change {
+    if (timer.phase != .task or timer.run != .running) return null;
+    var out = timer;
+    out.ms = msFrom(timer.ms, by_ms);
+    return .{ .timer = out };
+}
+
+/// What the display shows of the timer at one moment: built from a `Timer`
+/// and a time by `view`, never changed on its own.
 pub const State = struct {
     option: Option,
     remaining_ms: u64 = 0,
     phase: Phase = .idle,
     paused: bool = false,
     waiting: bool = false,
-
-    /// resets after each long break; drives long-break trigger
+    /// Resets after each long break; drives the long-break trigger.
     tasks_in_cycle: u8 = 0,
 
     pub const idle: State = .{
@@ -69,85 +250,15 @@ pub const State = struct {
         .option = .default,
     };
 
-    pub fn advance(self: *State) void {
-        const opt = self.option;
-        self.paused = false;
-        self.waiting = false;
-
-        switch (self.phase) {
-            .task => {
-                self.tasks_in_cycle += 1;
-
-                if (self.tasks_in_cycle >= opt.tasks_before_long_break) {
-                    self.tasks_in_cycle = 0;
-                    self.remaining_ms = opt.long_break_ms;
-                    self.phase = .long_break;
-                } else {
-                    self.remaining_ms = opt.short_break_ms;
-                    self.phase = .short_break;
-                }
-            },
-            .short_break, .long_break, .idle => {
-                self.phase = .task;
-                self.remaining_ms = opt.task_ms;
-            },
-        }
-    }
-
-    pub fn setPhaseEnd(self: *State, phase_end: Option.PhaseEnd) void {
-        self.option.on_phase_end = phase_end;
-        if (self.waiting and phase_end == .start_next) {
-            self.waiting = false;
-            self.advance();
-        }
-    }
-
-    /// Start (from idle), pause (running to paused), or resume (paused to running).
-    pub fn toggle(self: *State) void {
-        const option = self.option;
-        switch (self.phase) {
-            .idle => {
-                self.phase = .task;
-                self.paused = false;
-                self.remaining_ms = option.task_ms;
-            },
-            .task, .short_break, .long_break => {
-                if (self.waiting)
-                    // user confirmed, start next phase
-                    self.advance()
-                else
-                    self.paused = !self.paused;
-            },
-        }
-    }
-
-    /// Skip the current phase and advance to the next one immediately.
-    pub fn skip(self: *State) void {
-        if (self.phase == .idle) return;
-        self.advance();
-
-        // In manual mode: don't auto-start the next phase.
-        // Use paused=true so toggle() resumes (not advances) on next press.
-        self.paused = self.option.on_phase_end == .wait;
-    }
-
-    /// Full reset, back to idle, clears session count.
-    pub fn reset(self: *State) void {
-        const option = self.option;
-        self.* = .idle;
-        self.option = option;
-    }
-
-    /// Tick the timer by dt_ms. Returns true if the phase just ended
-    pub fn tick(self: *State, dt_ms: u64) bool {
-        if (self.phase == .idle or self.paused or self.waiting) return false;
-        if (dt_ms >= self.remaining_ms) {
-            self.remaining_ms = 0;
-            self.waiting = self.option.on_phase_end == .wait;
-            return true;
-        }
-        self.remaining_ms -= dt_ms;
-        return false;
+    pub fn view(timer: Timer, option: Option, now_ms: i64) State {
+        return .{
+            .option = option,
+            .remaining_ms = timer.remainingMs(now_ms),
+            .phase = timer.phase,
+            .paused = timer.phase != .idle and timer.run == .paused,
+            .waiting = timer.run == .waiting,
+            .tasks_in_cycle = timer.tasks_in_cycle,
+        };
     }
 
     /// Milliseconds until the next tick boundary (for waitEventsTimeout).
@@ -158,12 +269,7 @@ pub const State = struct {
     }
 
     pub fn getDuration(self: *const State, phase: Phase) u64 {
-        return switch (phase) {
-            .task => self.option.task_ms,
-            .short_break => self.option.short_break_ms,
-            .long_break => self.option.long_break_ms,
-            .idle => 0,
-        };
+        return durationMs(self.option, phase);
     }
 
     fn write2d(buf: []u8, end: *usize, n: u8) void {
