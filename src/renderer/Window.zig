@@ -393,6 +393,12 @@ pub fn setWindowFocusCallback(self: *Window, cb: c.GLFWwindowfocusfun) void {
     _ = c.glfwSetWindowFocusCallback(self.handle, cb);
 }
 
+/// Whether this window has input focus. GLFW does not deliver the focus
+/// the window opened with, so read this after installing the focus callback.
+pub fn focused(self: *const Window) bool {
+    return c.glfwGetWindowAttrib(self.handle, c.GLFW_FOCUSED) == c.GLFW_TRUE;
+}
+
 pub fn setWindowCloseCallback(self: *Window, cb: c.GLFWwindowclosefun) void {
     _ = c.glfwSetWindowCloseCallback(self.handle, cb);
 }

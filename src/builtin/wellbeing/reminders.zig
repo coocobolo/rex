@@ -60,18 +60,14 @@ pub const break_prompts: []const []const u8 = &.{
     "Stand up, reach both hands toward the ceiling, and take a deep breath.",
 };
 
+/// Fires the eyesight and movement reminders on the person's active time
+/// across all windows (`PersistentData.activeClock`). Each reminder's due
+/// point lives in the shared state, so whichever window is focused fires
+/// it, once; idle time pauses reminders because the clock stops.
 pub const RemindersEngine = struct {
     eyesight_opt: EyesightOption,
     movement_opt: MovementOption,
-
-    eyesight_timer_s: u32 = 0,
-    eyesight_active_s: u32 = 0,
-
-    movement_timer_s: u32 = 0,
-    movement_active_s: u32 = 0,
-
     break_prompt_idx: usize = 0,
-    current_alert: Alert = .{},
 
     pub fn init(eyesight: EyesightOption, movement: MovementOption) RemindersEngine {
         return .{
@@ -80,69 +76,34 @@ pub const RemindersEngine = struct {
         };
     }
 
-    pub fn tick(
-        self: *RemindersEngine,
-        dt_s: u32,
-        is_idle: bool,
-        today: *storage.DayRecord,
-    ) ?Alert {
-        // Decrement active alert if present
-        if (self.current_alert.remaining_s > 0) {
-            self.current_alert.remaining_s -|= dt_s;
-            if (self.current_alert.remaining_s == 0) {
-                self.current_alert.kind = .none;
-            }
+    /// Fires at most one due reminder, movement first, and counts its break
+    /// in `data.today`. A reminder that is also due waits for a later call,
+    /// so the caller decides when another alert may follow. Call it only
+    /// from the focused window.
+    pub fn tick(self: *RemindersEngine, data: *storage.PersistentData) ?Alert {
+        const clock = data.activeClock();
+        if (self.movement_opt.enabled and advance(&data.movement_due_s, clock, self.movement_opt.interval_ms)) {
+            data.today.movement_breaks +|= 1;
+            return .{
+                .kind = .movement,
+                .prompt = self.movement_opt.prompt,
+                .remaining_s = remainingSeconds(self.movement_opt.duration_ms),
+                .lock_input = self.movement_opt.during_reminder.contains(.lock_input),
+                .show_animation = self.movement_opt.animation != .none,
+                .animation = self.movement_opt.animation,
+            };
         }
-
-        // Reminders only accumulate when user is actively using the terminal
-        if (is_idle) {
-            // Paused while idle: no timer advances and nothing triggers.
-            return null;
+        if (self.eyesight_opt.enabled and advance(&data.eyesight_due_s, clock, self.eyesight_opt.interval_ms)) {
+            data.today.eyesight_breaks +|= 1;
+            return .{
+                .kind = .eyesight,
+                .prompt = self.eyesight_opt.prompt,
+                .remaining_s = remainingSeconds(self.eyesight_opt.duration_ms),
+                .lock_input = self.eyesight_opt.during_reminder.contains(.lock_input),
+                .show_animation = self.eyesight_opt.animation != .none,
+                .animation = self.eyesight_opt.animation,
+            };
         }
-
-        // Advance all enabled timers first
-        if (self.eyesight_opt.enabled) self.eyesight_timer_s +|= dt_s;
-        if (self.movement_opt.enabled) self.movement_timer_s +|= dt_s;
-
-        var triggered: ?Alert = null;
-
-        if (self.eyesight_opt.enabled) {
-            const threshold = secondsCeil(self.eyesight_opt.interval_ms);
-            if (self.eyesight_timer_s >= threshold) {
-                self.eyesight_timer_s = 0;
-                today.eyesight_breaks +|= 1;
-                triggered = .{
-                    .kind = .eyesight,
-                    .prompt = self.eyesight_opt.prompt,
-                    .remaining_s = remainingSeconds(self.eyesight_opt.duration_ms),
-                    .lock_input = self.eyesight_opt.during_reminder.contains(.lock_input),
-                    .show_animation = self.eyesight_opt.animation != .none,
-                    .animation = self.eyesight_opt.animation,
-                };
-            }
-        }
-
-        if (self.movement_opt.enabled) {
-            const threshold = secondsCeil(self.movement_opt.interval_ms);
-            if (self.movement_timer_s >= threshold) {
-                self.movement_timer_s = 0;
-                today.movement_breaks +|= 1;
-                triggered = .{
-                    .kind = .movement,
-                    .prompt = self.movement_opt.prompt,
-                    .remaining_s = remainingSeconds(self.movement_opt.duration_ms),
-                    .lock_input = self.movement_opt.during_reminder.contains(.lock_input),
-                    .show_animation = self.movement_opt.animation != .none,
-                    .animation = self.movement_opt.animation,
-                };
-            }
-        }
-
-        if (triggered) |alert| {
-            self.current_alert = alert;
-            return alert;
-        }
-
         return null;
     }
 
@@ -157,4 +118,22 @@ pub const RemindersEngine = struct {
 /// the countdown's type.
 fn remainingSeconds(ms: u64) u32 {
     return std.math.cast(u32, secondsCeil(ms)) orelse std.math.maxInt(u32);
+}
+
+/// Moves `due` to the latest point of its interval grid at or before
+/// `clock` and returns whether that fires a reminder. A due point of 0 means
+/// not started: the grid starts at `clock` without firing, so a reminder
+/// never fires on its first sight of the clock (a new or upgraded state
+/// file, a purge). After several missed intervals (reminder turned off,
+/// clock moved by a merge) it fires once. The grid makes windows that fire
+/// the same reminder agree on `due`, which merges count once.
+fn advance(due: *u64, clock: u64, interval_ms: u64) bool {
+    if (due.* == 0) {
+        due.* = clock;
+        return false;
+    }
+    const interval_s = @max(secondsCeil(interval_ms), 1);
+    if (clock < due.* +| interval_s) return false;
+    due.* += (clock - due.*) / interval_s * interval_s;
+    return true;
 }

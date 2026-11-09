@@ -538,6 +538,13 @@ pub fn run(self: *App) !void {
     self.window.setMouseButtonCallback(mouseButtonCb);
     self.window.setScrollCallback(scrollCb);
     self.window.setWindowFocusCallback(windowFocusCb);
+    // A window can open unfocused and then never get a focus event. Both
+    // flags start true, so that window would count screen time and fire
+    // reminders. Assigning the flag skips `windowFocusChanged`, which would
+    // count the open itself as activity.
+    const focused_now = self.window.focused();
+    self.window_focused = focused_now;
+    self.wellbeing_state.window_focused = focused_now;
     self.window.setWindowCloseCallback(windowCloseCb);
     self.window.setWindowContentScaleCallback(contentScaleCb);
 

@@ -400,6 +400,23 @@ fn openFocus(t: *StateTmp, utc_ms: i64) !wellbeing.Wellbeing {
     return wb;
 }
 
+/// Like `openShared`, with a 60 s eyesight reminder and movement off.
+fn openReminders(t: *StateTmp) !wellbeing.Wellbeing {
+    var option = quietOption();
+    option.eyesight = .{
+        .enabled = true,
+        .interval_ms = 60 * std.time.ms_per_s,
+        .duration_ms = 20 * std.time.ms_per_s,
+        .animation = .none,
+    };
+    option.privacy.state_dir = try t.path("");
+    option.privacy.state_filename = "wb.bin";
+    var wb = wellbeing.Wellbeing.init(option);
+    try wb.open(testing.io, "unused", 0);
+    _ = merge.rollover(&wb.data, 1000);
+    return wb;
+}
+
 test "focus: a phase end two windows notice counts once" {
     var t: StateTmp = .init();
     defer t.deinit();
@@ -798,11 +815,16 @@ test "tracker and reminders: limits far beyond a day don't overflow" {
     const res = tr.tick(30, -1, &today);
     try testing.expect(!res.limit_reached);
 
+    var data: storage.PersistentData = .empty;
+    data.today.active_screen_s = 30;
     var rem = reminders.RemindersEngine.init(
         .{ .interval_ms = std.math.maxInt(u64), .duration_ms = std.math.maxInt(u64) },
         .{ .interval_ms = std.math.maxInt(u64) },
     );
-    try testing.expectEqual(null, rem.tick(30, false, &today));
+    // A due point of 0 anchors at the clock and does not fire.
+    try testing.expectEqual(null, rem.tick(&data));
+    try testing.expectEqual(30, data.eyesight_due_s);
+    try testing.expectEqual(30, data.movement_due_s);
 }
 
 test "tracker: turning the limit or the grayscale off clears grayscale" {
@@ -841,19 +863,21 @@ fn quietOption() wellbeing.Option {
     };
 }
 
-test "applyOption: reminders keep their timers and use the new interval" {
+test "applyOption: reminders keep their due point and use the new interval" {
     var option = quietOption();
     option.eyesight = .{ .enabled = true, .interval_ms = 10 * std.time.ms_per_min };
     var wb = wellbeing.Wellbeing.init(option);
     const now = localAt(1000, 12, 0, 0);
 
-    _ = wb.tick(5 * std.time.ms_per_min, -1, now, 0);
-    try testing.expectEqual(@as(u32, 300), wb.reminders_engine.eyesight_timer_s);
+    _ = wb.tick(std.time.ms_per_s, -1, now, 0);
+    try testing.expectEqual(@as(u64, 1), wb.data.eyesight_due_s);
 
     option.eyesight.interval_ms = 4 * std.time.ms_per_min;
     wb.applyOption(option);
-    try testing.expectEqual(@as(u32, 300), wb.reminders_engine.eyesight_timer_s);
-    const res = wb.tick(std.time.ms_per_s, -1, now, 0);
+    try testing.expectEqual(@as(u64, 1), wb.data.eyesight_due_s);
+    const early = wb.tick(3 * std.time.ms_per_min, -1, now, 0);
+    try testing.expect(early.alert == null);
+    const res = wb.tick(std.time.ms_per_min, -1, now, 0);
     try testing.expectEqual(reminders.AlertKind.eyesight, res.alert.?.kind);
 }
 
@@ -908,29 +932,208 @@ test "applyOption: turning wind-down on applies on the next tick" {
     try testing.expect(wb.tick(1000, -1, night, 0).tint[2] < 1.0);
 }
 
-test "reminders: eyesight 20-20-20 and movement triggers" {
+test "reminders: a zero due point anchors without firing, then one interval fires" {
     var rem = reminders.RemindersEngine.init(
-        .{ .interval_ms = 1 * std.time.ms_per_min, .duration_ms = 20 * std.time.ms_per_s },
-        .{ .interval_ms = 2 * std.time.ms_per_min, .duration_ms = 60 * std.time.ms_per_s },
+        .{ .interval_ms = 60 * std.time.ms_per_s, .duration_ms = 20 * std.time.ms_per_s },
+        .{ .enabled = false },
     );
+    var data: storage.PersistentData = .empty;
+    data.today.active_screen_s = 50;
 
-    var today = storage.DayRecord{};
+    try testing.expectEqual(null, rem.tick(&data));
+    try testing.expectEqual(50, data.eyesight_due_s);
+    try testing.expectEqual(0, data.today.eyesight_breaks);
 
-    // Tick 50s (below 60s eyesight limit)
-    const alert1 = rem.tick(50, false, &today);
-    try testing.expect(alert1 == null);
+    data.today.active_screen_s = 110;
+    const alert = rem.tick(&data);
+    try testing.expectEqual(reminders.AlertKind.eyesight, alert.?.kind);
+    try testing.expectEqual(@as(u16, 1), data.today.eyesight_breaks);
+    try testing.expectEqual(110, data.eyesight_due_s);
+}
 
-    // Tick 10s (reaches 60s eyesight limit)
-    const alert2 = rem.tick(10, false, &today);
-    try testing.expect(alert2 != null);
-    try testing.expectEqual(reminders.AlertKind.eyesight, alert2.?.kind);
-    try testing.expectEqual(@as(u16, 1), today.eyesight_breaks);
+test "reminders: missed intervals fire once and snap to the grid" {
+    var rem = reminders.RemindersEngine.init(
+        .{ .interval_ms = 60 * std.time.ms_per_s },
+        .{ .enabled = false },
+    );
+    var data: storage.PersistentData = .empty;
+    data.eyesight_due_s = 10;
+    data.today.active_screen_s = 10 + 60 * 5 + 5;
 
-    // Tick 60s more (reaches 120s movement limit)
-    const alert3 = rem.tick(60, false, &today);
-    try testing.expect(alert3 != null);
-    try testing.expectEqual(reminders.AlertKind.movement, alert3.?.kind);
-    try testing.expectEqual(@as(u16, 1), today.movement_breaks);
+    const alert = rem.tick(&data);
+    try testing.expectEqual(reminders.AlertKind.eyesight, alert.?.kind);
+    try testing.expectEqual(@as(u16, 1), data.today.eyesight_breaks);
+    try testing.expectEqual(310, data.eyesight_due_s);
+    try testing.expectEqual(null, rem.tick(&data));
+}
+
+test "reminders: a zero due point does not fire on a clock that is already far ahead" {
+    var option = quietOption();
+    option.eyesight.enabled = true;
+    option.movement.enabled = true;
+    var wb = wellbeing.Wellbeing.init(option);
+    wb.data.total_active_screen_s = 50_000;
+    wb.data.today.active_screen_s = 10_000;
+
+    const res = wb.tick(1000, -1, localAt(1000, 12, 0, 0), 0);
+    try testing.expect(res.alert == null);
+    try testing.expectEqual(0, wb.data.today.eyesight_breaks);
+    try testing.expectEqual(0, wb.data.today.movement_breaks);
+    const clock = wb.data.activeClock();
+    try testing.expectEqual(clock, wb.data.eyesight_due_s);
+    try testing.expectEqual(clock, wb.data.movement_due_s);
+}
+
+test "reminders: an unfocused window does not fire" {
+    var option = quietOption();
+    option.eyesight = .{ .enabled = true, .interval_ms = 60 * std.time.ms_per_s, .animation = .none };
+    var wb = wellbeing.Wellbeing.init(option);
+    wb.data.eyesight_due_s = 10;
+    wb.data.today.active_screen_s = 100;
+    wb.windowFocusChanged(false);
+
+    const held = wb.tick(60_000, -1, localAt(1000, 12, 0, 0), 0);
+    try testing.expect(held.alert == null);
+    try testing.expectEqual(10, wb.data.eyesight_due_s);
+    try testing.expectEqual(0, wb.data.today.eyesight_breaks);
+    try testing.expectEqual(100, wb.data.today.active_screen_s);
+
+    wb.windowFocusChanged(true);
+    const fired = wb.tick(0, -1, localAt(1000, 12, 0, 0), 0);
+    try testing.expectEqual(reminders.AlertKind.eyesight, fired.alert.?.kind);
+}
+
+test "reminders: a reminder due during another alert waits" {
+    var option = quietOption();
+    option.eyesight = .{ .enabled = true, .interval_ms = 60 * std.time.ms_per_s, .animation = .none };
+    var wb = wellbeing.Wellbeing.init(option);
+    wb.data.eyesight_due_s = 10;
+    wb.data.today.active_screen_s = 100;
+    wb.current_alert = .{ .kind = .screen_limit, .remaining_s = 20, .prompt = "limit" };
+
+    const held = wb.tick(0, -1, localAt(1000, 12, 0, 0), 0);
+    try testing.expect(held.alert == null);
+    try testing.expectEqual(10, wb.data.eyesight_due_s);
+    try testing.expectEqual(0, wb.data.today.eyesight_breaks);
+
+    wb.dismissAlert();
+    const fired = wb.tick(0, -1, localAt(1000, 12, 0, 0), 0);
+    try testing.expectEqual(reminders.AlertKind.eyesight, fired.alert.?.kind);
+    try testing.expectEqual(@as(u16, 1), wb.data.today.eyesight_breaks);
+}
+
+test "reminders: two reminders due together show one after the other" {
+    var option = quietOption();
+    option.eyesight = .{
+        .enabled = true,
+        .interval_ms = 60 * std.time.ms_per_s,
+        .duration_ms = 20 * std.time.ms_per_s,
+        .animation = .none,
+    };
+    option.movement = .{
+        .enabled = true,
+        .interval_ms = 60 * std.time.ms_per_s,
+        .duration_ms = 20 * std.time.ms_per_s,
+        .animation = .none,
+    };
+    var wb = wellbeing.Wellbeing.init(option);
+    wb.data.eyesight_due_s = 10;
+    wb.data.movement_due_s = 10;
+    wb.data.today.active_screen_s = 10_000;
+
+    const first = wb.tick(0, -1, localAt(1000, 12, 0, 0), 0);
+    try testing.expectEqual(reminders.AlertKind.movement, first.alert.?.kind);
+    try testing.expectEqual(@as(u16, 1), wb.data.today.movement_breaks);
+    try testing.expectEqual(@as(u16, 0), wb.data.today.eyesight_breaks);
+    try testing.expectEqual(10, wb.data.eyesight_due_s);
+
+    const during = wb.tick(1000, -1, localAt(1000, 12, 0, 0), 0);
+    try testing.expect(during.alert == null);
+    try testing.expectEqual(10, wb.data.eyesight_due_s);
+    try testing.expectEqual(reminders.AlertKind.movement, wb.current_alert.kind);
+
+    wb.dismissAlert();
+    const second = wb.tick(0, -1, localAt(1000, 12, 0, 0), 0);
+    try testing.expectEqual(reminders.AlertKind.eyesight, second.alert.?.kind);
+    try testing.expectEqual(@as(u16, 1), wb.data.today.eyesight_breaks);
+}
+
+test "reminders: a new day does not restart the clock" {
+    var option = quietOption();
+    option.eyesight = .{ .enabled = true, .interval_ms = 60 * std.time.ms_per_s, .animation = .none };
+    var wb = wellbeing.Wellbeing.init(option);
+    const day1 = localAt(1000, 12, 0, 0);
+    const day2 = localAt(1001, 12, 0, 0);
+
+    _ = wb.tick(30_000, -1, day1, 0);
+    try testing.expectEqual(30, wb.data.eyesight_due_s);
+    const clock = wb.data.activeClock();
+    const rolled = wb.tick(0, -1, day2, 0);
+    try testing.expect(rolled.alert == null);
+    try testing.expectEqual(clock, wb.data.activeClock());
+    try testing.expectEqual(30, wb.data.eyesight_due_s);
+
+    const fired = wb.tick(60_000, -1, day2, 0);
+    try testing.expectEqual(reminders.AlertKind.eyesight, fired.alert.?.kind);
+    try testing.expectEqual(@as(u16, 1), wb.data.today.eyesight_breaks);
+    try testing.expectEqual(@as(u16, 0), wb.data.history[0].eyesight_breaks);
+}
+
+test "reminders: a focus switch just after a due point counts the break once" {
+    var t: StateTmp = .init();
+    defer t.deinit();
+    var a = try openReminders(&t);
+    defer a.close(testing.io);
+    var b = try openReminders(&t);
+    defer b.close(testing.io);
+    const day_s = localAt(1000, 12, 0, 0);
+
+    b.windowFocusChanged(false);
+    _ = a.tick(1000, -1, day_s, 0);
+    try a.sync(testing.io, "unused", 10, .merge);
+    try b.sync(testing.io, "unused", 10, .poll);
+
+    const fired = a.tick(60_000, -1, day_s, 0);
+    try testing.expectEqual(reminders.AlertKind.eyesight, fired.alert.?.kind);
+    a.windowFocusChanged(false);
+    try a.sync(testing.io, "unused", 11, .merge);
+
+    b.windowFocusChanged(true);
+    try b.sync(testing.io, "unused", 11, .poll);
+    const quiet = b.tick(1000, -1, day_s, 0);
+    try testing.expect(quiet.alert == null);
+    const file = try storage.load(testing.io, try t.path(""), "wb.bin");
+    try testing.expectEqual(@as(u16, 1), file.today.eyesight_breaks);
+    try testing.expectEqual(@as(u64, 61), file.eyesight_due_s);
+}
+
+test "reminders: two windows that cross the same due point count one break" {
+    var t: StateTmp = .init();
+    defer t.deinit();
+    var a = try openReminders(&t);
+    defer a.close(testing.io);
+    var b = try openReminders(&t);
+    defer b.close(testing.io);
+    const day_s = localAt(1000, 12, 0, 0);
+
+    b.windowFocusChanged(false);
+    _ = a.tick(1000, -1, day_s, 0);
+    try a.sync(testing.io, "unused", 10, .merge);
+    try b.sync(testing.io, "unused", 10, .poll);
+
+    b.windowFocusChanged(true);
+    const from_a = a.tick(60_000, -1, day_s, 0);
+    const from_b = b.tick(60_000, -1, day_s, 0);
+    try testing.expectEqual(reminders.AlertKind.eyesight, from_a.alert.?.kind);
+    try testing.expectEqual(reminders.AlertKind.eyesight, from_b.alert.?.kind);
+    try testing.expectEqual(61, a.data.eyesight_due_s);
+    try testing.expectEqual(61, b.data.eyesight_due_s);
+
+    try a.sync(testing.io, "unused", 11, .merge);
+    try b.sync(testing.io, "unused", 11, .merge);
+    const file = try storage.load(testing.io, try t.path(""), "wb.bin");
+    try testing.expectEqual(@as(u16, 1), file.today.eyesight_breaks);
+    try testing.expectEqual(@as(u64, 61), file.eyesight_due_s);
 }
 
 test "winddown: schedule window and color warmth tint" {
@@ -1217,6 +1420,9 @@ test "reminders: lock_input and animation wave modulation" {
     });
 
     const day1_s: i64 = 1000 * std.time.s_per_day + 3600;
+    // The first sight of the clock starts the interval and does not fire.
+    const started = wb.tick(1000, -1, day1_s, 0);
+    try testing.expect(started.alert == null);
     const res1 = wb.tick(60_000, -1, day1_s, 0);
     try testing.expect(res1.alert != null);
     try testing.expect(res1.input_locked);
@@ -1253,23 +1459,25 @@ test "focus: on_alert pause holds the task during a locking reminder and moves i
 
     wb.toggleFocus(0);
     try testing.expectEqual(@as(u64, 120_000), wb.focus_state.remaining_ms);
+    // 10 s anchors the reminder (a due point of 0 does not fire) and leaves 110 s.
     _ = wb.tick(10_000, -1, day1_s, 10_000);
     try testing.expectEqual(@as(u64, 110_000), wb.focus_state.remaining_ms);
 
-    // 60 s of activity brings the eyesight reminder, which blocks input:
-    // the display holds at the time left when it appeared.
-    const res_alert = wb.tick(50_000, -1, day1_s, 60_000);
+    // One interval later the reminder locks input. The task ends at 120 s
+    // and the display holds the 50 s left when the reminder appeared.
+    const res_alert = wb.tick(60_000, -1, day1_s, 70_000);
     try testing.expect(res_alert.alert != null);
     try testing.expect(res_alert.input_locked);
     try testing.expect(wb.isFocusPausedByAlert());
-    _ = wb.tick(5_000, -1, day1_s, 65_000);
-    try testing.expectEqual(@as(u64, 60_000), wb.focus_state.remaining_ms);
+    try testing.expectEqual(@as(u64, 50_000), wb.focus_state.remaining_ms);
+    _ = wb.tick(5_000, -1, day1_s, 75_000);
+    try testing.expectEqual(@as(u64, 50_000), wb.focus_state.remaining_ms);
 
-    // Closed after 10 s: the end moves 10 s later, so 60 s are still left.
+    // Shown for 10 s: the end moves from 120 s to 130 s, so 50 s are left.
     wb.dismissAlert();
     try testing.expect(!wb.isFocusPausedByAlert());
-    _ = wb.tick(5_000, -1, day1_s, 70_000);
-    try testing.expectEqual(@as(u64, 60_000), wb.focus_state.remaining_ms);
+    _ = wb.tick(5_000, -1, day1_s, 80_000);
+    try testing.expectEqual(@as(u64, 50_000), wb.focus_state.remaining_ms);
     try testing.expectEqual(130_000, wb.timer().ms);
 }
 

@@ -415,7 +415,6 @@ pub const Wellbeing = struct {
 
     pub fn dismissAlert(self: *Wellbeing) void {
         self.current_alert = .{};
-        self.reminders_engine.current_alert = .{};
         self.input_locked = false;
         self.anim_elapsed_ms = 0;
     }
@@ -484,9 +483,12 @@ pub const Wellbeing = struct {
             }
         }
 
-        // Reminders tick
-        if (dt_s > 0) {
-            if (self.reminders_engine.tick(dt_s, self.tracker_engine.is_idle, &self.data.today)) |rem| {
+        // Reminders: only the focused window fires them, on the shared
+        // active clock, and never over an alert on screen; a reminder due
+        // meanwhile fires once that alert has ended.
+        const alert_shown = self.current_alert.kind != .none and self.current_alert.remaining_s > 0;
+        if (self.window_focused and alert_to_return == null and !alert_shown) {
+            if (self.reminders_engine.tick(&self.data)) |rem| {
                 alert_to_return = rem;
                 needs_redraw = true;
             }
