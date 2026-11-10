@@ -709,6 +709,11 @@ test "readBudget: short turns only inside the echo window" {
     try std.testing.expectEqual(turn_budget, readBudget(9_000_000, 6_000_000));
 }
 
+/// Upper bound, in 1 ms polls, for a test to wait on the worker thread.
+/// Each wait ends as soon as its condition holds; the bound only matters on
+/// a loaded machine.
+const test_wait_ms = 2000;
+
 test "ThreadedDriver: create, destroy and basic frame acquisition" {
     const testing = std.testing;
     const test_option: Option = .{
@@ -775,11 +780,12 @@ test "ThreadedDriver: async PTY input, frame update, and GUI reply" {
     // Simulate child outputting characters
     _ = system.write(sv[1], "AsyncRex\r\n", 10);
 
-    // Wait briefly for worker thread to process and publish
-    var retries: usize = 100;
+    // Wait for a published frame that shows the output. `had_data` is set
+    // before the worker publishes, so it does not mean the frame is there.
+    var retries: usize = test_wait_ms;
     while (retries > 0) : (retries -= 1) {
-        const events = try driver.pollAndDrain();
-        if (events.has(.had_data) or driver.hasNewFrame()) break;
+        _ = try driver.pollAndDrain();
+        if (driver.getFrame().displayRow(0)[0].codepoint == 'A') break;
         std.Thread.yield() catch {};
         sleepNs(1_000_000); // 1ms
     }
@@ -794,7 +800,7 @@ test "ThreadedDriver: async PTY input, frame update, and GUI reply" {
     try driver.sendBytes("input_test");
 
     var read_buf: [64]u8 = undefined;
-    retries = 100;
+    retries = test_wait_ms;
     var n_read: isize = -1;
     while (retries > 0) : (retries -= 1) {
         n_read = system.read(sv[1], &read_buf, read_buf.len);
@@ -846,7 +852,7 @@ test "ThreadedDriver: Mode 2026 synchronized output hold and release" {
     // End synchronized output: \x1b[?2026l
     _ = system.write(sv[1], "\x1b[?2026l", 8);
 
-    var retries: usize = 100;
+    var retries: usize = test_wait_ms;
     while (retries > 0) : (retries -= 1) {
         _ = try driver.pollAndDrain();
         if (driver.hasNewFrame()) break;
@@ -899,7 +905,7 @@ test "ThreadedDriver: wakeup_fn callback and alternate screen alt_scroll" {
     // Output text from child: should trigger publish and invoke wakeup_fn
     _ = system.write(sv[1], "WakeupTest\r\n", 12);
 
-    var retries: usize = 100;
+    var retries: usize = test_wait_ms;
     while (retries > 0) : (retries -= 1) {
         if (test_wake_count.load(.acquire) > 0) break;
         std.Thread.yield() catch {};
@@ -910,7 +916,7 @@ test "ThreadedDriver: wakeup_fn callback and alternate screen alt_scroll" {
     // Switch to alternate screen (\x1b[?1049h)
     _ = system.write(sv[1], "\x1b[?1049h", 8);
 
-    retries = 100;
+    retries = test_wait_ms;
     while (retries > 0) : (retries -= 1) {
         const f = driver.getFrame();
         if (f.is_alternate) break;
@@ -929,7 +935,7 @@ test "ThreadedDriver: wakeup_fn callback and alternate screen alt_scroll" {
     });
 
     var read_buf: [32]u8 = undefined;
-    retries = 100;
+    retries = test_wait_ms;
     var n_read: isize = -1;
     while (retries > 0) : (retries -= 1) {
         n_read = system.read(sv[1], &read_buf, read_buf.len);
