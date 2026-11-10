@@ -291,8 +291,20 @@ decision.
    +3-6%, man_bash +1.6-2.5% best against best, with baseline runs
    varying up to 70%, so not settled. What remains is one hash per SGR
    that sets a non-default color. A two-entry cache of recent styles was
-   tried and made htop slower (+6.5-9%), so it was dropped. Acceptance
-   waits for a quiet-machine `bench-term` and `perf-gui.sh` run.
+   tried and made htop slower (+6.5-9%), so it was dropped.
+
+   Quiet machine (2026-11-10, maintainer away, three A/B pairs pinned to
+   CPU 2, ReleaseFast, Tctl under 59 C; runs agree within 1-3%):
+   `bench-term` against the branch base `abc31e2`: htop +4.4 to +5.6%,
+   ls_color +3.0%, man_bash +0.1 to +0.8% (noise). That is the one hash
+   per SGR that sets a non-default color; output dense in ANSI colors
+   pays 3-5%, plain styled text nothing, truecolor-heavy output gains
+   (interning is about 14 times cheaper than the palette's scan).
+   `LATENCY_KEYS=1000 scripts/perf-gui.sh ReleaseFast`, base then branch,
+   all keys matched: picked -> built median 92.9 to 88.8 us quiet and
+   190.6 to 181.6 us loaded; built -> drawn and key -> swapped unchanged
+   within noise (quiet 227 to 224 us, loaded 3.31 to 3.34 ms). Runs
+   `gui-20261110T192557_abc31e2` and `gui-20261110T192823_2265a5e`.
 
    Split into checkpoints. 3a (term core, frame table copy by
    `generation`, the renderer's color reads) is done: the Grok capture
