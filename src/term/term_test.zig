@@ -1228,3 +1228,44 @@ test "styles: the frame resolves cells through its own copy of the table" {
     other.copyFrom(&frame);
     try testing.expect(other.styleOf(other.displayRow(0)[0]).eql(cellStyle(&t, 0, 0)));
 }
+
+test "styles: an indexed color keeps its color while truecolors stream past" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+    // xterm color 16 sat in palette slot 17, the first slot RGB colors took.
+    t.feed("\x1b[38;5;16mI\x1b[0m");
+    var buf: [64]u8 = undefined;
+    for (0..300) |i| feedColored(&t, &buf, @intCast(i + 1), 5);
+    const style = cellStyle(&t, 0, 0);
+    try testing.expectEqual(Color{ .indexed = 16 }, Style.decode(style.fg));
+    const rgb = t.active().palette.resolveKeyRgb(style.fg, .foreground);
+    try testing.expectEqual(t.active().palette.getIndexed(16).toArray(), rgb);
+}
+
+test "styles: a full table gives new text the nearest style and changes no cell" {
+    // 160 x 120 = 19,200 cells: more than the table holds, all on screen.
+    const Big = Terminal(.{ .max_rows = 120, .max_cols = 160, .max_scrollback = 0 });
+    var t = try Big.create(alloc);
+    defer t.destroy(alloc);
+    const cap = Style.Table.capacity;
+    var buf: [48]u8 = undefined;
+    // One distinct color per cell, row by row, until the table is full.
+    var n: u32 = 0;
+    while (n < cap - 1) : (n += 1) {
+        const seq = std.fmt.bufPrint(&buf, "\x1b[38;2;{d};{d};{d}mx", .{ (n >> 16) & 0xff, (n >> 8) & 0xff, n & 0xff }) catch unreachable;
+        t.feed(seq);
+    }
+    try testing.expectEqual(cap - 1, t.active().styles.count());
+    var before: [cap - 1]Style = undefined;
+    for (&before, 0..) |*b, i| b.* = t.active().styles.get(t.active().row(i / 160)[i % 160].style);
+
+    // A new color cannot be stored: every live style is on screen.
+    t.feed("\x1b[38;2;255;255;254mN");
+    const last = cap - 1;
+    const new = t.active().styles.get(t.active().row(last / 160)[last % 160].style);
+    try testing.expect(!new.eql(Style.init(Color.fromRgb(255, 255, 254), .default, .default)));
+    try testing.expectEqual(cap - 1, t.active().styles.count());
+    for (before, 0..) |b, i| {
+        try testing.expect(t.active().styles.get(t.active().row(i / 160)[i % 160].style).eql(b));
+    }
+}

@@ -203,9 +203,28 @@ two counter updates to every cell write and erase, the hottest path.
 Mark-and-sweep costs nothing on writes and is already used for graphemes.
 Not chosen: the measured sweep is 0.5 ms, run only when the table is full (see Measurements).
 
-Prior art in other terminals (Ghostty, WezTerm, kitty, Alacritty, foot,
-xterm, VTE) is being collected separately; this ADR will cite it before it
-is accepted. Nothing here depends on an unverified claim about them.
+**Prior art** (research of nine terminals at pinned tags, 2026-11-10).
+Only Ghostty (v1.4.0) keeps a 64-bit cell with truecolor and never
+recolors: its `Cell` is `packed struct(u64)` with a `u16` `style_id` into
+an interned style set per page, freed by reference counts. The
+ref-counted set's doc comment was checked verbatim at commit
+83fb956 ("Items with 0 references will be kept until another item is
+written to their bucket"); the cell layout was checked from a summary of
+the same file, not verbatim. Ghostty pays for refcounts with a release and
+a use on every cell overwrite that changes style, page growth and splits
+when a set fills, and a fall back to the default style; its tracker shows
+crashes, runaway memory and degraded styles in this area before fixes in
+early 2026 (PRs 8277, 10251, 10337, issue 10258). Every other terminal
+stores colors in each cell: foot 12 bytes, st 16, VTE 20, Alacritty and
+WezTerm 24, xterm about 28, kitty 32. No surveyed terminal reuses palette
+slots round-robin, and none compacts a shared table by mark-and-sweep;
+this decision's sweep is therefore new, and its cost is the measured
+0.5 ms over the ring. Ghostty also stores the color of cells that hold no
+text directly in the cell (content tags `bg_color_palette` and
+`bg_color_rgb`), so runs of colored spaces need no style entry; here the
+32-bit codepoint of an empty cell could hold a `Style.Key` the same way,
+which would remove `blank_id`. Noted as a follow-up, not part of this
+decision.
 
 ## Consequences
 
@@ -259,6 +278,21 @@ is accepted. Nothing here depends on an unverified claim about them.
      `Cell` and `Palette`. The cursor shape type keeps its name
      `Cursor.Style` (DECSCUSR's own term; it already nests a `Shape`
      enum): the pen's colors live in `Attr.colors`, so no name clashes.
+
+   3c is done: `Palette` slots and `ExtAttr` removed, the
+   `cell.CursorStyle` alias removed, a fuzz invariant (every cell's and
+   the pen's style ID is live; 208K `terminal` and a `strings` run, no
+   crash), and two fixes found by `bench-term`. On a busy machine the
+   first run showed htop +25%, ls_color +9-10%, man_bash +2% against the
+   branch base; `perf` traced it to interning default colors out of line
+   (now short-circuited in `internPen`) and to `Style.Table.reset`
+   clearing its 64 KiB index on every alternate-screen entry (now it
+   clears only live slots below 1/16 full). After: htop +3-4%, ls_color
+   +3-6%, man_bash +1.6-2.5% best against best, with baseline runs
+   varying up to 70%, so not settled. What remains is one hash per SGR
+   that sets a non-default color. A two-entry cache of recent styles was
+   tried and made htop slower (+6.5-9%), so it was dropped. Acceptance
+   waits for a quiet-machine `bench-term` and `perf-gui.sh` run.
 
    Split into checkpoints. 3a (term core, frame table copy by
    `generation`, the renderer's color reads) is done: the Grok capture

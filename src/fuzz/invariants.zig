@@ -9,7 +9,8 @@ const term = @import("../term/term.zig");
 /// Fails unless `t` (a `*Terminal(option)`) is in a sane state:
 /// cursor and margins inside the active area of both screens, the reply
 /// queue, string buffers and title within their capacity, parser counts
-/// within their caps, and each grapheme intern table within its bound.
+/// within their caps, each grapheme intern table within its bound, and
+/// every style ID in use live in its screen's table.
 pub fn expectTerminal(t: anytype) !void {
     try expectScreen(&t.primary);
     try expectScreen(&t.alternate);
@@ -37,6 +38,30 @@ fn expectScreen(s: anytype) !void {
     const count = s.grapheme_table.count();
     try testing.expect(count <= s.grapheme_compact_at);
     try testing.expect(s.grapheme_compact_at <= @max(Screen.grapheme_compact_min, 2 * s.cells.len));
+    try expectStyles(s);
+}
+
+/// Every cell and the pen hold a live style ID (ADR 0005): no ID in use
+/// was swept or reset. The pen's IDs match its colors unless the table is
+/// full, when `internStyle` falls back to the nearest live style; its
+/// blank style is background-only either way, or the default.
+fn expectStyles(s: anytype) !void {
+    const table = &s.styles;
+    for (s.cells) |cell| try expectLive(table, cell.style);
+    const attr = s.cursor.attr;
+    try expectLive(table, attr.id);
+    try expectLive(table, attr.blank_id);
+    const full = table.count() == @TypeOf(table.*).capacity - 1;
+    if (!full) {
+        try testing.expect(table.get(attr.id).eql(attr.colors));
+        try testing.expect(table.get(attr.blank_id).eql(.{ .bg = attr.colors.bg }));
+    }
+}
+
+fn expectLive(table: anytype, id: anytype) !void {
+    if (id == 0) return;
+    try testing.expect(id < table.high);
+    try testing.expect(table.live.isSet(id));
 }
 
 /// Fails unless `a` and `b` (two `*Terminal(option)`) show the same

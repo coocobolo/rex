@@ -17,7 +17,6 @@ const Rgb = Color.Rgb;
 const Frame = @import("Frame.zig").Frame;
 
 const Charset = @import("cell.zig").Charset;
-const CursorStyle = @import("cell.zig").CursorStyle;
 const Screen = @import("screen.zig").Screen;
 const dispatcher = @import("dispatcher.zig");
 
@@ -1015,8 +1014,6 @@ pub fn Terminal(comptime option: Option) type {
                             alt.grapheme_reverse.clearRetainingCapacity();
                             alt.next_grapheme_id = 0x110000;
                             _ = alt.grapheme_arena.reset(.retain_capacity);
-                            alt.ext_attrs.clearRetainingCapacity();
-                            alt.url_table.clearRetainingCapacity();
                             // Cells and pen are default; a saved cursor
                             // keeps colors only and re-interns on DECRC.
                             alt.styles.reset();
@@ -1053,8 +1050,6 @@ pub fn Terminal(comptime option: Option) type {
                             alt.grapheme_reverse.clearRetainingCapacity();
                             alt.next_grapheme_id = 0x110000;
                             _ = alt.grapheme_arena.reset(.retain_capacity);
-                            alt.ext_attrs.clearRetainingCapacity();
-                            alt.url_table.clearRetainingCapacity();
                             // Cells and pen are default; a saved cursor
                             // keeps colors only and re-interns on DECRC.
                             alt.styles.reset();

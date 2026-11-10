@@ -168,3 +168,18 @@ test "Style.Table requestSweep: a full table that swept for nothing sweeps again
     t.requestSweep();
     try testing.expect(t.sweepDue());
 }
+
+test "Style.Table reset: a table reset with few or many live styles is empty and reusable" {
+    var t = try Table.init(testing.allocator);
+    defer t.deinit(testing.allocator);
+    for ([_]u32{ 10, Table.capacity / 16 + 50 }) |live| {
+        var n: u32 = 0;
+        while (n < live) : (n += 1) _ = t.intern(rgbStyle(n)).?;
+        t.reset();
+        try testing.expectEqual(0, t.count());
+        try testing.expect(std.mem.allEqual(Style.Id, t.index, 0));
+        // Old styles are not found; new ones start from the first ID.
+        try testing.expectEqual(@as(Style.Id, 1), t.intern(rgbStyle(7)).?);
+        t.reset();
+    }
+}

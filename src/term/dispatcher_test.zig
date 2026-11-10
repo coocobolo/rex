@@ -8,7 +8,7 @@ const DecModeReport = @import("term.zig").DecModeReport;
 
 const Attr = @import("cell.zig").Attr;
 const Cell = @import("cell.zig").Cell;
-const CursorStyle = @import("cell.zig").CursorStyle;
+const Cursor = @import("Cursor.zig");
 const Color = @import("cell.zig").Color;
 const SavedCursor = @import("cell.zig").SavedCursor;
 
@@ -480,26 +480,18 @@ test "escape: ESC c DECSC tab stops restored to defaults" {
     try testing.expect(!t.active().tab_stops.isSet(7));
 }
 
-test "escape: ESC c DECSC palette reset to ANSI defaults" {
+test "escape: ESC c resets OSC 4 colors and the style table" {
     var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
-    // Intern an RGB color to occupy a dynamic slot
-    const idx = t.active().palette.intern(.{ .rgb = .{ .r = 1, .g = 2, .b = 3 } });
-    try testing.expect(idx >= Palette.dynamic_base);
+    t.feed("\x1b]4;1;rgb:01/02/03\x1b\\\x1b[38;2;1;2;3mX");
+    try testing.expect(t.active().styles.count() > 0);
 
     t.feed("\x1bc");
 
-    // After reset, that dynamic slot should no longer hold our color
-    const color_after = t.active().palette.decode(idx);
-    try testing.expect(!std.meta.eql(
-        color_after,
-        Color{ .rgb = .{ .r = 1, .g = 2, .b = 3 } },
-    ));
-
-    // ANSI slots must be intact
-    try testing.expectEqual(Color{ .indexed = 0 }, t.active().palette.decode(Palette.ansi_base));
-    try testing.expectEqual(Color{ .indexed = 15 }, t.active().palette.decode(Palette.ansi_base + 15));
+    try testing.expectEqual(Rgb.fromU32(@import("../color/ansi.zig").indexed(1)), t.active().palette.getIndexed(1));
+    try testing.expectEqual(0, t.active().styles.count());
+    try testing.expect(t.active().cursor.attr.colors.isDefault());
 }
 
 test "escape: ESC c DECSC scroll_offset reset" {
@@ -2970,7 +2962,7 @@ test "csi: DECSCUSR unknown value resets to default" {
 
     t.feed("\x1b[2 q"); // set to steady block first
     t.feed("\x1b[99 q"); // unknown; reset to default
-    try testing.expectEqual(CursorStyle.default, t.active().cursor.style);
+    try testing.expectEqual(Cursor.Style.default, t.active().cursor.style);
 }
 
 test "escape: ESC c resets cursor style" {
@@ -2979,7 +2971,7 @@ test "escape: ESC c resets cursor style" {
 
     t.feed("\x1b[6 q"); // steady bar
     t.feed("\x1bc"); // RIS hard reset
-    try testing.expectEqual(CursorStyle.default, t.active().cursor.style);
+    try testing.expectEqual(Cursor.Style.default, t.active().cursor.style);
 }
 
 test "sgr: empty params = reset" {
@@ -3213,12 +3205,12 @@ test "sgr: 58 leaves fg, bg and the palette alone" {
     var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
-    const before = t.active().palette.entries;
+    const before = t.active().palette.indexed;
     t.feed("\x1b[58:2::1:2:3m");
     const attr = t.active().cursor.attr;
     try testing.expectEqual(Style.default_key, attr.colors.fg);
     try testing.expectEqual(Style.default_key, attr.colors.bg);
-    try testing.expectEqual(before, t.active().palette.entries);
+    try testing.expectEqual(before, t.active().palette.indexed);
 }
 
 test "sgr: 59 and 0 reset the underline color" {

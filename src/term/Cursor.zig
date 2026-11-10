@@ -16,7 +16,7 @@ pub const Cursor = @This();
 /// * odd discriminants represents steady styles.
 ///
 /// DO NOT reorder or renumber these values unless all parity-based
-/// code (e.g. `CursorStyle.blink()`, shaders instance flags) is updated.
+/// code (e.g. `Style.blink()`, shaders instance flags) is updated.
 pub const Style = enum(u3) {
     blinking_block = 0,
     steady_block = 1,

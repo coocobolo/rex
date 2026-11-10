@@ -13,7 +13,6 @@ pub const Charset = charset.Charset;
 pub const CharsetState = charset.CharsetState;
 
 pub const Cursor = @import("Cursor.zig").Cursor;
-pub const CursorStyle = Cursor.Style;
 pub const SavedCursor = Cursor.Saved;
 
 pub const Style = @import("Style.zig");
@@ -134,18 +133,6 @@ pub const Kind = enum(u3) {
     pub inline fn isWideLeft(self: Kind) bool {
         return self == .wide_left or self == .grapheme_wide;
     }
-};
-
-pub const ExtAttr = struct {
-    pub const Coordinate = struct { row: u16, col: u16 };
-
-    /// SGR 58 underline color (palette index)
-    /// 0 = use fg color
-    ul_color: u8,
-
-    /// valid IDs start at 1
-    /// 0 = no URL
-    url_id: u16,
 };
 
 /// A single terminal grid cell.

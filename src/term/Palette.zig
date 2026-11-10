@@ -5,43 +5,25 @@ const Rgb = Color.Rgb;
 const ansi = @import("../color/ansi.zig");
 const Theme = @import("../color/Theme.zig");
 
-/// Per-screen color palette.
+/// Per-screen color palette: what a `Style.Key` resolves to.
 ///
-/// Maps u8 indices (stored in Cell on field .fg / .bg) to Color values.
-/// 0        = default,
-/// 1..16    = ANSI color (0-15),
-/// 17..255  = dynamic slots (RGB / indexed > 15), pre-populated with
-///           xterm 256-color, evictable by RGB colors (round-robin).
-///
-/// Dynamic slots use a simple round-robin eviction policy.
-/// When all 239 dynamic slots are full, the oldest slot is overwritten.
-/// Cells referencing an evicted index will show the replacement color
-/// until they are redrawn, (looks like acceptable for a terminal emulator).
+/// The 256 xterm colors (`indexed`, the theme for 0-15, OSC 4 overrides on
+/// top) and the default foreground and background (theme, OSC 10/11).
+/// Cells no longer hold palette slots: they hold style IDs whose keys are
+/// either a default, an index into `indexed`, or an RGB value (ADR 0005),
+/// so an OSC 4 change applies to every cell drawn with that index.
 pub const Palette = @This();
 
-pub const default_base: u8 = 0;
-pub const ansi_base: u8 = 1; // ANSI color n (slot n+1)
-pub const dynamic_base: u8 = 17; // first evictable slot
-
-/// The Palette entries layer stores encoded color keys via colorKey(). This is not a raw RGBA value.
-/// Its an encoding that preserves the color type + value for fast lookup and eviction detection.
-// Hot, accessed every call render.
-entries: [256]u32,
+const Style = @import("Style.zig");
 
 /// RGB of each xterm color index: the theme for 0-15, the xterm
-/// 256-color cube and grays above, then any OSC 4 override. Slots
-/// holding `.indexed` keys resolve through this, so an override
-/// applies to every cell using that index.
+/// 256-color cube and grays above, then any OSC 4 override.
 // Hot, read when rendering an indexed color.
 indexed: [256]Rgb,
 
 /// What OSC 104 restores `indexed` to: the theme and xterm defaults.
 // Warm, accessed on OSC 104.
 indexed_default: [256]Rgb,
-
-/// Next dynamic slot for round-robin eviction (wraps in [dynamic_base..255]).
-// Warm, accessed on every intern()
-next: u8,
 
 // Colds
 
@@ -53,30 +35,16 @@ builtin_background: Rgb = .black,
 builtin_selection_foreground: Rgb = .white,
 builtin_selection_background: Rgb = .black,
 
-const default_entries: [256]u32 = blk: {
-    var e: [256]u32 = undefined;
-    e[0] = 0; // default slot sentinel
-    for (0..16) |n| {
-        e[ansi_base + n] = encode(.{ .indexed = @intCast(n) });
-    }
-    for (16..255) |n| {
-        e[n + 1] = encode(.{ .indexed = @intCast(n) });
-    }
-    break :blk e;
-};
-
 const xterm_indexed: [256]Rgb = ansi.xterm256;
 
-/// Returns a Palette with reserved slots pre-populated.
+/// The xterm colors and the built-in defaults, no theme.
 pub const empty: Palette = .{
     .background = null,
     .foreground = null,
     .builtin_background = .black,
     .builtin_foreground = .white,
-    .entries = default_entries,
     .indexed = xterm_indexed,
     .indexed_default = xterm_indexed,
-    .next = dynamic_base,
 };
 
 pub const GroundTarget = enum { foreground, background };
@@ -86,9 +54,7 @@ pub const GroundTarget = enum { foreground, background };
 pub fn reset(self: *Palette) void {
     self.foreground = null;
     self.background = null;
-    self.entries = default_entries;
     self.indexed = self.indexed_default;
-    self.next = dynamic_base;
 }
 
 /// Applies a theme. Called once at startup; OSC 4/10/11 can still
@@ -102,87 +68,10 @@ pub fn setTheme(self: *Palette, theme: Theme) void {
     self.indexed[0..16].* = theme.ansi;
 }
 
-/// Returns the decode Color stored at index.
-pub fn decode(self: *const Palette, index: u8) Color {
-    const key = self.entries[index];
-    return switch (key >> 24) {
-        0x00 => .default,
-        0x01 => .{ .indexed = @intCast(key & 0xFF) },
-        0x02 => .{
-            .rgb = .{
-                .r = @intCast((key >> 16) & 0xFF),
-                .g = @intCast((key >> 8) & 0xFF),
-                .b = @intCast(key & 0xFF),
-            },
-        },
-        else => unreachable,
-    };
-}
-
-/// Encode a Color as a u32 for fast equality comparison.
-fn encode(color: Color) u32 {
-    return switch (color) {
-        .default => 0x0000_0000,
-        .indexed => |n| @as(u32, 0x0100_0000) | n,
-        .rgb => |c| 0x0200_0000 | (@as(u32, c.r) << 16) | (@as(u32, c.g) << 8) | c.b,
-    };
-}
-
-/// Returns the palette index for Color, inserting it if necessary.
-///
-/// Fast path: performs no scan O(1)
-///  .default          = slot 0.
-///  .indexed(0..15)   = slots 1..16 (basic ANSI 16, fixed).
-///  .indexed(16..254) = slots (n+1) if still pre-populated (cold).
-///
-/// Slow path: linear scan and round-robin eviction
-///  .indexed(16..254) = after eviction by an RGB color (unlikely).
-///  .indexed(255)     = always (no fixed slot).
-///  .rgb(r,g,b)       = always.
-pub fn intern(self: *Palette, color: Color) u8 {
-    const key = encode(color);
-    return switch (color) {
-        .default => default_base,
-        .indexed => |index| switch (index) {
-            0...15 => ansi_base + index,
-            16...254 => blk: {
-                // Fast path, slot (n+1) was pre-populated at init.
-                // One comparison to verify it hasn't been evicted.
-                const slot: u8 = index + 1;
-                if (self.entries[slot] == key) break :blk slot;
-                break :blk self.internDynamic(key);
-            },
-            255 => self.internDynamic(key),
-        },
-        .rgb => self.internDynamic(key),
-    };
-}
-
-fn internDynamic(self: *Palette, key: u32) u8 {
-    // Linear scan over dynamic slots.
-    for (self.entries[dynamic_base..], 0..) |entry, offset| {
-        if (entry == key) return dynamic_base + @as(u8, @intCast(offset));
-    }
-
-    // Not found; allocate next slot via round-robin eviction.
-    const index = self.next;
-    self.entries[index] = key;
-    self.next = if (self.next == 255) dynamic_base else self.next + 1;
-    return index;
-}
-
-pub fn resolve(self: *const Palette, index: u8, comptime target: GroundTarget) u32 {
-    return self.resolveKey(self.entries[index], target);
-}
-
-pub fn resolveRgb(self: *const Palette, index: u8, comptime target: GroundTarget) [3]u8 {
-    return self.resolveKeyRgb(self.entries[index], target);
-}
-
-/// Resolves an encoded color (`Style.Key`, the same encoding as
-/// `entries`) to RGBA packed as 0xRRGGBBAA. `.default` resolves to the
-/// default for `target`, indexed colors through `indexed`.
-pub fn resolveKey(self: *const Palette, key: u32, comptime target: GroundTarget) u32 {
+/// Resolves an encoded color (`Style.Key`) to RGBA packed as 0xRRGGBBAA.
+/// `.default` resolves to the default for `target`, indexed colors
+/// through `indexed`.
+pub fn resolveKey(self: *const Palette, key: Style.Key, comptime target: GroundTarget) u32 {
     return switch (key >> 24) {
         0x00 => blk: {
             const c = self.get(target);
@@ -195,7 +84,7 @@ pub fn resolveKey(self: *const Palette, key: u32, comptime target: GroundTarget)
 }
 
 /// `resolveKey` as an RGB triple.
-pub fn resolveKeyRgb(self: *const Palette, key: u32, comptime target: GroundTarget) [3]u8 {
+pub fn resolveKeyRgb(self: *const Palette, key: Style.Key, comptime target: GroundTarget) [3]u8 {
     return switch (key >> 24) {
         0x00 => blk: {
             const c = self.get(target);

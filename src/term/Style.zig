@@ -194,7 +194,21 @@ pub const Table = struct {
     /// holds an ID other than `default_id` (RIS, entering the alternate
     /// screen).
     pub fn reset(self: *Table) void {
-        @memset(self.index, 0);
+        // The index holds exactly the live IDs, so clearing their slots
+        // empties it. That is far cheaper than clearing all 64 KiB when few
+        // styles are live: entering the alternate screen resets its table
+        // every time (`bench-term` htop, ADR 0005).
+        if (self.live.count() > capacity / 16) {
+            @memset(self.index, 0);
+        } else {
+            var it = self.live.iterator(.{});
+            while (it.next()) |id| {
+                var slot = slotOf(self.entries[id]);
+                // Earlier IDs' slots are already zero; skip over them.
+                while (self.index[slot] != id) slot = (slot + 1) & (index_len - 1);
+                self.index[slot] = 0;
+            }
+        }
         self.free_len = 0;
         self.high = 1;
         self.live = .initEmpty();

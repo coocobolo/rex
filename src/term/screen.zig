@@ -9,7 +9,6 @@ const optimize_mode = builtin.mode;
 const log = std.log.scoped(.screen);
 
 const Cell = @import("cell.zig").Cell;
-const ExtAttr = @import("cell.zig").ExtAttr;
 const CellKind = @import("cell.zig").Kind;
 const Cursor = @import("cell.zig").Cursor;
 const SavedCursor = @import("cell.zig").SavedCursor;
@@ -321,9 +320,6 @@ pub fn Screen(comptime option: Option) type {
         /// `grapheme_table` size that triggers the next `compactGraphemes`.
         grapheme_compact_at: u32 = grapheme_compact_min,
 
-        ext_attrs: std.AutoHashMapUnmanaged(ExtAttr.Coordinate, ExtAttr) = .{},
-        url_table: std.ArrayListUnmanaged([]const u8) = .empty, // interned URL strings
-
         cached_row_phys: u16 = std.math.maxInt(u16),
         cached_row_slice: []Cell = &.{},
 
@@ -387,8 +383,6 @@ pub fn Screen(comptime option: Option) type {
             self.grapheme_table.deinit();
             self.grapheme_reverse.deinit();
             self.grapheme_arena.deinit();
-            self.ext_attrs.deinit(allocator);
-            self.url_table.deinit(allocator);
         }
 
         /// Maps logical row `r` (0 = top of active area) to a physical index
@@ -684,10 +678,12 @@ pub fn Screen(comptime option: Option) type {
         /// after every change to the colors (SGR, DECRC).
         pub fn internPen(self: *Self) void {
             const attr = &self.cursor.attr;
-            // `id` is stored before the second intern, so a sweep in it
-            // keeps the new ID.
-            attr.id = self.internStyle(attr.colors);
-            attr.blank_id = self.internStyle(.{ .bg = attr.colors.bg });
+            // Default colors (SGR 0, a default background) are common and
+            // need no lookup; checked here so they cost no call (measured
+            // with `bench-term`, ADR 0005). `id` is stored before the
+            // second intern, so a sweep in it keeps the new ID.
+            attr.id = if (attr.colors.isDefault()) Style.Table.default_id else self.internStyle(attr.colors);
+            attr.blank_id = if (attr.colors.bg == Style.default_key) Style.Table.default_id else self.internStyle(.{ .bg = attr.colors.bg });
         }
 
         /// The background-only style of `id`, for a blank written next to
@@ -3031,9 +3027,6 @@ pub fn Screen(comptime option: Option) type {
                 self.scrollback_used = 0;
                 self.viewport_offset = 0;
             }
-
-            self.ext_attrs.clearRetainingCapacity();
-            self.url_table.clearRetainingCapacity();
 
             self.charset_is_identity = true;
             self.cached_row_phys = max_u16;

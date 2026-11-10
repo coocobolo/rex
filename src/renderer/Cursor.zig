@@ -14,14 +14,13 @@ const f32_size = @sizeOf(f32);
 const cell_instance_size = @sizeOf(CellInstance);
 
 const term = @import("../term/root.zig");
-const CursorStyle = term.cell.CursorStyle;
 
 pub const State = struct {
     col: u16,
     row: u16,
 
     /// Cursor shape + blink mode as reported by the terminal (\e[N q).
-    style: CursorStyle = .default,
+    style: term.cell.Cursor.Style = .default,
 
     /// Current blink phase. Only meaningful when style is a blinking variant.
     /// Toggled by the App timer tick; ignored for steady styles.
