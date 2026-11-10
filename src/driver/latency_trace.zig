@@ -4,15 +4,20 @@
 //! driver, and each stage it passes records a `CLOCK_MONOTONIC` timestamp
 //! in that key's `Record`. On exit the records are written as CSV.
 //!
-//! Matching assumes one key in flight: the first pty read after a key's
-//! bytes are written counts as that key's echo. A key that is still
-//! waiting when the next one is written keeps zeros in its later stages
-//! and counts as unmatched. Drive it with keys spaced further apart than
-//! one round trip (the harness waits between keys).
+//! Matching assumes one key in flight. The worker keeps that key's first
+//! byte and stamps `echoed` on the pty read that contains it, so program
+//! output queued ahead of the echo does not count. A read that lacks the
+//! byte leaves the key waiting. A key that is still waiting when the next
+//! one is written keeps zeros in its later stages and counts as unmatched.
+//! Drive it with keys spaced further apart than one round trip (the
+//! harness waits between keys). The load generator must not emit the
+//! traced byte, or its output matches before the echo.
 //!
-//! Threads: the GUI thread writes the `key`, `queued`, `picked`, `drawn`
-//! and `swapped` columns, the driver worker writes `written`, `echoed` and
-//! `published`. They write different fields, so no locking is needed.
+//! Threads: the GUI thread writes the `key`, `queued`, `picked`, `built`,
+//! `drawn` and `swapped` columns, the driver worker writes `written`,
+//! `echoed` and `published`. They write different fields, so no locking
+//! is needed. `blink` and `title` are flags on the picked frame, not
+//! timestamps.
 //! `input_seq` hands a sequence number from the GUI to the worker, and the
 //! worker hands it back with each published frame through the triple
 //! buffer's slot ownership (see `ThreadedDriver`). A record is reused
@@ -38,20 +43,22 @@ pub const none: Handle = if (enabled) null else {};
 
 /// The points a traced key passes, in order. The names are the CSV
 /// column names.
-pub const Stage = enum(u3) {
+pub const Stage = enum(u4) {
     /// GLFW key callback for the press (t0).
     key,
     /// Bytes pushed onto the driver's `InputQueue` (t1).
     queued,
     /// All of the key's bytes accepted by the pty (t2, worker).
     written,
-    /// First pty read after the write returned (t3, worker).
+    /// Pty read that contained the key's first byte (t3, worker).
     echoed,
     /// A frame containing that read published (t4, worker).
     published,
     /// `renderFrame` took that frame (t5a).
     picked,
-    /// Draw calls for it submitted, before `swapBuffers` (t5b).
+    /// Frame data is built; the draw calls have not started (t5b).
+    built,
+    /// Draw calls submitted, before `swapBuffers` (t5c).
     drawn,
     /// `swapBuffers` returned; includes the vsync wait (t6).
     swapped,
@@ -62,12 +69,30 @@ pub const stage_count = @typeInfo(Stage).@"enum".fields.len;
 /// Number of keys kept; older ones are overwritten.
 pub const capacity = 4096;
 
+/// Bit 0 of `Record.cause`: the frame's loop toggled a blink phase.
+pub const cause_blink: u8 = 1;
+/// Bit 1 of `Record.cause`: the frame's loop updated the window title.
+pub const cause_title: u8 = 2;
+
 /// One traced key. A zero timestamp means the stage wasn't reached.
-pub const Record = struct {
+/// `extern` keeps `first` and `cause` in the padding after `seq`. The
+/// default layout reorders fields in ReleaseFast. Nine timestamps make
+/// a record 80 bytes; eight were 72.
+pub const Record = extern struct {
     /// 0 marks an unused slot; sequence numbers start at 1.
     seq: u32 = 0,
+    /// First byte of the key, copied by the worker from the input event.
+    /// 0 means the worker has not seen a byte for this slot.
+    first: u8 = 0,
+    /// `cause_blink` and `cause_title` for the frame that was picked.
+    cause: u8 = 0,
     t: [stage_count]u64 = @splat(0),
 };
+
+comptime {
+    std.debug.assert(@sizeOf(Record) == 80);
+    std.debug.assert(@offsetOf(Record, "t") == 8);
+}
 
 /// Nanoseconds on the clock every stage uses.
 pub fn now(io: Io) u64 {
@@ -96,6 +121,8 @@ pub const Trace = struct {
     last_picked: u32 = 0,
     /// A taken frame that hasn't been drawn yet.
     pending_draw: u32 = 0,
+    /// Blink and title bits for the frame about to be picked.
+    frame_cause: u8 = 0,
 
     pub fn create(gpa: Allocator) Allocator.Error!*Trace {
         const records = try gpa.create([capacity]Record);
@@ -151,13 +178,29 @@ pub const Trace = struct {
         return seq;
     }
 
+    /// Blink and title for the frame `renderFrame` is about to take.
+    /// Stored on the record when that frame is picked.
+    pub fn setCause(self: *Trace, blink: bool, title: bool) void {
+        var cause: u8 = 0;
+        if (blink) cause |= cause_blink;
+        if (title) cause |= cause_title;
+        self.frame_cause = cause;
+    }
+
     /// `renderFrame` took a frame whose newest echo belongs to `seq`
     /// (0: none). Stamps `picked` the first time a sequence number shows up.
     pub fn framePicked(self: *Trace, seq: u32, t: u64) void {
         if (seq == 0 or seq == self.last_picked) return;
         self.last_picked = seq;
         self.pending_draw = seq;
+        self.record(seq).cause = self.frame_cause;
         self.stamp(seq, .picked, t);
+    }
+
+    /// The frame's cells and overlays are built. Draw calls come next.
+    pub fn frameBuilt(self: *Trace, t: u64) void {
+        if (self.pending_draw == 0) return;
+        self.stamp(self.pending_draw, .built, t);
     }
 
     /// Draw calls were submitted. Returns the sequence number to stamp
@@ -177,7 +220,7 @@ pub const Trace = struct {
         inline for (@typeInfo(Stage).@"enum".fields) |field| {
             try w.writeAll("," ++ field.name);
         }
-        try w.writeByte('\n');
+        try w.writeAll(",blink,title\n");
 
         // The slot after the newest record holds the oldest one once the
         // table has wrapped.
@@ -187,6 +230,10 @@ pub const Trace = struct {
             if (rec.seq == 0) continue;
             try w.print("{d}", .{rec.seq});
             for (rec.t) |t| try w.print(",{d}", .{t});
+            try w.print(",{d},{d}", .{
+                @intFromBool(rec.cause & cause_blink != 0),
+                @intFromBool(rec.cause & cause_title != 0),
+            });
             try w.writeByte('\n');
         }
     }
@@ -212,20 +259,28 @@ pub const Worker = struct {
     seen: u32 = 0,
     /// Bytes for this key are queued but not all written yet.
     awaiting_write: u32 = 0,
-    /// Written; the next pty read is its echo.
+    /// Written; a later pty read that contains `first` is its echo.
     awaiting_echo: u32 = 0,
+    /// First byte of the key in `awaiting_write` or `awaiting_echo`.
+    /// Null when that key queued no byte to search for.
+    first: ?u8 = null,
     /// Newest key whose echo has been read; tagged on published frames.
     echoed: u32 = 0,
     /// Newest key whose echo was in a published frame.
     published: u32 = 0,
 
-    /// After the input queue was drained.
-    pub fn inputHandled(self: *Worker, trace: *Trace) void {
+    /// After the input queue was drained. `first` is the first byte of the
+    /// key's bytes event, or null when this drain queued none. One key in
+    /// flight: a drain is one key, so a key split across chunks still
+    /// yields its first byte here.
+    pub fn inputHandled(self: *Worker, trace: *Trace, first: ?u8) void {
         const seq = trace.input_seq.load(.acquire);
         if (seq == self.seen) return;
         self.seen = seq;
         // A key still waiting to be written is superseded: unmatched.
         self.awaiting_write = seq;
+        self.first = first;
+        if (first) |byte| trace.record(seq).first = byte;
     }
 
     /// After a flush; `drained` is whether every queued byte was written.
@@ -236,9 +291,12 @@ pub const Worker = struct {
         self.awaiting_write = 0;
     }
 
-    /// The first pty read of a batch returned data at `t`.
-    pub fn read(self: *Worker, trace: *Trace, t: u64) void {
+    /// A pty read returned `bytes` at `t`. Stamps `echoed` when `bytes`
+    /// contains the key's first byte. Earlier output leaves the key waiting.
+    pub fn read(self: *Worker, trace: *Trace, bytes: []const u8, t: u64) void {
+        const byte = self.first orelse return;
         if (self.awaiting_echo == 0) return;
+        if (std.mem.indexOfScalar(u8, bytes, byte) == null) return;
         trace.stamp(self.awaiting_echo, .echoed, t);
         self.echoed = self.awaiting_echo;
         self.awaiting_echo = 0;

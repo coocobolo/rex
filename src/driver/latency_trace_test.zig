@@ -9,19 +9,20 @@ fn at(trace: *const Trace, seq: u32, stage: Stage) u64 {
     return trace.records[seq % latency_trace.capacity].t[@intFromEnum(stage)];
 }
 
-/// Runs one key through every stage, `base` + 1..8.
+/// Runs one key through every stage, `base` + 1..9.
 fn traceKey(trace: *Trace, worker: *Worker, base: u64) u32 {
     trace.keyPressed(base + 1);
     const seq = trace.beginSend(base + 99);
     trace.stamp(seq, .queued, base + 2);
     trace.eventsHandled();
-    worker.inputHandled(trace);
+    worker.inputHandled(trace, 'a');
     worker.flushed(trace, true, base + 3);
-    worker.read(trace, base + 4);
+    worker.read(trace, "a", base + 4);
     worker.framePublished(trace, base + 5);
     trace.framePicked(worker.echoed, base + 6);
-    const drawn = trace.frameDrawn(base + 7);
-    trace.stamp(drawn, .swapped, base + 8);
+    trace.frameBuilt(base + 7);
+    const drawn = trace.frameDrawn(base + 8);
+    trace.stamp(drawn, .swapped, base + 9);
     return seq;
 }
 
@@ -54,17 +55,20 @@ test "a key written before the previous echo leaves that one unmatched" {
     var worker: Worker = .{};
 
     const first = trace.beginSend(1);
-    worker.inputHandled(trace);
+    worker.inputHandled(trace, 'a');
     worker.flushed(trace, true, 2);
 
     const second = trace.beginSend(3);
-    worker.inputHandled(trace);
+    worker.inputHandled(trace, 'b');
     worker.flushed(trace, true, 4);
-    worker.read(trace, 5);
+    worker.read(trace, "aa", 5);
+    try testing.expectEqual(@as(u64, 0), at(trace, second, .echoed));
+    worker.read(trace, "b", 6);
 
     try testing.expectEqual(@as(u64, 2), at(trace, first, .written));
     try testing.expectEqual(@as(u64, 0), at(trace, first, .echoed));
-    try testing.expectEqual(@as(u64, 5), at(trace, second, .echoed));
+    try testing.expectEqual(@as(u64, 6), at(trace, second, .echoed));
+    try testing.expectEqual(@as(u8, 'b'), trace.records[second % latency_trace.capacity].first);
 }
 
 test "written waits until every byte reached the pty" {
@@ -73,12 +77,12 @@ test "written waits until every byte reached the pty" {
     var worker: Worker = .{};
 
     const seq = trace.beginSend(1);
-    worker.inputHandled(trace);
+    worker.inputHandled(trace, 'a');
     worker.flushed(trace, false, 2);
     // Output read before the write finished isn't the echo.
-    worker.read(trace, 3);
+    worker.read(trace, "a", 3);
     worker.flushed(trace, true, 4);
-    worker.read(trace, 5);
+    worker.read(trace, "xa", 5);
 
     try testing.expectEqual(@as(u64, 4), at(trace, seq, .written));
     try testing.expectEqual(@as(u64, 5), at(trace, seq, .echoed));
@@ -96,7 +100,8 @@ test "later frames and draws don't restamp a key" {
 
     try testing.expectEqual(@as(u64, 5), at(trace, seq, .published));
     try testing.expectEqual(@as(u64, 6), at(trace, seq, .picked));
-    try testing.expectEqual(@as(u64, 7), at(trace, seq, .drawn));
+    try testing.expectEqual(@as(u64, 7), at(trace, seq, .built));
+    try testing.expectEqual(@as(u64, 8), at(trace, seq, .drawn));
 }
 
 test "frames without a traced echo stamp nothing" {
@@ -104,7 +109,7 @@ test "frames without a traced echo stamp nothing" {
     defer trace.destroy(testing.allocator);
     var worker: Worker = .{};
 
-    worker.read(trace, 1);
+    worker.read(trace, "a", 1);
     worker.framePublished(trace, 2);
     trace.framePicked(0, 3);
     try testing.expectEqual(@as(u32, 0), trace.frameDrawn(4));
@@ -120,8 +125,8 @@ test "CSV has a header and one line per key, oldest first after wrapping" {
     defer out.deinit();
     try trace.writeCsv(&out.writer);
     try testing.expectEqualStrings(
-        "seq,key,queued,written,echoed,published,picked,drawn,swapped\n" ++
-            "1,1,2,3,4,5,6,7,8\n",
+        "seq,key,queued,written,echoed,published,picked,built,drawn,swapped,blink,title\n" ++
+            "1,1,2,3,4,5,6,7,8,9,0,0\n",
         out.written(),
     );
 
@@ -136,4 +141,45 @@ test "CSV has a header and one line per key, oldest first after wrapping" {
     var prefix_buf: [16]u8 = undefined;
     const prefix = try std.fmt.bufPrint(&prefix_buf, "{d},", .{oldest});
     try testing.expect(std.mem.startsWith(u8, lines.next().?, prefix));
+}
+
+test "a picked frame records blink and title" {
+    const trace = try Trace.create(testing.allocator);
+    defer trace.destroy(testing.allocator);
+    var worker: Worker = .{};
+
+    const seq = trace.beginSend(1);
+    worker.inputHandled(trace, 'a');
+    worker.flushed(trace, true, 2);
+    worker.read(trace, "a", 3);
+    trace.setCause(true, false);
+    trace.framePicked(seq, 4);
+    try testing.expectEqual(latency_trace.cause_blink, trace.records[seq % latency_trace.capacity].cause);
+
+    trace.setCause(false, true);
+    const seq2 = trace.beginSend(5);
+    worker.inputHandled(trace, 'b');
+    worker.flushed(trace, true, 6);
+    worker.read(trace, "b", 7);
+    trace.framePicked(seq2, 8);
+    try testing.expectEqual(latency_trace.cause_title, trace.records[seq2 % latency_trace.capacity].cause);
+}
+
+test "output without the key byte is not the echo" {
+    const trace = try Trace.create(testing.allocator);
+    defer trace.destroy(testing.allocator);
+    var worker: Worker = .{};
+
+    const seq = trace.beginSend(1);
+    worker.inputHandled(trace, 'a');
+    worker.flushed(trace, true, 2);
+    worker.read(trace, "xxxx\n", 3);
+    worker.read(trace, "yyyy", 4);
+    try testing.expectEqual(@as(u64, 0), at(trace, seq, .echoed));
+
+    worker.read(trace, "yyay", 5);
+    try testing.expectEqual(@as(u64, 5), at(trace, seq, .echoed));
+    // A later read does not move the stamp.
+    worker.read(trace, "a", 6);
+    try testing.expectEqual(@as(u64, 5), at(trace, seq, .echoed));
 }

@@ -192,6 +192,12 @@ pub fn Driver(comptime option: Option) type {
             };
 
             var read_buffer: [64 * 1024]u8 align(64) = undefined;
+            // One read is small enough that a key arriving during a drain
+            // waits out tens of microseconds of parsing, not the whole pty
+            // buffer. The turn still publishes only after a larger budget,
+            // so a flood does not snapshot once per syscall.
+            const read_chunk: usize = 4 * 1024;
+            const turn_budget: usize = 256 * 1024;
             var reply_buffer: [term.Response.capacity]u8 = undefined;
             var sync_start: ?std.Io.Clock.Timestamp = null;
             var child_closed = false;
@@ -238,20 +244,26 @@ pub fn Driver(comptime option: Option) type {
 
                 self.terminal_mutex.lockUncancelable(self.io);
 
-                if (self.input_queue.hasPending() or (pollfds[1].revents & system.POLL.IN) != 0) {
-                    self.input_queue.drainWakeup();
-                    while (self.input_queue.pop()) |ev| {
-                        self.processInputEvent(&terminal, &reply_buffer, &outbound, ev);
-                        had_input = true;
-                    }
-                    if (latency_trace.enabled) {
-                        if (self.latency) |trace| latency_worker.inputHandled(trace);
-                    }
+                if (self.takeQueuedInput(&terminal, &reply_buffer, &outbound, &latency_worker, (pollfds[1].revents & system.POLL.IN) != 0)) {
+                    had_input = true;
+                }
+
+                // The key's bytes go out before this turn's pty read. Under
+                // load that read runs until EAGAIN, and writing after it
+                // held the key for the whole drain.
+                if (!child_closed) self.flushOutbound(&outbound);
+                if (latency_trace.enabled and latency_worker.awaiting_write != 0) {
+                    if (self.latency) |trace| latency_worker.flushed(trace, outbound.isEmpty(), latency_trace.now(self.io));
                 }
 
                 if (!child_closed and pollfds[0].fd >= 0 and (pollfds[0].revents & (system.POLL.IN | system.POLL.HUP | system.POLL.ERR)) != 0) {
-                    drain: while (true) {
-                        const n = self.pty.readRaw(&read_buffer) catch |err| switch (err) {
+                    // Stop before the budget, or before the next read once a
+                    // key is queued, and publish this turn. The pty stays
+                    // readable, so the next poll returns at once.
+                    drain: while (total_read < turn_budget) {
+                        if (total_read > 0 and self.input_queue.hasPending()) break :drain;
+                        const want = @min(read_chunk, turn_budget - total_read);
+                        const n = self.pty.readRaw(read_buffer[0..want]) catch |err| switch (err) {
                             error.WouldBlock => break :drain,
                             error.InputOutput => {
                                 child_closed = true;
@@ -268,8 +280,10 @@ pub fn Driver(comptime option: Option) type {
                             break :drain;
                         }
 
-                        if (latency_trace.enabled and total_read == 0) {
-                            if (self.latency) |trace| latency_worker.read(trace, latency_trace.now(self.io));
+                        if (latency_trace.enabled and latency_worker.awaiting_echo != 0 and latency_worker.first != null) {
+                            if (self.latency) |trace| {
+                                latency_worker.read(trace, read_buffer[0..n], latency_trace.now(self.io));
+                            }
                         }
 
                         terminal.feed(read_buffer[0..n]);
@@ -299,8 +313,13 @@ pub fn Driver(comptime option: Option) type {
                     }
                 }
 
-                // Write what the kernel accepts now: input queued this round, or
-                // older bytes once POLLOUT says there's room again.
+                // A key that arrived during the read is written before the
+                // snapshot, still ahead of any further pty bytes.
+                if (self.takeQueuedInput(&terminal, &reply_buffer, &outbound, &latency_worker, false)) {
+                    had_input = true;
+                }
+                // Replies produced by the read, and any key byte the first
+                // flush could not fit in the kernel buffer.
                 if (!child_closed) self.flushOutbound(&outbound);
                 if (latency_trace.enabled and latency_worker.awaiting_write != 0) {
                     if (self.latency) |trace| latency_worker.flushed(trace, outbound.isEmpty(), latency_trace.now(self.io));
@@ -385,6 +404,40 @@ pub fn Driver(comptime option: Option) type {
                 error.InputOutput => {},
                 else => log.err("pty write failed: {}", .{err}),
             };
+        }
+
+        /// Pops every queued input event. `wake` is the poll bit for the
+        /// input queue; during a drain only `hasPending` is known. Returns
+        /// whether any event was handled. One key in flight: the first
+        /// bytes event of this drain is that key.
+        fn takeQueuedInput(
+            self: *Self,
+            terminal: *TerminalType,
+            reply_buf: *[term.Response.capacity]u8,
+            out: *OutboundQueue,
+            latency_worker: *latency_trace.Worker,
+            wake: bool,
+        ) bool {
+            if (!wake and !self.input_queue.hasPending()) return false;
+            self.input_queue.drainWakeup();
+            var traced_first: ?u8 = null;
+            var had = false;
+            while (self.input_queue.pop()) |ev| {
+                if (latency_trace.enabled and traced_first == null) {
+                    switch (ev) {
+                        .bytes => |b| if (b.len > 0) {
+                            traced_first = b.data[0];
+                        },
+                        else => {},
+                    }
+                }
+                self.processInputEvent(terminal, reply_buf, out, ev);
+                had = true;
+            }
+            if (latency_trace.enabled) {
+                if (self.latency) |trace| latency_worker.inputHandled(trace, traced_first);
+            }
+            return had;
         }
 
         fn processInputEvent(self: *Self, terminal: *TerminalType, reply_buf: *[term.Response.capacity]u8, out: *OutboundQueue, ev: InputEvent) void {

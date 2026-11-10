@@ -55,10 +55,11 @@
 # and the script checks before each batch that Rex's window has the
 # keyboard focus. Rex is always ended through its child so it exits
 # normally and writes its trace. In a Wayland session Rex runs on X11
-# through XWayland, so that path is what gets measured. Under load the
-# first pty read after a key is usually program output rather than the
-# echo, so "echoed" there means "first output after the key" and the
-# result is a lower bound for the key's own echo.
+# through XWayland, so that path is what gets measured. The trace stamps
+# `echoed` on the pty read that contains the key's first byte (`a` is
+# 0x61, Return is 0x0d). The load line is the plain text with `a`
+# rewritten to `b`, so the generator never emits either byte and a match
+# is the kernel echo. A key that never sees its byte stays unmatched.
 #
 # Output: perf-results/runs/gui-<ts>_<sha>[-dirty]_<mode>/
 #   result.txt   the numbers below
@@ -308,8 +309,15 @@ latency_run() {
     launch_env=()
     if [ "$1" = loaded ]; then
         # One process, so stopping it leaves nothing behind: 76-column
-        # lines of the plain test data, as fast as Rex takes them.
-        yes "$(head -1 "$plain")" > "$pts" 2>/dev/null 9>&- &
+        # lines, as fast as Rex takes them. `a` and CR are the traced
+        # keys' first bytes, so neither may appear in this stream.
+        local line
+        line=$(head -1 "$plain" | tr 'a' 'b')
+        case "$line" in
+            *a*|*$'\r'*) die "latency load still contains a traced key byte" ;;
+        esac
+        [ -n "$line" ] || die "latency load line is empty"
+        yes "$line" > "$pts" 2>/dev/null 9>&- &
         loader=$!
         sleep 1
     fi

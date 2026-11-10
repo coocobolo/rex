@@ -572,6 +572,7 @@ pub fn run(self: *App) !void {
         const dt_clamped: u64 = @min(dt_ms, 500);
 
         const blink_changed = self.tick(dt_clamped);
+        var title_updated = false;
 
         const now_real = std.Io.Clock.Timestamp.now(self.io, .real);
         const local_s = self.local_clock.localSeconds(@intCast(now_real.raw.toSeconds()));
@@ -587,9 +588,11 @@ pub fn run(self: *App) !void {
         if (wb_res.phase_changed) {
             self.ringBell();
             self.last_title = now;
+            title_updated = true;
             self.updateWindowTitle();
         } else if (wb_res.alert != null) {
             self.ringBell();
+            title_updated = true;
             self.updateWindowTitle();
         }
 
@@ -600,6 +603,7 @@ pub fn run(self: *App) !void {
                 .clock = .awake,
             });
             // update title every second even without a phase transition
+            title_updated = true;
             self.updateWindowTitle();
         }
 
@@ -640,6 +644,7 @@ pub fn run(self: *App) !void {
         }
 
         if (f.title) {
+            title_updated = true;
             self.updateWindowTitle();
         }
 
@@ -671,6 +676,7 @@ pub fn run(self: *App) !void {
         }
 
         if (had_data or blink_changed or self.needs_redraw or self.driver.hasNewFrame()) {
+            if (latency_trace.enabled) self.latency.?.setCause(blink_changed, title_updated);
             if (try self.renderFrame()) self.needs_redraw = false;
         }
 
@@ -830,6 +836,8 @@ fn renderFrame(self: *App) !bool {
     }
 
     if (!frame.dirty.any()) return false;
+
+    if (latency_trace.enabled) self.latency.?.frameBuilt(latency_trace.now(self.io));
 
     const dimension = self.window.frameBufferSize(f32);
     self.renderer.draw(
