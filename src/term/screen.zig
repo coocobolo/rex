@@ -70,6 +70,12 @@ comptime {
     std.debug.assert(@as(u64, @bitCast(Cell{})) == 0);
 }
 
+/// The placeholder after a wide character `left`: same style and flags,
+/// no codepoint, whatever kind of wide cell `left` is.
+fn rightHalf(left: Cell) Cell {
+    return .{ .kind = .wide_right, .style = left.style, .flags = left.flags };
+}
+
 fn nextPowerOfTwo(comptime n: usize) usize {
     if (n <= 1) return 1;
 
@@ -571,12 +577,7 @@ pub fn Screen(comptime option: Option) type {
                 .wide_left => .grapheme_wide,
                 else => .grapheme,
             };
-            self.writeChar(.{
-                .kind = stored_kind,
-                .codepoint = grapheme_id,
-                .style = self.cursor.attr.id,
-                .flags = self.cursor.attr.flags,
-            });
+            self.writeChar(self.penCell(stored_kind, grapheme_id));
         }
 
         /// Smallest intern table size at which compaction runs.
@@ -818,13 +819,19 @@ pub fn Screen(comptime option: Option) type {
                     return;
                 },
             };
-            self.writeChar(.{
-                .kind = kind,
-                .codepoint = translated,
-                .style = self.cursor.attr.id,
-                .flags = self.cursor.attr.flags,
-            });
+            self.writeChar(self.penCell(kind, translated));
             self.last_char = translated;
+        }
+
+        /// A cell drawn with the pen: its colors and attribute flags.
+        inline fn penCell(self: *const Self, kind: CellKind, codepoint: u32) Cell {
+            return .{ .kind = kind, .codepoint = codepoint, .style = self.cursor.attr.id, .flags = self.cursor.attr.flags };
+        }
+
+        /// An empty cell for erasing: the pen's background, default
+        /// foreground and no flags (background color erase).
+        inline fn blankCell(self: *const Self) Cell {
+            return .{ .style = self.cursor.attr.blank_id };
         }
 
         /// Maps `cp` through the active charset (GL, or a pending single
@@ -907,19 +914,10 @@ pub fn Screen(comptime option: Option) type {
                 // overwriting an orphaned wide-right placeholder from a
                 // pre-existing wide char to its left.
                 if (row_mut[cursor_col].kind == .wide_right and cursor_col > 0) {
-                    row_mut[cursor_col - 1] = Cell{ .style = self.cursor.attr.blank_id };
+                    row_mut[cursor_col - 1] = self.blankCell();
                 }
 
-                const flags = self.cursor.attr.flags;
-
-                const base_cell = Cell{
-                    .kind = .narrow,
-                    .codepoint = 0,
-                    .style = self.cursor.attr.id,
-                    .flags = flags,
-                    .wrapped = false,
-                };
-                const base_u64: u64 = @bitCast(base_cell);
+                const base_u64: u64 = @bitCast(self.penCell(.narrow, 0));
                 const vector_len = 8;
                 const CellVector = @Vector(vector_len, u64);
                 const base_vec: CellVector = @splat(base_u64);
@@ -945,7 +943,7 @@ pub fn Screen(comptime option: Option) type {
                 if (cursor_col + n < self.active_cols and
                     row_mut[cursor_col + n].kind == .wide_right)
                 {
-                    row_mut[cursor_col + n] = Cell{ .style = self.cursor.attr.blank_id };
+                    row_mut[cursor_col + n] = self.blankCell();
                 }
 
                 self.dirty_rows.set(self.cursor.row); // once per row, not once per byte
@@ -982,12 +980,7 @@ pub fn Screen(comptime option: Option) type {
         pub inline fn putCharKind(self: *Self, cp: u21, kind: CellKind) void {
             const translated = self.translate(cp);
             // wc == 0 (combining) is impossible for CJK/ASCII callers, skip that branch
-            self.writeChar(.{
-                .kind = kind,
-                .codepoint = translated,
-                .style = self.cursor.attr.id,
-                .flags = self.cursor.attr.flags,
-            });
+            self.writeChar(self.penCell(kind, translated));
             self.last_char = translated;
         }
 
@@ -1080,12 +1073,7 @@ pub fn Screen(comptime option: Option) type {
                 // Re-fetch row_mut after potential scroll (ring buffer may have advanced).
                 const new_row_mut = self.rowMutBase(self.cursor.row, false);
                 new_row_mut[0] = cell;
-                new_row_mut[1] = Cell{
-                    .codepoint = 0,
-                    .kind = .wide_right, // always, regardless of left-half kind
-                    .flags = cell.flags,
-                    .style = cell.style,
-                };
+                new_row_mut[1] = rightHalf(cell);
 
                 self.dirty_rows.set(old_row); // old row got a blank
                 self.dirty_rows.set(self.cursor.row); // new row got the wide char
@@ -1122,12 +1110,7 @@ pub fn Screen(comptime option: Option) type {
             self.dirty_rows.set(self.cursor.row);
 
             if (is_wide) {
-                row_mut[cursor_col + 1] = Cell{
-                    .codepoint = 0,
-                    .kind = .wide_right, // always, regardless of left-half kind
-                    .flags = cell.flags,
-                    .style = cell.style,
-                };
+                row_mut[cursor_col + 1] = rightHalf(cell);
             }
 
             // Advance cursor
@@ -1170,12 +1153,7 @@ pub fn Screen(comptime option: Option) type {
             const count = @max(n, 1);
 
             for (0..count) |_| {
-                self.writeChar(.{
-                    .kind = kind,
-                    .codepoint = self.last_char,
-                    .style = self.cursor.attr.id,
-                    .flags = self.cursor.attr.flags,
-                });
+                self.writeChar(self.penCell(kind, self.last_char));
             }
 
             // FIXME called bump every writeChar bad for hot-paths.
@@ -1555,7 +1533,7 @@ pub fn Screen(comptime option: Option) type {
             // A degenerate region (top >= bottom) has nothing to scroll.
             if (self.scroll_top >= self.scroll_bottom) return false;
 
-            const blank: Cell = .{ .style = self.cursor.attr.blank_id };
+            const blank = self.blankCell();
             const region_top: usize = self.scroll_top;
             const region_bottom: usize = self.scroll_bottom;
             const region_height: usize = region_bottom - region_top + 1;
@@ -1704,7 +1682,7 @@ pub fn Screen(comptime option: Option) type {
             const region_height = region_bot - region_top + 1;
 
             const count: usize = @min(@max(n, 1), region_height);
-            const blank: Cell = .{ .style = self.cursor.attr.blank_id };
+            const blank = self.blankCell();
 
             self.rotateRowMapRegion(region_top, region_bot, count, .right);
 
@@ -1769,7 +1747,7 @@ pub fn Screen(comptime option: Option) type {
         ///
         /// Clears `wrap_pending`.
         pub fn eraseDisplay(self: *Self, mode: u16) void {
-            const blank: Cell = .{ .style = self.cursor.attr.blank_id };
+            const blank = self.blankCell();
 
             switch (mode) {
                 0 => { // cursor to end
@@ -1836,7 +1814,7 @@ pub fn Screen(comptime option: Option) type {
         /// The cursor position is not changed by any mode.
         /// Does not interact with scrollback. Clears `wrap_pending`.
         pub fn eraseLine(self: *Self, mode: u16) void {
-            const blank: Cell = .{ .style = self.cursor.attr.blank_id };
+            const blank = self.blankCell();
             const r = @as(usize, self.cursor.row);
             const c = @as(usize, self.cursor.col);
             switch (mode) {
@@ -2088,13 +2066,7 @@ pub fn Screen(comptime option: Option) type {
                     if (is_wide) {
                         right_half_row = dst_row;
                         right_half_col = dst_col + 1;
-                        scratch[(dst_row & ring_mask) * max_cols + dst_col + 1] = Cell{
-                            .codepoint = 0,
-                            .kind = .wide_right,
-                            .flags = c.flags,
-                            .style = c.style,
-                            .wrapped = false,
-                        };
+                        scratch[(dst_row & ring_mask) * max_cols + dst_col + 1] = rightHalf(c);
                     }
 
                     dst_col += span;
@@ -2584,7 +2556,7 @@ pub fn Screen(comptime option: Option) type {
         pub fn insertChars(self: *Self, n: usize) void {
             const cr = self.cursor.row;
             const cc = @as(usize, self.cursor.col);
-            const blank: Cell = .{ .style = self.cursor.attr.blank_id };
+            const blank = self.blankCell();
 
             const count = @min(@max(n, 1), self.active_cols -| cc);
             if (count == 0) return;
@@ -2616,7 +2588,7 @@ pub fn Screen(comptime option: Option) type {
         pub fn deleteChars(self: *Self, n: usize) void {
             const cr = self.cursor.row;
             const cc = @as(usize, self.cursor.col);
-            const blank: Cell = .{ .style = self.cursor.attr.blank_id };
+            const blank = self.blankCell();
 
             if (cc >= self.active_cols) return;
             // n=0 is treated as n=1 per ECMA-48 default parameter rule.
@@ -2654,7 +2626,7 @@ pub fn Screen(comptime option: Option) type {
             const r = @as(usize, self.cursor.row);
             if (r < self.scroll_top or r > self.scroll_bottom) return;
 
-            const blank: Cell = .{ .style = self.cursor.attr.blank_id };
+            const blank = self.blankCell();
             const region_bottom = @as(usize, self.scroll_bottom);
             const region_height = region_bottom - r + 1;
             const count = @min(@max(n, 1), region_height);
@@ -2724,7 +2696,7 @@ pub fn Screen(comptime option: Option) type {
             }
 
             // ECMA-48 S8.3.42: Ps defaults to 1; treat 0 as 1.
-            const blank: Cell = .{ .style = self.cursor.attr.blank_id };
+            const blank = self.blankCell();
             const region_height = region_bottom - r + 1;
             const count = @min(@max(n, 1), region_height);
 
@@ -2875,7 +2847,7 @@ pub fn Screen(comptime option: Option) type {
             const count = @max(n, 1);
             const col = @as(usize, self.cursor.col);
             const end = @min(col + count, @as(usize, self.active_cols));
-            const blank: Cell = .{ .style = self.cursor.attr.blank_id };
+            const blank = self.blankCell();
 
             const r = self.rowMut(self.cursor.row);
 
