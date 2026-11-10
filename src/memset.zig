@@ -24,7 +24,12 @@ comptime {
 /// C `memset`: sets `len` bytes at `dest` to `c` and returns `dest`.
 /// C passes `c` as an `int`; only its low byte is used, so taking a `u8`
 /// matches the C ABI on every target Rex supports, as compiler_rt does.
-fn memset(dest: ?[*]u8, c: u8, len: usize) callconv(.c) ?[*]u8 {
+///
+/// Aligned to a cache line so its store loop sits at the same place in
+/// every build: when unrelated code moved it from offset 0 to 32,
+/// `bench-term` `scroll/alt/full` (one 640-byte row clear per step) went
+/// from 10.7 to 13.8 ns, and `align(64)` brought it back (#73, #79).
+fn memset(dest: ?[*]u8, c: u8, len: usize) align(64) callconv(.c) ?[*]u8 {
     if (len != 0) fill(dest.?, c, len);
     return dest;
 }
