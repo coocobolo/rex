@@ -25,6 +25,13 @@ pub fn fontDir(allocator: Allocator, exe_path: []const u8) error{ OutOfMemory, B
     return std.fs.path.resolve(allocator, &.{ bin, "..", "share", "rex", "fonts" });
 }
 
+/// Path of the shipped regular face for an executable at `exe_path`.
+pub fn regularPath(allocator: Allocator, exe_path: []const u8) error{ OutOfMemory, BadExePath }![]u8 {
+    const dir = try fontDir(allocator, exe_path);
+    defer allocator.free(dir);
+    return std.fs.path.join(allocator, &.{ dir, regular_name });
+}
+
 fn key(comptime section: keys.Section, comptime name: []const u8) keys.KeyIndex {
     return comptime keys.lookup(section, name).?;
 }
@@ -79,6 +86,12 @@ pub fn apply(
             log.warn("built-in emoji missing: {s}", .{emoji});
         }
     }
+}
+
+test "regularPath: the shipped regular face beside the executable" {
+    const path = try regularPath(std.testing.allocator, "/opt/rex/bin/rex");
+    defer std.testing.allocator.free(path);
+    try std.testing.expectEqualStrings("/opt/rex/share/rex/fonts/" ++ regular_name, path);
 }
 
 test "fontDir: installed faces sit beside the executable" {

@@ -23,8 +23,9 @@
 # and restored, and every window this script opens is closed on exit.
 #
 # Environment:
-#   FONT           required: a variable font file. The sandbox config sets
-#                  `[font] file` to it, so the run does not use the installed faces
+#   FONT           optional variable font file. Set, the sandbox config sets
+#                  `[font] file` to it. Omitted, Rex uses the faces installed
+#                  next to the executable
 #   FONT_CONF      a config fragment appended to the sandbox config, such as
 #                  `[font]` fallback lines; its keys override the defaults.
 #                  Results are comparable only between runs with the same
@@ -84,8 +85,9 @@ die() { echo "error: $*" >&2; exit 1; }
 
 font="${FONT:-}"
 font_conf="${FONT_CONF:-}"
-[ -n "$font" ] || die "set FONT to a variable font file"
-[ -f "$font" ] || die "FONT: no such file: $font"
+if [ -n "$font" ]; then
+    [ -f "$font" ] || die "FONT: no such file: $font"
+fi
 [ -z "$font_conf" ] || [ -f "$font_conf" ] || die "FONT_CONF: no such file: $font_conf"
 
 # Latency mode also runs in a Wayland session, with Rex on XWayland.
@@ -170,9 +172,11 @@ fi
 mkdir -p "$sandbox/.config/rex"
 sandbox_config="$sandbox/.config/rex/config"
 "$prefix/bin/rex" config defaults > "$sandbox_config"
-font_quoted=${font//\\/\\\\}
-font_quoted=${font_quoted//\"/\\\"}
-printf '\n[font]\nfile = "%s"\n' "$font_quoted" >> "$sandbox_config"
+if [ -n "$font" ]; then
+    font_quoted=${font//\\/\\\\}
+    font_quoted=${font_quoted//\"/\\\"}
+    printf '\n[font]\nfile = "%s"\n' "$font_quoted" >> "$sandbox_config"
+fi
 if [ -n "$font_conf" ]; then
     printf '\n' >> "$sandbox_config"
     cat "$font_conf" >> "$sandbox_config"

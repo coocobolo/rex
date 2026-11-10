@@ -295,8 +295,12 @@ pub fn init(
     // Before takeArena: the filled paths live in this arena.
     useBuiltinFonts(io, loaded.arena.allocator(), &loaded, argv0) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
-        error.BadExePath, error.BuiltinFontMissing => {
-            log.err("no font: set `file` in [font] of {s}; the built-in face was not found next to this executable", .{user_cfg_path});
+        error.BadExePath => {
+            log.err("no font: set `file` in [font] of {s}; the executable path is not usable", .{user_cfg_path});
+            return error.NoFontFile;
+        },
+        error.BuiltinFontMissing => {
+            log.err("no font: set `file` in [font] of {s}; missing {s}", .{ user_cfg_path, missingBuiltinFace(io, loaded.arena.allocator(), argv0) });
             return error.NoFontFile;
         },
     };
@@ -1254,8 +1258,19 @@ pub fn reloadConfig(self: *App) void {
             self.needs_redraw = true;
             return;
         },
-        error.BadExePath, error.BuiltinFontMissing => {
-            self.config_banner = Banner.init(.err, "Config error", "font.file is not set, and the built-in face is not installed next to this executable");
+        error.BadExePath => {
+            self.config_banner = Banner.init(.err, "Config error", "font.file is not set, and the executable path is not usable");
+            self.frame_builder.last_generation = null;
+            self.needs_redraw = true;
+            return;
+        },
+        error.BuiltinFontMissing => {
+            var buf: [128]u8 = undefined;
+            const face = missingBuiltinFace(self.io, loaded.arena.allocator(), self.argv0);
+            log.err("no font: set `file` in [font]; missing {s}", .{face});
+            const name = std.fs.path.basename(face);
+            const msg = std.fmt.bufPrint(&buf, "{s} is missing; set `file` in [font]", .{name}) catch "the built-in face is missing; set `file` in [font]";
+            self.config_banner = Banner.init(.err, "Config error", msg);
             self.frame_builder.last_generation = null;
             self.needs_redraw = true;
             return;
@@ -1596,6 +1611,17 @@ fn useBuiltinFonts(io: std.Io, arena: std.mem.Allocator, loaded: *rex.config.Loa
     else |_|
         argv0;
     try rex.config.builtin_font.apply(io, arena, loaded, exe);
+}
+
+/// The shipped regular face this process would load, or its file name when
+/// the executable path cannot be resolved.
+fn missingBuiltinFace(io: std.Io, allocator: std.mem.Allocator, argv0: []const u8) []const u8 {
+    var exe_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const exe: []const u8 = if (std.process.executablePath(io, &exe_buf)) |len|
+        exe_buf[0..len]
+    else |_|
+        argv0;
+    return rex.config.builtin_font.regularPath(allocator, exe) catch rex.config.builtin_font.regular_name;
 }
 
 /// Logs every config problem in full: the banner shows only the first one,

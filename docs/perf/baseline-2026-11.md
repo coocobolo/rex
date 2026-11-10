@@ -64,9 +64,10 @@ At `cc4c6b2` the default config was compiled into `main.zig` and included
 the maintainer's fonts: a variable family with its italic, an emoji face
 and seven fallback fonts. The config rebuild (`57587ce`) left the defaults
 with no font file. Since `6d13682` an omitted `font.file` uses the faces
-installed next to the executable. `perf-gui.sh` still requires `FONT` and
-accepts `FONT_CONF` (for example fallback lines), and writes them into the
-sandbox config, so a run names the faces it measured. Startup time and
+installed next to the executable. `perf-gui.sh` accepts `FONT` and
+`FONT_CONF` (for example fallback lines) and writes them into the sandbox
+config. Omitted `FONT` leaves the installed faces. A set `FONT` names the
+face that run measured. Startup time and
 memory depend on the fonts loaded, so compare those numbers only with runs
 that load the same fonts.
 
@@ -171,6 +172,9 @@ Notes:
 ## 4. Not measured yet
 
 - **Font-change time.**
+
+Shipped-font startup, measured later on this machine, is in
+`font-startup-2026-11.md`.
 
 ## Reproducing
 
