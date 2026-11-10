@@ -248,6 +248,14 @@ decision.
   SGR interning 14 times cheaper than the palette it replaces; a table
   copy (under 1 µs typically, about 9 µs at the cap) on snapshots after
   SGR added styles.
+- Measured at acceptance (2026-11-10), rebased onto `develop` `dfe1bde`,
+  whose own `memset` made the baseline faster: `bench-term` corpus
+  `feed_once`, ReleaseFast, pinned, 8 runs each, median: htop +10.9%
+  (64.8 to 71.8 µs), ls_color +4.4%, man_bash +6.3%, against +3-5% before
+  that change. `Style.Table.intern` takes 5.3% of the htop run
+  (`Palette.intern` took 1.5%); the rest of the gap is in the parser and
+  CSI dispatch and may be code layout (#79). Accepted for the correctness
+  fix; recovering the cost is #80.
 - Follow-up: the reflow and resize paths must keep IDs as they move cells
   (they do today, since IDs are plain cell bits).
 
