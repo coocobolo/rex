@@ -169,7 +169,113 @@ Notes:
   keystroke-to-pixel tool (#10) is needed for those and for comparing with
   other terminals.
 
-## 4. Not measured yet
+## 4. Input latency under load (#21, measured 2026-11-10)
+
+Same machine and harness as section 3, ReleaseFast, X11, NVIDIA,
+`LATENCY_KEYS=1000`. Two differences. The trace stamps `echoed` on the pty
+read that contains the key's first byte, and the load line rewrites `a` to
+`b`, so the generator never emits `a` or CR. A key with no such byte stays
+unmatched. Both runs below matched all 1,000 keys in both scenarios, so the
+loaded column is the key's own echo.
+
+The first table is that match on the old loop, which still reads the pty
+before writing the key. The second flushes queued input before that read.
+Replies produced by the read are flushed afterwards. Times in microseconds.
+
+Read the pty, then write the key:
+
+| Step | Quiet median | Quiet p99 | Loaded median | Loaded p99 |
+|---|---|---|---|---|
+| queued -> written to the pty | 13.9 | 20.6 | 1,165 | 6,365 |
+| written -> echo read | 13.7 | 21.9 | 27.5 | 62.9 |
+| echo read -> frame published | 10.7 | 20.8 | 449 | 3,732 |
+| published -> picked by the GUI | 10.6 | 16.7 | 4,245 | 6,114 |
+| picked -> drawn | 143.2 | 217.2 | 259 | 323 |
+| drawn -> `swapBuffers` returned | 38.7 | 102.3 | 5,795 | 6,720 |
+| **key -> swapped** | **234.6** | **716.6** | **12,061** | **18,161** |
+
+Write the key, then read the pty:
+
+| Step | Quiet median | Quiet p99 | Loaded median | Loaded p99 |
+|---|---|---|---|---|
+| queued -> written to the pty | 14.0 | 24.3 | 513 | 3,453 |
+| written -> echo read | 13.5 | 20.8 | 18.2 | 49.1 |
+| echo read -> frame published | 10.7 | 19.3 | 466 | 3,804 |
+| published -> picked by the GUI | 10.5 | 17.1 | 4,790 | 6,062 |
+| picked -> drawn | 149.0 | 218.8 | 264 | 320 |
+| drawn -> `swapBuffers` returned | 38.9 | 480.9 | 5,791 | 6,956 |
+| **key -> swapped** | **240.0** | **883.2** | **12,058** | **13,380** |
+
+Once the byte is written, the echo is in the next read about 20 us later
+under load. The loaded key-to-swap median stays about 12 ms. Most of that
+is still the GUI picking up the frame and `swapBuffers` waiting, which is
+#22.
+
+Writing first cut queued-to-written from 1.2 ms to 0.5 ms at the median. A
+key typed while the worker is inside a drain still waited there, because
+the input queue was read only after that drain returned EAGAIN.
+
+The third table bounds a turn: reads are 4 KiB, and the turn stops at
+256 KiB or as soon as a key is queued, then writes that key before the
+snapshot. The pty stays readable, so the next `poll` returns at once.
+Loaded queued-to-written is 8 µs median, 22 µs p95, 164 µs p99. The p99 is
+a key that arrived during a 4 KiB read. All 1,000 keys matched.
+
+| Step | Quiet median | Quiet p99 | Loaded median | Loaded p99 |
+|---|---|---|---|---|
+| queued -> written to the pty | 14.1 | 21.0 | 8.4 | 164.4 |
+| written -> echo read | 13.5 | 21.9 | 24.3 | 58.2 |
+| echo read -> frame published | 10.2 | 21.8 | 434 | 2,750 |
+| published -> picked by the GUI | 10.5 | 15.2 | 5,522 | 6,416 |
+| picked -> drawn | 148.0 | 197.3 | 266 | 321 |
+| drawn -> `swapBuffers` returned | 38.1 | 250.0 | 5,786 | 6,336 |
+| **key -> swapped** | **237.7** | **1,147** | **12,059** | **12,647** |
+
+Throughput in the same session, 100 MiB, ReleaseFast, three runs. Before
+the bound: plain 83.9-86.7 MiB/s, escapes 73.9-75.3. After: plain
+84.0-84.7, escapes 72.8-74.8. The low escapes run is about 1 MiB/s under
+the previous low. That is inside the run-to-run spread of this harness.
+
+Runs: `perf-results/runs/gui-20261110T005317_eba5d33-dirty_ReleaseFast`,
+`gui-20261110T005622_eba5d33-dirty_ReleaseFast`,
+`gui-20261110T010512_eba5d33-dirty_ReleaseFast`,
+`gui-20261110T010655_eba5d33-dirty_ReleaseFast`,
+`gui-20261110T010755_eba5d33-dirty_ReleaseFast`.
+
+The fourth table splits picked -> drawn into building the frame and
+submitting the draw calls. The same loop records whether it toggled a blink
+phase or called `setWindowTitle`. All 1,000 keys matched again.
+
+| Step | Quiet median | Quiet p99 | Loaded median | Loaded p99 |
+|---|---|---|---|---|
+| queued -> written to the pty | 14.5 | 21.6 | 8.5 | 191.1 |
+| published -> picked by the GUI | 10.7 | 16.0 | 5,469 | 6,820 |
+| picked -> frame built | 85.8 | 122.7 | 182 | 203 |
+| frame built -> drawn | 63.2 | 97.7 | 86.5 | 132 |
+| drawn -> `swapBuffers` returned | 39.5 | 64.8 | 5,785 | 6,699 |
+| **key -> swapped** | **241.8** | **404.8** | **12,058** | **13,063** |
+
+On the idle terminal `swapBuffers` returns in about 40 us, so the loop runs
+far faster than the blink half-period (500 ms) and the one-second title
+timer. Those iterations are not the ones that pick a key: blink and title
+are both 0 on all 1,000 quiet keys. Frame build stays at or under 150 us.
+Two draw calls took 1.1 ms and 1.7 ms. Four swaps took 2.9-4.2 ms. None of
+those six keys had either flag. The 3.3 ms quiet p99 from section 3 does
+not reappear; this run's quiet p99 is 405 us, and the max is one of those
+swaps.
+
+Under load the loop does wait in the swap, and 21 keys share a blink toggle
+and 7 a title update. Blink frames built in 163 us median against 182 for
+the rest. Title frames drew in 104 us median against 86, seven samples, max
+138 us. No build or draw exceeded 500 us (build max 242, draw max 223).
+Skipping an unchanged `setWindowTitle`, or special-casing blink, would not
+move the tail. The loaded 12 ms is still the pickup wait and
+`swapBuffers`, which is #22. Blink and the window title were left as they
+are.
+
+Run: `perf-results/runs/gui-20261110T011559_eba5d33-dirty_ReleaseFast`.
+
+## 5. Not measured yet
 
 - **Font-change time.**
 
