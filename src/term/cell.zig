@@ -16,7 +16,7 @@ pub const Cursor = @import("Cursor.zig").Cursor;
 pub const CursorStyle = Cursor.Style;
 pub const SavedCursor = Cursor.Saved;
 
-pub const Style = @import("Style.zig").Style;
+pub const Style = @import("Style.zig");
 
 /// Underline style, 3 bits of AttrFlags.
 ///

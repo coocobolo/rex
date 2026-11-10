@@ -8,7 +8,7 @@ pub const cell = @import("cell.zig");
 pub const Cell = cell.Cell;
 pub const Cursor = @import("Cursor.zig");
 pub const charset = @import("charset.zig");
-pub const Style = @import("Style.zig").Style;
+pub const Style = @import("Style.zig");
 
 pub const term = @import("term.zig");
 pub const Terminal = term.Terminal;
@@ -34,6 +34,7 @@ test {
     _ = @import("Cursor.zig");
     _ = @import("charset.zig");
     _ = @import("Style.zig");
+    _ = @import("style_test.zig");
     _ = @import("cell.zig");
     _ = @import("Frame.zig");
     std.testing.refAllDecls(@This());
