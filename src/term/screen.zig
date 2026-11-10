@@ -805,17 +805,7 @@ pub fn Screen(comptime option: Option) type {
         /// designating methods (designateCharset, shiftIn, shiftOut, singleShift2, singleShift3)
         /// for the corresponding escape sequences.
         pub inline fn putChar(self: *Self, cp: u21) void {
-            const translated: u21 = blk: {
-                if (self.charset_is_identity) {
-                    @branchHint(.likely);
-                    break :blk cp;
-                } else break :blk self.cursor.charset.translate(cp);
-            };
-
-            if (self.cursor.charset.ss != CharsetState.no_shift) {
-                self.cursor.charset.ss = CharsetState.no_shift;
-                self.charset_is_identity = self.cursor.charset.isIdentity(); // may become true again
-            }
+            const translated = self.translate(cp);
             const kind: CellKind = switch (width(translated)) {
                 .wide => .wide_left,
                 // Unassigned and other non-printing code points still take
@@ -835,6 +825,21 @@ pub fn Screen(comptime option: Option) type {
                 .flags = self.cursor.attr.flags,
             });
             self.last_char = translated;
+        }
+
+        /// Maps `cp` through the active charset (GL, or a pending single
+        /// shift) and ends the single shift, which applies to one character.
+        inline fn translate(self: *Self, cp: u21) u21 {
+            const translated: u21 = if (self.charset_is_identity) blk: {
+                @branchHint(.likely);
+                break :blk cp;
+            } else self.cursor.charset.translate(cp);
+
+            if (self.cursor.charset.ss != CharsetState.no_shift) {
+                self.cursor.charset.ss = CharsetState.no_shift;
+                self.charset_is_identity = self.cursor.charset.isIdentity(); // may become true again
+            }
+            return translated;
         }
 
         pub inline fn putChars(self: *Self, bytes: []const u8) void {
@@ -861,11 +866,22 @@ pub fn Screen(comptime option: Option) type {
             self.rowMutRaw(self.cursor.row)[self.active_cols - 1].wrapped = true;
         }
 
+        /// Wraps the line a pending autowrap left the cursor on: marks it
+        /// dirty and soft-wrapped, then moves to the start of the next line.
+        /// The row is marked dirty here because `markSoftWrap` doesn't, and
+        /// an earlier `feed` may already have published it.
         inline fn resolveDeferredWrap(self: *Self) void {
+            self.dirty_rows.set(self.cursor.row);
             self.markSoftWrap();
             self.cursor.wrap_pending = false;
-            self.cursor.col = 0;
+            self.advanceLine();
+        }
 
+        /// Moves the cursor to column 0 of the next line for an automatic
+        /// wrap: scrolls the region up at its bottom margin, moves down
+        /// elsewhere, and stays on the last row outside the region.
+        inline fn advanceLine(self: *Self) void {
+            self.cursor.col = 0;
             const cr = @as(usize, self.cursor.row);
             if (cr == @as(usize, self.scroll_bottom)) {
                 _ = self.scrollUpImpl(1);
@@ -880,9 +896,7 @@ pub fn Screen(comptime option: Option) type {
             while (bytes.len > 0) {
                 // Deferred wrap must still be resolved before this row is valid,
                 // exactly like writeChar does for a single cell.
-                if (self.cursor.wrap_pending) {
-                    self.resolveDeferredWrap(); // extracted from writeChar, see below
-                }
+                if (self.cursor.wrap_pending) self.resolveDeferredWrap();
 
                 const row_mut = self.rowMutRaw(self.cursor.row);
                 const cursor_col = @as(usize, self.cursor.col);
@@ -966,11 +980,7 @@ pub fn Screen(comptime option: Option) type {
 
         // Called when width is already known (avoids wcwidth binary search)
         pub inline fn putCharKind(self: *Self, cp: u21, kind: CellKind) void {
-            const translated: u21 = if (self.charset_is_identity) cp else self.cursor.charset.translate(cp);
-            if (self.cursor.charset.ss != CharsetState.no_shift) {
-                self.cursor.charset.ss = CharsetState.no_shift;
-                self.charset_is_identity = self.cursor.charset.isIdentity();
-            }
+            const translated = self.translate(cp);
             // wc == 0 (combining) is impossible for CJK/ASCII callers, skip that branch
             self.writeChar(.{
                 .kind = kind,
@@ -1000,24 +1010,7 @@ pub fn Screen(comptime option: Option) type {
         pub inline fn writeChar(self: *Self, cell: Cell) void {
             std.debug.assert(cell.kind != .empty and cell.kind != .wide_right);
 
-            // Deferred wrap
-            if (self.cursor.wrap_pending) {
-                self.dirty_rows.set(self.cursor.row); // erase cursor from old row
-                self.markSoftWrap();
-                self.cursor.wrap_pending = false;
-                self.cursor.col = 0;
-
-                const cr = @as(usize, self.cursor.row);
-                if (cr == @as(usize, self.scroll_bottom)) {
-                    _ = self.scrollUpImpl(1);
-                    // cursor.row_mut stays at scroll_bottom after scrollUp
-                } else if (cr + 1 < self.active_rows) {
-                    self.cursor.row = @intCast(cr + 1);
-                }
-
-                // If below scroll_bottom (outside scroll region): just move down.
-                // If at the last row_mut outside the scroll region: don't move, don't scroll.
-            }
+            if (self.cursor.wrap_pending) self.resolveDeferredWrap();
 
             const kind: CellKind = cell.kind;
             const cursor_col = @as(usize, self.cursor.col);
@@ -1081,13 +1074,8 @@ pub fn Screen(comptime option: Option) type {
                 const old_row = self.cursor.row;
                 row_mut[cursor_col] = Cell{ .style = self.blankFor(cell.style), .wrapped = true };
 
-                // Wrap/scroll logic (same logic as deferred wrap above).
-                self.cursor.col = 0;
-                if (self.cursor.row == self.scroll_bottom) {
-                    _ = self.scrollUpImpl(1);
-                } else if (self.cursor.row + 1 < self.active_rows) {
-                    self.cursor.row = @intCast(self.cursor.row + 1);
-                }
+                // The blank above carries the soft-wrap flag.
+                self.advanceLine();
 
                 // Re-fetch row_mut after potential scroll (ring buffer may have advanced).
                 const new_row_mut = self.rowMutBase(self.cursor.row, false);

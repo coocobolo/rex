@@ -891,6 +891,28 @@ test "Terminal: snapshot live view, dirty rows and buffer switch" {
     try testing.expectEqual('H', frame.displayRow(0)[0].codepoint);
 }
 
+test "snapshot: resolving a wrap left pending by an earlier feed redraws the wrapped row" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+    var frame = try Term.FrameType.init(alloc);
+    defer frame.deinit(alloc);
+
+    // Fill row 0 exactly: the wrap stays pending and the row isn't
+    // soft-wrapped yet.
+    const cols = t.active().active_cols;
+    const full_row: [test_option.max_cols]u8 = @splat('a');
+    t.feed(full_row[0..cols]);
+    try testing.expect(t.snapshot(&frame));
+    try testing.expect(!frame.displayRow(0)[cols - 1].wrapped);
+
+    // Plain ASCII takes the bulk path, which resolves the pending wrap
+    // and marks row 0 soft-wrapped. The incremental snapshot must copy it.
+    t.feed("b");
+    try testing.expect(t.snapshot(&frame));
+    try testing.expectEqual('b', frame.displayRow(1)[0].codepoint);
+    try testing.expect(frame.displayRow(0)[cols - 1].wrapped);
+}
+
 test "print: utf-8 continuation bytes in the C1 range are text, not controls" {
     var t = try Term.create(alloc);
     defer t.destroy(alloc);
