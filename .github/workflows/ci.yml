@@ -26,6 +26,12 @@ jobs:
       # Zig global cache between runs.
       - uses: mlugg/setup-zig@v2.2.1
 
+      # Zig 0.16.0 unpacks .zip dependencies through <global cache>/tmp but
+      # never creates that directory, so a fresh cache fails with "failed to
+      # create temporary zip file: FileNotFound". Drop with the zip
+      # dependencies (#65) or a fixed Zig.
+      - run: mkdir -p "$ZIG_GLOBAL_CACHE_DIR/tmp"
+
       - run: zig fmt --check .
       - run: zig build
       # GL tests need a display; Xvfb plus Mesa gives a software one.
