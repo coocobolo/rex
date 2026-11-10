@@ -333,7 +333,55 @@ loaded keys and the title updated on 5. No build or draw exceeded 500 µs.
 
 Run: `perf-results/runs/gui-20261110T021543_032a06a-dirty_ReleaseFast`.
 
-## 7. Not measured yet
+## 7. Short worker turns after input (#57, measured 2026-11-10)
+
+Section 6 left 488 of 1,000 loaded keys at or over 7 ms. Under load a
+worker turn reads up to 256 KiB before it publishes, about 3 ms of
+parsing, so an echo read early in a turn waits for the rest of it, and the
+GUI often latches its frame first. Loaded echoed -> published was 464 µs
+median and 2,451 µs p95.
+
+Now, for 2 ms after a turn's input grows the outbound queue (keys, a
+paste, mouse or scroll reports), turns read at most `echo_budget` before
+they publish (`readBudget` in `src/driver/threaded.zig`). The window
+depends only on time, not on what the output contains. Without input
+nothing changes.
+
+Same harness as section 4, ReleaseFast, X11, NVIDIA, `LATENCY_KEYS=1000`,
+all keys matched in every run. One session. The baseline is the same tree
+with `echo_budget` equal to the 256 KiB turn budget, which never shortens
+a turn. "Late" is key -> swapped at or over 7 ms, loaded.
+
+| `echo_budget` | Late keys | Loaded echoed -> published median / p95 | Loaded key -> swapped median | Quiet key -> swapped median | Loaded swap block median |
+|---|---|---|---|---|---|
+| 256 KiB (baseline) | 468 | 464 / 2,451 µs | 3,595 µs | 222 µs | 1,599 µs |
+| **16 KiB** | **194** | 162 / 237 µs | 3,372 µs | 220 µs | 1,602 µs |
+| 16 KiB, repeat | 194 | 163 / 237 µs | 3,335 µs | 218 µs | 1,578 µs |
+| 32 KiB | 267 | 318 / 458 µs | 3,385 µs | 218 µs | 1,611 µs |
+| 64 KiB | 455 | 480 / 819 µs | 3,505 µs | 220 µs | 1,586 µs |
+
+16 KiB is the shipped value: the only one under 250 late keys, and it
+repeated exactly. Most of the remaining late keys are published -> picked
+(p95 about 5.8 ms), an echo published just after the GUI latched.
+
+Throughput, 100 MiB per run, MiB/s, one pair per row:
+
+| Pair | 256 KiB plain | 16 KiB plain | 256 KiB escapes | 16 KiB escapes |
+|---|---|---|---|---|
+| 1 (16 KiB first) | 85.0-87.8 | 78.7-81.7 | 74.1-75.9 | 69.2-70.0 |
+| 2 (16 KiB first) | 87.4-88.1 | 84.3-85.9 | 74.3-76.8 | 73.6-74.3 |
+| 3 (256 KiB first) | 85.2-86.7 | 86.6-89.4 | 74.9-76.3 | 76.5-78.0 |
+
+Pair 3 ran with temporary counters (not committed). The throughput
+instance opened the window 0 times and ran no short turn over about 11,000
+drain turns and 609 MiB, so the code path is the baseline's plus one clock
+read per turn. The spread between pairs is run order and noise.
+
+Runs: `perf-results/runs/gui-20261110T161655` (baseline),
+`T161928` and `T162810` (16 KiB), `T162153` (32 KiB), `T162418` (64 KiB),
+all `_8663cd1-dirty_ReleaseFast`.
+
+## 8. Not measured yet
 
 - **Font-change time.**
 
