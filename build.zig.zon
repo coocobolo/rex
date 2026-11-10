@@ -11,14 +11,6 @@
             .url = "https://github.com/glfw/glfw/archive/refs/tags/3.5.1.tar.gz",
             .hash = "N-V-__8AAFAoSgCaIXvRyU85vZ0bKDcZLaUHWrojNKxEio2r",
         },
-        .google_sans_code = .{
-            .url = "https://github.com/googlefonts/googlesans-code/releases/download/v6.001/GoogleSansCode-v6.001.zip",
-            .hash = "N-V-__8AAKQFBAAygiImF_Af1QmJO47XyQYVPSL4RNbYBqiC",
-        },
-        .noto_sans = .{
-            .url = "https://github.com/notofonts/latin-greek-cyrillic/releases/download/NotoSans-v2.015/NotoSans-v2.015.zip",
-            .hash = "N-V-__8AAOn5wQzcaWp1RYXth9pMdDd_fKBd-UG2fd-j_G9Q",
-        },
     },
     .paths = .{
         "build.zig",

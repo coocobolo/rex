@@ -2,8 +2,8 @@
 //!
 //! Groups are separated by `--`. The first path of a group is the license,
 //! and every font after it must carry that same copyright. `zig build` runs
-//! this on the Google Sans Code and Noto Sans packages from `zig fetch`
-//! and on the test fonts in `testdata/font`.
+//! this on the built-in faces in `assets/fonts` and on the test fonts in
+//! `testdata/font`.
 
 const std = @import("std");
 

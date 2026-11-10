@@ -191,29 +191,22 @@ pub fn build(b: *std.Build) !void {
         .install_subdir = "hicolor",
     });
 
-    // Built-in faces land in `<prefix>/share/rex/fonts`, beside `bin/rex`.
-    // Google Sans Code and the Noto Sans italics are zig-fetched packages.
-    // The hash is the bytes. The check below requires each package's OFL.txt
-    // to name the same copyright as its fonts. Noto Color Emoji is
-    // the test fixture, installed from testdata so the tests and the prefix
-    // share one copy.
-    const sans = b.dependency("google_sans_code", .{});
-    const noto = b.dependency("noto_sans", .{});
-    const font_paths = b.addOptions();
-    font_paths.addOption([]const u8, "noto_sans_italic", noto.path("NotoSans/hinted/ttf/NotoSans-Italic.ttf").getPath(b));
-    font_paths.addOption([]const u8, "noto_sans_bold_italic", noto.path("NotoSans/hinted/ttf/NotoSans-BoldItalic.ttf").getPath(b));
-    mod.addImport("font_paths", font_paths.createModule());
+    // Built-in faces land in `<prefix>/share/rex/fonts`, beside `bin/rex`:
+    // Google Sans Code from `assets/fonts` (sources in its README) and Noto
+    // Color Emoji, the test fixture, from `testdata/font`, so the tests and
+    // the prefix share one copy. The check below requires each font's
+    // copyright to head its OFL file.
     const font_dir: std.Build.InstallDir = .{ .custom = "share/rex/fonts" };
     const installed = .{
-        .{ "variable/GoogleSansCode[wght].ttf", "GoogleSansCode[wght].ttf" },
-        .{ "variable/GoogleSansCode-Italic[wght].ttf", "GoogleSansCode-Italic[wght].ttf" },
-        .{ "OFL.txt", "OFL-GoogleSansCode.txt" },
+        "assets/fonts/GoogleSansCode[wght].ttf",
+        "assets/fonts/GoogleSansCode-Italic[wght].ttf",
+        "assets/fonts/OFL-GoogleSansCode.txt",
+        "testdata/font/NotoColorEmoji.ttf",
+        "testdata/font/OFL-NotoColorEmoji.txt",
     };
-    inline for (installed) |item| {
-        b.getInstallStep().dependOn(&b.addInstallFileWithDir(sans.path(item[0]), font_dir, item[1]).step);
+    inline for (installed) |path| {
+        b.getInstallStep().dependOn(&b.addInstallFileWithDir(b.path(path), font_dir, std.fs.path.basename(path)).step);
     }
-    b.getInstallStep().dependOn(&b.addInstallFileWithDir(b.path("testdata/font/NotoColorEmoji.ttf"), font_dir, "NotoColorEmoji.ttf").step);
-    b.getInstallStep().dependOn(&b.addInstallFileWithDir(b.path("testdata/font/OFL-NotoColorEmoji.txt"), font_dir, "OFL-NotoColorEmoji.txt").step);
 
     const check_font = b.addExecutable(.{
         .name = "check-font-license",
@@ -225,13 +218,13 @@ pub fn build(b: *std.Build) !void {
     });
     const check_run = b.addRunArtifact(check_font);
     check_run.addArg("--");
-    check_run.addFileArg(sans.path("OFL.txt"));
-    check_run.addFileArg(sans.path("variable/GoogleSansCode[wght].ttf"));
-    check_run.addFileArg(sans.path("variable/GoogleSansCode-Italic[wght].ttf"));
+    check_run.addFileArg(b.path("assets/fonts/OFL-GoogleSansCode.txt"));
+    check_run.addFileArg(b.path("assets/fonts/GoogleSansCode[wght].ttf"));
+    check_run.addFileArg(b.path("assets/fonts/GoogleSansCode-Italic[wght].ttf"));
     check_run.addArg("--");
-    check_run.addFileArg(noto.path("OFL.txt"));
-    check_run.addFileArg(noto.path("NotoSans/hinted/ttf/NotoSans-Italic.ttf"));
-    check_run.addFileArg(noto.path("NotoSans/hinted/ttf/NotoSans-BoldItalic.ttf"));
+    check_run.addFileArg(b.path("testdata/font/OFL-NotoSans.txt"));
+    check_run.addFileArg(b.path("testdata/font/NotoSans-Italic.ttf"));
+    check_run.addFileArg(b.path("testdata/font/NotoSans-BoldItalic.ttf"));
     check_run.addArg("--");
     check_run.addFileArg(b.path("testdata/font/OFL-NotoSansMono.txt"));
     check_run.addFileArg(b.path("testdata/font/NotoSansMono-Regular.ttf"));
