@@ -46,10 +46,10 @@ fn decorated(flags: term.cell.AttrFlags) Cell {
 
 test "decorationInstance: only decorated, visible cells produce a run" {
     const option: Decoration.Option = .{};
-    try testing.expectEqual(null, Frame.decorationInstance(&option, decorated(.{ .bold = true }), text, 255, 0, 0, 1));
-    try testing.expectEqual(null, Frame.decorationInstance(&option, decorated(.{ .underline = .single, .invisible = true }), text, 255, 0, 0, 1));
+    try testing.expectEqual(null, Frame.decorationInstance(&option, decorated(.{ .bold = true }), null, text, 255, 0, 0, 1));
+    try testing.expectEqual(null, Frame.decorationInstance(&option, decorated(.{ .underline = .single, .invisible = true }), null, text, 255, 0, 0, 1));
 
-    const run = Frame.decorationInstance(&option, decorated(.{ .underline = .curly, .strikethrough = true }), text, 255, 3, 2, 2).?;
+    const run = Frame.decorationInstance(&option, decorated(.{ .underline = .curly, .strikethrough = true }), null, text, 255, 3, 2, 2).?;
     try testing.expectEqual(3, run.col);
     try testing.expectEqual(2, run.row);
     try testing.expectEqual(2, run.span);
@@ -65,19 +65,19 @@ test "decorationInstance: dim and blink follow the option" {
     const cell = decorated(.{ .overline = true, .blink = true, .blink_rapid = true });
 
     const follow: Decoration.Option = .{};
-    const a = Frame.decorationInstance(&follow, cell, text, 128, 0, 0, 1).?;
+    const a = Frame.decorationInstance(&follow, cell, null, text, 128, 0, 0, 1).?;
     try testing.expectEqual(128, a.overline[3]);
     try testing.expect(a.flags.blink and a.flags.blink_rapid);
 
     const steady: Decoration.Option = .{ .dim = false, .blink = false };
-    const b = Frame.decorationInstance(&steady, cell, text, 128, 0, 0, 1).?;
+    const b = Frame.decorationInstance(&steady, cell, null, text, 128, 0, 0, 1).?;
     try testing.expectEqual(255, b.overline[3]);
     try testing.expect(!b.flags.blink and !b.flags.blink_rapid);
 }
 
 test "decorationInstance: per kind colors override the text color" {
     const option: Decoration.Option = .{ .color = .{ .underline = .{ 255, 0, 0 }, .overline = .{ 0, 0, 255 } } };
-    const run = Frame.decorationInstance(&option, decorated(.{ .underline = .single, .overline = true, .strikethrough = true }), text, 128, 0, 0, 1).?;
+    const run = Frame.decorationInstance(&option, decorated(.{ .underline = .single, .overline = true, .strikethrough = true }), null, text, 128, 0, 0, 1).?;
     try testing.expectEqual([4]u8{ 255, 0, 0, 128 }, run.underline);
     try testing.expectEqual([4]u8{ 10, 20, 30, 128 }, run.strikethrough);
     try testing.expectEqual([4]u8{ 0, 0, 255, 128 }, run.overline);
@@ -90,17 +90,17 @@ test "appendRun: merges adjacent matching cells, splits on any difference" {
     const single = decorated(.{ .underline = .single });
 
     // Columns 0, 1 and a wide cell at 2..3 merge into one run of 4.
-    Decoration.appendRun(&runs, Frame.decorationInstance(&option, single, text, 255, 0, 0, 1).?);
-    Decoration.appendRun(&runs, Frame.decorationInstance(&option, single, text, 255, 1, 0, 1).?);
-    Decoration.appendRun(&runs, Frame.decorationInstance(&option, single, text, 255, 2, 0, 2).?);
+    Decoration.appendRun(&runs, Frame.decorationInstance(&option, single, null, text, 255, 0, 0, 1).?);
+    Decoration.appendRun(&runs, Frame.decorationInstance(&option, single, null, text, 255, 1, 0, 1).?);
+    Decoration.appendRun(&runs, Frame.decorationInstance(&option, single, null, text, 255, 2, 0, 2).?);
     // A gap at column 4.
-    Decoration.appendRun(&runs, Frame.decorationInstance(&option, single, text, 255, 5, 0, 1).?);
+    Decoration.appendRun(&runs, Frame.decorationInstance(&option, single, null, text, 255, 5, 0, 1).?);
     // Another style.
-    Decoration.appendRun(&runs, Frame.decorationInstance(&option, decorated(.{ .underline = .double }), text, 255, 6, 0, 1).?);
+    Decoration.appendRun(&runs, Frame.decorationInstance(&option, decorated(.{ .underline = .double }), null, text, 255, 6, 0, 1).?);
     // Another color.
-    Decoration.appendRun(&runs, Frame.decorationInstance(&option, single, .{ 1, 1, 1 }, 255, 7, 0, 1).?);
+    Decoration.appendRun(&runs, Frame.decorationInstance(&option, single, null, .{ 1, 1, 1 }, 255, 7, 0, 1).?);
     // The next row, even though its column follows on.
-    Decoration.appendRun(&runs, Frame.decorationInstance(&option, single, .{ 1, 1, 1 }, 255, 8, 1, 1).?);
+    Decoration.appendRun(&runs, Frame.decorationInstance(&option, single, null, .{ 1, 1, 1 }, 255, 8, 1, 1).?);
 
     try testing.expectEqual(5, runs.items.len);
     const expected = [_][3]u16{ .{ 0, 0, 4 }, .{ 5, 0, 1 }, .{ 6, 0, 1 }, .{ 7, 0, 1 }, .{ 8, 1, 1 } };
@@ -123,7 +123,7 @@ test "build: SGR text produces merged decoration runs" {
     var runs: std.ArrayListUnmanaged(Decoration.Instance) = .initBuffer(&storage);
     for (row[0..6], 0..) |cell, col| {
         const colors = Frame.cellColors(&screen.palette, screen.styles.get(cell.style), cell, false);
-        if (Frame.decorationInstance(&option, cell, colors[0], 255, @intCast(col), 0, 1)) |run| {
+        if (Frame.decorationInstance(&option, cell, null, colors[0], 255, @intCast(col), 0, 1)) |run| {
             Decoration.appendRun(&runs, run);
         }
     }
@@ -162,10 +162,39 @@ test "decorationInstance: SGR 53 reaches the shader's overline bit on narrow, wi
     for (cases) |case| {
         const c = screen.row(case.row)[case.col];
         try testing.expectEqual(case.span, c.kind.columnSpan());
-        const run = Frame.decorationInstance(&option, c, text, 255, case.col, case.row, case.span).?;
+        const run = Frame.decorationInstance(&option, c, null, text, 255, case.col, case.row, case.span).?;
         try testing.expect(run.flags.overline);
         // decoration.frag reads the overline as bit 2 (FLAG_OVERLINE = 4u).
         try testing.expectEqual(4, @as(u8, @bitCast(run.flags)));
         try testing.expectEqual(case.span, run.span);
     }
+}
+
+test "decorationInstance: SGR 58 colors the underline before the configured color" {
+    const ink: [3]u8 = .{ 9, 9, 9 };
+    const cell: Cell = .{ .codepoint = 'a', .kind = .narrow, .flags = .{ .underline = .single, .strikethrough = true } };
+    var option: Decoration.Option = .{};
+
+    // Neither: the text color.
+    try testing.expectEqual([4]u8{ 9, 9, 9, 255 }, Frame.decorationInstance(&option, cell, null, ink, 255, 0, 0, 1).?.underline);
+    // The configured fixed color.
+    option.color.underline = .{ 1, 2, 3 };
+    try testing.expectEqual([4]u8{ 1, 2, 3, 255 }, Frame.decorationInstance(&option, cell, null, ink, 255, 0, 0, 1).?.underline);
+    // SGR 58 wins, and only for the underline.
+    const run = Frame.decorationInstance(&option, cell, .{ 200, 100, 50 }, ink, 255, 0, 0, 1).?;
+    try testing.expectEqual([4]u8{ 200, 100, 50, 255 }, run.underline);
+    try testing.expectEqual([4]u8{ 9, 9, 9, 255 }, run.strikethrough);
+}
+
+test "build: SGR 58 reaches the underline through the cell's style" {
+    var t = try Term.create(testing.allocator);
+    defer t.destroy(testing.allocator);
+
+    t.feed("\x1b[4;58:2::200:100:50mA\x1b[59mB");
+    const screen = t.active();
+    const row = screen.row(0);
+    const a = screen.styles.get(row[0].style);
+    const b = screen.styles.get(row[1].style);
+    try testing.expectEqual([3]u8{ 200, 100, 50 }, screen.palette.resolveKeyRgb(a.underline, .foreground));
+    try testing.expectEqual(term.Style.default_key, b.underline);
 }

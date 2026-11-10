@@ -58,10 +58,14 @@ pub fn alphaByte(alpha: f32) u8 {
 /// Returns the decoration run for one cell, or null when the cell has
 /// no visible decoration. `foreground` is the text color after reverse
 /// video and the selection override; `foreground_alpha` carries SGR 2.
-/// Invisible (SGR 8) cells hide their decorations with the text.
+/// `sgr_underline` is the cell's SGR 58 color, null when unset. The
+/// underline takes it first, then the configured fixed color, then the
+/// text color. Invisible (SGR 8) cells hide their decorations with the
+/// text.
 pub fn decorationInstance(
     option: *const Decoration.Option,
     cell: term.Cell,
+    sgr_underline: ?[3]u8,
     foreground: [3]u8,
     foreground_alpha: u8,
     col: u16,
@@ -78,7 +82,7 @@ pub fn decorationInstance(
         .col = col,
         .row = row,
         .span = span,
-        .underline = rgba(color.underline orelse foreground, alpha),
+        .underline = rgba(sgr_underline orelse color.underline orelse foreground, alpha),
         .strikethrough = rgba(color.strikethrough orelse foreground, alpha),
         .overline = rgba(color.overline orelse foreground, alpha),
         .flags = .{
@@ -564,7 +568,8 @@ pub fn Builder(comptime option: Option) type {
                     // Drop the do_reverse logic in build, with the overlay approach, text colors
                     // are unchanged and the semi-transparent highlight provides the visual selection.
                     // This is simpler and looks better than color inversion.
-                    var foreground, const background = cellColors(palette, frame.styleOf(c), c, reverse_video);
+                    const style = frame.styleOf(c);
+                    var foreground, const background = cellColors(palette, style, c, reverse_video);
 
                     // Invisible text (SGR 8): hide glyph by matching fg to bg
                     if (c.flags.invisible) foreground = background;
@@ -587,7 +592,11 @@ pub fn Builder(comptime option: Option) type {
                         .a = 255,
                     });
 
-                    if (decorationInstance(&self.decoration, c, foreground, foreground_alpha, col, row, span)) |run| {
+                    const sgr_underline: ?[3]u8 = if (style.underline == term.Style.default_key)
+                        null
+                    else
+                        palette.resolveKeyRgb(style.underline, .foreground);
+                    if (decorationInstance(&self.decoration, c, sgr_underline, foreground, foreground_alpha, col, row, span)) |run| {
                         Decoration.appendRun(&self.decoration_buffer, run);
                     }
 
