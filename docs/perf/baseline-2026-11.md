@@ -275,7 +275,65 @@ are.
 
 Run: `perf-results/runs/gui-20261110T011559_eba5d33-dirty_ReleaseFast`.
 
-## 5. Not measured yet
+## 5. Why the loaded 12 ms is two refreshes (#22, 2026-11-10)
+
+Same trace as the last table in section 4. 770 of 1,000 loaded keys were
+published within 1 ms of the callback, and 993 were first picked 4.5-7.5 ms
+after it (one 6.06 ms refresh). The pick then waited another refresh in
+`swapBuffers`. The mailbox drops stale frames, so this is not a queued
+frame inside the driver. The GUI loop polls events after `swapBuffers`, and
+the echo is published after that turn has already latched a frame. ADR
+0002 is the schedule for that, measured in section 6. No renderer change
+in that investigation.
+
+## 6. Late latch before vblank (#56, measured 2026-11-10)
+
+`App.run` now waits, on a turn that is already going to draw, until shortly
+before the next vblank, polling events while it waits, then builds and
+draws the newest frame. The vblank estimate is the previous blocking
+`swapBuffers` return plus one refresh, shifted by how long the next swap
+blocked. An idle turn still uses `waitForNextEvent`. `glfwSwapInterval(1)`
+is unchanged. The worker and the mailbox are unchanged.
+
+Same harness as section 4, ReleaseFast, X11, NVIDIA, `LATENCY_KEYS=1000`,
+from `feat/22-frame-pacing`. All 1,000 keys matched in both scenarios.
+Times in microseconds. The section 4 run this is compared with is
+`gui-20261110T011559_eba5d33-dirty_ReleaseFast` (loaded key -> swapped
+median 12,058).
+
+| Step | Quiet median | Quiet p99 | Loaded median | Loaded p99 |
+|---|---|---|---|---|
+| key -> queued | 1.3 | 3.0 | 971 | 2,665 |
+| queued -> written to the pty | 11.8 | 28.4 | 7.6 | 27.5 |
+| published -> picked by the GUI | 12.9 | 18.6 | 2,346 | 6,169 |
+| picked -> frame built | 92.8 | 130.9 | 208 | 224 |
+| frame built -> drawn | 46.5 | 94.3 | 84.0 | 109 |
+| drawn -> `swapBuffers` returned | 33.0 | 68.5 | 1,603 | 2,236 |
+| **key -> swapped** | **220.7** | **348.7** | **6,048** | **9,869** |
+
+Loaded key -> swapped median is 6.05 ms, one 165 Hz refresh (6.06 ms).
+512 keys were under 7 ms, 483 were between 7 and 10 ms, and 5 were at or
+over 10 ms (max 12.1 ms). The late group is a key that arrived after the
+frame was latched: it waits for the next refresh, whose swap blocks about
+1.6 ms instead of a whole frame. `swapBuffers` blocked for 1.0-2.0 ms on
+925 of 1,000 loaded keys (median 1.6 ms). Four keys saw a swap return in
+under 0.4 ms, which is a draw that landed after the vblank; the latch
+drops that deadline and the next frame blocks, so the present slips one
+refresh. One loaded swap blocked 5.7 ms, a full refresh.
+
+Quiet key -> swapped stays at 221 µs median (p99 349 µs). The deadline is
+armed only when a frame is already due, so an idle key does not sleep
+toward the next vblank.
+
+Under load, key -> queued is 971 µs median. About half the keys are still
+near 1 µs; the other half wait for the character callback on a later poll
+during the pre-vblank sleep (p95 2.4 ms). That wait is inside the
+one-refresh budget. Queued -> written stays at 7.6 µs. Blink toggled on 14
+loaded keys and the title updated on 5. No build or draw exceeded 500 µs.
+
+Run: `perf-results/runs/gui-20261110T021543_032a06a-dirty_ReleaseFast`.
+
+## 7. Not measured yet
 
 - **Font-change time.**
 
