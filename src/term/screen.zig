@@ -55,26 +55,14 @@ pub const Mode = packed struct {
     _pad: u7 = 0, // 11 bits used; pad to 16 bits
 };
 
-/// Sets `n` cells at `dest` to `Cell{}`, the blank with default colors,
-/// by writing zero bytes (see the assert below).
-///
-/// On x86-64 this is `rep stosb`, because `@memset` lowers to a call to
-/// Zig 0.16.0's `compiler_rt.memset`, a byte-at-a-time loop that the
-/// linker picks over the libc one (#78). Measured on a Ryzen 3 3300X
-/// (ReleaseFast, `zig build bench-term -- --filter zero_row`, p50) for a
-/// 220-cell row: 401 ns with `@memset`, 26 ns with `rep stosb`. Other
-/// architectures use `@memset` until #78 is fixed.
-pub noinline fn zeroRow(dest: [*]Cell, n: usize) void {
-    if (comptime builtin.cpu.arch == .x86_64) {
-        asm volatile ("rep stosb"
-            :
-            : [_dst] "{rdi}" (@as([*]u8, @ptrCast(dest))),
-              [_ax] "{rax}" (@as(u64, 0)),
-              [_n] "{rcx}" (n * @sizeOf(Cell)),
-            : .{ .memory = true, .rdi = true, .rcx = true });
-    } else {
-        @memset(dest[0..n], Cell{});
-    }
+/// Sets `n` cells at `dest` to `Cell{}`, the blank with default colors.
+/// `Cell{}` is all zero bits (see the assert below), so this is a byte
+/// fill, which lowers to a `memset` call: in Rex's executables that is
+/// `src/memset.zig` (#78), about 16 ns for a 220-cell row on a Ryzen 3
+/// 3300X, against 67 ns for a fill with a `Cell` value the compiler can't
+/// see is zero.
+pub fn zeroRow(dest: [*]Cell, n: usize) void {
+    @memset(dest[0..n], Cell{});
 }
 
 comptime {
