@@ -208,6 +208,8 @@ blink_rapid: PeriodicTimer,
 
 // Frame timing, focus and size tracking
 last_frame: std.Io.Clock.Timestamp,
+/// Draws a due frame just before vblank. Idle turns leave it unused.
+frame_latch: FrameLatch = .{},
 window_focused: bool = true,
 /// The last wellbeing sync error, so a failure that repeats every second is
 /// reported once and its end is reported too; null while syncs succeed.
@@ -241,6 +243,117 @@ const PeriodicTimer = struct {
         return self.period_ms - self.elapsed_ms;
     }
 };
+
+/// Picks the moment to draw so `swapBuffers` blocks for about `margin_ns`
+/// instead of a whole refresh. `next_vblank_ns == 0` means the next vblank
+/// is not known: startup, an idle gap, or a swap that did not wait.
+const FrameLatch = struct {
+    /// Nanoseconds between refreshes. Starts at 165 Hz and follows the gap
+    /// between swaps that actually waited.
+    period_ns: u64 = 1_000_000_000 / 165,
+    /// How long the swap should still block after the draw is submitted.
+    margin_ns: u64 = 1_500_000,
+    /// Recent build and draw time, kept so the wait ends early enough to
+    /// finish the frame inside the margin.
+    render_ns: u64 = 300_000,
+    /// Awake-clock time of the next vblank, or 0 when it is not known.
+    next_vblank_ns: u64 = 0,
+    /// Last swap return that waited for a vblank, or 0.
+    last_vblank_ns: u64 = 0,
+    /// Added to the vblank estimated from the last blocking swap. Positive
+    /// draws later. A swap that returns without waiting drives this down,
+    /// and the next frame is drawn at once so its block can reanchor.
+    shift_ns: i64 = 0,
+    /// This draw was aimed at `next_vblank_ns`. Cleared once the swap is
+    /// observed, including when the frame had nothing dirty to swap.
+    used_prediction: bool = false,
+
+    fn leadNs(self: *const FrameLatch) u64 {
+        return self.margin_ns +| self.render_ns;
+    }
+
+    /// The stored vblank is still the upcoming refresh. Two periods covers
+    /// a late aim. A longer gap is an idle stretch, and sleeping toward it
+    /// would delay a key.
+    fn pending(self: *const FrameLatch, now_ns: u64) bool {
+        const vb = self.next_vblank_ns;
+        if (vb == 0 or now_ns >= vb) return false;
+        return vb - now_ns <= self.period_ns *| 2;
+    }
+
+    /// Nanoseconds to sleep before drawing. Zero means draw now: the vblank
+    /// is unknown, already inside the lead, or left over from an idle gap.
+    fn sleepNs(self: *const FrameLatch, now_ns: u64) u64 {
+        if (!self.pending(now_ns)) return 0;
+        const until_vb = self.next_vblank_ns - now_ns;
+        const lead = self.leadNs();
+        if (until_vb <= lead) return 0;
+        return until_vb - lead;
+    }
+
+    /// `render_ns` is the build and draw that just finished, before the swap.
+    /// A swap that returns without waiting is not a vblank sample.
+    fn observe(self: *FrameLatch, swap_enter_ns: u64, swap_return_ns: u64, render_ns: u64) void {
+        const predicted = self.used_prediction;
+        self.used_prediction = false;
+        if (swap_return_ns < swap_enter_ns) return;
+        const block = swap_return_ns - swap_enter_ns;
+
+        if (render_ns > 0 and render_ns < 20_000_000) {
+            self.render_ns = (self.render_ns *| 3 +| render_ns) / 4;
+            if (self.render_ns < 200_000) self.render_ns = 200_000;
+        }
+
+        // A real wait is longer than a scheduling hiccup and shorter than
+        // two refreshes. Anything else is an idle swap or a missed vblank.
+        const trusted = block >= 400_000 and block <= self.period_ns +| 2_000_000;
+        if (!trusted) {
+            // Aim was past the vblank. Drop it and draw the next frame
+            // immediately: that swap blocks for a refresh and reanchors.
+            // Shifting earlier keeps the following aim on the safe side.
+            if (predicted and block < 400_000) self.bump(-500_000);
+            self.next_vblank_ns = 0;
+            return;
+        }
+
+        if (self.last_vblank_ns != 0 and swap_return_ns > self.last_vblank_ns) {
+            const gap = swap_return_ns - self.last_vblank_ns;
+            if (gap >= 4_000_000 and gap <= 20_000_000) {
+                self.period_ns = (self.period_ns *| 7 +| gap) / 8;
+            }
+        }
+        self.last_vblank_ns = swap_return_ns;
+
+        if (predicted and block > self.margin_ns +| 300_000) {
+            const extra = block - self.margin_ns;
+            self.bump(@intCast(@min(extra / 2, 200_000)));
+        } else if (predicted and self.margin_ns > block +| 300_000) {
+            const deficit = self.margin_ns - block;
+            self.bump(-@as(i64, @intCast(@min(deficit / 2, 200_000))));
+        }
+        self.arm(swap_return_ns);
+    }
+
+    /// Moves `shift_ns` and keeps it inside three milliseconds. A larger
+    /// step walks the aim past the vblank; the swap then stops blocking.
+    fn bump(self: *FrameLatch, delta_ns: i64) void {
+        const sum = self.shift_ns +| delta_ns;
+        self.shift_ns = std.math.clamp(sum, -3_000_000, 3_000_000);
+    }
+
+    fn arm(self: *FrameLatch, swap_return_ns: u64) void {
+        const base = swap_return_ns +| self.period_ns;
+        if (self.shift_ns >= 0) {
+            self.next_vblank_ns = base +| @as(u64, @intCast(self.shift_ns));
+        } else {
+            self.next_vblank_ns = base -| @as(u64, @intCast(-self.shift_ns));
+        }
+    }
+};
+
+fn awakeNs(io: std.Io) u64 {
+    return @intCast(std.Io.Clock.Timestamp.now(io, .awake).raw.toNanoseconds());
+}
 
 pub fn init(
     gpa: std.mem.Allocator,
@@ -676,6 +789,9 @@ pub fn run(self: *App) !void {
         }
 
         if (had_data or blink_changed or self.needs_redraw or self.driver.hasNewFrame()) {
+            // Events keep flowing while this sleeps, so a key is queued and
+            // its echo can be published before the draw latches the frame.
+            self.waitUntilFrame();
             if (latency_trace.enabled) self.latency.?.setCause(blink_changed, title_updated);
             if (try self.renderFrame()) self.needs_redraw = false;
         }
@@ -698,6 +814,7 @@ fn latencyQueued(self: *App, seq: u32) void {
 }
 
 fn renderFrame(self: *App) !bool {
+    const render_enter = awakeNs(self.io);
     const atlas = &self.atlas;
     const current_frame = self.driver.getFrame();
     if (latency_trace.enabled) {
@@ -835,7 +952,10 @@ fn renderFrame(self: *App) !bool {
         frame.dirty.overlay = true;
     }
 
-    if (!frame.dirty.any()) return false;
+    if (!frame.dirty.any()) {
+        self.frame_latch.used_prediction = false;
+        return false;
+    }
 
     if (latency_trace.enabled) self.latency.?.frameBuilt(latency_trace.now(self.io));
 
@@ -851,11 +971,30 @@ fn renderFrame(self: *App) !bool {
     );
 
     const swapped_seq = if (latency_trace.enabled) self.latency.?.frameDrawn(latency_trace.now(self.io)) else {};
+    const swap_enter = awakeNs(self.io);
     self.window.swapBuffers();
+    const swap_return = awakeNs(self.io);
+    self.frame_latch.observe(swap_enter, swap_return, swap_enter -| render_enter);
     if (latency_trace.enabled and swapped_seq != 0) {
         self.latency.?.stamp(swapped_seq, .swapped, latency_trace.now(self.io));
     }
     return true;
+}
+
+/// Sleeps until this frame's draw should start. The long gap is one sleep:
+/// `glfwWaitEventsTimeout` returns on the worker's empty event and was
+/// ending the wait early. The last 1.5 ms is polled in short slices so a
+/// key and its character are delivered while the echo can still publish.
+fn waitUntilFrame(self: *App) void {
+    self.frame_latch.used_prediction = self.frame_latch.pending(awakeNs(self.io));
+    Window.glfwPollEvents();
+    while (true) {
+        const sleep = self.frame_latch.sleepNs(awakeNs(self.io));
+        if (sleep == 0) break;
+        const slice: i96 = @intCast(if (sleep > 1_500_000) sleep - 1_500_000 else @min(sleep, 250_000));
+        std.Io.sleep(self.io, .fromNanoseconds(slice), .awake) catch {};
+        Window.glfwPollEvents();
+    }
 }
 
 /// Polls when pty data arrived or a new frame is ready, else sleeps until the next blink or
@@ -2591,6 +2730,86 @@ const windowCloseCb: c.GLFWwindowclosefun = struct {
         app.requestQuit();
     }
 }.cb;
+
+test "FrameLatch: no known vblank draws immediately" {
+    const latch: FrameLatch = .{};
+    try std.testing.expectEqual(@as(u64, 0), latch.sleepNs(1_000_000));
+    try std.testing.expectEqual(false, latch.pending(1_000_000));
+}
+
+test "FrameLatch: a vblank left over from an idle gap draws immediately" {
+    const latch: FrameLatch = .{
+        .period_ns = 6_000_000,
+        .next_vblank_ns = 20_000_000,
+    };
+    try std.testing.expectEqual(false, latch.pending(1_000_000));
+    try std.testing.expectEqual(@as(u64, 0), latch.sleepNs(1_000_000));
+}
+
+test "FrameLatch: a vblank inside two refreshes sleeps" {
+    const latch: FrameLatch = .{
+        .period_ns = 6_000_000,
+        .margin_ns = 1_500_000,
+        .render_ns = 500_000,
+        .next_vblank_ns = 9_000_000,
+    };
+    // 8 ms ahead is more than one period and less than two.
+    try std.testing.expectEqual(true, latch.pending(1_000_000));
+    try std.testing.expectEqual(@as(u64, 6_000_000), latch.sleepNs(1_000_000));
+}
+
+test "FrameLatch: sleep leaves the margin and the last render before vblank" {
+    const latch: FrameLatch = .{
+        .period_ns = 6_000_000,
+        .margin_ns = 1_500_000,
+        .render_ns = 1_000_000,
+        .next_vblank_ns = 8_000_000,
+    };
+    try std.testing.expectEqual(true, latch.pending(3_000_000));
+    try std.testing.expectEqual(@as(u64, 2_500_000), latch.sleepNs(3_000_000));
+    try std.testing.expectEqual(@as(u64, 0), latch.sleepNs(6_000_000));
+}
+
+test "FrameLatch: a swap that waited anchors the next vblank" {
+    var latch: FrameLatch = .{ .period_ns = 6_000_000 };
+    latch.observe(1_000_000, 7_000_000, 300_000);
+    try std.testing.expectEqual(@as(u64, 13_000_000), latch.next_vblank_ns);
+    try std.testing.expectEqual(false, latch.used_prediction);
+}
+
+test "FrameLatch: a swap that did not wait forgets the vblank" {
+    var latch: FrameLatch = .{
+        .period_ns = 6_000_000,
+        .next_vblank_ns = 10_000_000,
+        .used_prediction = true,
+    };
+    latch.observe(10_000_000, 10_040_000, 300_000);
+    try std.testing.expectEqual(@as(u64, 0), latch.next_vblank_ns);
+    try std.testing.expectEqual(@as(i64, -500_000), latch.shift_ns);
+    try std.testing.expectEqual(false, latch.used_prediction);
+    // The following block reanchors, and the missed aim draws earlier.
+    latch.observe(10_100_000, 16_100_000, 300_000);
+    try std.testing.expectEqual(@as(u64, 21_600_000), latch.next_vblank_ns);
+}
+
+test "FrameLatch: a long block after a prediction draws later next time" {
+    var latch: FrameLatch = .{
+        .period_ns = 6_000_000,
+        .margin_ns = 1_500_000,
+        .last_vblank_ns = 1_000_000,
+        .used_prediction = true,
+    };
+    // Block is 5 ms, 3.5 ms past the margin. One step is capped at 0.2 ms.
+    latch.observe(2_000_000, 7_000_000, 300_000);
+    try std.testing.expectEqual(@as(i64, 200_000), latch.shift_ns);
+    try std.testing.expectEqual(@as(u64, 13_200_000), latch.next_vblank_ns);
+}
+
+test "FrameLatch: the refresh period follows the gap between vblanks" {
+    var latch: FrameLatch = .{ .period_ns = 6_000_000, .last_vblank_ns = 1_000_000 };
+    latch.observe(2_000_000, 7_060_606, 300_000);
+    try std.testing.expectEqual((6_000_000 * 7 + 6_060_606) / 8, latch.period_ns);
+}
 
 test "PeriodicTimer: counts whole periods and keeps the remainder" {
     var timer: PeriodicTimer = .{ .period_ms = 500 };
