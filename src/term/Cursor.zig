@@ -3,6 +3,8 @@
 const std = @import("std");
 
 const Attr = @import("cell.zig").Attr;
+const AttrFlags = @import("cell.zig").AttrFlags;
+const Colors = @import("Style.zig");
 const CharsetState = @import("charset.zig").CharsetState;
 
 pub const Cursor = @This();
@@ -78,7 +80,7 @@ pub fn position(self: *const Cursor) struct { u16, u16 } {
 }
 
 comptime {
-    std.debug.assert(20 == @sizeOf(Cursor));
+    std.debug.assert(32 == @sizeOf(Cursor));
 }
 
 /// Saved cursor state for DECSC (`ESC 7`) and SCOSC (`CSI s`).
@@ -86,14 +88,17 @@ pub const Saved = struct {
     row: u16 = 0,
     col: u16 = 0,
     origin: bool = false,
-    attr: Attr = .{},
+    /// The pen's attributes and colors. Not its style IDs: they may be
+    /// stale by DECRC, which interns the colors again.
+    flags: AttrFlags = .{},
+    colors: Colors = .default,
     style: Style = .steady_block,
     charset: CharsetState = .{},
     charset_is_identity: bool = true,
 };
 
 comptime {
-    std.debug.assert(20 == @sizeOf(Saved));
+    std.debug.assert(28 == @sizeOf(Saved));
 }
 
 test "Cursor: position and style shape" {
@@ -101,7 +106,7 @@ test "Cursor: position and style shape" {
     const pos = c.position();
     try std.testing.expectEqual(5, pos[0]);
     try std.testing.expectEqual(12, pos[1]);
-    try std.testing.expectEqual(20, @sizeOf(Cursor));
+    try std.testing.expectEqual(32, @sizeOf(Cursor));
 
     try std.testing.expectEqual(Cursor.Style.Shape.block, Cursor.Style.blinking_block.shape());
     try std.testing.expectEqual(Cursor.Style.Blink.on, Cursor.Style.blinking_block.blink());
@@ -113,5 +118,5 @@ test "Cursor: position and style shape" {
     try std.testing.expectEqual(0, saved.row);
     try std.testing.expectEqual(0, saved.col);
     try std.testing.expectEqual(Cursor.Style.steady_block, saved.style);
-    try std.testing.expectEqual(20, @sizeOf(Saved));
+    try std.testing.expectEqual(28, @sizeOf(Saved));
 }

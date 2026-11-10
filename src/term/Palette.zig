@@ -172,7 +172,17 @@ fn internDynamic(self: *Palette, key: u32) u8 {
 }
 
 pub fn resolve(self: *const Palette, index: u8, comptime target: GroundTarget) u32 {
-    const key = self.entries[index];
+    return self.resolveKey(self.entries[index], target);
+}
+
+pub fn resolveRgb(self: *const Palette, index: u8, comptime target: GroundTarget) [3]u8 {
+    return self.resolveKeyRgb(self.entries[index], target);
+}
+
+/// Resolves an encoded color (`Style.Key`, the same encoding as
+/// `entries`) to RGBA packed as 0xRRGGBBAA. `.default` resolves to the
+/// default for `target`, indexed colors through `indexed`.
+pub fn resolveKey(self: *const Palette, key: u32, comptime target: GroundTarget) u32 {
     return switch (key >> 24) {
         0x00 => blk: {
             const c = self.get(target);
@@ -184,8 +194,8 @@ pub fn resolve(self: *const Palette, index: u8, comptime target: GroundTarget) u
     };
 }
 
-pub fn resolveRgb(self: *const Palette, index: u8, comptime target: GroundTarget) [3]u8 {
-    const key = self.entries[index];
+/// `resolveKey` as an RGB triple.
+pub fn resolveKeyRgb(self: *const Palette, key: u32, comptime target: GroundTarget) [3]u8 {
     return switch (key >> 24) {
         0x00 => blk: {
             const c = self.get(target);

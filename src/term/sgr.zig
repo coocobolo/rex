@@ -17,12 +17,14 @@ const Option = @import("term.zig").Option;
 const Terminal = @import("term.zig").Terminal;
 const Attr = @import("cell.zig").Attr;
 const Color = @import("cell.zig").Color;
-const Palette = @import("Palette.zig").Palette;
+const Style = @import("Style.zig");
 
 const ColorTarget = enum { fg, bg, underline };
 
-/// Apply a CSI SGR sequence to `attr`.
+/// Apply a CSI SGR sequence to the active screen's pen.
 /// `CSI m` (no params) and `CSI 0 m` both reset all attributes.
+/// Colors change in `attr.colors` code by code; the pen is interned once at
+/// the end, and only when its colors changed (ADR 0005).
 pub fn parse(comptime option: Option, term: *Terminal(option), params: []const Parameter) void {
     const n: usize = @intCast(params.len);
     const attr = &term.active().cursor.attr;
@@ -33,7 +35,7 @@ pub fn parse(comptime option: Option, term: *Terminal(option), params: []const P
         return;
     }
 
-    const palette = &term.active().palette;
+    const before = attr.*;
 
     var i: usize = 0;
     while (i < n) : (i += 1) {
@@ -90,24 +92,24 @@ pub fn parse(comptime option: Option, term: *Terminal(option), params: []const P
             55 => attr.flags.overline = false,
 
             // Foreground colours
-            30...37 => attr.fg = palette.intern(.{ .indexed = @intCast(code - 30) }),
-            38 => i = parseExtColor(palette, attr, params, i, n, .fg),
-            39 => attr.fg = Palette.default_base,
+            30...37 => attr.colors.fg = Style.encode(.{ .indexed = @intCast(code - 30) }),
+            38 => i = parseExtColor(attr, params, i, n, .fg),
+            39 => attr.colors.fg = Style.default_key,
 
             // Background colours
-            40...47 => attr.bg = palette.intern(.{ .indexed = @intCast(code - 40) }),
-            48 => i = parseExtColor(palette, attr, params, i, n, .bg),
-            49 => attr.bg = Palette.default_base,
+            40...47 => attr.colors.bg = Style.encode(.{ .indexed = @intCast(code - 40) }),
+            48 => i = parseExtColor(attr, params, i, n, .bg),
+            49 => attr.colors.bg = Style.default_key,
 
             // Bright foreground (high-intensity, non-bold)
-            90...97 => attr.fg = palette.intern(.{ .indexed = @intCast(code - 90 + 8) }),
+            90...97 => attr.colors.fg = Style.encode(.{ .indexed = @intCast(code - 90 + 8) }),
 
             // Bright background
-            100...107 => attr.bg = palette.intern(.{ .indexed = @intCast(code - 100 + 8) }),
+            100...107 => attr.colors.bg = Style.encode(.{ .indexed = @intCast(code - 100 + 8) }),
 
             // Underline colour (kitty and VTE extension, widely supported)
-            58 => i = parseExtColor(palette, attr, params, i, n, .underline),
-            59 => attr.underline_color = .default,
+            58 => i = parseExtColor(attr, params, i, n, .underline),
+            59 => attr.colors.underline = Style.default_key,
 
             else => {}, // unknown; silently ignore
         }
@@ -115,6 +117,15 @@ pub fn parse(comptime option: Option, term: *Terminal(option), params: []const P
         // Skip sub-parameters the code did not consume, such as a stray
         // `:0` after an unknown code, so they are not read as codes.
         while (i + 1 < n and params[i + 1].separator == .sub_parameter) i += 1;
+    }
+
+    // Same colors as before (also after `0` then the same colors again):
+    // the cached IDs still match, though `0` cleared them.
+    if (attr.colors.eql(before.colors)) {
+        attr.id = before.id;
+        attr.blank_id = before.blank_id;
+    } else {
+        term.active().internPen();
     }
 }
 
@@ -130,7 +141,6 @@ pub fn parse(comptime option: Option, term: *Terminal(option), params: []const P
 /// produce the same `values[]` layout, only the separators differ, and
 /// we don't need to distinguish them here.
 fn parseExtColor(
-    palette: *Palette,
     attr: *Attr,
     params: []const Parameter,
     index: usize,
@@ -142,12 +152,11 @@ fn parseExtColor(
 
     const kind = params[index + 1].value;
     const set = struct {
-        fn set(p: *Palette, a: *Attr, t: ColorTarget, color: Color) void {
+        fn set(a: *Attr, t: ColorTarget, color: Color) void {
             switch (t) {
-                .fg => a.fg = p.intern(color),
-                .bg => a.bg = p.intern(color),
-                // Kept as a Color, not a palette slot: see Attr.underline_color.
-                .underline => a.underline_color = color,
+                .fg => a.colors.fg = Style.encode(color),
+                .bg => a.colors.bg = Style.encode(color),
+                .underline => a.colors.underline = Style.encode(color),
             }
         }
     }.set;
@@ -165,7 +174,7 @@ fn parseExtColor(
                 const r: u8 = @truncate(params[index + 3].value);
                 const g: u8 = @truncate(params[index + 4].value);
                 const b: u8 = @truncate(params[index + 5].value);
-                set(palette, attr, target, .{ .rgb = .{ .r = r, .g = g, .b = b } });
+                set(attr, target, .{ .rgb = .{ .r = r, .g = g, .b = b } });
                 return index + 5;
             } else {
                 // 38:2:r:g:b or 38;2;r;g;b
@@ -173,7 +182,7 @@ fn parseExtColor(
                 const r: u8 = @truncate(params[index + 2].value);
                 const g: u8 = @truncate(params[index + 3].value);
                 const b: u8 = @truncate(params[index + 4].value);
-                set(palette, attr, target, .{ .rgb = .{ .r = r, .g = g, .b = b } });
+                set(attr, target, .{ .rgb = .{ .r = r, .g = g, .b = b } });
                 return index + 4;
             }
         },
@@ -181,7 +190,7 @@ fn parseExtColor(
             // 256-colour: kind + n = 2 extra values
             if (index + 2 >= count) return index + 1; // malformed; skip kind only
             const n: u8 = @intCast(@min(params[index + 2].value, 255));
-            set(palette, attr, target, .{ .indexed = n });
+            set(attr, target, .{ .indexed = n });
             return index + 2; // last consumed index
         },
         else => return index + 1, // unknown kind; skip kind only

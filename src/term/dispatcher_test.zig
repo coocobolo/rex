@@ -1,4 +1,5 @@
 const std = @import("std");
+const Style = @import("Style.zig");
 const testing = std.testing;
 
 const Terminal = @import("term.zig").Terminal;
@@ -384,7 +385,7 @@ test "escape: ESC 7 saves cursor SGR attributes" {
     t.active().cursor.attr.flags.bold = true;
 
     t.feed("\x1b7"); // DECSC
-    try testing.expect(t.active().saved_cursor.attr.flags.bold);
+    try testing.expect(t.active().saved_cursor.flags.bold);
 }
 
 test "escape: ESC 8 restore cursor SGR attributes" {
@@ -1318,8 +1319,8 @@ test "csi: DECSTR cursor attr fg/bg reset to palette default_idx" {
     t.feed("\x1b[38;5;196m"); // fg = indexed 196
     t.feed("\x1b[48;5;22m"); // bg = indexed 22
     t.feed("\x1b[!p");
-    try testing.expectEqual(Palette.default_base, t.active().cursor.attr.fg);
-    try testing.expectEqual(Palette.default_base, t.active().cursor.attr.bg);
+    try testing.expectEqual(Style.default_key, t.active().cursor.attr.colors.fg);
+    try testing.expectEqual(Style.default_key, t.active().cursor.attr.colors.bg);
 }
 
 test "csi: DECSTR origin mode cleared" {
@@ -1508,7 +1509,7 @@ test "csi: ED uses current background color for blank cells" {
 
     // Set a non-default background color.
     t.feed("\x1b[41m"); // SGR 41 = red background (indexed 1)
-    const bg = t.active().cursor.attr.bg; // palette index for red
+    const bg = t.active().cursor.attr.blank_id;
 
     t.active().cursor.row = 0;
     t.active().cursor.col = 0;
@@ -1516,7 +1517,7 @@ test "csi: ED uses current background color for blank cells" {
 
     // All cells should have the current background color.
     for (t.active().row(0)[0..t.active().active_cols]) |c| {
-        try testing.expectEqual(bg, c.background);
+        try testing.expectEqual(bg, c.style);
         try testing.expectEqual(@as(u32, 0), c.codepoint);
     }
 }
@@ -1596,14 +1597,14 @@ test "csi: EL uses current background color for blank cells" {
     defer t.destroy(alloc);
 
     t.feed("\x1b[42m"); // SGR 42 = green background
-    const bg = t.active().cursor.attr.bg;
+    const bg = t.active().cursor.attr.blank_id;
 
     t.active().cursor.row = 0;
     t.active().cursor.col = 0;
     t.feed("\x1b[2K");
 
     for (t.active().row(0)[0..t.active().active_cols]) |c| {
-        try testing.expectEqual(bg, c.background);
+        try testing.expectEqual(bg, c.style);
     }
 }
 
@@ -1709,14 +1710,14 @@ test "csi: ECH uses current background color" {
     defer t.destroy(alloc);
 
     t.feed("\x1b[43m"); // SGR 43 = yellow background
-    const bg = t.active().cursor.attr.bg;
+    const bg = t.active().cursor.attr.blank_id;
 
     t.active().cursor.row = 0;
     t.active().cursor.col = 0;
     t.feed("\x1b[3X"); // erase 3 chars
 
     for (t.active().row(0)[0..3]) |c| {
-        try testing.expectEqual(bg, c.background);
+        try testing.expectEqual(bg, c.style);
         try testing.expectEqual(@as(u32, 0), c.codepoint);
     }
 }
@@ -1816,7 +1817,7 @@ test "csi: ICH blank cells use current background color" {
     defer t.destroy(alloc);
 
     t.feed("\x1b[41m"); // SGR 41 = bg indexed 1
-    const bg_idx = t.active().cursor.attr.bg;
+    const bg_idx = t.active().cursor.attr.blank_id;
 
     t.active().cursor.col = 0;
     t.feed("\x1b[2@"); // ICH 2
@@ -1824,8 +1825,8 @@ test "csi: ICH blank cells use current background color" {
     const r = t.active().row(0);
     try testing.expectEqual(@as(u32, 0), r[0].codepoint);
     try testing.expectEqual(@as(u32, 0), r[1].codepoint);
-    try testing.expectEqual(bg_idx, r[0].background);
-    try testing.expectEqual(bg_idx, r[1].background);
+    try testing.expectEqual(bg_idx, r[0].style);
+    try testing.expectEqual(bg_idx, r[1].style);
 }
 
 test "csi: ICH at last column replaces cell with blank" {
@@ -1911,7 +1912,7 @@ test "csi: DCH vacated cells use current background color" {
     defer t.destroy(alloc);
 
     t.feed("\x1b[41m"); // SGR 41 = bg indexed 1
-    const bg_idx = t.active().cursor.attr.bg;
+    const bg_idx = t.active().cursor.attr.blank_id;
 
     {
         const row = t.active().rowMut(0);
@@ -1927,8 +1928,8 @@ test "csi: DCH vacated cells use current background color" {
     const r = t.active().row(0);
     try testing.expectEqual(@as(u32, 0), r[cols - 2].codepoint);
     try testing.expectEqual(@as(u32, 0), r[cols - 1].codepoint);
-    try testing.expectEqual(bg_idx, r[cols - 2].background);
-    try testing.expectEqual(bg_idx, r[cols - 1].background);
+    try testing.expectEqual(bg_idx, r[cols - 2].style);
+    try testing.expectEqual(bg_idx, r[cols - 1].style);
 }
 
 test "csi: IL inserts blank line and shifts rows down" {
@@ -2157,7 +2158,7 @@ test "csi: DL blank lines use current background color" {
     defer t.destroy(alloc);
 
     t.feed("\x1b[41m"); // SGR 41 = bg indexed 1
-    const bg_idx = t.active().cursor.attr.bg;
+    const bg_idx = t.active().cursor.attr.blank_id;
 
     t.active().scroll_top = 0;
     t.active().scroll_bottom = 4;
@@ -2170,7 +2171,7 @@ test "csi: DL blank lines use current background color" {
     t.feed("\x1b[M"); // DL 1
 
     // New blank line at bottom of region carries current bg.
-    try testing.expectEqual(bg_idx, t.active().row(4)[0].background);
+    try testing.expectEqual(bg_idx, t.active().row(4)[0].style);
     try testing.expectEqual(@as(u32, 0), t.active().row(4)[0].codepoint);
 }
 
@@ -2310,7 +2311,7 @@ test "csi: SU blank lines use current background color" {
     defer t.destroy(alloc);
 
     t.feed("\x1b[41m"); // SGR 41 = bg indexed 1
-    const bg_idx = t.active().cursor.attr.bg;
+    const bg_idx = t.active().cursor.attr.blank_id;
 
     // Constrain scroll region to rows 0-4
     t.active().scroll_top = 0;
@@ -2323,7 +2324,7 @@ test "csi: SU blank lines use current background color" {
     t.feed("\x1b[S"); // SU 1
 
     // New blank line at bottom of scroll region (row 4) carries current bg.
-    try testing.expectEqual(bg_idx, t.active().row(4)[0].background);
+    try testing.expectEqual(bg_idx, t.active().row(4)[0].style);
     try testing.expectEqual(@as(u32, 0), t.active().row(4)[0].codepoint);
 }
 
@@ -2429,7 +2430,7 @@ test "csi: SD blank lines use current background color" {
     defer t.destroy(alloc);
 
     t.feed("\x1b[42m"); // SGR 42 = bg indexed 2 (green)
-    const bg_idx = t.active().cursor.attr.bg;
+    const bg_idx = t.active().cursor.attr.blank_id;
 
     for (0..5) |r| {
         t.active().rowMut(r)[0] = .{ .codepoint = @intCast('A' + r), .kind = .narrow };
@@ -2438,7 +2439,7 @@ test "csi: SD blank lines use current background color" {
     t.feed("\x1b[T"); // SD 1
 
     // New blank line at top should carry the current background.
-    try testing.expectEqual(bg_idx, t.active().row(0)[0].background);
+    try testing.expectEqual(bg_idx, t.active().row(0)[0].style);
     try testing.expectEqual(@as(u32, 0), t.active().row(0)[0].codepoint);
 }
 
@@ -2932,12 +2933,11 @@ test "csi: REP uses current SGR attributes, not original" {
     t.feed("\x1b[b"); // REP 1
 
     // Original 'X' at col 0 has red fg.
-    const red_idx = t.active().palette.intern(.{ .indexed = 1 });
-    try testing.expectEqual(red_idx, t.active().row(0)[0].foreground);
+    const styles = &t.active().styles;
+    try testing.expectEqual(Color{ .indexed = 1 }, Style.decode(styles.get(t.active().row(0)[0].style).fg));
 
     // Repeated 'X' at col 1 has green fg (current attr at time of REP).
-    const green_idx = t.active().palette.intern(.{ .indexed = 2 });
-    try testing.expectEqual(green_idx, t.active().row(0)[1].foreground);
+    try testing.expectEqual(Color{ .indexed = 2 }, Style.decode(styles.get(t.active().row(0)[1].style).fg));
 }
 
 test "csi: REP no-op when no previous char" {
@@ -2987,7 +2987,8 @@ test "sgr: empty params = reset" {
     defer t.destroy(alloc);
 
     t.active().cursor.attr.flags.bold = true;
-    t.active().cursor.attr.fg = t.active().palette.intern(.{ .indexed = 3 });
+    t.active().cursor.attr.colors.fg = Style.encode(.{ .indexed = 3 });
+    t.active().internPen();
 
     t.feed("\x1b[m");
     try testing.expectEqualDeep(Attr{}, t.active().cursor.attr);
@@ -2998,7 +2999,8 @@ test "sgr: 0 explicit reset" {
     defer t.destroy(alloc);
 
     t.active().cursor.attr.flags.bold = true;
-    t.active().cursor.attr.fg = t.active().palette.intern(.{ .indexed = 5 });
+    t.active().cursor.attr.colors.fg = Style.encode(.{ .indexed = 5 });
+    t.active().internPen();
 
     t.feed("\x1b[0m");
     try testing.expectEqualDeep(Attr{}, t.active().cursor.attr);
@@ -3194,7 +3196,7 @@ fn expectUnderlineColor(seq: []const u8, expected: Color) !void {
     defer t.destroy(alloc);
 
     t.feed(seq);
-    try testing.expectEqual(expected, t.active().cursor.attr.underline_color);
+    try testing.expectEqual(expected, Style.decode(t.active().cursor.attr.colors.underline));
 }
 
 test "sgr: 58 sets the underline color in every 38 form" {
@@ -3214,8 +3216,8 @@ test "sgr: 58 leaves fg, bg and the palette alone" {
     const before = t.active().palette.entries;
     t.feed("\x1b[58:2::1:2:3m");
     const attr = t.active().cursor.attr;
-    try testing.expectEqual(0, attr.fg);
-    try testing.expectEqual(0, attr.bg);
+    try testing.expectEqual(Style.default_key, attr.colors.fg);
+    try testing.expectEqual(Style.default_key, attr.colors.bg);
     try testing.expectEqual(before, t.active().palette.entries);
 }
 
@@ -3234,7 +3236,7 @@ test "sgr: 58 consumes its parameters, the codes after it still apply" {
     try testing.expectEqual(.curly, attr.flags.underline);
     try testing.expect(attr.flags.bold);
     try testing.expect(!attr.flags.dim);
-    try testing.expectEqual(Color.fromRgb(255, 0, 0), attr.underline_color);
+    try testing.expectEqual(Color.fromRgb(255, 0, 0), Style.decode(attr.colors.underline));
 }
 
 test "sgr: sub-parameters of an unknown code are skipped" {
@@ -3352,7 +3354,7 @@ test "sgr: 30 = fg black (indexed 0)" {
     t.feed("\x1b[30m");
     try testing.expectEqual(
         Color{ .indexed = 0 },
-        t.active().palette.decode(t.active().cursor.attr.fg),
+        Style.decode(t.active().cursor.attr.colors.fg),
     );
 }
 
@@ -3363,7 +3365,7 @@ test "sgr: 37 = fg white (indexed 7)" {
     t.feed("\x1b[37m");
     try testing.expectEqual(
         Color{ .indexed = 7 },
-        t.active().palette.decode(t.active().cursor.attr.fg),
+        Style.decode(t.active().cursor.attr.colors.fg),
     );
 }
 
@@ -3375,9 +3377,9 @@ test "sgr: 39 = fg default" {
     t.feed("\x1b[39m"); // reset to default
     try testing.expectEqual(
         Color.default,
-        t.active().palette.decode(t.active().cursor.attr.fg),
+        Style.decode(t.active().cursor.attr.colors.fg),
     );
-    try testing.expectEqual(Palette.default_base, t.active().cursor.attr.fg);
+    try testing.expectEqual(Style.default_key, t.active().cursor.attr.colors.fg);
 }
 
 test "sgr: 40 = bg black (indexed 0)" {
@@ -3387,7 +3389,7 @@ test "sgr: 40 = bg black (indexed 0)" {
     t.feed("\x1b[40m");
     try testing.expectEqual(
         Color{ .indexed = 0 },
-        t.active().palette.decode(t.active().cursor.attr.bg),
+        Style.decode(t.active().cursor.attr.colors.bg),
     );
 }
 
@@ -3398,7 +3400,7 @@ test "sgr: 47 = bg white (indexed 7)" {
     t.feed("\x1b[47m");
     try testing.expectEqual(
         Color{ .indexed = 7 },
-        t.active().palette.decode(t.active().cursor.attr.bg),
+        Style.decode(t.active().cursor.attr.colors.bg),
     );
 }
 
@@ -3410,9 +3412,9 @@ test "sgr: 49 = bg default" {
     t.feed("\x1b[49m");
     try testing.expectEqual(
         Color.default,
-        t.active().palette.decode(t.active().cursor.attr.bg),
+        Style.decode(t.active().cursor.attr.colors.bg),
     );
-    try testing.expectEqual(Palette.default_base, t.active().cursor.attr.bg);
+    try testing.expectEqual(Style.default_key, t.active().cursor.attr.colors.bg);
 }
 
 test "sgr: 90 = fg bright black (indexed 8)" {
@@ -3422,7 +3424,7 @@ test "sgr: 90 = fg bright black (indexed 8)" {
     t.feed("\x1b[90m");
     try testing.expectEqual(
         Color{ .indexed = 8 },
-        t.active().palette.decode(t.active().cursor.attr.fg),
+        Style.decode(t.active().cursor.attr.colors.fg),
     );
 }
 
@@ -3433,7 +3435,7 @@ test "sgr: 97 = fg bright white (indexed 15)" {
     t.feed("\x1b[97m");
     try testing.expectEqual(
         Color{ .indexed = 15 },
-        t.active().palette.decode(t.active().cursor.attr.fg),
+        Style.decode(t.active().cursor.attr.colors.fg),
     );
 }
 
@@ -3444,7 +3446,7 @@ test "sgr: 100 = bg bright black (indexed 8)" {
     t.feed("\x1b[100m");
     try testing.expectEqual(
         Color{ .indexed = 8 },
-        t.active().palette.decode(t.active().cursor.attr.bg),
+        Style.decode(t.active().cursor.attr.colors.bg),
     );
 }
 
@@ -3455,7 +3457,7 @@ test "sgr: 107 = bg bright white (indexed 15)" {
     t.feed("\x1b[107m");
     try testing.expectEqual(
         Color{ .indexed = 15 },
-        t.active().palette.decode(t.active().cursor.attr.bg),
+        Style.decode(t.active().cursor.attr.colors.bg),
     );
 }
 
@@ -3466,7 +3468,7 @@ test "sgr: 38;5;200 = fg indexed 200" {
     t.feed("\x1b[38;5;200m");
     try testing.expectEqual(
         Color{ .indexed = 200 },
-        t.active().palette.decode(t.active().cursor.attr.fg),
+        Style.decode(t.active().cursor.attr.colors.fg),
     );
 }
 
@@ -3477,7 +3479,7 @@ test "sgr: 38;5;0 = fg indexed 0" {
     t.feed("\x1b[38;5;0m");
     try testing.expectEqual(
         Color{ .indexed = 0 },
-        t.active().palette.decode(t.active().cursor.attr.fg),
+        Style.decode(t.active().cursor.attr.colors.fg),
     );
 }
 
@@ -3488,7 +3490,7 @@ test "sgr: 38;5;255 = fg indexed 255" {
     t.feed("\x1b[38;5;255m");
     try testing.expectEqual(
         Color{ .indexed = 255 },
-        t.active().palette.decode(t.active().cursor.attr.fg),
+        Style.decode(t.active().cursor.attr.colors.fg),
     );
 }
 
@@ -3499,7 +3501,7 @@ test "sgr: 38:5:200 = fg indexed 200 (colon form)" {
     t.feed("\x1b[38:5:200m");
     try testing.expectEqual(
         Color{ .indexed = 200 },
-        t.active().palette.decode(t.active().cursor.attr.fg),
+        Style.decode(t.active().cursor.attr.colors.fg),
     );
 }
 
@@ -3510,7 +3512,7 @@ test "sgr: 38;2;255;0;128 = fg rgb(255,0,128)" {
     t.feed("\x1b[38;2;255;0;128m");
     try testing.expectEqual(
         Color{ .rgb = .{ .r = 255, .g = 0, .b = 128 } },
-        t.active().palette.decode(t.active().cursor.attr.fg),
+        Style.decode(t.active().cursor.attr.colors.fg),
     );
 }
 
@@ -3521,7 +3523,7 @@ test "sgr: 38;2;0;0;0 = fg rgb(0,0,0)" {
     t.feed("\x1b[38;2;0;0;0m");
     try testing.expectEqual(
         Color{ .rgb = .{ .r = 0, .g = 0, .b = 0 } },
-        t.active().palette.decode(t.active().cursor.attr.fg),
+        Style.decode(t.active().cursor.attr.colors.fg),
     );
 }
 
@@ -3532,7 +3534,7 @@ test "sgr: 38:2:255:128:0 = fg rgb(255,128,0) (colon form)" {
     t.feed("\x1b[38:2:255:128:0m");
     try testing.expectEqual(
         Color{ .rgb = .{ .r = 255, .g = 128, .b = 0 } },
-        t.active().palette.decode(t.active().cursor.attr.fg),
+        Style.decode(t.active().cursor.attr.colors.fg),
     );
 }
 
@@ -3543,7 +3545,7 @@ test "sgr: 48;5;100 = bg indexed 100" {
     t.feed("\x1b[48;5;100m");
     try testing.expectEqual(
         Color{ .indexed = 100 },
-        t.active().palette.decode(t.active().cursor.attr.bg),
+        Style.decode(t.active().cursor.attr.colors.bg),
     );
 }
 
@@ -3554,7 +3556,7 @@ test "sgr: 48;2;10;20;30 = bg rgb(10,20,30)" {
     t.feed("\x1b[48;2;10;20;30m");
     try testing.expectEqual(
         Color{ .rgb = .{ .r = 10, .g = 20, .b = 30 } },
-        t.active().palette.decode(t.active().cursor.attr.bg),
+        Style.decode(t.active().cursor.attr.colors.bg),
     );
 }
 
@@ -3563,11 +3565,11 @@ test "sgr: same rgb color twice = same palette index" {
     defer t.destroy(alloc);
 
     t.feed("\x1b[38;2;100;150;200m");
-    const idx1 = t.active().cursor.attr.fg;
+    const idx1 = t.active().cursor.attr.id;
 
     t.feed("\x1b[39m"); // reset fg
     t.feed("\x1b[38;2;100;150;200m"); // same color again
-    const idx2 = t.active().cursor.attr.fg;
+    const idx2 = t.active().cursor.attr.id;
 
     try testing.expectEqual(idx1, idx2);
 }
@@ -3581,7 +3583,7 @@ test "sgr: combined bold + italic + fg in one sequence" {
     try testing.expect(t.active().cursor.attr.flags.italic);
     try testing.expectEqual(
         Color{ .indexed = 2 },
-        t.active().palette.decode(t.active().cursor.attr.fg),
+        Style.decode(t.active().cursor.attr.colors.fg),
     );
 }
 
@@ -3735,8 +3737,9 @@ test "color: OSC 4 on 16-255 applies to text drawn after it" {
     t.feed("\x1b[38;5;100mX\x1b[48;5;255mY");
     const p = &t.active().palette;
     const row = t.active().row(0);
-    try testing.expectEqual([3]u8{ 10, 11, 12 }, p.resolveRgb(row[0].foreground, .foreground));
-    try testing.expectEqual([3]u8{ 1, 2, 3 }, p.resolveRgb(row[1].background, .background));
+    const styles = &t.active().styles;
+    try testing.expectEqual([3]u8{ 10, 11, 12 }, p.resolveKeyRgb(styles.get(row[0].style).fg, .foreground));
+    try testing.expectEqual([3]u8{ 1, 2, 3 }, p.resolveKeyRgb(styles.get(row[1].style).bg, .background));
 }
 
 test "color: OSC 104 with no argument resets all 256 indices" {

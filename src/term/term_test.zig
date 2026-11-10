@@ -1,4 +1,5 @@
 const std = @import("std");
+const Style = @import("Style.zig");
 const testing = std.testing;
 
 const Mode = @import("term.zig").Mode;
@@ -621,7 +622,8 @@ test "softReset: active screen cursor attrs cleared" {
     defer t.destroy(alloc);
 
     t.active().cursor.attr.flags.bold = true;
-    t.active().cursor.attr.fg = t.active().palette.intern(.{ .indexed = 22 });
+    t.active().cursor.attr.colors.fg = Style.encode(.{ .indexed = 22 });
+    t.active().internPen();
     t.softReset();
 
     try testing.expectEqualDeep(Attr{}, t.active().cursor.attr);
@@ -1113,4 +1115,116 @@ test "feed: S8C1T applies to the rest of the same Latin-1 chunk" {
     t.feed("\x1b%@\x1b[62;1\"p");
     t.feed("\x1b G\x9b5Cx");
     try testing.expectEqual('x', t.active().row(0)[5].codepoint);
+}
+
+// Cell colors as interned styles (ADR 0005).
+
+const Color = @import("cell.zig").Color;
+
+/// The colors the cell at (`row`, `col`) of the active screen is drawn with.
+fn cellStyle(t: *Term, row: usize, col: usize) Style {
+    return t.active().styles.get(t.active().row(row)[col].style);
+}
+
+/// Feeds `CUP row;col` then a character drawn with truecolor foreground `n`.
+fn feedColored(t: *Term, buf: []u8, n: u32, row: u16) void {
+    const seq = std.fmt.bufPrint(buf, "\x1b[{d};1H\x1b[38;2;{d};{d};{d}mx", .{ row + 1, (n >> 16) & 0xff, (n >> 8) & 0xff, n & 0xff }) catch unreachable;
+    t.feed(seq);
+}
+
+test "styles: text keeps its color while 20,000 new colors stream past" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+    t.feed("\x1b[38;2;200;10;10m\x1b[48;2;1;2;3mA\x1b[0m");
+    const before = cellStyle(&t, 0, 0);
+    const id = t.active().row(0)[0].style;
+
+    // Every new color lands on the same cell of row 5, so all but the last
+    // become garbage: the table fills, sweeps, and reuses their IDs.
+    var buf: [64]u8 = undefined;
+    for (0..20_000) |i| feedColored(&t, &buf, @intCast(i + 1), 5);
+
+    try testing.expectEqual(id, t.active().row(0)[0].style);
+    try testing.expect(cellStyle(&t, 0, 0).eql(before));
+    try testing.expectEqual(Color.fromRgb(200, 10, 10), Style.decode(before.fg));
+    // The last color drawn is exact, not a nearest fallback.
+    try testing.expectEqual(Color.fromRgb(0, 78, 32), Style.decode(cellStyle(&t, 5, 0).fg));
+}
+
+test "styles: erased cells take the background only, not the foreground" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+    t.feed("\x1b[38;2;250;0;0m\x1b[48;2;0;0;250m\x1b[2J");
+    const blank = cellStyle(&t, 3, 3);
+    try testing.expectEqual(Style.default_key, blank.fg);
+    try testing.expectEqual(Color.fromRgb(0, 0, 250), Style.decode(blank.bg));
+    try testing.expectEqual(Style.default_key, blank.underline);
+}
+
+test "styles: SGR that only changes attributes keeps the pen's IDs" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+    t.feed("\x1b[38;2;1;2;3m");
+    const pen = t.active().cursor.attr;
+    t.feed("\x1b[1;3m");
+    try testing.expectEqual(pen.id, t.active().cursor.attr.id);
+    t.feed("\x1b[0;38;2;1;2;3m");
+    try testing.expectEqual(pen.id, t.active().cursor.attr.id);
+    try testing.expectEqual(pen.blank_id, t.active().cursor.attr.blank_id);
+}
+
+test "styles: DECRC restores colors after the table was reset" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+    t.feed("\x1b[?1049h\x1b[38;2;9;8;7m\x1b7"); // alt screen, color, DECSC
+    t.feed("\x1b[?1049l\x1b[?1049h"); // leave and re-enter: alt table reset
+    t.feed("\x1b8"); // DECRC
+    const attr = t.active().cursor.attr;
+    try testing.expectEqual(Color.fromRgb(9, 8, 7), Style.decode(attr.colors.fg));
+    try testing.expect(t.active().styles.get(attr.id).eql(attr.colors));
+    t.feed("y");
+    try testing.expectEqual(Color.fromRgb(9, 8, 7), Style.decode(cellStyle(&t, 0, 0).fg));
+}
+
+test "styles: an alternate screen session leaves the primary's colors alone" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+    t.feed("\x1b[38;2;40;50;60mP\x1b[0m");
+    const before = cellStyle(&t, 0, 0);
+    t.feed("\x1b[?1049h");
+    var buf: [64]u8 = undefined;
+    for (0..3000) |i| feedColored(&t, &buf, @intCast(i + 1), 2);
+    t.feed("\x1b[?1049l");
+    try testing.expect(cellStyle(&t, 0, 0).eql(before));
+}
+
+test "styles: the frame resolves cells through its own copy of the table" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+    var frame = try Term.FrameType.init(alloc);
+    defer frame.deinit(alloc);
+    var other = try Term.FrameType.init(alloc);
+    defer other.deinit(alloc);
+
+    t.feed("\x1b[38;2;11;22;33mA");
+    try testing.expect(t.snapshot(&frame));
+    try testing.expect(frame.styleOf(frame.displayRow(0)[0]).eql(cellStyle(&t, 0, 0)));
+
+    // A new color copies the table again; an unchanged table is not copied.
+    t.feed("\x1b[38;2;44;55;66mB");
+    try testing.expect(t.snapshot(&frame));
+    try testing.expect(frame.styleOf(frame.displayRow(0)[1]).eql(cellStyle(&t, 0, 1)));
+    try testing.expectEqual(t.active().styles.generation, frame.style_generation);
+
+    // The triple-buffer copy carries the table across.
+    other.copyFrom(&frame);
+    try testing.expect(other.styleOf(other.displayRow(0)[1]).eql(cellStyle(&t, 0, 1)));
+
+    // Switching screens copies the other screen's table.
+    t.feed("\x1b[?1049h\x1b[38;2;77;88;99mC");
+    try testing.expect(t.snapshot(&frame));
+    try testing.expect(frame.is_alternate);
+    try testing.expect(frame.styleOf(frame.displayRow(0)[0]).eql(cellStyle(&t, 0, 0)));
+    other.copyFrom(&frame);
+    try testing.expect(other.styleOf(other.displayRow(0)[0]).eql(cellStyle(&t, 0, 0)));
 }

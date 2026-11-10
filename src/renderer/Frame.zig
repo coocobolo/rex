@@ -30,11 +30,12 @@ const Option = term.term.Option;
 const Palette = term.Palette;
 const TermFrame = term.Frame;
 
-/// Returns the foreground and background `cell` is drawn with. SGR 7
-/// and DECSCNM each swap them, so the two together cancel out.
-pub fn cellColors(palette: *const Palette, cell: term.Cell, reverse_video: bool) [2][3]u8 {
-    var foreground = palette.resolveRgb(cell.foreground, .foreground);
-    var background = palette.resolveRgb(cell.background, .background);
+/// Returns the foreground and background `cell` is drawn with, given its
+/// `style` (from the frame's table). SGR 7 and DECSCNM each swap them, so
+/// the two together cancel out.
+pub fn cellColors(palette: *const Palette, style: term.Style, cell: term.Cell, reverse_video: bool) [2][3]u8 {
+    var foreground = palette.resolveKeyRgb(style.fg, .foreground);
+    var background = palette.resolveKeyRgb(style.bg, .background);
     if (cell.flags.reverse != reverse_video) std.mem.swap([3]u8, &foreground, &background);
     return .{ foreground, background };
 }
@@ -193,8 +194,9 @@ pub const CursorCache = struct {
 
         self.glyph = cellGlyph(gpa, rasterizer, atlas, frame, cursor_cell);
 
-        var fg: u32 = palette.resolve(cursor_cell.foreground, .foreground);
-        var bg: u32 = palette.resolve(cursor_cell.background, .background);
+        const style = frame.styleOf(cursor_cell.*);
+        var fg: u32 = palette.resolveKey(style.fg, .foreground);
+        var bg: u32 = palette.resolveKey(style.bg, .background);
         if (cursor_cell.flags.reverse) std.mem.swap(u32, &fg, &bg);
 
         const bg_u = unpackRgb(bg);
@@ -562,7 +564,7 @@ pub fn Builder(comptime option: Option) type {
                     // Drop the do_reverse logic in build, with the overlay approach, text colors
                     // are unchanged and the semi-transparent highlight provides the visual selection.
                     // This is simpler and looks better than color inversion.
-                    var foreground, const background = cellColors(palette, c, reverse_video);
+                    var foreground, const background = cellColors(palette, frame.styleOf(c), c, reverse_video);
 
                     // Invisible text (SGR 8): hide glyph by matching fg to bg
                     if (c.flags.invisible) foreground = background;

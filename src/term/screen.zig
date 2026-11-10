@@ -19,6 +19,7 @@ const Charset = @import("cell.zig").Charset;
 const CharsetState = @import("cell.zig").CharsetState;
 
 const Palette = @import("Palette.zig").Palette;
+const Style = @import("Style.zig");
 const Option = @import("term.zig").Option;
 
 const wc = @import("../unicode/wcwidth.zig");
@@ -286,6 +287,10 @@ pub fn Screen(comptime option: Option) type {
         // it's window terminal behavior.
         palette: Palette,
 
+        /// Colors of this screen's cells, the pen's `id` and `blank_id`
+        /// (ADR 0005). Owned; 288 KiB allocated by `create`.
+        styles: Style.Table,
+
         // FIXME not a screen state
         // moved to terminal
         last_char: u21 = 0, // last graphic char written by putChar; 0 = none
@@ -352,9 +357,13 @@ pub fn Screen(comptime option: Option) type {
             errdefer if (comptime is_scrollback_used) gpa.free(scratch_cells);
 
             var row_map = try gpa.alloc(u16, ring_rows);
+            errdefer gpa.free(row_map);
             for (0..ring_rows) |i| row_map[i] = @intCast(i);
 
+            const styles: Style.Table = try .init(gpa);
+
             return .{
+                .styles = styles,
                 .row_map = row_map,
                 .cells = cells,
                 .scratch_cells = scratch_cells,
@@ -374,6 +383,7 @@ pub fn Screen(comptime option: Option) type {
             allocator.free(self.cells);
             if (comptime is_scrollback_used) allocator.free(self.scratch_cells);
             allocator.free(self.row_map);
+            self.styles.deinit(allocator);
             self.grapheme_table.deinit();
             self.grapheme_reverse.deinit();
             self.grapheme_arena.deinit();
@@ -570,8 +580,7 @@ pub fn Screen(comptime option: Option) type {
             self.writeChar(.{
                 .kind = stored_kind,
                 .codepoint = grapheme_id,
-                .foreground = self.cursor.attr.fg,
-                .background = self.cursor.attr.bg,
+                .style = self.cursor.attr.id,
                 .flags = self.cursor.attr.flags,
             });
         }
@@ -657,6 +666,46 @@ pub fn Screen(comptime option: Option) type {
             try self.grapheme_table.put(id, owned);
             self.next_grapheme_id += 1;
             return id;
+        }
+
+        /// The ID of `style` in this screen's table. When the table is full,
+        /// sweeps it if due and retries, else falls back to the nearest
+        /// live style, so no ID in use ever changes (ADR 0005).
+        pub fn internStyle(self: *Self, style: Style) Style.Id {
+            if (self.styles.intern(style)) |id| return id;
+            if (self.styles.sweepDue()) {
+                self.sweepStyles();
+                if (self.styles.intern(style)) |id| return id;
+            }
+            return self.styles.nearest(style);
+        }
+
+        /// Refreshes the pen's cached IDs from `cursor.attr.colors`. Call
+        /// after every change to the colors (SGR, DECRC).
+        pub fn internPen(self: *Self) void {
+            const attr = &self.cursor.attr;
+            // `id` is stored before the second intern, so a sweep in it
+            // keeps the new ID.
+            attr.id = self.internStyle(attr.colors);
+            attr.blank_id = self.internStyle(.{ .bg = attr.colors.bg });
+        }
+
+        /// The background-only style of `id`, for a blank written next to
+        /// a cell drawn with `id` (splitting a wide character). Usually the
+        /// pen's own.
+        fn blankFor(self: *Self, id: Style.Id) Style.Id {
+            if (id == self.cursor.attr.id) return self.cursor.attr.blank_id;
+            return self.internStyle(.{ .bg = self.styles.get(id).bg });
+        }
+
+        /// Frees every style no cell (screen and scrollback) and no pen ID
+        /// refers to. O(cells): about 0.5 ms for the default ring.
+        fn sweepStyles(self: *Self) void {
+            var in_use: Style.Table.InUse = .initEmpty();
+            for (self.cells) |cell| in_use.set(cell.style);
+            in_use.set(self.cursor.attr.id);
+            in_use.set(self.cursor.attr.blank_id);
+            _ = self.styles.sweep(&in_use);
         }
 
         pub fn getGrapheme(self: *const Self, id: u32) ?[]const u21 {
@@ -786,8 +835,7 @@ pub fn Screen(comptime option: Option) type {
             self.writeChar(.{
                 .kind = kind,
                 .codepoint = translated,
-                .foreground = self.cursor.attr.fg,
-                .background = self.cursor.attr.bg,
+                .style = self.cursor.attr.id,
                 .flags = self.cursor.attr.flags,
             });
             self.last_char = translated;
@@ -849,18 +897,15 @@ pub fn Screen(comptime option: Option) type {
                 // overwriting an orphaned wide-right placeholder from a
                 // pre-existing wide char to its left.
                 if (row_mut[cursor_col].kind == .wide_right and cursor_col > 0) {
-                    row_mut[cursor_col - 1] = Cell{ .background = self.cursor.attr.bg };
+                    row_mut[cursor_col - 1] = Cell{ .style = self.cursor.attr.blank_id };
                 }
 
-                const fg = self.cursor.attr.fg;
-                const bg = self.cursor.attr.bg;
                 const flags = self.cursor.attr.flags;
 
                 const base_cell = Cell{
                     .kind = .narrow,
                     .codepoint = 0,
-                    .foreground = fg,
-                    .background = bg,
+                    .style = self.cursor.attr.id,
                     .flags = flags,
                     .wrapped = false,
                 };
@@ -890,7 +935,7 @@ pub fn Screen(comptime option: Option) type {
                 if (cursor_col + n < self.active_cols and
                     row_mut[cursor_col + n].kind == .wide_right)
                 {
-                    row_mut[cursor_col + n] = Cell{ .background = self.cursor.attr.bg };
+                    row_mut[cursor_col + n] = Cell{ .style = self.cursor.attr.blank_id };
                 }
 
                 self.dirty_rows.set(self.cursor.row); // once per row, not once per byte
@@ -934,8 +979,7 @@ pub fn Screen(comptime option: Option) type {
             self.writeChar(.{
                 .kind = kind,
                 .codepoint = translated,
-                .foreground = self.cursor.attr.fg,
-                .background = self.cursor.attr.bg,
+                .style = self.cursor.attr.id,
                 .flags = self.cursor.attr.flags,
             });
             self.last_char = translated;
@@ -1031,7 +1075,7 @@ pub fn Screen(comptime option: Option) type {
             // Blank the orphaned left half so the renderer doesn't see a
             // dangling wide cell.
             if (needs_blank_left_half) {
-                row_mut[cursor_col - 1] = Cell{ .background = cell.background };
+                row_mut[cursor_col - 1] = Cell{ .style = self.blankFor(cell.style) };
             }
 
             // Wide char or grapheme wide at last column
@@ -1039,7 +1083,7 @@ pub fn Screen(comptime option: Option) type {
             // wrap inline, then place the wide char at column 0 of the new row_mut.
             if (wide_at_end) {
                 const old_row = self.cursor.row;
-                row_mut[cursor_col] = Cell{ .background = cell.background, .wrapped = true };
+                row_mut[cursor_col] = Cell{ .style = self.blankFor(cell.style), .wrapped = true };
 
                 // Wrap/scroll logic (same logic as deferred wrap above).
                 self.cursor.col = 0;
@@ -1056,8 +1100,7 @@ pub fn Screen(comptime option: Option) type {
                     .codepoint = 0,
                     .kind = .wide_right, // always, regardless of left-half kind
                     .flags = cell.flags,
-                    .foreground = cell.foreground,
-                    .background = cell.background,
+                    .style = cell.style,
                 };
 
                 self.dirty_rows.set(old_row); // old row got a blank
@@ -1082,12 +1125,12 @@ pub fn Screen(comptime option: Option) type {
             // of another wide char, blank its orphaned right half.
             if (needs_blank_right_of_right) {
                 @branchHint(.unlikely);
-                row_mut[cursor_col + 2] = Cell{ .background = cell.background };
+                row_mut[cursor_col + 2] = Cell{ .style = self.blankFor(cell.style) };
             }
 
             if (needs_blank_right_of_self) {
                 @branchHint(.unlikely);
-                row_mut[cursor_col + 1] = Cell{ .background = cell.background };
+                row_mut[cursor_col + 1] = Cell{ .style = self.blankFor(cell.style) };
             }
 
             // Write the cell
@@ -1099,8 +1142,7 @@ pub fn Screen(comptime option: Option) type {
                     .codepoint = 0,
                     .kind = .wide_right, // always, regardless of left-half kind
                     .flags = cell.flags,
-                    .foreground = cell.foreground,
-                    .background = cell.background,
+                    .style = cell.style,
                 };
             }
 
@@ -1147,8 +1189,7 @@ pub fn Screen(comptime option: Option) type {
                 self.writeChar(.{
                     .kind = kind,
                     .codepoint = self.last_char,
-                    .foreground = self.cursor.attr.fg,
-                    .background = self.cursor.attr.bg,
+                    .style = self.cursor.attr.id,
                     .flags = self.cursor.attr.flags,
                 });
             }
@@ -1288,11 +1329,11 @@ pub fn Screen(comptime option: Option) type {
             return if (self.cursor.origin) self.scroll_top else 0;
         }
 
-        // Callers build `blank` from the background alone, so a default
-        // background means `Cell{}`, which `zeroRow` fills fastest.
+        // Callers build `blank` from the style alone, so the default style
+        // means `Cell{}`, which `zeroRow` fills fastest.
         inline fn clearRow(self: *Self, r: usize, blank: Cell) void {
             const row_mut = self.rowMutRaw(r)[0..self.active_cols];
-            if (blank.background == 0) {
+            if (blank.style == Style.Table.default_id) {
                 zeroRow(row_mut.ptr, row_mut.len);
             } else {
                 @memset(row_mut, blank);
@@ -1530,7 +1571,7 @@ pub fn Screen(comptime option: Option) type {
             // A degenerate region (top >= bottom) has nothing to scroll.
             if (self.scroll_top >= self.scroll_bottom) return false;
 
-            const blank: Cell = .{ .background = self.cursor.attr.bg };
+            const blank: Cell = .{ .style = self.cursor.attr.blank_id };
             const region_top: usize = self.scroll_top;
             const region_bottom: usize = self.scroll_bottom;
             const region_height: usize = region_bottom - region_top + 1;
@@ -1581,7 +1622,7 @@ pub fn Screen(comptime option: Option) type {
                     const row_cells =
                         self.cells[row_start .. row_start + self.active_cols];
 
-                    if (blank.background == 0) {
+                    if (blank.style == Style.Table.default_id) {
                         zeroRow(row_cells.ptr, row_cells.len);
                     } else {
                         @branchHint(.unlikely);
@@ -1625,7 +1666,7 @@ pub fn Screen(comptime option: Option) type {
                     const phys = self.physRow(r);
                     // pass phys directly to avoid recomputing inside clearRow
                     const row_mut = self.cells[phys * max_cols ..][0..self.active_cols];
-                    if (blank.background == 0) {
+                    if (blank.style == Style.Table.default_id) {
                         zeroRow(row_mut.ptr, row_mut.len);
                     } else {
                         // most terminals use default background tho
@@ -1679,7 +1720,7 @@ pub fn Screen(comptime option: Option) type {
             const region_height = region_bot - region_top + 1;
 
             const count: usize = @min(@max(n, 1), region_height);
-            const blank: Cell = .{ .background = self.cursor.attr.bg };
+            const blank: Cell = .{ .style = self.cursor.attr.blank_id };
 
             self.rotateRowMapRegion(region_top, region_bot, count, .right);
 
@@ -1687,7 +1728,7 @@ pub fn Screen(comptime option: Option) type {
             for (region_top..region_top + count) |r| {
                 const phys = self.physRow(r);
                 const row_mut = self.cells[phys * max_cols ..][0..self.active_cols];
-                if (blank.background == 0) {
+                if (blank.style == Style.Table.default_id) {
                     zeroRow(row_mut.ptr, row_mut.len);
                 } else {
                     @memset(row_mut, blank);
@@ -1744,7 +1785,7 @@ pub fn Screen(comptime option: Option) type {
         ///
         /// Clears `wrap_pending`.
         pub fn eraseDisplay(self: *Self, mode: u16) void {
-            const blank: Cell = .{ .background = self.cursor.attr.bg };
+            const blank: Cell = .{ .style = self.cursor.attr.blank_id };
 
             switch (mode) {
                 0 => { // cursor to end
@@ -1797,6 +1838,8 @@ pub fn Screen(comptime option: Option) type {
             }
 
             if (mode != 3) self.cursor.wrap_pending = false;
+            // Content was dropped, so a full style table may free a lot.
+            if (mode >= 2) self.styles.requestSweep();
             self.bump();
         }
 
@@ -1809,7 +1852,7 @@ pub fn Screen(comptime option: Option) type {
         /// The cursor position is not changed by any mode.
         /// Does not interact with scrollback. Clears `wrap_pending`.
         pub fn eraseLine(self: *Self, mode: u16) void {
-            const blank: Cell = .{ .background = self.cursor.attr.bg };
+            const blank: Cell = .{ .style = self.cursor.attr.blank_id };
             const r = @as(usize, self.cursor.row);
             const c = @as(usize, self.cursor.col);
             switch (mode) {
@@ -1942,7 +1985,7 @@ pub fn Screen(comptime option: Option) type {
                 const row_cells = self.cells[phys * max_cols ..][0..self.active_cols];
                 var empty = true;
                 for (row_cells) |*c| {
-                    if (c.kind != .empty or c.background != 0 or c.wrapped) {
+                    if (c.kind != .empty or c.style != Style.Table.default_id or c.wrapped) {
                         empty = false;
                         break;
                     }
@@ -2000,7 +2043,7 @@ pub fn Screen(comptime option: Option) type {
                     // Hard break: trim trailing default empty cells
                     while (valid_cols > 0 and
                         src_row_cells[valid_cols - 1].kind == .empty and
-                        src_row_cells[valid_cols - 1].background == 0) : (valid_cols -= 1)
+                        src_row_cells[valid_cols - 1].style == Style.Table.default_id) : (valid_cols -= 1)
                     {}
                 }
 
@@ -2065,8 +2108,7 @@ pub fn Screen(comptime option: Option) type {
                             .codepoint = 0,
                             .kind = .wide_right,
                             .flags = c.flags,
-                            .foreground = c.foreground,
-                            .background = c.background,
+                            .style = c.style,
                             .wrapped = false,
                         };
                     }
@@ -2492,7 +2534,8 @@ pub fn Screen(comptime option: Option) type {
             self.saved_cursor = .{
                 .row = self.cursor.row,
                 .col = self.cursor.col,
-                .attr = self.cursor.attr,
+                .flags = self.cursor.attr.flags,
+                .colors = self.cursor.attr.colors,
                 .origin = self.cursor.origin,
                 .charset = self.cursor.charset,
                 .charset_is_identity = self.charset_is_identity,
@@ -2522,7 +2565,11 @@ pub fn Screen(comptime option: Option) type {
             self.cursor.row = self.saved_cursor.row;
             self.cursor.col = self.saved_cursor.col;
             self.cursor.origin = self.saved_cursor.origin;
-            self.cursor.attr = self.saved_cursor.attr;
+            // The table may have been swept or reset since DECSC, so the
+            // saved colors are interned again.
+            self.cursor.attr.flags = self.saved_cursor.flags;
+            self.cursor.attr.colors = self.saved_cursor.colors;
+            self.internPen();
             self.cursor.charset = self.saved_cursor.charset;
             self.charset_is_identity = self.cursor.charset.isIdentity();
             // wrap_pending always cleared on restore, see doc comment.
@@ -2553,7 +2600,7 @@ pub fn Screen(comptime option: Option) type {
         pub fn insertChars(self: *Self, n: usize) void {
             const cr = self.cursor.row;
             const cc = @as(usize, self.cursor.col);
-            const blank: Cell = .{ .background = self.cursor.attr.bg };
+            const blank: Cell = .{ .style = self.cursor.attr.blank_id };
 
             const count = @min(@max(n, 1), self.active_cols -| cc);
             if (count == 0) return;
@@ -2585,7 +2632,7 @@ pub fn Screen(comptime option: Option) type {
         pub fn deleteChars(self: *Self, n: usize) void {
             const cr = self.cursor.row;
             const cc = @as(usize, self.cursor.col);
-            const blank: Cell = .{ .background = self.cursor.attr.bg };
+            const blank: Cell = .{ .style = self.cursor.attr.blank_id };
 
             if (cc >= self.active_cols) return;
             // n=0 is treated as n=1 per ECMA-48 default parameter rule.
@@ -2623,7 +2670,7 @@ pub fn Screen(comptime option: Option) type {
             const r = @as(usize, self.cursor.row);
             if (r < self.scroll_top or r > self.scroll_bottom) return;
 
-            const blank: Cell = .{ .background = self.cursor.attr.bg };
+            const blank: Cell = .{ .style = self.cursor.attr.blank_id };
             const region_bottom = @as(usize, self.scroll_bottom);
             const region_height = region_bottom - r + 1;
             const count = @min(@max(n, 1), region_height);
@@ -2693,7 +2740,7 @@ pub fn Screen(comptime option: Option) type {
             }
 
             // ECMA-48 S8.3.42: Ps defaults to 1; treat 0 as 1.
-            const blank: Cell = .{ .background = self.cursor.attr.bg };
+            const blank: Cell = .{ .style = self.cursor.attr.blank_id };
             const region_height = region_bottom - r + 1;
             const count = @min(@max(n, 1), region_height);
 
@@ -2844,7 +2891,7 @@ pub fn Screen(comptime option: Option) type {
             const count = @max(n, 1);
             const col = @as(usize, self.cursor.col);
             const end = @min(col + count, @as(usize, self.active_cols));
-            const blank: Cell = .{ .background = self.cursor.attr.bg };
+            const blank: Cell = .{ .style = self.cursor.attr.blank_id };
 
             const r = self.rowMut(self.cursor.row);
 
@@ -2971,6 +3018,8 @@ pub fn Screen(comptime option: Option) type {
             @memset(&self.line_attrs, .normal);
             @memset(self.cells, Cell{});
             self.scroll_offset = 0;
+            // Every cell and the pen are default now.
+            self.styles.reset();
 
             _ = self.grapheme_arena.reset(.retain_capacity);
             self.grapheme_table.clearRetainingCapacity();

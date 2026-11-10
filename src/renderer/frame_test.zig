@@ -19,10 +19,10 @@ test "cellColors: SGR 7 and DECSCNM each swap, together they cancel" {
     const fg: [3]u8 = .{ 0x11, 0x11, 0x11 };
     const bg: [3]u8 = .{ 0x22, 0x22, 0x22 };
 
-    try testing.expectEqual([2][3]u8{ fg, bg }, Frame.cellColors(&screen.palette, row[0], false));
-    try testing.expectEqual([2][3]u8{ bg, fg }, Frame.cellColors(&screen.palette, row[1], false));
-    try testing.expectEqual([2][3]u8{ bg, fg }, Frame.cellColors(&screen.palette, row[0], true));
-    try testing.expectEqual([2][3]u8{ fg, bg }, Frame.cellColors(&screen.palette, row[1], true));
+    try testing.expectEqual([2][3]u8{ fg, bg }, Frame.cellColors(&screen.palette, screen.styles.get(row[0].style), row[0], false));
+    try testing.expectEqual([2][3]u8{ bg, fg }, Frame.cellColors(&screen.palette, screen.styles.get(row[1].style), row[1], false));
+    try testing.expectEqual([2][3]u8{ bg, fg }, Frame.cellColors(&screen.palette, screen.styles.get(row[0].style), row[0], true));
+    try testing.expectEqual([2][3]u8{ fg, bg }, Frame.cellColors(&screen.palette, screen.styles.get(row[1].style), row[1], true));
 }
 
 test "cursorColor: without OSC 12 the cursor is the default foreground" {
@@ -122,7 +122,7 @@ test "build: SGR text produces merged decoration runs" {
     var storage: [8]Decoration.Instance = undefined;
     var runs: std.ArrayListUnmanaged(Decoration.Instance) = .initBuffer(&storage);
     for (row[0..6], 0..) |cell, col| {
-        const colors = Frame.cellColors(&screen.palette, cell, false);
+        const colors = Frame.cellColors(&screen.palette, screen.styles.get(cell.style), cell, false);
         if (Frame.decorationInstance(&option, cell, colors[0], 255, @intCast(col), 0, 1)) |run| {
             Decoration.appendRun(&runs, run);
         }

@@ -242,9 +242,10 @@ is accepted. Nothing here depends on an unverified claim about them.
    together:
    - `Cell`: `style: Style.Id` replaces `foreground`/`background`.
    - Pen (`Attr`): colors as `Style` plus `id` and `blank_id`; SGR
-     interns once per sequence; `Cursor.Saved` stores colors. Measure
-     `@sizeOf(Attr)` and `@sizeOf(Cursor.Saved)` before and after
-     (8 and 20 bytes today).
+     interns once per sequence, only when the colors changed;
+     `Cursor.Saved` stores flags and colors, not IDs. Measured (3a):
+     `Attr` 8 to 20 bytes (2 of padding), `Cursor` 20 to 32,
+     `Cursor.Saved` 20 to 28, `Cell` stays 8.
    - Every writer (characters, erase, background color erase, wide
      splits, reflow) and reader (`renderer/Frame.zig`,
      `renderer/Selection.zig`, `Decoration.zig` for the underline color).
@@ -255,8 +256,19 @@ is accepted. Nothing here depends on an unverified claim about them.
    - `Palette`: dynamic slots and `next` removed; it keeps the defaults,
      the 256 indexed colors and OSC 4/10/11/104.
    - Remove `ExtAttr`, `ext_attrs`, `url_table`; the stale comments in
-     `Cell` and `Palette`. Rename the cursor shape type `Cursor.Style`
-     to `Cursor.Shape`, since `Cursor.Saved` will hold both.
+     `Cell` and `Palette`. The cursor shape type keeps its name
+     `Cursor.Style` (DECSCUSR's own term; it already nests a `Shape`
+     enum): the pen's colors live in `Attr.colors`, so no name clashes.
+
+   Split into checkpoints. 3a (term core, frame table copy by
+   `generation`, the renderer's color reads) is done: the Grok capture
+   replays with 0 of 4,280 cells showing a background it never sent at
+   every tenth of the stream (up to 4,253 before). 3b: SGR 58 drawn by
+   `Decoration.zig`; renderer frame-build time before and after. 3c:
+   `Palette` slots and `ExtAttr` removed, stage 4 tests, benches.
+   Known limit kept from graphemes: the sweep marks the whole ring, so
+   scrollback cleared by ED 3 (hidden but not wiped) keeps its styles
+   alive until scrolling overwrites it. Safe, never frees a used ID.
 4. Regression tests: old text keeps its color after 70,000 new styles;
    indexed colors survive truecolors; blanks keep the default
    foreground; the saved cursor's colors survive a reset and a sweep;

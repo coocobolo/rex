@@ -75,21 +75,26 @@ comptime {
 }
 
 /// SGR (Select Graphic Rendition) attributes of the cursor pen.
+///
+/// `colors` is the source of truth (SGR, DECSC/DECRC). `id` and
+/// `blank_id` cache it interned in the screen's `Style.Table`; the screen
+/// refreshes them (`Screen.internPen`) whenever `colors` changes, and
+/// nothing else may set them. A saved copy's IDs are stale: DECRC
+/// re-interns.
 pub const Attr = struct {
     flags: AttrFlags = .{},
-    /// Palette index of the foreground, 0 = default.
-    fg: u8 = 0,
-    /// Palette index of the background, 0 = default.
-    bg: u8 = 0,
-    /// Underline color from SGR 58, reset by SGR 59 and SGR 0.
-    /// `.default` draws the underline in the foreground color. Only the
-    /// pen keeps it: a printed Cell has no room for it, so cells get
-    /// their underline color once the per-screen Style table lands.
-    underline_color: Color = .default,
+    /// Foreground, background and underline color (SGR 58; `.default`
+    /// draws the underline in the foreground color).
+    colors: Style = .default,
+    /// `colors` interned; written to printed cells.
+    id: Style.Id = Style.Table.default_id,
+    /// The background of `colors` alone, interned; written to blank cells
+    /// (erase, background color erase), which keep the default foreground.
+    blank_id: Style.Id = Style.Table.default_id,
 };
 
 comptime {
-    std.debug.assert(8 == @sizeOf(Attr));
+    std.debug.assert(20 == @sizeOf(Attr));
 }
 
 pub const Kind = enum(u3) {
@@ -153,15 +158,9 @@ pub const Cell = packed struct(u64) {
     kind: Kind = .empty,
     flags: AttrFlags = .default,
 
-    // HACK: The bottleneck is not palette size, but it's
-    // eviction policy. With index 0 = default and indices 1-15 ANSI colors,
-    // 8-bit gives 240 dynamic slots. A typical terminal session (vim,tmux,syntax,highlighting)
-    // uses 20-50 distinct colors simultaneously. I think 240 is still overkill.
-    /// store palette index (0 = default)
-    foreground: u8 = 0,
-
-    /// store palette index (0 = default)
-    background: u8 = 0,
+    /// Colors, as an ID into the screen's `Style.Table` (0 = default).
+    /// The ID keeps its colors while any cell holds it (ADR 0005).
+    style: Style.Id = Style.Table.default_id,
 
     /// Set on the last column of a row when printing continued onto the
     /// next row (a soft wrap, as xterm's LINEWRAPPED line flag). Reverse
@@ -183,8 +182,7 @@ test "Cell: empty defaults and sizeOf/alignOf" {
     try std.testing.expectEqual(0, c.codepoint);
     try std.testing.expectEqual(Kind.empty, c.kind);
     try std.testing.expectEqual(false, c.wrapped);
-    try std.testing.expectEqual(0, c.foreground);
-    try std.testing.expectEqual(0, c.background);
+    try std.testing.expectEqual(Style.Table.default_id, c.style);
     try std.testing.expectEqual(8, @sizeOf(Cell));
     try std.testing.expectEqual(8, @alignOf(Cell));
 }
@@ -217,10 +215,10 @@ test "AttrFlags: default values and bit size" {
 
 test "Attr: defaults and size" {
     const a = Attr{};
-    try std.testing.expectEqual(0, a.fg);
-    try std.testing.expectEqual(0, a.bg);
-    try std.testing.expectEqual(Color.default, a.underline_color);
-    try std.testing.expectEqual(8, @sizeOf(Attr));
+    try std.testing.expect(a.colors.isDefault());
+    try std.testing.expectEqual(Style.Table.default_id, a.id);
+    try std.testing.expectEqual(Style.Table.default_id, a.blank_id);
+    try std.testing.expectEqual(20, @sizeOf(Attr));
 }
 
 test "Kind: column spans and predicates" {

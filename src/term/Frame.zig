@@ -13,6 +13,7 @@ const Allocator = std.mem.Allocator;
 const Cell = @import("cell.zig").Cell;
 const Cursor = @import("Cursor.zig");
 const Palette = @import("Palette.zig").Palette;
+const Style = @import("Style.zig");
 const Option = @import("term.zig").Option;
 const Classifier = @import("../unicode/Classifier.zig");
 
@@ -67,6 +68,15 @@ pub fn Frame(comptime option: Option) type {
         /// Active color palette for this viewport snapshot.
         palette: Palette = Palette.empty,
 
+        /// Copy of the active screen's style table: `styles[0..style_len]`
+        /// resolves every cell's `style`. Owned, allocated by `init` at full
+        /// capacity (192 KiB) so copies never allocate (ADR 0005).
+        styles: *[Style.Table.capacity]Style,
+        style_len: u16 = 1,
+        /// The table's `generation` when copied. With `is_alternate` it tells
+        /// whether a copy is still exact.
+        style_generation: u32 = 0,
+
         /// Cursor state mapped to viewport coordinates.
         cursor: CursorSnapshot = .{},
 
@@ -113,26 +123,35 @@ pub fn Frame(comptime option: Option) type {
         /// Allocates cell memory with 64-byte alignment. Free with `deinit`.
         pub fn init(allocator: Allocator) !Self {
             const cells = try allocator.alignedAlloc(Cell, .@"64", max_cells);
+            errdefer allocator.free(cells);
             @memset(cells, Cell{});
+            const styles = try allocator.create([Style.Table.capacity]Style);
+            styles[Style.Table.default_id] = .default;
             return .{
                 .cells = cells,
+                .styles = styles,
                 .dirty_rows = .empty,
             };
         }
 
-        /// Initializes a Frame borrowing a pre-allocated 64-byte aligned buffer.
-        pub fn initWithBuffer(buffer: []align(64) Cell) Self {
-            std.debug.assert(buffer.len >= max_cells);
-            @memset(buffer[0..max_cells], Cell{});
-            return .{
-                .cells = buffer[0..max_cells],
-                .dirty_rows = .empty,
-            };
-        }
-
-        /// Releases cell memory allocated by `init`.
+        /// Releases the memory allocated by `init`.
         pub fn deinit(self: *Self, allocator: Allocator) void {
             allocator.free(self.cells);
+            allocator.destroy(self.styles);
+        }
+
+        /// Replaces the style table copy with `entries` (a table's
+        /// `entries[0..high]`) taken at `generation`.
+        pub fn copyStyles(self: *Self, entries: []const Style, generation: u32) void {
+            @memcpy(self.styles[0..entries.len], entries);
+            self.style_len = @intCast(entries.len);
+            self.style_generation = generation;
+        }
+
+        /// The colors `cell` is drawn with.
+        pub inline fn styleOf(self: *const Self, cell: Cell) Style {
+            std.debug.assert(cell.style < self.style_len);
+            return self.styles[cell.style];
         }
 
         /// Const slice of `active_cols` cells for viewport display row `r`.
@@ -153,6 +172,9 @@ pub fn Frame(comptime option: Option) type {
             self.selection_foreground = src.selection_foreground;
             self.selection_background = src.selection_background;
             self.reverse_video = src.reverse_video;
+            if (self.style_generation != src.style_generation or self.is_alternate != src.is_alternate) {
+                self.copyStyles(src.styles[0..src.style_len], src.style_generation);
+            }
             self.is_alternate = src.is_alternate;
             self.scrollback_used = src.scrollback_used;
             self.viewport_offset = src.viewport_offset;

@@ -1017,6 +1017,9 @@ pub fn Terminal(comptime option: Option) type {
                             _ = alt.grapheme_arena.reset(.retain_capacity);
                             alt.ext_attrs.clearRetainingCapacity();
                             alt.url_table.clearRetainingCapacity();
+                            // Cells and pen are default; a saved cursor
+                            // keeps colors only and re-interns on DECRC.
+                            alt.styles.reset();
                             alt.charset_is_identity = true;
                         },
                         false => self.switchScreen(false),
@@ -1052,6 +1055,9 @@ pub fn Terminal(comptime option: Option) type {
                             _ = alt.grapheme_arena.reset(.retain_capacity);
                             alt.ext_attrs.clearRetainingCapacity();
                             alt.url_table.clearRetainingCapacity();
+                            // Cells and pen are default; a saved cursor
+                            // keeps colors only and re-interns on DECRC.
+                            alt.styles.reset();
                             alt.charset_is_identity = true;
 
                             if (comptime option.max_scrollback > 0) {
@@ -1229,6 +1235,11 @@ pub fn Terminal(comptime option: Option) type {
             target.active_cols = scr.active_cols;
             target.generation = scr.generation;
             target.palette = scr.palette;
+            // IDs stay valid while referenced, so the frame needs the table
+            // only when it changed or the screen did (ADR 0005).
+            if (needs_full or target.style_generation != scr.styles.generation) {
+                target.copyStyles(scr.styles.entries[0..scr.styles.high], scr.styles.generation);
+            }
             target.reverse_video = scr.mode.reverse_video;
             target.is_alternate = is_alt;
             target.scrollback_used = scr_scrollback_used;

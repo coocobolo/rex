@@ -1,4 +1,5 @@
 const std = @import("std");
+const Style = @import("Style.zig");
 
 const term = @import("term.zig");
 const screen = @import("screen.zig");
@@ -741,7 +742,7 @@ test "effectiveTop: toggling origin mode changes result" {
 
 /// Returns the blank cell that scrollUp uses: inherits cursor background color.
 fn blankCell(s: anytype) Cell {
-    return .{ .background = s.cursor.attr.bg };
+    return .{ .style = s.cursor.attr.blank_id };
 }
 
 test "scrollUp: full-screen n=1, row 1 moves to row 0" {
@@ -824,11 +825,12 @@ test "scrollUp: full-screen, blank cell inherits cursor bg" {
     defer s.destroy(alloc);
 
     // Set a non-default cursor background
-    s.cursor.attr.bg = s.palette.intern(.{ .indexed = 3 });
+    s.cursor.attr.colors.bg = Style.encode(.{ .indexed = 3 });
+    s.internPen();
     s.scrollUp(1);
 
     const bottom = s.cellAt(s.active_rows - 1, 0);
-    try testing.expectEqualDeep(s.cursor.attr.bg, bottom.background);
+    try testing.expectEqual(s.cursor.attr.blank_id, bottom.style);
 }
 
 test "scrollUp: full-screen, bumps generation" {
@@ -1061,7 +1063,7 @@ test "scrollDown: n=1 shifts rows down, top row cleared" {
     // Row 1 (old row 1) is now at row 2
     try testing.expectEqualDeep(b, s.cellAt(2, 0));
     // New row 0 is blank
-    try testing.expectEqualDeep(Cell{ .background = s.cursor.attr.bg }, s.cellAt(0, 0));
+    try testing.expectEqualDeep(Cell{ .style = s.cursor.attr.blank_id }, s.cellAt(0, 0));
 }
 
 test "scrollDown: n=3 bulk shift" {
@@ -1076,7 +1078,7 @@ test "scrollDown: n=3 bulk shift" {
     s.scrollDown(3);
 
     // Rows 0..2 are blank
-    const blank = Cell{ .background = s.cursor.attr.bg };
+    const blank = Cell{ .style = s.cursor.attr.blank_id };
     for (0..3) |r| try testing.expectEqualDeep(blank, s.cellAt(r, 0));
     // Old row 0 is now at row 3
     try testing.expectEqual(@as(u21, '0'), s.cellAt(3, 0).codepoint);
@@ -1095,7 +1097,7 @@ test "scrollDown: n > region_height clears entire region" {
 
     s.scrollDown(test_max_rows + 99); // way more than region height
 
-    const blank = Cell{ .background = s.cursor.attr.bg };
+    const blank = Cell{ .style = s.cursor.attr.blank_id };
     for (0..test_max_rows) |r| try testing.expectEqualDeep(blank, s.cellAt(r, 0));
 }
 
@@ -1128,7 +1130,7 @@ test "scrollDown: partial region, rows outside unaffected" {
     // Old row 2 is now at row 3
     try testing.expectEqualDeep(inside, s.cellAt(3, 0));
     // New row 2 (scroll_top) is blank
-    const blank = Cell{ .background = s.cursor.attr.bg };
+    const blank = Cell{ .style = s.cursor.attr.blank_id };
     try testing.expectEqualDeep(blank, s.cellAt(2, 0));
 }
 
@@ -1196,7 +1198,7 @@ test "eraseDisplay: (0) cursor at (0,0) erases entire screen" {
     s.cursor.col = 0;
     s.eraseDisplay(0);
 
-    const blank = Cell{ .background = s.cursor.attr.bg };
+    const blank = Cell{ .style = s.cursor.attr.blank_id };
     for (0..s.active_rows) |r|
         for (0..s.active_cols) |c|
             try testing.expectEqualDeep(blank, s.cellAt(r, c));
@@ -1214,7 +1216,7 @@ test "eraseDisplay: (0) erases from cursor col to end of row, and all rows below
     s.cursor.col = 5;
     s.eraseDisplay(0);
 
-    const blank = Cell{ .background = s.cursor.attr.bg };
+    const blank = Cell{ .style = s.cursor.attr.blank_id };
 
     // Rows above cursor: untouched
     for (0..2) |r|
@@ -1243,7 +1245,7 @@ test "eraseDisplay: (0) cursor at last row last col erases only that cell" {
     s.cursor.col = @intCast(s.active_cols - 1);
     s.eraseDisplay(0);
 
-    const blank = Cell{ .background = s.cursor.attr.bg };
+    const blank = Cell{ .style = s.cursor.attr.blank_id };
 
     // All cells except the last are untouched
     for (0..s.active_rows - 1) |r|
@@ -1296,7 +1298,7 @@ test "eraseDisplay: (1) cursor at (0,0) erases only that cell" {
     s.cursor.col = 0;
     s.eraseDisplay(1);
 
-    const blank = Cell{ .background = s.cursor.attr.bg };
+    const blank = Cell{ .style = s.cursor.attr.blank_id };
 
     // Only (0,0) is erased
     try testing.expectEqualDeep(blank, s.cellAt(0, 0));
@@ -1318,7 +1320,7 @@ test "eraseDisplay: (1) erases rows above and cursor row up to cursor col (inclu
     s.cursor.col = 6;
     s.eraseDisplay(1);
 
-    const blank = Cell{ .background = s.cursor.attr.bg };
+    const blank = Cell{ .style = s.cursor.attr.blank_id };
 
     // Rows above cursor: fully erased
     for (0..3) |r|
@@ -1374,7 +1376,7 @@ test "eraseDisplay: (2) erases entire active area" {
     s.cursor.col = 10;
     s.eraseDisplay(2);
 
-    const blank = Cell{ .background = s.cursor.attr.bg };
+    const blank = Cell{ .style = s.cursor.attr.blank_id };
     for (0..s.active_rows) |r|
         for (0..s.active_cols) |c|
             try testing.expectEqualDeep(blank, s.cellAt(r, c));
@@ -1570,7 +1572,7 @@ test "eraseLine: (0) cursor to end of line, before cursor untouched" {
     s.cursor.col = 5;
     s.eraseLine(0);
 
-    const blank = Cell{ .background = s.cursor.attr.bg };
+    const blank = Cell{ .style = s.cursor.attr.blank_id };
 
     // Before cursor: untouched
     for (0..5) |c| try testing.expectEqualDeep(marker, s.cellAt(3, c));
@@ -1588,7 +1590,7 @@ test "eraseLine: (0) cursor at col 0 erases entire line" {
     s.cursor.col = 0;
     s.eraseLine(0);
 
-    const blank = Cell{ .background = s.cursor.attr.bg };
+    const blank = Cell{ .style = s.cursor.attr.blank_id };
     for (0..s.active_cols) |c| try testing.expectEqualDeep(blank, s.cellAt(0, c));
 }
 
@@ -1618,7 +1620,7 @@ test "eraseLine: (1) start of line to cursor inclusive, after cursor untouched" 
     s.cursor.col = 7;
     s.eraseLine(1);
 
-    const blank = Cell{ .background = s.cursor.attr.bg };
+    const blank = Cell{ .style = s.cursor.attr.blank_id };
 
     // 0..=7 erased (inclusive)
     for (0..8) |c| try testing.expectEqualDeep(blank, s.cellAt(2, c));
@@ -1650,7 +1652,7 @@ test "eraseLine: (2) entire line erased" {
     s.cursor.col = 10;
     s.eraseLine(2);
 
-    const blank = Cell{ .background = s.cursor.attr.bg };
+    const blank = Cell{ .style = s.cursor.attr.blank_id };
     for (0..s.active_cols) |c| try testing.expectEqualDeep(blank, s.cellAt(5, c));
 }
 
@@ -3677,7 +3679,7 @@ test "reverseIndex: cursor at scroll_top (full screen), scrolls region down" {
     s.reverseIndex();
 
     // Row 0 should now be blank (inserted by scrollDown)
-    const blank: Cell = .{ .background = s.cursor.attr.bg };
+    const blank: Cell = .{ .style = s.cursor.attr.blank_id };
     try testing.expectEqualDeep(blank, s.cellAt(0, 0));
 
     // Old row 0 (cell 'A') is now at row 1
@@ -3871,7 +3873,7 @@ test "index: cursor at scroll_bottom (full screen), scrolls up" {
     try testing.expectEqualDeep(b, s.cellAt(0, 0));
 
     // Bottom row is blank
-    const blank: Cell = .{ .background = s.cursor.attr.bg };
+    const blank: Cell = .{ .style = s.cursor.attr.blank_id };
     try testing.expectEqualDeep(blank, s.cellAt(s.scroll_bottom, 0));
 }
 
@@ -3905,7 +3907,7 @@ test "index: cursor at scroll_bottom (partial region), only region scrolls" {
     try testing.expectEqualDeep(marker, s.cellAt(2, 0));
 
     // Bottom of region is blank
-    const blank: Cell = .{ .background = s.cursor.attr.bg };
+    const blank: Cell = .{ .style = s.cursor.attr.blank_id };
     try testing.expectEqualDeep(blank, s.cellAt(6, 0));
 }
 
@@ -4046,14 +4048,15 @@ test "saveCursor/restoreCursor: attrs restored" {
     defer s.destroy(alloc);
 
     s.cursor.attr.flags.bold = true;
-    s.cursor.attr.fg = s.palette.intern(Color.fromRgb(255, 0, 0));
+    s.cursor.attr.colors.fg = Style.encode(Color.fromRgb(255, 0, 0));
+    s.internPen();
     s.saveCursor();
 
     s.cursor.attr = .{};
     s.restoreCursor();
 
     try testing.expect(s.cursor.attr.flags.bold);
-    try testing.expectEqualDeep(Color.fromRgb(255, 0, 0), s.palette.decode(s.cursor.attr.fg));
+    try testing.expectEqualDeep(Color.fromRgb(255, 0, 0), Style.decode(s.cursor.attr.colors.fg));
 }
 
 test "saveCursor/restoreCursor: modes origin restored" {
@@ -4228,7 +4231,7 @@ test "insertChars: shifts cells right, fills blanks at cursor" {
     s.cursor.col = 1;
     s.insertChars(1);
 
-    const blank: Cell = .{ .background = s.cursor.attr.bg };
+    const blank: Cell = .{ .style = s.cursor.attr.blank_id };
     try testing.expectEqualDeep(a, s.cellAt(0, 0)); // untouched
     try testing.expectEqualDeep(blank, s.cellAt(0, 1)); // inserted blank
     try testing.expectEqualDeep(b, s.cellAt(0, 2)); // shifted right
@@ -4248,7 +4251,7 @@ test "insertChars: overflow discards cells past active_cols" {
     s.cursor.col = 0;
     s.insertChars(3);
 
-    const blank: Cell = .{ .background = s.cursor.attr.bg };
+    const blank: Cell = .{ .style = s.cursor.attr.blank_id };
     // First 3 cells are blank
     for (0..3) |c| try testing.expectEqualDeep(blank, s.cellAt(0, c));
     // Remaining cells are 'X' (shifted right, last 3 'X', fell off)
@@ -4267,7 +4270,7 @@ test "insertChars: n >= remaining cols clears to end of line" {
     s.cursor.col = 8; // active_cols=12, so 4 cells remain
     s.insertChars(999);
 
-    const blank: Cell = .{ .background = s.cursor.attr.bg };
+    const blank: Cell = .{ .style = s.cursor.attr.blank_id };
     // Cols 0..8 untouched
     for (0..8) |c| try testing.expectEqualDeep(x, s.cellAt(0, c));
     // Cols 8 .. 12 blanked
@@ -4430,7 +4433,7 @@ test "deleteChars: shift cells leftt, fills blanks at end" {
     s.cursor.col = 0;
     s.deleteChars(1);
 
-    const blank: Cell = .{ .background = s.cursor.attr.bg };
+    const blank: Cell = .{ .style = s.cursor.attr.blank_id };
     try testing.expectEqualDeep(b, s.cellAt(0, 0)); // shifted left
     try testing.expectEqualDeep(c, s.cellAt(0, 1)); // shifted left
     try testing.expectEqualDeep(blank, s.cellAt(0, 2)); // filled blank
@@ -4448,7 +4451,7 @@ test "deleteChars: n >= remaining cols clears to end of line" {
     s.cursor.col = 8;
     s.deleteChars(999);
 
-    const blank: Cell = .{ .background = s.cursor.attr.bg };
+    const blank: Cell = .{ .style = s.cursor.attr.blank_id };
     for (0..8) |c| try testing.expectEqualDeep(x, s.cellAt(0, c));
     for (8..s.active_cols) |c| try testing.expectEqualDeep(blank, s.cellAt(0, c));
 }
@@ -4484,7 +4487,7 @@ test "insertLines: inserts blank lines at cursor row, shifts down" {
     s.cursor.col = 5;
     s.insertLines(1);
 
-    const blank: Cell = .{ .background = s.cursor.attr.bg };
+    const blank: Cell = .{ .style = s.cursor.attr.blank_id };
     // Row 0, 1 untouched
     try testing.expectEqualDeep(Cell{ .codepoint = 'A', .kind = .narrow }, s.cellAt(0, 0));
     try testing.expectEqualDeep(Cell{ .codepoint = 'B', .kind = .narrow }, s.cellAt(1, 0));
@@ -4528,7 +4531,7 @@ test "insertLines: n >= region height clears entire region" {
     s.cursor.row = 0;
     s.insertLines(999);
 
-    const blank: Cell = .{ .background = s.cursor.attr.bg };
+    const blank: Cell = .{ .style = s.cursor.attr.blank_id };
     for (0..s.active_rows) |r| try testing.expectEqualDeep(blank, s.cellAt(r, 0));
 }
 
@@ -4577,7 +4580,7 @@ test "insertLines: partial scroll region respected" {
     s.cursor.row = 2;
     s.insertLines(1);
 
-    const blank: Cell = .{ .background = s.cursor.attr.bg };
+    const blank: Cell = .{ .style = s.cursor.attr.blank_id };
     // Rows outside region untouched
     try testing.expectEqualDeep(Cell{ .codepoint = 'A', .kind = .narrow }, s.cellAt(0, 0));
     try testing.expectEqualDeep(Cell{ .codepoint = 'B', .kind = .narrow }, s.cellAt(1, 0));
@@ -4602,7 +4605,7 @@ test "deleteLines: deletes lines at cursor row, shifts up" {
     s.cursor.row = 2;
     s.deleteLines(1);
 
-    const blank: Cell = .{ .background = s.cursor.attr.bg };
+    const blank: Cell = .{ .style = s.cursor.attr.blank_id };
     // Rows 0, 1 untouched
     try testing.expectEqualDeep(Cell{ .codepoint = 'A', .kind = .narrow }, s.cellAt(0, 0));
     try testing.expectEqualDeep(Cell{ .codepoint = 'B', .kind = .narrow }, s.cellAt(1, 0));
@@ -4643,7 +4646,7 @@ test "deleteLines: n >= region height clears entire region" {
     s.cursor.row = 0;
     s.deleteLines(999);
 
-    const blank: Cell = .{ .background = s.cursor.attr.bg };
+    const blank: Cell = .{ .style = s.cursor.attr.blank_id };
     for (0..s.active_rows) |r|
         try testing.expectEqualDeep(blank, s.cellAt(r, 0));
 }
@@ -4692,7 +4695,7 @@ test "deleteLines: partial scroll region respected" {
     s.cursor.row = 2;
     s.deleteLines(1);
 
-    const blank: Cell = .{ .background = s.cursor.attr.bg };
+    const blank: Cell = .{ .style = s.cursor.attr.blank_id };
     // Rows outside region untouched
     try testing.expectEqualDeep(Cell{ .codepoint = 'A', .kind = .narrow }, s.cellAt(0, 0));
     try testing.expectEqualDeep(Cell{ .codepoint = 'B', .kind = .narrow }, s.cellAt(1, 0));
@@ -5892,7 +5895,7 @@ test "eraseChars: erases one character at cursor" {
     s.cursor.col = 3;
     s.eraseChars(1);
 
-    const blank: Cell = .{ .background = s.cursor.attr.bg };
+    const blank: Cell = .{ .style = s.cursor.attr.blank_id };
     try testing.expectEqualDeep(blank, s.cellAt(0, 3));
     // neighbours untouched
     try testing.expectEqualDeep(marker, s.cellAt(0, 2));
@@ -5911,7 +5914,7 @@ test "eraseChars: erase multiple characters" {
     s.cursor.col = 2;
     s.eraseChars(4); // erase cols: 2..5
 
-    const blank: Cell = .{ .background = s.cursor.attr.bg };
+    const blank: Cell = .{ .style = s.cursor.attr.blank_id };
     for (2..6) |c| try testing.expectEqualDeep(blank, s.cellAt(0, c));
 
     // neighbours untouched
@@ -5931,7 +5934,7 @@ test "eraseChars: n=0 treated as n=1" {
     s.cursor.col = 5;
     s.eraseChars(0); // default parameter: erase 1
 
-    const blank: Cell = .{ .background = s.cursor.attr.bg };
+    const blank: Cell = .{ .style = s.cursor.attr.blank_id };
 
     try testing.expectEqualDeep(blank, s.cellAt(0, 5));
     // neighbours untouched
@@ -5951,7 +5954,7 @@ test "eraseChars: clamped to end-of-line" {
     s.cursor.col = 20; // test_max_cols=24, so 4 cols remain
     s.eraseChars(999); // clamps to active_cols
 
-    const blank: Cell = .{ .background = s.cursor.attr.bg };
+    const blank: Cell = .{ .style = s.cursor.attr.blank_id };
 
     for (20..24) |c| try testing.expectEqualDeep(blank, s.cellAt(0, c));
 
@@ -6003,7 +6006,7 @@ test "eraseChars: chars to the right are NOT shifted" {
     // Col 0: 'A' untouched
     try testing.expectEqual(@as(u21, 'A'), s.cellAt(0, 0).codepoint);
     // Cols 1–2: blanked
-    const blank: Cell = .{ .background = s.cursor.attr.bg };
+    const blank: Cell = .{ .style = s.cursor.attr.blank_id };
     try testing.expectEqualDeep(blank, s.cellAt(0, 1));
     try testing.expectEqualDeep(blank, s.cellAt(0, 2));
     // Col 3: 'D' still at col 3 (NOT shifted to col 1)
@@ -6016,8 +6019,9 @@ test "eraseChars: uses cursor background color" {
     var s = try altScreen(alloc);
     defer s.destroy(alloc);
 
-    const red = s.palette.intern(.{ .rgb = .{ .r = 0, .g = 0, .b = 0 } });
-    s.cursor.attr.bg = red;
+    s.cursor.attr.colors.bg = Style.encode(.{ .rgb = .{ .r = 0, .g = 0, .b = 0 } });
+    s.internPen();
+    const red = s.cursor.attr.blank_id;
 
     const marker: Cell = .{ .codepoint = 'Z', .kind = .narrow };
     s.setCell(0, 0, marker);
@@ -6026,7 +6030,7 @@ test "eraseChars: uses cursor background color" {
     s.cursor.col = 0;
     s.eraseChars(1);
 
-    try testing.expectEqualDeep(red, s.cellAt(0, 0).background);
+    try testing.expectEqual(red, s.cellAt(0, 0).style);
 }
 
 test "eraseChars: generation bumped" {
@@ -6340,7 +6344,8 @@ test "softReset: cursor attributes cleared" {
     s.cursor.attr.flags.bold = true;
     s.cursor.attr.flags.strikethrough = true;
     s.cursor.attr.flags.italic = true;
-    s.cursor.attr.fg = s.palette.intern(.{ .indexed = 3 });
+    s.cursor.attr.colors.fg = Style.encode(.{ .indexed = 3 });
+    s.internPen();
 
     s.softReset();
 
