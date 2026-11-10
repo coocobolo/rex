@@ -152,6 +152,16 @@ pub fn build(b: *std.Build) !void {
         @panic("unimplemented glfw extension link library headers");
     }
 
+    // Rex's own `memset`, replacing compiler_rt's byte loop (#78). It needs
+    // `no_builtin`, so it is its own module; executables import it, the
+    // `rex` library module and the fuzz module don't.
+    const memset_mod = b.createModule(.{
+        .root_source_file = b.path("src/memset.zig"),
+        .target = target,
+        .optimize = optimize,
+        .no_builtin = true,
+    });
+
     // Executable
     const exe = b.addExecutable(.{
         .name = "rex",
@@ -161,6 +171,7 @@ pub fn build(b: *std.Build) !void {
             .optimize = optimize,
             .imports = &.{
                 .{ .name = "rex", .module = mod },
+                .{ .name = "memset", .module = memset_mod },
             },
             .strip = false, // TODO delete for testing only
             .link_libc = true,
@@ -258,6 +269,7 @@ pub fn build(b: *std.Build) !void {
             .root_source_file = b.path("bench/main.zig"),
             .imports = &.{
                 .{ .name = "rex", .module = mod },
+                .{ .name = "memset", .module = memset_mod },
             },
             .target = target,
             .strip = strip,
@@ -374,6 +386,12 @@ pub fn build(b: *std.Build) !void {
     const test_step = b.step("test", "Run all tests");
     test_step.dependOn(tests.run(tests.add("test-rex", mod, test_filters)));
     test_step.dependOn(tests.run(tests.add("test-exe", exe.root_module, test_filters)));
+    test_step.dependOn(tests.run(tests.add("test-memset", b.createModule(.{
+        .root_source_file = b.path("src/memset_test.zig"),
+        .target = target,
+        .optimize = optimize,
+        .no_builtin = true, // memset.zig's requirement; see its doc comment
+    }), test_filters)));
     // `test` doesn't run the benchmark, but it compiles it, so a change the
     // benchmark cases depend on can't break `perf-bench.sh` unnoticed.
     test_step.dependOn(&bench.step);

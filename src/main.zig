@@ -1,6 +1,11 @@
 const std = @import("std");
 const rex = @import("rex");
 
+comptime {
+    // Links Rex's `memset` over compiler_rt's (#78).
+    _ = @import("memset");
+}
+
 pub const std_options: std.Options = .{
     .log_level = .debug,
 };

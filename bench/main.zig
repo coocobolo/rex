@@ -1,5 +1,10 @@
 const std = @import("std");
 const builtin = @import("builtin");
+
+comptime {
+    // Links Rex's `memset` over compiler_rt's (#78).
+    _ = @import("memset");
+}
 const mem = std.mem;
 
 const cases = @import("cases/root.zig");
