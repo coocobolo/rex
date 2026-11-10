@@ -1291,14 +1291,22 @@ pub fn Screen(comptime option: Option) type {
             return if (self.cursor.origin) self.scroll_top else 0;
         }
 
-        // Callers build `blank` from the style alone, so the default style
-        // means `Cell{}`, which `zeroRow` fills fastest.
+        /// Fills logical row `r` with `blank` across the active columns.
+        /// Marks nothing dirty.
         inline fn clearRow(self: *Self, r: usize, blank: Cell) void {
-            const row_mut = self.rowMutRaw(r)[0..self.active_cols];
+            self.clearPhysRow(self.physRow(r), blank);
+        }
+
+        /// `clearRow` for physical row `phys`, for callers that already
+        /// resolved it. Callers build `blank` from the style alone, so the
+        /// default style means `Cell{}`, which `zeroRow` fills fastest.
+        inline fn clearPhysRow(self: *Self, phys: usize, blank: Cell) void {
+            const cells = self.cells[phys * max_cols ..][0..self.active_cols];
             if (blank.style == Style.Table.default_id) {
-                zeroRow(row_mut.ptr, row_mut.len);
+                zeroRow(cells.ptr, cells.len);
             } else {
-                @memset(row_mut, blank);
+                @branchHint(.unlikely);
+                @memset(cells, blank);
             }
         }
 
@@ -1575,22 +1583,9 @@ pub fn Screen(comptime option: Option) type {
                 );
                 const phys_end_total = phys_start + count;
 
-                // clear cells
                 var r = phys_start;
-                var remaining = count;
-
-                while (remaining > 0) : (remaining -= 1) {
-                    const row_start = r * max_cols;
-                    const row_cells =
-                        self.cells[row_start .. row_start + self.active_cols];
-
-                    if (blank.style == Style.Table.default_id) {
-                        zeroRow(row_cells.ptr, row_cells.len);
-                    } else {
-                        @branchHint(.unlikely);
-                        @memset(row_cells, blank);
-                    }
-
+                for (0..count) |_| {
+                    self.clearPhysRow(r, blank);
                     r = (r + 1) & ring_mask;
                 }
 
@@ -1626,15 +1621,7 @@ pub fn Screen(comptime option: Option) type {
                 // Their row_map entries now point to the evicted physical slots.
                 for (region_bottom + 1 - count..region_bottom + 1) |r| {
                     const phys = self.physRow(r);
-                    // pass phys directly to avoid recomputing inside clearRow
-                    const row_mut = self.cells[phys * max_cols ..][0..self.active_cols];
-                    if (blank.style == Style.Table.default_id) {
-                        zeroRow(row_mut.ptr, row_mut.len);
-                    } else {
-                        // most terminals use default background tho
-                        @branchHint(.unlikely);
-                        @memset(row_mut, blank);
-                    }
+                    self.clearPhysRow(phys, blank);
                     self.line_attrs[phys] = .normal;
                 }
 
@@ -1689,12 +1676,7 @@ pub fn Screen(comptime option: Option) type {
             // Clear the count vacated rows at the TOP of the region
             for (region_top..region_top + count) |r| {
                 const phys = self.physRow(r);
-                const row_mut = self.cells[phys * max_cols ..][0..self.active_cols];
-                if (blank.style == Style.Table.default_id) {
-                    zeroRow(row_mut.ptr, row_mut.len);
-                } else {
-                    @memset(row_mut, blank);
-                }
+                self.clearPhysRow(phys, blank);
                 self.line_attrs[phys] = .normal;
             }
 
