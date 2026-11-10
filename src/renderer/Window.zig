@@ -265,6 +265,16 @@ pub fn deinit(self: *Window) void {
     self.* = undefined;
 }
 
+/// Refresh rate of the primary monitor in Hz, or null when GLFW does not
+/// know it. GLFW has no "monitor this window is on" for a windowed window,
+/// so callers treat this as a starting estimate.
+pub fn primaryRefreshHz() ?u32 {
+    const monitor = c.glfwGetPrimaryMonitor() orelse return null;
+    const mode = c.glfwGetVideoMode(monitor) orelse return null;
+    if (mode.*.refreshRate <= 0) return null;
+    return @intCast(mode.*.refreshRate);
+}
+
 pub fn getWindowContentScale(self: *Window) Dimension(f32) {
     var scale: Dimension(f32) = .empty;
     c.glfwGetWindowContentScale(self.handle, &scale.width, &scale.height);

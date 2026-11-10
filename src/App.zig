@@ -248,9 +248,9 @@ const PeriodicTimer = struct {
 /// instead of a whole refresh. `next_vblank_ns == 0` means the next vblank
 /// is not known: startup, an idle gap, or a swap that did not wait.
 const FrameLatch = struct {
-    /// Nanoseconds between refreshes. Starts at 165 Hz and follows the gap
-    /// between swaps that actually waited.
-    period_ns: u64 = 1_000_000_000 / 165,
+    /// Nanoseconds between refreshes. Starts at the monitor's rate (`init`)
+    /// and follows the gap between swaps that actually waited.
+    period_ns: u64 = 1_000_000_000 / fallback_hz,
     /// How long the swap should still block after the draw is submitted.
     margin_ns: u64 = 1_500_000,
     /// Recent build and draw time, kept so the wait ends early enough to
@@ -267,6 +267,25 @@ const FrameLatch = struct {
     /// This draw was aimed at `next_vblank_ns`. Cleared once the swap is
     /// observed, including when the frame had nothing dirty to swap.
     used_prediction: bool = false,
+
+    /// A gap outside the range around `period_ns` (2-50 ms), kept until a
+    /// second one agrees with it; then it replaces the period. 0 when none.
+    /// Lets a wrong start (the window is not on the primary monitor, or
+    /// moved) correct itself.
+    candidate_ns: u64 = 0,
+
+    /// Used when the monitor's refresh rate is unknown.
+    const fallback_hz = 60;
+    /// Refresh periods considered real: 500 Hz to 20 Hz.
+    const min_period_ns = 2_000_000;
+    const max_period_ns = 50_000_000;
+
+    /// A latch for a display refreshing at `refresh_hz`, or at 60 Hz when
+    /// that is unknown. The period adapts to the measured swaps either way.
+    fn init(refresh_hz: ?u32) FrameLatch {
+        const hz: u64 = refresh_hz orelse fallback_hz;
+        return .{ .period_ns = 1_000_000_000 / @max(hz, 1) };
+    }
 
     fn leadNs(self: *const FrameLatch) u64 {
         return self.margin_ns +| self.render_ns;
@@ -304,9 +323,10 @@ const FrameLatch = struct {
             if (self.render_ns < 200_000) self.render_ns = 200_000;
         }
 
-        // A real wait is longer than a scheduling hiccup and shorter than
-        // two refreshes. Anything else is an idle swap or a missed vblank.
-        const trusted = block >= 400_000 and block <= self.period_ns +| 2_000_000;
+        // A real wait is longer than a scheduling hiccup. However long it
+        // was, it ended at a vblank, so it anchors the next one; bounding it
+        // by the current period would lock out a period that started wrong.
+        const trusted = block >= 400_000 and block <= max_period_ns;
         if (!trusted) {
             // Aim was past the vblank. Drop it and draw the next frame
             // immediately: that swap blocks for a refresh and reanchors.
@@ -317,10 +337,7 @@ const FrameLatch = struct {
         }
 
         if (self.last_vblank_ns != 0 and swap_return_ns > self.last_vblank_ns) {
-            const gap = swap_return_ns - self.last_vblank_ns;
-            if (gap >= 4_000_000 and gap <= 20_000_000) {
-                self.period_ns = (self.period_ns *| 7 +| gap) / 8;
-            }
+            self.samplePeriod(swap_return_ns - self.last_vblank_ns);
         }
         self.last_vblank_ns = swap_return_ns;
 
@@ -332,6 +349,27 @@ const FrameLatch = struct {
             self.bump(-@as(i64, @intCast(@min(deficit / 2, 200_000))));
         }
         self.arm(swap_return_ns);
+    }
+
+    /// Folds the gap between two waited swaps into `period_ns`. Half to one
+    /// and a half periods is one refresh and refines the average. Anything
+    /// else between 2 and 50 ms is a missed vblank, a stall, or a wrong
+    /// period: it becomes the period only when the next such gap agrees
+    /// within 10%.
+    fn samplePeriod(self: *FrameLatch, gap: u64) void {
+        if (gap >= self.period_ns / 2 and gap <= self.period_ns + self.period_ns / 2) {
+            self.period_ns = (self.period_ns *| 7 +| gap) / 8;
+            self.candidate_ns = 0;
+            return;
+        }
+        if (gap < min_period_ns or gap > max_period_ns) return;
+        const prev = self.candidate_ns;
+        if (prev != 0 and @max(gap, prev) - @min(gap, prev) <= prev / 10) {
+            self.period_ns = (gap + prev) / 2;
+            self.candidate_ns = 0;
+        } else {
+            self.candidate_ns = gap;
+        }
     }
 
     /// Moves `shift_ns` and keeps it inside three milliseconds. A larger
@@ -566,6 +604,7 @@ pub fn init(
         .latency = latency,
         .latency_path = latency_path,
         .window = win,
+        .frame_latch = .init(Window.primaryRefreshHz()),
         .background_color = .{ background_color.r, background_color.g, background_color.b, background_alpha },
         .blink = .{ .period_ms = active_config.blink.half_period_ms },
         .blink_rapid = .{ .period_ms = active_config.blink.rapid_half_period_ms },
@@ -992,7 +1031,10 @@ fn waitUntilFrame(self: *App) void {
         const sleep = self.frame_latch.sleepNs(awakeNs(self.io));
         if (sleep == 0) break;
         const slice: i96 = @intCast(if (sleep > 1_500_000) sleep - 1_500_000 else @min(sleep, 250_000));
-        std.Io.sleep(self.io, .fromNanoseconds(slice), .awake) catch {};
+        std.Io.sleep(self.io, .fromNanoseconds(slice), .awake) catch |err| switch (err) {
+            // The Io is shutting down: stop waiting and draw now.
+            error.Canceled => break,
+        };
         Window.glfwPollEvents();
     }
 }
@@ -2730,6 +2772,37 @@ const windowCloseCb: c.GLFWwindowclosefun = struct {
         app.requestQuit();
     }
 }.cb;
+
+test "FrameLatch: starts at the monitor's refresh rate, or 60 Hz" {
+    try std.testing.expectEqual(@as(u64, 1_000_000_000 / 60), FrameLatch.init(60).period_ns);
+    try std.testing.expectEqual(@as(u64, 1_000_000_000 / 144), FrameLatch.init(144).period_ns);
+    try std.testing.expectEqual(@as(u64, 1_000_000_000 / 60), FrameLatch.init(null).period_ns);
+}
+
+test "FrameLatch: a wrong starting period corrects itself after two agreeing swaps" {
+    // Seeded for 165 Hz while the window refreshes at 60 Hz.
+    var latch: FrameLatch = .init(165);
+    const real: u64 = 16_666_667;
+    var t: u64 = 100_000_000;
+    // Each swap blocks 10 ms and returns at a 60 Hz vblank.
+    for (0..3) |_| {
+        latch.observe(t - 10_000_000, t, 300_000);
+        t += real;
+    }
+    try std.testing.expect(latch.period_ns > 16_000_000 and latch.period_ns < 17_300_000);
+}
+
+test "FrameLatch: one missed vblank does not change the period" {
+    var latch: FrameLatch = .init(60);
+    const p = latch.period_ns;
+    latch.observe(98_000_000, 100_000_000, 300_000);
+    // Two refreshes later: a missed vblank.
+    latch.observe(131_000_000, 133_333_334, 300_000);
+    try std.testing.expectEqual(p, latch.period_ns);
+    // The next swap is one refresh on: still the same period.
+    latch.observe(148_000_000, 150_000_000, 300_000);
+    try std.testing.expect(latch.period_ns > p - 200_000 and latch.period_ns < p + 200_000);
+}
 
 test "FrameLatch: no known vblank draws immediately" {
     const latch: FrameLatch = .{};
