@@ -48,6 +48,30 @@ pub const SharedModes = root.SharedModes;
 pub const EventBits = root.Events.Bits;
 pub const EventSet = root.Events.Set;
 
+/// One pty read. Small enough that a key arriving during a drain waits out
+/// tens of microseconds of parsing, not the whole pty buffer.
+const read_chunk: usize = 4 * 1024;
+/// Bytes a turn reads before it publishes, so a flood does not snapshot
+/// once per syscall.
+const turn_budget: usize = 256 * 1024;
+/// How long after input is queued for the child its turns stay short. A
+/// shell echoes well inside this; a program that does not echo costs a
+/// few extra snapshots.
+const echo_window_ns: u64 = 2 * std.time.ns_per_ms;
+/// Bytes a turn reads inside that window. The echo of a key is published
+/// within a few chunks of arriving instead of behind a full `turn_budget`.
+const echo_budget: usize = 16 * 1024;
+
+/// Read budget for a turn starting at `now_ns`. `echo_deadline_ns` ends
+/// the short-turn window that follows input to the child.
+fn readBudget(now_ns: u64, echo_deadline_ns: u64) usize {
+    return if (now_ns < echo_deadline_ns) echo_budget else turn_budget;
+}
+
+fn awakeNs(io: std.Io) u64 {
+    return @intCast(std.Io.Clock.awake.now(io).toNanoseconds());
+}
+
 /// Multi-threaded terminal driver parameterized by terminal capacity `Option`.
 pub fn Driver(comptime option: Option) type {
     const TerminalType = Terminal(option);
@@ -192,12 +216,9 @@ pub fn Driver(comptime option: Option) type {
             };
 
             var read_buffer: [64 * 1024]u8 align(64) = undefined;
-            // One read is small enough that a key arriving during a drain
-            // waits out tens of microseconds of parsing, not the whole pty
-            // buffer. The turn still publishes only after a larger budget,
-            // so a flood does not snapshot once per syscall.
-            const read_chunk: usize = 4 * 1024;
-            const turn_budget: usize = 256 * 1024;
+            // Awake-clock time until which turns use `echo_budget`; see
+            // `readBudget`. 0 (or any past time) means no window.
+            var echo_deadline_ns: u64 = 0;
             var reply_buffer: [term.Response.capacity]u8 = undefined;
             var sync_start: ?std.Io.Clock.Timestamp = null;
             var child_closed = false;
@@ -244,9 +265,11 @@ pub fn Driver(comptime option: Option) type {
 
                 self.terminal_mutex.lockUncancelable(self.io);
 
+                var queued_before = outbound.pending();
                 if (self.takeQueuedInput(&terminal, &reply_buffer, &outbound, &latency_worker, (pollfds[1].revents & system.POLL.IN) != 0)) {
                     had_input = true;
                 }
+                if (outbound.pending() > queued_before) echo_deadline_ns = awakeNs(self.io) +| echo_window_ns;
 
                 // The key's bytes go out before this turn's pty read. Under
                 // load that read runs until EAGAIN, and writing after it
@@ -260,9 +283,10 @@ pub fn Driver(comptime option: Option) type {
                     // Stop before the budget, or before the next read once a
                     // key is queued, and publish this turn. The pty stays
                     // readable, so the next poll returns at once.
-                    drain: while (total_read < turn_budget) {
+                    const budget = readBudget(awakeNs(self.io), echo_deadline_ns);
+                    drain: while (total_read < budget) {
                         if (total_read > 0 and self.input_queue.hasPending()) break :drain;
-                        const want = @min(read_chunk, turn_budget - total_read);
+                        const want = @min(read_chunk, budget - total_read);
                         const n = self.pty.readRaw(read_buffer[0..want]) catch |err| switch (err) {
                             error.WouldBlock => break :drain,
                             error.InputOutput => {
@@ -314,10 +338,13 @@ pub fn Driver(comptime option: Option) type {
                 }
 
                 // A key that arrived during the read is written before the
-                // snapshot, still ahead of any further pty bytes.
+                // snapshot, still ahead of any further pty bytes. Its echo
+                // comes in a later turn, which the window keeps short.
+                queued_before = outbound.pending();
                 if (self.takeQueuedInput(&terminal, &reply_buffer, &outbound, &latency_worker, false)) {
                     had_input = true;
                 }
+                if (outbound.pending() > queued_before) echo_deadline_ns = awakeNs(self.io) +| echo_window_ns;
                 // Replies produced by the read, and any key byte the first
                 // flush could not fit in the kernel buffer.
                 if (!child_closed) self.flushOutbound(&outbound);
@@ -673,6 +700,13 @@ fn sleepNs(ns: u64) void {
     };
     var rem: posix.timespec = undefined;
     _ = system.nanosleep(&req, &rem);
+}
+
+test "readBudget: short turns only inside the echo window" {
+    try std.testing.expectEqual(turn_budget, readBudget(5_000_000, 0));
+    try std.testing.expectEqual(echo_budget, readBudget(5_000_000, 6_000_000));
+    try std.testing.expectEqual(turn_budget, readBudget(6_000_000, 6_000_000));
+    try std.testing.expectEqual(turn_budget, readBudget(9_000_000, 6_000_000));
 }
 
 test "ThreadedDriver: create, destroy and basic frame acquisition" {
