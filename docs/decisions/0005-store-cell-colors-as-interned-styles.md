@@ -1,8 +1,8 @@
 # 0005: Store cell colors as interned styles that are never reused while referenced
 
-- Status: proposed
+- Status: accepted
 - Date: 2026-11-10
-- Deciders: maintainer (pending)
+- Deciders: Kbgjtn (maintainer)
 - Tickets: #61
 
 ## Context
