@@ -162,9 +162,11 @@ Inputs in `regressions` are raw fuzzer bytes, replayed as they are.
 Seeds are plain byte strings: `harness.fuzz` wraps each one as the
 target's first `chunk`, and `harness.seeded` mutates them.
 
-CI fuzzes every target too (`.github/workflows/fuzz.yml`): one
-million runs per target on each push and fifty million nightly (GitHub
-runs the nightly only from the default branch, `develop`). The corpus
+CI fuzzes every target too (`.github/workflows/fuzz.yml`): two
+minutes per target on each push and an hour nightly (GitHub runs the
+nightly only from the default branch, `develop`). It fuzzes in limited
+chunks of about three minutes until the time is up, because killing a
+run would save a false crash. The corpus
 is cached between runs: each run reloads the saved inputs, and only
 the coverage numbers start over when the code changes. The job fails
 when the fuzzer saves a crash file, and the input is uploaded as the

@@ -13,9 +13,9 @@ on:
     - cron: "0 2 * * *" # 02:00 UTC
   workflow_dispatch:
     inputs:
-      runs:
-        description: "Runs per target"
-        default: "50000000"
+      minutes:
+        description: "Fuzzing minutes per target"
+        default: "60"
 
 jobs:
   fuzz:
@@ -26,8 +26,11 @@ jobs:
       matrix:
         target: [config, parser, terminal, strings, utf8, grapheme, wcwidth]
     env:
-      # About 1 minute per target on push, about an hour nightly.
-      RUNS: ${{ github.event_name == 'push' && '1000000' || inputs.runs || '50000000' }}
+      # Fuzzing time per target: 2 minutes on push, an hour nightly. Runs
+      # per second differ widely between targets (grapheme did 50M runs in
+      # 13 minutes; five others did not finish 50M in 90), so the budget is
+      # time, not a run count.
+      MINUTES: ${{ github.event_name == 'push' && '2' || inputs.minutes || '60' }}
     steps:
       - uses: actions/checkout@v7
 
@@ -60,17 +63,32 @@ jobs:
       - name: Build and replay ${{ matrix.target }}
         run: zig build fuzz-${{ matrix.target }} -Dllvm
 
+      # Limited runs in chunks until the time is up. Each chunk ends on its
+      # own, so nothing is killed: a killed run saves its current input as
+      # if it were a crash. The corpus in .zig-cache/f carries over between
+      # chunks. Each chunk is sized from the last to take about 3 minutes,
+      # so the time is overshot by at most one chunk.
       # zig 0.16.0's build runner exits 0 when a limited --fuzz run finds a
       # crash (it only prints "input saved"), so the crash file is what
       # fails the step; the stale one was removed above.
       - name: Fuzz ${{ matrix.target }}
         id: fuzz
         run: |
-          zig build fuzz-${{ matrix.target }} -Dllvm --fuzz=$RUNS
-          if [ -e .zig-cache/f/crash ]; then
-            echo "::error::fuzz-${{ matrix.target }} found a crash; the input is in the crash-${{ matrix.target }} artifact"
-            exit 1
-          fi
+          deadline=$(( $(date +%s) + MINUTES * 60 ))
+          runs=100000
+          while [ "$(date +%s)" -lt "$deadline" ]; do
+            start=$(date +%s)
+            zig build fuzz-${{ matrix.target }} -Dllvm --fuzz=$runs
+            if [ -e .zig-cache/f/crash ]; then
+              echo "::error::fuzz-${{ matrix.target }} found a crash; the input is in the crash-${{ matrix.target }} artifact"
+              exit 1
+            fi
+            took=$(( $(date +%s) - start ))
+            [ "$took" -gt 0 ] || took=1
+            runs=$(( runs * 180 / took ))
+            [ "$runs" -ge 100000 ] || runs=100000
+            [ "$runs" -le 100000000 ] || runs=100000000
+          done
 
       - name: Upload crash
         if: failure() && steps.fuzz.outcome == 'failure'
