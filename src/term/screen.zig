@@ -55,68 +55,31 @@ pub const Mode = packed struct {
     _pad: u7 = 0, // 11 bits used; pad to 16 bits
 };
 
-pub noinline fn zeroRowStosb(dest: [*]Cell, n: usize) void {
-    const bytes = n * @sizeOf(Cell);
-    const p: [*]u8 = @ptrCast(dest);
-
-    asm volatile ("rep stosb"
-        :
-        : [_dst] "{rdi}" (p),
-          [_ax] "{rax}" (@as(u64, 0)),
-          [_n] "{rcx}" (bytes),
-        : .{ .memory = true, .rdi = true, .rcx = true });
-}
-
-pub noinline fn zeroRowStos(dest: [*]Cell, n: usize) void {
-
-    // rep stosq writes n quadwords of rax to [rdi].
-    // Cell = u64, so n cells = n quadwords. No vzeroupper needed.
-    // zig fmt: off
-            asm volatile (
-               "rep stosq"
-                :
-                : [_dst] "{rdi}" (dest),
-                  [_ax]  "{rax}" (@as(u64, 0)),  
-                  [_n] "{rcx}" (n),
-                : .{ .memory = true, .rdi = true, .rcx = true }
-            );
-            // zig fmt: on
-}
-
-pub noinline fn zeroRowBytes(dest: [*]Cell, n: usize) void {
-    const bytes = n * @sizeOf(Cell);
-    const p: [*]u8 = @ptrCast(dest);
-
-    @memset(p[0..bytes], 0);
-}
-
-pub noinline fn zeroRowMemset(dest: [*]Cell, n: usize) void {
-    @memset(dest[0..n], Cell{});
-}
-
-pub noinline fn zeroRowVector(dest: [*]Cell, n: usize) void {
-    const bytes = n * @sizeOf(Cell);
-    const p: [*]u8 = @ptrCast(dest);
-
-    const V = @Vector(32, u8);
-    const zero: V = @splat(0);
-
-    var i: usize = 0;
-
-    while (i + 128 <= bytes) : (i += 128) {
-        @as(*align(1) V, @ptrCast(p + i + 0)).* = zero;
-        @as(*align(1) V, @ptrCast(p + i + 32)).* = zero;
-        @as(*align(1) V, @ptrCast(p + i + 64)).* = zero;
-        @as(*align(1) V, @ptrCast(p + i + 96)).* = zero;
+/// Sets `n` cells at `dest` to `Cell{}`, the blank with default colors,
+/// by writing zero bytes (see the assert below).
+///
+/// On x86-64 this is `rep stosb`, because `@memset` lowers to a call to
+/// Zig 0.16.0's `compiler_rt.memset`, a byte-at-a-time loop that the
+/// linker picks over the libc one (#78). Measured on a Ryzen 3 3300X
+/// (ReleaseFast, `zig build bench-term -- --filter zero_row`, p50) for a
+/// 220-cell row: 401 ns with `@memset`, 26 ns with `rep stosb`. Other
+/// architectures use `@memset` until #78 is fixed.
+pub noinline fn zeroRow(dest: [*]Cell, n: usize) void {
+    if (comptime builtin.cpu.arch == .x86_64) {
+        asm volatile ("rep stosb"
+            :
+            : [_dst] "{rdi}" (@as([*]u8, @ptrCast(dest))),
+              [_ax] "{rax}" (@as(u64, 0)),
+              [_n] "{rcx}" (n * @sizeOf(Cell)),
+            : .{ .memory = true, .rdi = true, .rcx = true });
+    } else {
+        @memset(dest[0..n], Cell{});
     }
+}
 
-    while (i + 32 <= bytes) : (i += 32) {
-        @as(*align(1) V, @ptrCast(p + i)).* = zero;
-    }
-
-    while (i < bytes) : (i += 1) {
-        p[i] = 0;
-    }
+comptime {
+    // `zeroRow` writes zero bytes for `Cell{}`.
+    std.debug.assert(@as(u64, @bitCast(Cell{})) == 0);
 }
 
 fn nextPowerOfTwo(comptime n: usize) usize {
@@ -1337,50 +1300,15 @@ pub fn Screen(comptime option: Option) type {
             return if (self.cursor.origin) self.scroll_top else 0;
         }
 
-        // fast path: default bg, zero-fill (compiler emits rep stosq / vmovdqu)
+        // Callers build `blank` from the background alone, so a default
+        // background means `Cell{}`, which `zeroRow` fills fastest.
         inline fn clearRow(self: *Self, r: usize, blank: Cell) void {
             const row_mut = self.rowMutRaw(r)[0..self.active_cols];
             if (blank.background == 0) {
-                // packed Cell = u64, so memset(0 bytes) is a full zero Cell
                 zeroRow(row_mut.ptr, row_mut.len);
             } else {
                 @memset(row_mut, blank);
             }
-        }
-
-        inline fn zeroBytes(dest: [*]u8, n: usize) void {
-            // We cast to a volatile pointer. This prevents LLVM from
-            // recognizing this as a 'memset' idiom and replacing it with a call.
-            const v_dest: [*]volatile u8 = @ptrCast(dest);
-            var i: usize = 0;
-            while (i < n) : (i += 1) {
-                v_dest[i] = 0;
-            }
-        }
-
-        noinline fn zeroRow(dest: [*]Cell, n: usize) void {
-            // rep stosq writes n quadwords of rax to [rdi].
-            // Cell = u64, so n cells = n quadwords. No vzeroupper needed.
-            // zig fmt: off
-            // asm volatile (
-            //    "rep stosq"
-            //     :
-            //     : [_dst] "{rdi}" (dest),
-            //       [_ax]  "{rax}" (@as(u64, 0)),  
-            //       [_n] "{rcx}" (n),
-            //     : .{ .memory = true, .rdi = true, .rcx = true }
-            // );
-            // zig fmt: on
-
-            const bytes = n * @sizeOf(Cell);
-            const p: [*]u8 = @ptrCast(dest);
-
-            asm volatile ("rep stosb"
-                :
-                : [_dst] "{rdi}" (p),
-                  [_ax] "{rax}" (@as(u64, 0)),
-                  [_n] "{rcx}" (bytes),
-                : .{ .memory = true, .rdi = true, .rcx = true });
         }
 
         fn setDirtyAll(self: *Self) void {

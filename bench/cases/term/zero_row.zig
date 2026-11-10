@@ -1,6 +1,7 @@
-//! Row-clear strategies from screen.zig, on an 80-cell row and a
-//! production `max_cols` row. Picks how scroll and reflow blank rows.
-//! The `rep stos*` variants are x86_64 only.
+//! Row-clear strategies on an 80-cell row and a production `max_cols`
+//! row: `screen` is the `zeroRow` that scroll and erase use, the rest are
+//! the alternatives it was chosen from. The `rep stosq` variant is
+//! x86_64 only.
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -18,15 +19,56 @@ const Result = support.Result;
 
 const term = @import("root.zig");
 
-const is_x86_64 = builtin.cpu.arch == .x86_64;
-
 const strategies = .{
-    .{ "memset", screen.zeroRowMemset, true },
-    .{ "bytes", screen.zeroRowBytes, true },
-    .{ "vector", screen.zeroRowVector, true },
-    .{ "stosq", screen.zeroRowStos, is_x86_64 },
-    .{ "stosb", screen.zeroRowStosb, is_x86_64 },
-};
+    .{ "screen", screen.zeroRow },
+    .{ "memset", zeroRowMemset },
+    .{ "bytes", zeroRowBytes },
+    .{ "vector", zeroRowVector },
+} ++ if (builtin.cpu.arch == .x86_64) .{
+    .{ "stosq", zeroRowStosq },
+} else .{};
+
+noinline fn zeroRowMemset(dest: [*]Cell, n: usize) void {
+    @memset(dest[0..n], Cell{});
+}
+
+noinline fn zeroRowBytes(dest: [*]Cell, n: usize) void {
+    const bytes: [*]u8 = @ptrCast(dest);
+    @memset(bytes[0 .. n * @sizeOf(Cell)], 0);
+}
+
+noinline fn zeroRowVector(dest: [*]Cell, n: usize) void {
+    const bytes = n * @sizeOf(Cell);
+    const p: [*]u8 = @ptrCast(dest);
+
+    const V = @Vector(32, u8);
+    const zero: V = @splat(0);
+
+    var i: usize = 0;
+    while (i + 128 <= bytes) : (i += 128) {
+        @as(*align(1) V, @ptrCast(p + i + 0)).* = zero;
+        @as(*align(1) V, @ptrCast(p + i + 32)).* = zero;
+        @as(*align(1) V, @ptrCast(p + i + 64)).* = zero;
+        @as(*align(1) V, @ptrCast(p + i + 96)).* = zero;
+    }
+    while (i + 32 <= bytes) : (i += 32) {
+        @as(*align(1) V, @ptrCast(p + i)).* = zero;
+    }
+    while (i < bytes) : (i += 1) {
+        p[i] = 0;
+    }
+}
+
+/// `rep stosq` writes `n` quadwords of `rax` to `[rdi]`; a `Cell` is one
+/// quadword.
+noinline fn zeroRowStosq(dest: [*]Cell, n: usize) void {
+    asm volatile ("rep stosq"
+        :
+        : [_dst] "{rdi}" (dest),
+          [_ax] "{rax}" (@as(u64, 0)),
+          [_n] "{rcx}" (n),
+        : .{ .memory = true, .rdi = true, .rcx = true });
+}
 
 const widths = .{ 80, rex.config.Config.default_terminal.max_cols };
 
@@ -44,8 +86,8 @@ pub fn run(io: Io, gpa: Allocator, opts: Options, results: *std.ArrayList(Result
     inline for (widths) |n| {
         const case = std.fmt.comptimePrint("zero_row_{d}", .{n});
         inline for (strategies) |s| {
-            const name, const zero, const supported = s;
-            if (supported and support.allowed(opts.filter, case, name)) {
+            const name, const zero = s;
+            if (support.allowed(opts.filter, case, name)) {
                 const row = try gpa.alignedAlloc(Cell, .@"64", n);
                 defer gpa.free(row);
                 // Dirty, so the first clear is not a no-op.
