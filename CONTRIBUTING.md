@@ -55,8 +55,12 @@ Check each file you touch against this list.
   host or the pty.
 - **Comptime for tables and layout only,** with a clear
   `@compileError` when a guard fails.
-- **Descriptive names.** A builder that does not allocate is
-  `make*`, one that does is `create*`.
+- **Constructors follow the std.** `init` returns a value and
+  `deinit` releases what it holds; when either allocates, it takes
+  the `Allocator`, so the signature shows it. `create` allocates the
+  object itself and returns `*T`, for an address that must stay
+  fixed; `destroy` frees it. A default needing no arguments is a decl
+  literal (`.empty`, `.init`).
 - **Doc comments.** Every public function has a `///` stating its
   contract. Comment non-obvious constants and spec quirks, citing a
   public spec (xterm ctlseqs, ECMA-48, VT510). Do not restate the code.
