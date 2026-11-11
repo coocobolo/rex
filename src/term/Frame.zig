@@ -257,27 +257,29 @@ pub fn Frame(comptime option: Option) type {
             return null;
         }
 
-        /// Inserts or updates a grapheme entry in the side-table.
-        pub fn addGrapheme(self: *Self, id: u32, cps: []const u21) void {
+        /// Inserts or updates a grapheme entry in the side-table. Returns
+        /// false when the table is full and `id` is new; the caller then
+        /// rebuilds it or the cell draws as missing.
+        pub fn addGrapheme(self: *Self, id: u32, cps: []const u21) bool {
             for (self.graphemes[0..self.grapheme_count]) |*entry| {
                 if (entry.id == id) {
                     const len: u8 = @intCast(@min(cps.len, max_cluster_len));
                     entry.len = len;
                     @memcpy(entry.cps[0..len], cps[0..len]);
-                    return;
+                    return true;
                 }
             }
-            if (self.grapheme_count < max_frame_graphemes) {
-                const len: u8 = @intCast(@min(cps.len, max_cluster_len));
-                var entry: GraphemeEntry = .{
-                    .id = id,
-                    .len = len,
-                    .cps = undefined,
-                };
-                @memcpy(entry.cps[0..len], cps[0..len]);
-                self.graphemes[self.grapheme_count] = entry;
-                self.grapheme_count += 1;
-            }
+            if (self.grapheme_count == max_frame_graphemes) return false;
+            const len: u8 = @intCast(@min(cps.len, max_cluster_len));
+            var entry: GraphemeEntry = .{
+                .id = id,
+                .len = len,
+                .cps = undefined,
+            };
+            @memcpy(entry.cps[0..len], cps[0..len]);
+            self.graphemes[self.grapheme_count] = entry;
+            self.grapheme_count += 1;
+            return true;
         }
     };
 }
@@ -323,7 +325,7 @@ test "Frame: grapheme side-table" {
     defer frame.deinit(testing.allocator);
 
     const cluster = [_]u21{ 'e', 0x0301 };
-    frame.addGrapheme(0x110001, &cluster);
+    try std.testing.expect(frame.addGrapheme(0x110001, &cluster));
 
     const found = frame.getGrapheme(0x110001);
     try testing.expect(found != null);

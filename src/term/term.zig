@@ -1147,6 +1147,18 @@ pub fn Terminal(comptime option: Option) type {
         /// Viewport rows are normalized to row 0 (so scrollback offsets are
         /// resolved at snapshot time). Screen dirty rows are drained and
         /// reset to `.empty`.
+        /// Adds the clusters of `cells` to the frame's table. Returns false
+        /// if any did not fit.
+        fn addGraphemes(target: *FrameType, scr: *const ScreenType, cells: []const Cell) bool {
+            var all = true;
+            for (cells) |c| {
+                if (!c.kind.isGrapheme()) continue;
+                const cps = scr.getGrapheme(c.codepoint) orelse continue;
+                if (!target.addGrapheme(c.codepoint, cps)) all = false;
+            }
+            return all;
+        }
+
         pub fn snapshot(self: *Self, target: *FrameType) bool {
             const scr = self.active();
             const max_cols = option.max_cols;
@@ -1197,15 +1209,11 @@ pub fn Terminal(comptime option: Option) type {
                     if (scr.active_cols < max_cols) {
                         @memset(dst_row[scr.active_cols..max_cols], Cell{});
                     }
-                    for (src_row[0..scr.active_cols]) |c| {
-                        if (c.kind.isGrapheme()) {
-                            if (scr.getGrapheme(c.codepoint)) |cps| {
-                                target.addGrapheme(c.codepoint, cps);
-                            }
-                        }
-                    }
+                    // Beyond the table's capacity a cluster draws as missing.
+                    _ = addGraphemes(target, scr, src_row[0..scr.active_cols]);
                 }
             } else {
+                var table_full = false;
                 target.dirty_rows = scr.dirty_rows;
                 var it = scr.dirty_rows.iterator(.{});
                 while (it.next()) |r| {
@@ -1216,12 +1224,14 @@ pub fn Terminal(comptime option: Option) type {
                     if (scr.active_cols < max_cols) {
                         @memset(dst_row[scr.active_cols..max_cols], Cell{});
                     }
-                    for (src_row[0..scr.active_cols]) |c| {
-                        if (c.kind.isGrapheme()) {
-                            if (scr.getGrapheme(c.codepoint)) |cps| {
-                                target.addGrapheme(c.codepoint, cps);
-                            }
-                        }
+                    if (!addGraphemes(target, scr, src_row[0..scr.active_cols])) table_full = true;
+                }
+                // The table keeps clusters of rows since overwritten. When it
+                // fills, start over from what is on screen now (#67).
+                if (table_full) {
+                    target.grapheme_count = 0;
+                    for (0..scr.active_rows) |r| {
+                        _ = addGraphemes(target, scr, target.cells[r * max_cols ..][0..scr.active_cols]);
                     }
                 }
             }

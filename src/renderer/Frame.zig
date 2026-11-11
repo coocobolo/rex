@@ -761,7 +761,10 @@ fn cellGlyph(
         .wide_left, .grapheme_wide => .double,
     };
     if (cell.kind.isGrapheme()) {
-        const cps = frame.getGrapheme(cell.codepoint) orelse return null;
+        // A cluster the frame's table had no room for draws as U+FFFD
+        // instead of a blank cell (`max_frame_graphemes`).
+        const cps = frame.getGrapheme(cell.codepoint) orelse
+            return atlas.get(gpa, rasterizer, 0xFFFD, face, span) catch null;
         return atlas.getSequence(gpa, rasterizer, cps, face, span) catch null;
     }
     // narrow and wide_left cells always hold a valid scalar value.

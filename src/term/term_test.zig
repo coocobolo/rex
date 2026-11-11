@@ -1431,3 +1431,46 @@ test "resizing past the maximum width resizes both screens to the maximum" {
     try testing.expectEqual(@as(u16, test_option.max_cols), t.alternate.active_cols);
     try expectNoSplitWide(&t, 0);
 }
+
+/// Writes a cluster unique to `i` (a letter plus one or two combining
+/// marks from U+0300-U+036F) at the cursor.
+fn feedCluster(t: *Term, i: usize) void {
+    var buf: [16]u8 = undefined;
+    var len: usize = 0;
+    buf[len] = 'a' + @as(u8, @intCast(i % 26));
+    len += 1;
+    const marks = [_]u21{ 0x300 + @as(u21, @intCast((i / 26) % 0x70)), 0x300 + @as(u21, @intCast(i / (26 * 0x70))) };
+    for (marks[0..if (i / (26 * 0x70) > 0) 2 else 1]) |m| len += std.unicode.utf8Encode(m, buf[len..]) catch unreachable;
+    t.feed(buf[0..len]);
+}
+
+test "incremental snapshots keep finding new clusters after 256 others" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+    var frame = try Term.FrameType.init(alloc);
+    defer frame.deinit(alloc);
+
+    // Each pass rewrites one cell with a new cluster, so every snapshot
+    // after the first is incremental.
+    for (0..300) |i| {
+        t.feed("\x1b[1;1H");
+        feedCluster(&t, i);
+        t.end();
+        _ = t.snapshot(&frame);
+        const cell = frame.displayRow(0)[0];
+        try testing.expect(cell.kind.isGrapheme());
+        try testing.expect(frame.getGrapheme(cell.codepoint) != null);
+    }
+}
+
+test "a full frame keeps the first 256 distinct clusters and reports the rest missing" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+    var frame = try Term.FrameType.init(alloc);
+    defer frame.deinit(alloc);
+
+    for (0..257) |i| feedCluster(&t, i);
+    t.end();
+    _ = t.snapshot(&frame);
+    try testing.expectEqual(@as(u16, 256), frame.grapheme_count);
+}
