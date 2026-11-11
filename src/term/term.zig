@@ -60,9 +60,10 @@ pub const Reply = union(enum) {
     secondary_attributes,
     /// DSR 5, operating status: CSI 0 n, meaning no malfunction.
     status_ok,
-    /// CPR (DSR 6). xterm reports the absolute position, even under DECOM.
+    /// CPR (DSR 6). Under DECOM the row counts from the top margin.
     cursor_position: CellPosition,
-    /// DECXCPR (CSI ? 6 n): as CPR, with the DEC private marker.
+    /// DECXCPR (CSI ? 6 n): as CPR, with the DEC private marker and, at
+    /// level 4, the page number 1 (xterm, VT420).
     dec_cursor_position: CellPosition,
     /// XTVERSION (CSI > q): DCS > | name version ST.
     xtversion,
@@ -896,6 +897,19 @@ pub fn Terminal(comptime option: Option) type {
             self.events.set(.selection_reset);
         }
 
+        /// Puts the alternate screen's cursor, modes and margins back to
+        /// their defaults on entry. xterm keeps these terminal-wide
+        /// instead (#69 item 1).
+        fn resetAltCursor(self: *Self) void {
+            const alt = &self.alternate;
+            // The default pen holds the default style IDs, valid in any table.
+            alt.cursor = .{};
+            alt.mode = .{};
+            alt.scroll_top = 0;
+            alt.scroll_bottom = @intCast(alt.active_rows - 1);
+            alt.charset_is_identity = true;
+        }
+
         /// SM (CSI h) and RM (CSI l). Unknown modes are ignored.
         pub fn setMode(self: *Self, mode: u16, set: bool) void {
             switch (mode) {
@@ -996,70 +1010,32 @@ pub fn Terminal(comptime option: Option) type {
                 1004 => self.mode.focus_events = set, // focus in/out
                 1006 => self.mode.mouse_sgr = set, // SGR mouse encoding
 
+                // Alternate screen; xterm clears it when leaving, not when
+                // entering (ctlseqs, `charproc.c` srm_OPT_ALTBUF).
                 1047 => {
                     switch (set) {
                         true => {
                             self.switchScreen(true);
-                            const alt = &self.alternate;
-                            alt.scroll_offset = 0;
-                            alt.row_map_is_identity = true;
-                            alt.cached_row = std.math.maxInt(u16);
-                            alt.mode = .{};
-                            alt.cursor = .{};
-                            alt.scroll_top = 0;
-                            alt.scroll_bottom = @intCast(alt.active_rows - 1);
-                            @memset(alt.cells[0 .. alt.active_rows * option.max_cols], .{});
-                            @memset(alt.line_attrs[0..alt.active_rows], .normal);
-                            alt.grapheme_table.clearRetainingCapacity();
-                            alt.grapheme_reverse.clearRetainingCapacity();
-                            alt.next_grapheme_id = 0x110000;
-                            _ = alt.grapheme_arena.reset(.retain_capacity);
-                            // Cells and pen are default; a saved cursor
-                            // keeps colors only and re-interns on DECRC.
-                            alt.styles.reset();
-                            alt.charset_is_identity = true;
+                            self.resetAltCursor();
                         },
-                        false => self.switchScreen(false),
+                        false => {
+                            if (self.active_buffer == .alternate) self.alternate.clearForAltScreen();
+                            self.switchScreen(false);
+                        },
                     }
 
                     self.active().bump();
                 },
 
-                // Alternate screen with save/restore cursor (xterm 1049).
+                // Alternate screen with save/restore cursor (xterm 1049):
+                // 1048 and 1047 combined, clearing on entry.
                 1049 => {
                     switch (set) {
                         true => {
                             self.primary.saveCursor();
                             self.switchScreen(true);
-                            const alt = &self.alternate;
-                            // Reset ring buffer, must happen before any physRow-dependent ops
-                            alt.scroll_offset = 0;
-                            alt.row_map_is_identity = true;
-                            alt.cached_row = std.math.maxInt(u16);
-                            // Reset cursor and scroll region
-                            alt.cursor = .{};
-                            alt.mode = .{};
-                            alt.scroll_top = 0;
-                            alt.scroll_bottom = @intCast(alt.active_rows - 1);
-
-                            // Clear cells directly, no physRow dependency
-                            @memset(alt.cells[0 .. alt.active_rows * option.max_cols], .{});
-                            @memset(alt.line_attrs[0..alt.active_rows], .normal);
-
-                            alt.grapheme_table.clearRetainingCapacity();
-                            alt.grapheme_reverse.clearRetainingCapacity();
-                            alt.next_grapheme_id = 0x110000;
-                            _ = alt.grapheme_arena.reset(.retain_capacity);
-                            // Cells and pen are default; a saved cursor
-                            // keeps colors only and re-interns on DECRC.
-                            alt.styles.reset();
-                            alt.charset_is_identity = true;
-
-                            if (comptime option.max_scrollback > 0) {
-                                alt.scrollback_used = 0;
-                                alt.viewport_offset = 0;
-                            }
-                            // dirty_rows already set to .full by switchScreen
+                            self.resetAltCursor();
+                            self.alternate.clearForAltScreen();
                         },
                         false => {
                             self.switchScreen(false);
@@ -1272,7 +1248,10 @@ pub fn Terminal(comptime option: Option) type {
                 .secondary_attributes => self.replyFmt(.csi, ">1;0;0c", .{}),
                 .status_ok => self.replyFmt(.csi, "0n", .{}),
                 .cursor_position => |at| self.replyFmt(.csi, "{d};{d}R", .{ @as(u32, at.row) + 1, @as(u32, at.col) + 1 }),
-                .dec_cursor_position => |at| self.replyFmt(.csi, "?{d};{d}R", .{ @as(u32, at.row) + 1, @as(u32, at.col) + 1 }),
+                .dec_cursor_position => |at| switch (self.conformance_level) {
+                    .level4 => self.replyFmt(.csi, "?{d};{d};1R", .{ @as(u32, at.row) + 1, @as(u32, at.col) + 1 }),
+                    else => self.replyFmt(.csi, "?{d};{d}R", .{ @as(u32, at.row) + 1, @as(u32, at.col) + 1 }),
+                },
                 .xtversion => self.replyFmt(.dcs, ">|{s} {s}", .{ option.name, option.version }),
                 .palette_color => |c| self.replyFmt(.osc, "4;{d};rgb:{x:0>2}/{x:0>2}/{x:0>2}", .{ c.index, c.rgb.r, c.rgb.g, c.rgb.b }),
                 .dynamic_color => |c| self.replyFmt(.osc, "{d};rgb:{x:0>4}/{x:0>4}/{x:0>4}", .{

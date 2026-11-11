@@ -2428,8 +2428,12 @@ pub fn Screen(comptime option: Option) type {
         /// Cursor below `scroll_bottom`, moves down, clamped to `active_rows - 1`.
         /// Otherwise, cursor moves down one row.
         ///
+        /// Clears `wrap_pending` in every case. LF, VT and FF come here too.
         /// This is the counterpart of `reverseIndex` (RI / ESC M).
         pub inline fn index(self: *Self) void {
+            // Cleared on both paths, as xterm's CursorDown does even when it
+            // moves zero rows and scrolls (`cursor.c` xtermIndex).
+            self.cursor.wrap_pending = false;
             if (self.cursor.row == self.scroll_bottom) {
                 // At the bottom of the scroll region, scroll the region up.
                 // scrollUp handles dirty_rows (.full on full-screen, per-row on partial)
@@ -2889,6 +2893,39 @@ pub fn Screen(comptime option: Option) type {
             self.charset_is_identity = true;
 
             self.cached_row = max_u16;
+            self.setDirtyAll();
+            self.bump();
+        }
+
+        /// Blanks the active area and drops the scrollback, the line
+        /// attributes, the graphemes and the style table, for the
+        /// alternate screen's 1047 and 1049 clears. Cursor, modes and
+        /// margins are kept; the pen is interned again because its IDs
+        /// pointed into the old table.
+        pub fn clearForAltScreen(self: *Self) void {
+            // The ring goes back to identity before the clear, which writes
+            // physical rows 0 to active_rows directly.
+            self.scroll_offset = 0;
+            self.row_map_is_identity = true;
+            self.cached_row = max_u16;
+
+            @memset(self.cells[0 .. @as(usize, self.active_rows) * max_cols], Cell{});
+            @memset(self.line_attrs[0..self.active_rows], .normal);
+
+            self.grapheme_table.clearRetainingCapacity();
+            self.grapheme_reverse.clearRetainingCapacity();
+            self.next_grapheme_id = 0x110000;
+            self.grapheme_compact_at = grapheme_compact_min;
+            _ = self.grapheme_arena.reset(.retain_capacity);
+
+            self.styles.reset();
+            self.internPen();
+
+            if (comptime is_scrollback_used) {
+                self.scrollback_used = 0;
+                self.viewport_offset = 0;
+            }
+
             self.setDirtyAll();
             self.bump();
         }

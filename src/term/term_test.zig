@@ -1470,3 +1470,47 @@ test "a full frame keeps the first 256 distinct clusters and reports the rest mi
     _ = t.snapshot(&frame);
     try testing.expectEqual(@as(u16, 256), frame.grapheme_count);
 }
+
+test "1047: entering keeps the alternate screen's content (xterm clears on leaving)" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+    t.feed("\x1b[?47hX\x1b[?47l"); // 47 never clears
+    t.feed("\x1b[?1047h");
+    try testing.expectEqual(&t.alternate, t.active());
+    try testing.expectEqual(@as(u21, 'X'), t.alternate.cellAt(0, 0).codepoint);
+}
+
+test "1047: leaving clears the alternate screen and keeps the primary" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+    t.feed("P\x1b[?1047hX\x1b[?1047l");
+    try testing.expectEqual(&t.primary, t.active());
+    try testing.expectEqual(@as(u21, 'P'), t.primary.cellAt(0, 0).codepoint);
+    try testing.expectEqualDeep(Cell{}, t.alternate.cellAt(0, 0));
+}
+
+test "1047: leaving keeps the alternate pen valid in its reset table" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+    t.feed("\x1b[?1047h\x1b[38;2;1;2;3mX\x1b[?1047l");
+    t.feed("\x1b[?47hY"); // 47 keeps the alternate pen
+    const attr = t.active().cursor.attr;
+    try testing.expect(t.active().styles.get(attr.id).eql(attr.colors));
+    try testing.expectEqual(Color.fromRgb(1, 2, 3), Style.decode(cellStyle(&t, 0, 1).fg));
+}
+
+test "1047: leaving from the primary screen clears nothing" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+    t.feed("\x1b[?47hX\x1b[?47l");
+    t.feed("\x1b[?1047l");
+    try testing.expectEqual(@as(u21, 'X'), t.alternate.cellAt(0, 0).codepoint);
+}
+
+test "1049: entering still clears the alternate screen" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+    t.feed("\x1b[?47hX\x1b[?47l");
+    t.feed("\x1b[?1049h");
+    try testing.expectEqualDeep(Cell{}, t.alternate.cellAt(0, 0));
+}

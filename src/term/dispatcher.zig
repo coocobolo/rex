@@ -9,11 +9,20 @@ const Parameter = @import("../vt/parser.zig").Parameter;
 const Terminal = @import("term.zig").Terminal;
 const Charset = @import("cell.zig").Charset;
 const Option = @import("term.zig").Option;
+const CellPosition = @import("term.zig").CellPosition;
 const Palette = @import("Palette.zig").Palette;
 const Screen = @import("screen.zig").Screen;
 const sgr = @import("sgr.zig");
 
 /// helper: get param value or default fallback, skipping sub-params
+/// The cursor position CPR and DECXCPR report: under DECOM the row counts
+/// from the top margin, as xterm does (`charproc.c` CASE_DSR) and the VT100
+/// manual describes.
+fn reportedPosition(comptime option: Option, screen: *const Screen(option)) CellPosition {
+    const top: u16 = @intCast(screen.effectiveTop());
+    return .{ .row = screen.cursor.row -| top, .col = screen.cursor.col };
+}
+
 fn paramOr(params: []const Parameter, index: usize, default: u16) u16 {
     var n: usize = 0;
     for (params) |p| {
@@ -221,7 +230,7 @@ pub const Csi = struct {
             // DSR / CSI Ps n
             'n' => switch (p1_0) {
                 5 => terminal.reply(.status_ok),
-                6 => terminal.reply(.{ .cursor_position = .{ .row = screen.cursor.row, .col = screen.cursor.col } }), // CPR
+                6 => terminal.reply(.{ .cursor_position = reportedPosition(option, screen) }), // CPR
                 else => {},
             },
 
@@ -254,7 +263,7 @@ pub const Csi = struct {
 
             // DEC DSR / CSI ? Ps n
             0x3F6E => switch (p1_0) {
-                6 => terminal.reply(.{ .dec_cursor_position = .{ .row = screen.cursor.row, .col = screen.cursor.col } }), // DECXCPR
+                6 => terminal.reply(.{ .dec_cursor_position = reportedPosition(option, screen) }), // DECXCPR
                 else => {},
             },
 

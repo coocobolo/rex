@@ -3928,3 +3928,61 @@ test "mode 45: erasing the wrapped row ends the soft wrap" {
     try testing.expectEqual(@as(u16, 1), t.active().cursor.row);
     try testing.expectEqual(@as(u16, 0), t.active().cursor.col);
 }
+
+test "c0: LF at the bottom margin clears wrap_pending (xterm CursorDown)" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+    const last_row = test_option.max_rows - 1;
+    const last_col = test_option.max_cols - 1;
+
+    t.feed("\x1b[12;1H" ++ "A" ** test_option.max_cols);
+    try testing.expect(t.active().cursor.wrap_pending);
+    t.feed("\n"); // scrolls, no CR
+    try testing.expect(!t.active().cursor.wrap_pending);
+
+    // The next character overwrites the last column instead of wrapping
+    // onto a second new line.
+    t.feed("B");
+    const s = t.active();
+    try testing.expectEqual(last_row, s.cursor.row);
+    try testing.expectEqual(@as(u21, 'B'), s.cellAt(last_row, last_col).codepoint);
+    try testing.expectEqual(@as(u21, 'A'), s.cellAt(last_row - 1, last_col).codepoint);
+    try testing.expectEqual(@as(u21, 0), s.cellAt(last_row, 0).codepoint);
+}
+
+test "escape: IND at the bottom of a scroll region clears wrap_pending" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+    t.feed("\x1b[3;6r\x1b[6;1H" ++ "A" ** test_option.max_cols);
+    try testing.expect(t.active().cursor.wrap_pending);
+    t.feed("\x1bD"); // IND scrolls the region
+    const s = t.active();
+    try testing.expect(!s.cursor.wrap_pending);
+    try testing.expectEqual(@as(u16, 5), s.cursor.row);
+    try testing.expectEqual(@as(u16, test_option.max_cols - 1), s.cursor.col);
+}
+
+test "csi: CPR and DECXCPR under DECOM count rows from the top margin" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+    t.control_format = .s7c1t;
+    t.feed("\x1b[3;8r\x1b[?6h\x1b[2;5H"); // region rows 3-8, origin mode, row 2 of the region
+    try testing.expectEqual(@as(u16, 3), t.active().cursor.row);
+
+    t.feed("\x1b[6n");
+    try testing.expectEqualStrings("\x1b[2;5R", t.response.slice());
+    t.response.clear();
+    t.feed("\x1b[?6n");
+    try testing.expectEqualStrings("\x1b[?2;5R", t.response.slice());
+}
+
+test "csi: DECXCPR adds page 1 at conformance level 4" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+    t.feed("\x1b[64;1\"p"); // DECSCL VT400, 7-bit controls
+    t.feed("\x1b[2;3H\x1b[?6n");
+    try testing.expectEqualStrings("\x1b[?2;3;1R", t.response.slice());
+    t.response.clear();
+    t.feed("\x1b[6n"); // CPR has no page
+    try testing.expectEqualStrings("\x1b[2;3R", t.response.slice());
+}
