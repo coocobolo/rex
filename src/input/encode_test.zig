@@ -186,3 +186,14 @@ test "encode: 7-bit controls for the same keys" {
     try expectKey("\x1b[Z", .tab, shift, .{});
     try expectKey("\x1bOp", .kp_0, 0, .{ .keypad_app = true });
 }
+
+test "encode: Home and End follow DECCKM like the arrows, as in xterm" {
+    try expectKey("\x1b[H", .home, 0, .{});
+    try expectKey("\x1b[F", .end, 0, .{});
+    try expectKey("\x1bOH", .home, 0, .{ .cursor_keys = true });
+    try expectKey("\x1bOF", .end, 0, .{ .cursor_keys = true });
+    // With a modifier they stay CSI.
+    try expectKey("\x1b[1;2H", .home, shift, .{ .cursor_keys = true });
+    try expectKey("\x1b[1;5F", .end, ctrl, .{ .cursor_keys = true });
+    try expectKey("\x8fH", .home, 0, .{ .cursor_keys = true, .eight_bit_controls = true });
+}

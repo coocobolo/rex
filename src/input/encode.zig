@@ -323,7 +323,7 @@ fn encodeOtherKey(level: Level, key: Key, mods: Modifiers, out: Out) ?[]const u8
     return out.otherKey(report.param, report.code);
 }
 
-/// A cursor key: SS3 `letter` in application mode, else CSI `letter`, and
+/// A cursor key (the arrows, Home and End): SS3 `letter` in application mode, else CSI `letter`, and
 /// always CSI 1 ; mod `letter` with a modifier.
 fn cursorKey(out: Out, letter: u8, mod: u8, modes: Modes) []const u8 {
     if (mod > 1) return out.csi(letter, mod);
@@ -391,8 +391,9 @@ pub fn encode(key: Key, mods: Modifiers, modes: Modes, buf: *[max_len]u8) []cons
         .f11 => out.tilde(23, mod),
         .f12 => out.tilde(24, mod),
 
-        .home => out.csi('H', mod),
-        .end => out.csi('F', mod),
+        // Home and End are cursor keys in xterm (`input.c` IsCursorKey).
+        .home => cursorKey(out, 'H', mod, modes),
+        .end => cursorKey(out, 'F', mod, modes),
         .insert => out.tilde(2, mod),
         .delete => out.tilde(3, mod),
         .page_up => out.tilde(5, mod),
