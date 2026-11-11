@@ -1386,6 +1386,11 @@ pub fn Screen(comptime option: Option) type {
                 .right => normalized > len / 2,
             };
 
+            // Scrolls move few rows, so save the shorter side and shift the
+            // rest with one memmove. `std.mem.rotate` (three reversals) for
+            // every case measured 2x the instructions and 2.6x the time per
+            // one-row region scroll (`bench-term` scroll/alt/bottom_region
+            // 19.0 vs 52.5 ns, #73).
             const small_k_threshold = 64;
             if (k <= small_k_threshold) {
                 var scratch: [small_k_threshold]u16 = undefined;
