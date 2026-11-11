@@ -256,7 +256,9 @@ pub const Csi = struct {
             // for modifyOtherKeys that is level 0.
             0x3E6E => if (p1_0 == 4) terminal.setModifyOtherKeys(null),
 
-            0x3E70 => terminal.xtversion(), // XTVERSION / CSI > Ps q
+            // XTVERSION / CSI > Ps q, Ps 0 only (`charproc.c`
+            // CASE_REPORT_VERSION). CSI > Ps p is xterm's XTSMPOINTER.
+            0x3E71 => if (p1_0 == 0) terminal.xtversion(),
             0x2071 => terminal.setCursorStyle(p1_0), // DECSCUSR / CSI Ps SP q
 
             0x3F68, 0x3F6C => {

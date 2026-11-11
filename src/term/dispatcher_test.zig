@@ -2817,7 +2817,7 @@ test "csi: DSR XTVERSION xterm name and version" {
     defer t.destroy(alloc);
 
     t.control_format = .s7c1t;
-    t.feed("\x1b[>0p");
+    t.feed("\x1b[>0q");
 
     try testing.expect(t.hasReplies());
     try testing.expectEqualStrings("\x1bP>|test 0.0.1\x1b\\", t.response.slice());
@@ -4095,4 +4095,17 @@ test "csi: XTMODKEYS ignores unsupported levels and other resources" {
     try testing.expectEqual(1, t.mode.modify_other_keys);
     t.feed("\x1b[>1n");
     try testing.expectEqual(1, t.mode.modify_other_keys);
+}
+
+test "csi: XTVERSION answers CSI > q only" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+    t.control_format = .s7c1t;
+
+    t.feed("\x1b[>q"); // Ps omitted
+    try testing.expectEqualStrings("\x1bP>|test 0.0.1\x1b\\", t.response.slice());
+    t.response.clear();
+
+    t.feed("\x1b[>0p\x1b[>1q"); // XTSMPOINTER; XTVERSION with Ps 1
+    try testing.expect(!t.hasReplies());
 }
