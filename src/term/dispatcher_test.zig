@@ -4382,3 +4382,37 @@ test "csi: mode 1007 is on by default, set and reset by DECSET, kept by DECSTR, 
     t.feed("\x1b[?1007l\x1b[?1007h");
     try testing.expect(t.mode.alt_scroll);
 }
+
+test "csi: DECSET 1048 saves and DECRST 1048 restores the cursor and pen" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    t.feed("\x1b[3;5H\x1b[1;31m\x1b[?1048h");
+    t.feed("\x1b[10;20H\x1b[0m");
+    t.feed("\x1b[?1048l");
+    const screen = t.active();
+    try testing.expectEqual(@as(u16, 2), screen.cursor.row);
+    try testing.expectEqual(@as(u16, 4), screen.cursor.col);
+    try testing.expect(screen.cursor.attr.flags.bold);
+}
+
+test "csi: DECRQM 1048 reports whether the active screen holds a saved cursor" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+    t.control_format = .s7c1t;
+
+    t.feed("\x1b[?1048$p");
+    try testing.expectEqualStrings("\x1b[?1048;2$y", t.response.slice());
+    t.response.clear();
+
+    t.feed("\x1b7\x1b[?1048$p"); // DECSC counts, as in xterm
+    try testing.expectEqualStrings("\x1b[?1048;1$y", t.response.slice());
+    t.response.clear();
+
+    t.feed("\x1b[?47h\x1b[?1048$p"); // the alternate screen has its own
+    try testing.expectEqualStrings("\x1b[?1048;2$y", t.response.slice());
+    t.response.clear();
+
+    t.feed("\x1b[?47l\x1bc\x1b[?1048$p"); // RIS clears it
+    try testing.expectEqualStrings("\x1b[?1048;2$y", t.response.slice());
+}

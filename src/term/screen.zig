@@ -2484,8 +2484,8 @@ pub fn Screen(comptime option: Option) type {
                 .colors = self.cursor.attr.colors,
                 .origin = self.cursor.origin,
                 .charset = self.cursor.charset,
-                .charset_is_identity = self.charset_is_identity,
-                // wrap_pending intentianally NOT saved per DECSC spec
+                .saved = true,
+                // wrap_pending intentionally NOT saved per DECSC spec
             };
         }
 

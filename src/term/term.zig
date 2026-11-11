@@ -1140,6 +1140,7 @@ pub fn Terminal(comptime option: Option) type {
                 47, 1047, 1049 => .of(self.active_buffer == .alternate),
                 1004 => .of(self.mode.focus_events),
                 1007 => .of(self.mode.alt_scroll),
+                1048 => .of(self.active().saved_cursor.saved),
                 9 => .of(self.mode.mouse_tracking == .x10),
                 1000 => .of(self.mode.mouse_tracking == .normal),
                 1002 => .of(self.mode.mouse_tracking == .button_motion),
@@ -1225,6 +1226,11 @@ pub fn Terminal(comptime option: Option) type {
                 1004 => self.mode.focus_events = set, // focus in/out
                 1006 => self.mode.mouse_sgr = set, // SGR mouse encoding
                 1007 => self.mode.alt_scroll = set, // alternate scroll
+
+                // Save or restore the cursor, on the active screen (xterm
+                // `charproc.c` srm_SAVE_CURSOR); 1049 does it with the
+                // screen switch.
+                1048 => if (set) self.active().saveCursor() else self.active().restoreCursor(),
 
                 // Alternate screen; xterm clears it when leaving, not when
                 // entering (ctlseqs, `charproc.c` srm_OPT_ALTBUF).

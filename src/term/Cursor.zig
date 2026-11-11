@@ -93,7 +93,10 @@ pub const Saved = struct {
     flags: AttrFlags = .{},
     colors: Colors = .default,
     charset: CharsetState = .{},
-    charset_is_identity: bool = true,
+    /// Whether DECSC, DECSET 1048 or 1049 has saved a cursor here since the
+    /// last reset; DECRQM 1048 reports it, as xterm does (`cursor.c`
+    /// CursorSave2, `misc.c` srm_SAVE_CURSOR).
+    saved: bool = false,
 };
 
 comptime {
