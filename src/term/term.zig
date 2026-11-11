@@ -866,6 +866,8 @@ pub fn Terminal(comptime option: Option) type {
 
             self.parser = .{};
             self.mode = .{};
+            self.conformance_level = .level3;
+            self.control_format = .s7c1t;
 
             self.input.reset();
 

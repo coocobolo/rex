@@ -1872,6 +1872,8 @@ pub fn Screen(comptime option: Option) type {
                         if (pull > 0) {
                             self.scroll_offset = @intCast((self.scroll_offset + ring_rows - pull) & ring_mask);
                             self.scrollback_used -= @intCast(pull);
+                            // Less history now: keep the view inside it.
+                            self.viewport_offset = @min(self.viewport_offset, self.scrollback_used);
                             self.total_lines_scrolled -= @intCast(pull);
                             self.cursor.row = @min(self.cursor.row + @as(u16, @intCast(pull)), @as(u16, @intCast(new_rows - 1)));
                             self.saved_cursor.row = @min(self.saved_cursor.row + @as(u16, @intCast(pull)), @as(u16, @intCast(new_rows - 1)));
@@ -2815,7 +2817,7 @@ pub fn Screen(comptime option: Option) type {
             const r = self.rowMut(self.cursor.row);
 
             // If erasing starts mid-wide-char (right-half), clear the left half too.
-            if (col > 0 and r[col].kind.columnSpan() == 3) r[col - 1] = blank;
+            if (col > 0 and r[col].kind == .wide_right) r[col - 1] = blank;
             // If erasing ends mid-wide-char (left half), clear the right half too.
             if (end < self.active_cols and r[end - 1].kind.columnSpan() == 2) r[end] = blank;
 

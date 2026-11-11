@@ -1291,3 +1291,59 @@ test "styles: a full table gives new text the nearest style and changes no cell"
         try testing.expect(t.active().styles.get(t.active().row(i / 160)[i % 160].style).eql(b));
     }
 }
+
+// #67: cell-editing bugs from the 2026-11-10 `term/` audit.
+
+test "ECH starting on the right half of a wide character erases its left half" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    // A wide character in columns 0-1, then ECH 1 from column 1, its right half.
+    t.feed("\u{4E2D}\x1b[1;2H\x1b[X");
+    const r = t.active().row(0);
+    try testing.expect(r[0].kind == .empty);
+    try testing.expect(r[1].kind == .empty);
+}
+
+test "growing the window keeps the scrollback view inside the history" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    t.resize(6, 24);
+    for (0..20) |_| t.feed("line\r\n");
+    const s = t.active();
+    s.scrollViewportBack(s.scrollback_used);
+    try testing.expectEqual(s.scrollback_used, s.viewport_offset);
+
+    // Growing pulls rows back out of scrollback, so there is less history.
+    t.resize(12, 24);
+    try testing.expect(t.active().viewport_offset <= t.active().scrollback_used);
+}
+
+test "RIS restores 7-bit C1 replies" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    // S8C1T, then RIS, then a cursor position report.
+    t.feed("\x1b G\x1bc\x1b[6n");
+    var out: [Response.capacity]u8 = undefined;
+    const n = t.drainReplies(&out);
+    try testing.expectEqualStrings("\x1b[1;1R", out[0..n]);
+}
+
+test "an East Asian Ambiguous Latin-1 letter is wide when ambiguous_width is wide" {
+    const wide_option = comptime blk: {
+        var o = test_option;
+        o.ambiguous_width = .wide;
+        break :blk o;
+    };
+    const WideTerm = Terminal(wide_option);
+    var t = try WideTerm.create(alloc);
+    defer t.destroy(alloc);
+
+    // U+00D7 MULTIPLICATION SIGN is East Asian Width A.
+    t.feed("\u{00D7}");
+    t.end();
+    try testing.expect(t.active().row(0)[0].kind == .wide_left);
+    try testing.expectEqual(@as(u16, 2), t.active().cursor.col);
+}

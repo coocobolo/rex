@@ -189,7 +189,9 @@ fn feedCodepoint(self: *InputEngine, sink: anytype, cp: u21) void {
 
     // Latin-1 Supplement letters and Latin Extended-A/B: narrow. A mark
     // that follows still attaches, through the zero-width path below.
-    if (cp >= 0x00C0 and cp <= 0x024F) {
+    // Some are East Asian Ambiguous (U+00D7, U+00C6, U+00DF, ...), so only
+    // when ambiguous characters are narrow.
+    if (cp >= 0x00C0 and cp <= 0x024F and self.wcwidth_ambiguous_width == .narrow) {
         self.flushGrapheme(sink);
         sink.putCharKind(cp, .narrow);
         self.grapheme_breaker = null;
