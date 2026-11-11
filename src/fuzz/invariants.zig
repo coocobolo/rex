@@ -9,8 +9,9 @@ const term = @import("../term/term.zig");
 /// Fails unless `t` (a `*Terminal(option)`) is in a sane state:
 /// cursor and margins inside the active area of both screens, the reply
 /// queue, string buffers and title within their capacity, parser counts
-/// within their caps, each grapheme intern table within its bound, and
-/// every style ID in use live in its screen's table.
+/// within their caps, each grapheme intern table within its bound,
+/// every style ID in use live in its screen's table, and no wide
+/// character in the active area missing one of its halves.
 pub fn expectTerminal(t: anytype) !void {
     try expectScreen(&t.primary);
     try expectScreen(&t.alternate);
@@ -39,6 +40,26 @@ fn expectScreen(s: anytype) !void {
     try testing.expect(count <= s.grapheme_compact_at);
     try testing.expect(s.grapheme_compact_at <= @max(Screen.grapheme_compact_min, 2 * s.cells.len));
     try expectStyles(s);
+    try expectWidePairs(s);
+}
+
+/// In every active row, a wide character's left half is followed by its
+/// right half and a right half follows a left half (#67). A row narrower
+/// than two columns can't hold both halves; reflow keeps the character
+/// there so a wider size shows it again.
+fn expectWidePairs(s: anytype) !void {
+    if (s.active_cols < 2) return;
+    for (0..s.active_rows) |r| {
+        const cells = s.row(r)[0..s.active_cols];
+        for (cells, 0..) |cell, i| {
+            if (cell.kind.isWideLeft()) {
+                try testing.expect(i + 1 < cells.len and cells[i + 1].kind == .wide_right);
+            }
+            if (cell.kind == .wide_right) {
+                try testing.expect(i > 0 and cells[i - 1].kind.isWideLeft());
+            }
+        }
+    }
 }
 
 /// Every cell and the pen hold a live style ID (ADR 0005): no ID in use

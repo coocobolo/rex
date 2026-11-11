@@ -1347,3 +1347,87 @@ test "an East Asian Ambiguous Latin-1 letter is wide when ambiguous_width is wid
     try testing.expect(t.active().row(0)[0].kind == .wide_left);
     try testing.expectEqual(@as(u16, 2), t.active().cursor.col);
 }
+
+/// No wide character in row `r` is missing its other half.
+fn expectNoSplitWide(t: *Term, r: usize) !void {
+    const s = t.active();
+    const cells = s.row(r)[0..s.active_cols];
+    for (cells, 0..) |c, i| {
+        if (c.kind.isWideLeft()) {
+            if (i + 1 >= cells.len or cells[i + 1].kind != .wide_right) return error.OrphanedLeftHalf;
+        }
+        if (c.kind == .wide_right) {
+            if (i == 0 or !cells[i - 1].kind.isWideLeft()) return error.OrphanedRightHalf;
+        }
+    }
+}
+
+test "DCH on the left half of a wide character leaves no right half" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+    t.feed("\u{4E2D}ab\x1b[1;1H\x1b[P");
+    try expectNoSplitWide(&t, 0);
+}
+
+test "ICH pushing a wide character into the last column leaves no left half" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+    // Columns 21-22 of 24, then insert two blanks at column 0.
+    t.feed("\x1b[1;22H\u{4E2D}\x1b[1;1H\x1b[2@");
+    try expectNoSplitWide(&t, 0);
+}
+
+test "insert-mode printing pushes a wide character off the row whole" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+    t.feed("\x1b[1;22H\u{4E2D}\x1b[1;1H\x1b[4hab");
+    try expectNoSplitWide(&t, 0);
+}
+
+test "EL 0 from the right half of a wide character erases its left half" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+    t.feed("\u{4E2D}\x1b[1;2H\x1b[K");
+    try expectNoSplitWide(&t, 0);
+}
+
+test "EL 1 ending on the left half of a wide character erases its right half" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+    t.feed("a\u{4E2D}\x1b[1;2H\x1b[1K");
+    try expectNoSplitWide(&t, 0);
+}
+
+test "ED 0 from the right half of a wide character erases its left half" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+    t.feed("\u{4E2D}\x1b[1;2H\x1b[J");
+    try expectNoSplitWide(&t, 0);
+}
+
+test "ED 1 ending on the left half of a wide character erases its right half" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+    t.feed("a\u{4E2D}\x1b[1;2H\x1b[1J");
+    try expectNoSplitWide(&t, 0);
+}
+
+test "the alternate screen shows no stale columns after a narrow-then-wide resize" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+    t.feed("\x1b[?1049h\x1b[1;21HX");
+    t.resize(12, 10);
+    t.resize(12, 24);
+    try testing.expectEqual(@as(u32, 0), t.active().row(0)[20].codepoint);
+}
+
+test "resizing past the maximum width resizes both screens to the maximum" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+    t.feed("0123\u{4E00}4567");
+    t.resize(12, 1);
+    t.resize(12, test_option.max_cols + 1);
+    try testing.expectEqual(@as(u16, test_option.max_cols), t.primary.active_cols);
+    try testing.expectEqual(@as(u16, test_option.max_cols), t.alternate.active_cols);
+    try expectNoSplitWide(&t, 0);
+}

@@ -1309,10 +1309,12 @@ pub fn Terminal(comptime option: Option) type {
             self.reply(.xtversion);
         }
 
-        /// Resizes both screens to `rows` by `cols`, each at least 1.
+        /// Resizes both screens to `rows` by `cols`, each clamped to at
+        /// least 1 and at most `max_rows`/`max_cols` (`reflowBuffer` ignores
+        /// larger sizes, so the primary would keep its old size).
         pub fn resize(self: *Self, rows: u16, cols: u16) void {
-            const r = @max(rows, 1);
-            const c = @max(cols, 1);
+            const r: u16 = @intCast(std.math.clamp(rows, 1, option.max_rows));
+            const c: u16 = @intCast(std.math.clamp(cols, 1, option.max_cols));
 
             if (c != self.primary.active_cols) {
                 self.primary.reflowBuffer(r, c);

@@ -836,6 +836,23 @@ pub fn Screen(comptime option: Option) type {
             return .{ .style = self.cursor.attr.blank_id };
         }
 
+        /// After an edit cut or moved cells at the boundary just before
+        /// column `col` of `cells` (a row's active columns; `col` may be
+        /// `cells.len`, the row's end), blanks the half of a wide character
+        /// whose other half is gone.
+        inline fn repairWideBoundary(self: *const Self, cells: []Cell, col: usize) void {
+            if (col < cells.len and cells[col].kind == .wide_right and
+                (col == 0 or !cells[col - 1].kind.isWideLeft()))
+            {
+                cells[col] = self.blankCell();
+            }
+            if (col > 0 and cells[col - 1].kind.isWideLeft() and
+                (col == cells.len or cells[col].kind != .wide_right))
+            {
+                cells[col - 1] = self.blankCell();
+            }
+        }
+
         /// Maps `cp` through the active charset (GL, or a pending single
         /// shift) and ends the single shift, which applies to one character.
         inline fn translate(self: *Self, cp: u21) u21 {
@@ -1022,6 +1039,8 @@ pub fn Screen(comptime option: Option) type {
                         row_mut[cursor_col .. self.active_cols - shift],
                     );
                 }
+                // A wide character pushed past the end loses its right half.
+                self.repairWideBoundary(row_mut[0..self.active_cols], self.active_cols);
             }
 
             const self_kind = row_mut[cursor_col].kind;
@@ -1113,6 +1132,10 @@ pub fn Screen(comptime option: Option) type {
 
             if (is_wide) {
                 row_mut[cursor_col + 1] = rightHalf(cell);
+            }
+            if (self.mode.insert) {
+                // The shifted cells start right after the new one.
+                self.repairWideBoundary(row_mut[0..self.active_cols], cursor_col + kind.columnSpan());
             }
 
             // Advance cursor
@@ -1741,7 +1764,9 @@ pub fn Screen(comptime option: Option) type {
             switch (mode) {
                 0 => { // cursor to end
                     // Cursor row: partial erase; keep its line_attr.
-                    @memset(self.rowMut(self.cursor.row)[self.cursor.col..self.active_cols], blank);
+                    const cells = self.rowMut(self.cursor.row)[0..self.active_cols];
+                    @memset(cells[self.cursor.col..], blank);
+                    self.repairWideBoundary(cells, self.cursor.col);
 
                     // Rows below cursor: fully erased; reset line_attrs.
                     var r: usize = @as(usize, self.cursor.row) + 1;
@@ -1759,7 +1784,9 @@ pub fn Screen(comptime option: Option) type {
                     }
 
                     // Cursor row: partial erase; keep its line_attr.
-                    @memset(self.rowMut(self.cursor.row)[0 .. @as(usize, self.cursor.col) + 1], blank);
+                    const cells = self.rowMut(self.cursor.row)[0..self.active_cols];
+                    @memset(cells[0 .. @as(usize, self.cursor.col) + 1], blank);
+                    self.repairWideBoundary(cells, @as(usize, self.cursor.col) + 1);
                 },
                 2 => {
                     // Entire active area erased; reset ALL line_attrs.
@@ -1807,8 +1834,16 @@ pub fn Screen(comptime option: Option) type {
             const r = @as(usize, self.cursor.row);
             const c = @as(usize, self.cursor.col);
             switch (mode) {
-                0 => @memset(self.rowMut(r)[c..self.active_cols], blank), // partial; keep line_attr
-                1 => @memset(self.rowMut(r)[0 .. c + 1], blank), // partial; keep line_attr
+                0 => { // partial; keep line_attr
+                    const cells = self.rowMut(r)[0..self.active_cols];
+                    @memset(cells[c..], blank);
+                    self.repairWideBoundary(cells, c);
+                },
+                1 => { // partial; keep line_attr
+                    const cells = self.rowMut(r)[0..self.active_cols];
+                    @memset(cells[0 .. c + 1], blank);
+                    self.repairWideBoundary(cells, c + 1);
+                },
                 2 => { // full erase; reset line_attr
                     @memset(self.rowMut(r)[0..self.active_cols], blank);
                     self.line_attrs[self.physRow(r)] = .normal;
@@ -1897,6 +1932,16 @@ pub fn Screen(comptime option: Option) type {
 
             self.active_rows = @intCast(new_rows);
             self.active_cols = @intCast(new_cols);
+
+            // Nothing above touched the columns between the old and new
+            // width: past the old width they hold cells from an earlier,
+            // wider size, and a wide character at the new edge may have
+            // lost its right half.
+            for (0..new_rows) |r| {
+                const cells = self.cells[self.physRow(r) * max_cols ..][0..max_cols];
+                if (new_cols > old_cols) @memset(cells[old_cols..new_cols], Cell{});
+                self.repairWideBoundary(cells[0..new_cols], new_cols);
+            }
 
             self.dirty_rows = .full;
             self.scroll_top = 0;
@@ -2538,6 +2583,11 @@ pub fn Screen(comptime option: Option) type {
             // Fill the vacated cells with blanks.
             @memset(r[cc..][0..count], blank);
 
+            const cells = r[0..self.active_cols];
+            self.repairWideBoundary(cells, cc);
+            self.repairWideBoundary(cells, cc + count);
+            self.repairWideBoundary(cells, cells.len);
+
             self.cursor.wrap_pending = false;
             self.bump();
         }
@@ -2572,6 +2622,10 @@ pub fn Screen(comptime option: Option) type {
 
             // Fill the vacated tail with blanks.
             @memset(r[self.active_cols - count ..][0..count], blank);
+
+            const cells = r[0..self.active_cols];
+            self.repairWideBoundary(cells, cc);
+            self.repairWideBoundary(cells, cells.len - count);
 
             self.cursor.wrap_pending = false;
             self.dirty_rows.set(cr);
