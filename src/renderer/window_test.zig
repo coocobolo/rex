@@ -29,6 +29,18 @@ test "Xlib: the bell functions load next to GLFW's X11 connection" {
     xlib.close();
 }
 
+test "setPrimarySelection: sets PRIMARY on X11" {
+    try Window.testGlContext();
+    if (c.glfwGetPlatform() != c.GLFW_PLATFORM_X11) return error.SkipZigTest;
+
+    var win: Window = .{ .handle = c.glfwGetCurrentContext().? };
+    try testing.expect(win.setPrimarySelection("from osc 52"));
+    const got = glfwGetX11SelectionString() orelse return error.NoSelection;
+    try testing.expectEqualStrings("from osc 52", std.mem.span(got));
+}
+
+extern "c" fn glfwGetX11SelectionString() ?[*:0]const u8;
+
 test "choosePlatform: auto follows the session, an explicit choice is forced" {
     const Case = struct {
         requested: Window.Platform,

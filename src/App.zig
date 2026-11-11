@@ -2126,12 +2126,16 @@ fn mouseCellPos(self: *App, xpos: f32, ypos: f32) struct { u16, u16 } {
 }
 
 /// What App does with an OSC 52 request (ADR 0006).
-const ClipboardAction = enum { ignore, set_clipboard, reply_empty };
+const ClipboardAction = union(enum) {
+    ignore,
+    /// Set these selections to the write's data.
+    set: rex.terminal.term.Clipboard.Targets,
+    reply_empty,
+};
 
 fn clipboardAction(policy: Config.Clipboard, request: rex.driver.ClipboardRequest) ClipboardAction {
     return switch (request) {
-        // PRIMARY comes in a later stage; until then only CLIPBOARD is set.
-        .write => |w| if (policy.osc52_write == .allow and w.targets.clipboard) .set_clipboard else .ignore,
+        .write => |w| if (policy.osc52_write == .allow) .{ .set = w.targets } else .ignore,
         // Reads are refused: the empty reply keeps a waiting program
         // (Neovim waits up to 10 s) from hanging.
         .read => .reply_empty,
@@ -2143,10 +2147,12 @@ fn handleClipboard(self: *App) void {
     const request = self.driver.takeClipboard(self.clipboard_buf[0..terminal_option.max_clipboard_bytes]) orelse return;
     switch (clipboardAction(self.config.clipboard, request)) {
         .ignore => log.debug("OSC 52: ignored {t}", .{request}),
-        .set_clipboard => {
+        .set => |targets| {
             const len = request.write.data.len;
             self.clipboard_buf[len] = 0;
-            c.glfwSetClipboardString(self.window.handle, self.clipboard_buf[0..len :0].ptr);
+            const text = self.clipboard_buf[0..len :0];
+            if (targets.clipboard) self.window.setClipboard(text);
+            if (targets.primary) _ = self.window.setPrimarySelection(text);
         },
         .reply_empty => {
             const read = request.read;
@@ -2920,10 +2926,13 @@ test "clipboardAction: writes follow the policy, reads get the empty reply" {
     const write: rex.driver.ClipboardRequest = .{ .write = .{ .targets = .{ .clipboard = true }, .data = "hi" } };
     const primary: rex.driver.ClipboardRequest = .{ .write = .{ .targets = .{ .primary = true }, .data = "hi" } };
     const read: rex.driver.ClipboardRequest = .{ .read = .{ .targets = .{ .clipboard = true }, .control_format = .s7c1t } };
-    try std.testing.expectEqual(.set_clipboard, clipboardAction(.{ .osc52_write = .allow }, write));
-    try std.testing.expectEqual(.ignore, clipboardAction(.{ .osc52_write = .deny }, write));
-    try std.testing.expectEqual(.ignore, clipboardAction(.{ .osc52_write = .allow }, primary));
-    try std.testing.expectEqual(.reply_empty, clipboardAction(.{ .osc52_write = .allow }, read));
+    const both: rex.driver.ClipboardRequest = .{ .write = .{ .targets = .{ .clipboard = true, .primary = true }, .data = "" } };
+    try std.testing.expectEqual(ClipboardAction{ .set = .{ .clipboard = true } }, clipboardAction(.{ .osc52_write = .allow }, write));
+    try std.testing.expectEqual(ClipboardAction{ .set = .{ .primary = true } }, clipboardAction(.{ .osc52_write = .allow }, primary));
+    try std.testing.expectEqual(ClipboardAction{ .set = .{ .clipboard = true, .primary = true } }, clipboardAction(.{ .osc52_write = .allow }, both));
+    try std.testing.expectEqual(ClipboardAction.ignore, clipboardAction(.{ .osc52_write = .deny }, primary));
+    try std.testing.expectEqual(ClipboardAction.ignore, clipboardAction(.{ .osc52_write = .deny }, write));
+    try std.testing.expectEqual(ClipboardAction.reply_empty, clipboardAction(.{ .osc52_write = .allow }, read));
 }
 
 test "windowTitle: configured text wins, then the program's title, then the default" {

@@ -120,6 +120,10 @@ pub const Xlib = struct {
 /// check `glfwGetPlatform` first, as ADR 0001 requires.
 pub extern "c" fn glfwGetX11Display() ?*Xlib.Display;
 
+/// Sets X11's PRIMARY selection, copying `string` (glfw3native.h, since
+/// 3.3). Main thread only, and only while GLFW runs on X11.
+extern "c" fn glfwSetX11SelectionString(string: [*:0]const u8) void;
+
 handle: *c.GLFWwindow,
 
 /// Xlib, loaded on the first X11 bell and closed by `deinit`.
@@ -128,6 +132,9 @@ xlib: union(enum) { unloaded, loaded: Xlib, failed } = .unloaded,
 /// Whether a bell that could only ask for attention has been logged, so
 /// it's logged once rather than on every bell.
 silent_bell_logged: bool = false,
+/// Whether a PRIMARY write this platform can't do has been logged, so it's
+/// logged once.
+no_primary_logged: bool = false,
 
 /// The OpenGL core version the renderer needs: the shaders are GLSL 330
 /// and every GL call is core in 3.3. Keep it there so the renderer runs
@@ -349,6 +356,26 @@ pub fn glfwGetWindowUserPointer(window: ?*c.GLFWwindow) ?*anyopaque {
 
 pub fn glfwWaitEventsTimeout(timeout: f64) void {
     c.glfwWaitEventsTimeout(timeout);
+}
+
+/// Sets the CLIPBOARD selection. GLFW copies `text`. Main thread only.
+pub fn setClipboard(self: *Window, text: [:0]const u8) void {
+    c.glfwSetClipboardString(self.handle, text.ptr);
+}
+
+/// Sets the PRIMARY selection where GLFW can: on X11. Elsewhere (Wayland,
+/// which GLFW gives no primary selection, ADR 0001) it does nothing,
+/// logs that once and returns false. GLFW copies `text`. Main thread only.
+pub fn setPrimarySelection(self: *Window, text: [:0]const u8) bool {
+    if (has_x11 and c.glfwGetPlatform() == c.GLFW_PLATFORM_X11) {
+        glfwSetX11SelectionString(text.ptr);
+        return true;
+    }
+    if (!self.no_primary_logged) {
+        self.no_primary_logged = true;
+        log.info("no PRIMARY selection on this platform; only CLIPBOARD is set", .{});
+    }
+    return false;
 }
 
 pub fn setWindowTitle(self: *Window, title: [:0]const u8) void {
