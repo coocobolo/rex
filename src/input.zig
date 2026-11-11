@@ -538,6 +538,196 @@ fn fmtMok(buf: *[32]u8, mod: u8, cp: u21) []const u8 {
     return std.fmt.bufPrint(buf, "\x1b[27;{d};{d}~", .{ mod, cp }) catch "";
 }
 
+// modifyOtherKeys, ported from xterm 412 `input.c` (ModifyOtherKeys,
+// allowedCharModifiers, filterAltMeta and the check in Input) with xterm's
+// default resources: metaSendsEscape off, Alt reported as Alt (3), no
+// modifier ignored, DECBKM reset (Backspace sends DEL), a US layout, and
+// the CSI 27 ; mod ; code ~ format (formatOtherKeys 0). Super is not a
+// modifier here. Level 3 and up are not supported.
+
+/// Shift, Alt and Ctrl as xterm's state bits; the parameter is 1 + bits.
+const ModState = packed struct(u3) {
+    shift: bool = false,
+    alt: bool = false,
+    ctrl: bool = false,
+
+    const none: ModState = .{};
+
+    fn bits(self: ModState) u3 {
+        return @bitCast(self);
+    }
+
+    /// xtermStateToParam: 0 without modifiers, else 1 + Shift + 2 Alt + 4 Ctrl.
+    fn param(self: ModState) u8 {
+        return if (self.bits() == 0) 0 else @as(u8, self.bits()) + 1;
+    }
+
+    fn without(self: ModState, mask: ModState) ModState {
+        return @bitCast(self.bits() & ~mask.bits());
+    }
+};
+
+/// The X keysym of a key xterm counts as ordinary: an ASCII character
+/// after Shift (US layout), or one of the predefined keys between
+/// ISO_Lock and Delete. `delete` is Backspace after the backarrow toggle.
+const OtherKey = union(enum) {
+    char: u8,
+    backspace,
+    delete,
+    tab,
+    left_tab,
+    enter,
+    escape,
+
+    fn isPredefined(self: OtherKey) bool {
+        return self != .char;
+    }
+
+    /// IsControlInput: a keysym from 0x40 to 0x7f.
+    fn isControlInput(self: OtherKey) bool {
+        return switch (self) {
+            .char => |ch| ch >= 0x40 and ch <= 0x7f,
+            else => false,
+        };
+    }
+
+    /// The one byte XLookupString gives for the key, with Xlib's Ctrl
+    /// conversion for characters (`_XTranslateKeySym`).
+    fn byte(self: OtherKey, ctrl: bool) u8 {
+        return switch (self) {
+            .char => |ch| if (!ctrl) ch else switch (ch) {
+                '@'...'~', ' ' => ch & 0x1f,
+                '2' => 0x00,
+                '3'...'7' => ch - ('3' - 0x1b),
+                '8' => 0x7f,
+                '/' => '_' & 0x1f,
+                else => ch,
+            },
+            .backspace => 0x08,
+            .delete => 0x7f,
+            .tab, .left_tab => '\t',
+            .enter => '\r',
+            .escape => 0x1b,
+        };
+    }
+
+    /// IsControlAlias: the key's byte is a control character (IS_CTRL).
+    fn isControlAlias(self: OtherKey, ctrl: bool) bool {
+        const b = self.byte(ctrl);
+        return b < 0x20 or (b >= 0x7f and b <= 0x9f);
+    }
+};
+
+/// allowedCharModifiers: at levels 0 and 1 drop the modifiers a key's
+/// usual byte already carries, then a bare Alt (filterAltMeta).
+fn allowedModifiers(level: u2, state: ModState, key: OtherKey, ctrl_held: bool) ModState {
+    var result = state;
+    if (level <= 1) {
+        if (key.isControlInput() and result.without(.{ .ctrl = true }).bits() == 0) {
+            if (level == 0) result.ctrl = false;
+        } else if (key == .tab or key == .enter) {
+            // kept
+        } else if (key.isControlAlias(ctrl_held)) {
+            if (result.without(.{ .ctrl = true, .shift = true }).bits() == 0) result = .none;
+        } else if (!key.isPredefined()) {
+            if (!result.ctrl) result.shift = false;
+        }
+        if (result.alt and result.without(.{ .alt = true }).bits() == 0) result.alt = false;
+    }
+    return result;
+}
+
+/// ModifyOtherKeys: whether the key is sent as CSI 27 ; mod ; code ~.
+/// May turn `key` from Backspace into Delete (the backarrow toggle).
+fn modifiesOtherKey(level: u2, event: ModState, key: *OtherKey) bool {
+    const modify_parm = event.param();
+    if (modify_parm == 0) return false;
+    var state = event;
+    if (key.* == .backspace and !state.ctrl) key.* = .delete;
+    if (!key.isPredefined()) state = allowedModifiers(level, state, key.*, event.ctrl);
+    if (state.bits() == 0) return false;
+
+    return switch (level) {
+        0, 3 => false,
+        1 => switch (key.*) {
+            .backspace, .delete => false,
+            .left_tab => state.without(.{ .shift = true }).param() != 0,
+            .enter, .tab => true,
+            else => if (key.isControlInput())
+                !(std.meta.eql(state, ModState{ .ctrl = true }) or std.meta.eql(state, ModState{ .shift = true }))
+            else if (key.isControlAlias(event.ctrl))
+                !std.meta.eql(state, ModState{ .shift = true }) and state.without(.{ .ctrl = true }).param() != 0
+            else
+                true,
+        },
+        2 => switch (key.*) {
+            .backspace => state.without(.{ .ctrl = true }).param() != 0,
+            .delete => state.param() != 0,
+            .left_tab => state.without(.{ .shift = true }).param() != 0,
+            .escape, .enter, .tab => true,
+            .char => |ch| key.isControlInput() or
+                (std.meta.eql(state, ModState{ .shift = true }) and ch == ' ') or
+                state.without(.{ .shift = true }).param() != 0,
+        },
+    };
+}
+
+/// The CSI 27 ; mod ; code ~ fields xterm sends for `key`, or null when
+/// the key goes out its usual way. The code is the keysym when it is
+/// below 256, else the key's byte.
+fn otherKeyReport(level: u2, event: ModState, key_in: OtherKey) ?struct { param: u8, code: u8 } {
+    var key = key_in;
+    if (!modifiesOtherKey(level, event, &key)) return null;
+    const state = allowedModifiers(level, event, key, event.ctrl);
+    if (state.bits() == 0) return null;
+    const code = switch (key) {
+        .char => |ch| ch,
+        else => key.byte(event.ctrl),
+    };
+    return .{ .param = state.param(), .code = code };
+}
+
+/// The unshifted and shifted ASCII characters of a key on a US layout.
+fn usLayout(key: c_int) ?[2]u8 {
+    return switch (key) {
+        c.GLFW_KEY_A...c.GLFW_KEY_Z => .{ @intCast('a' + (key - c.GLFW_KEY_A)), @intCast('A' + (key - c.GLFW_KEY_A)) },
+        c.GLFW_KEY_0...c.GLFW_KEY_9 => .{ @intCast('0' + (key - c.GLFW_KEY_0)), ")!@#$%^&*("[@intCast(key - c.GLFW_KEY_0)] },
+        c.GLFW_KEY_SPACE => .{ ' ', ' ' },
+        c.GLFW_KEY_APOSTROPHE => .{ '\'', '"' },
+        c.GLFW_KEY_COMMA => .{ ',', '<' },
+        c.GLFW_KEY_MINUS => .{ '-', '_' },
+        c.GLFW_KEY_PERIOD => .{ '.', '>' },
+        c.GLFW_KEY_SLASH => .{ '/', '?' },
+        c.GLFW_KEY_SEMICOLON => .{ ';', ':' },
+        c.GLFW_KEY_EQUAL => .{ '=', '+' },
+        c.GLFW_KEY_LEFT_BRACKET => .{ '[', '{' },
+        c.GLFW_KEY_BACKSLASH => .{ '\\', '|' },
+        c.GLFW_KEY_RIGHT_BRACKET => .{ ']', '}' },
+        c.GLFW_KEY_GRAVE_ACCENT => .{ '`', '~' },
+        else => null,
+    };
+}
+
+/// The modifyOtherKeys sequence for `key`, or null when it is not an
+/// ordinary key or xterm would send it the usual way.
+fn encodeOtherKey(level: u2, key: c_int, mods: c_int, buf: *[32]u8) ?[]const u8 {
+    if (mods & c.GLFW_MOD_SUPER != 0) return null;
+    const event: ModState = .{
+        .shift = mods & c.GLFW_MOD_SHIFT != 0,
+        .alt = mods & c.GLFW_MOD_ALT != 0,
+        .ctrl = mods & c.GLFW_MOD_CONTROL != 0,
+    };
+    const other: OtherKey = switch (key) {
+        c.GLFW_KEY_BACKSPACE => .backspace,
+        c.GLFW_KEY_TAB => if (event.shift) .left_tab else .tab,
+        c.GLFW_KEY_ENTER => .enter,
+        c.GLFW_KEY_ESCAPE => .escape,
+        else => .{ .char = (usLayout(key) orelse return null)[@intFromBool(event.shift)] },
+    };
+    const report = otherKeyReport(level, event, other) orelse return null;
+    return fmtMok(buf, report.param, report.code);
+}
+
 /// Encode a GLFW key event into a terminal escape sequence.
 ///
 /// Returns a slice into `buf` or a string literal, never allocates.
@@ -554,7 +744,9 @@ pub inline fn encodeKey(
     const alt = mods & c.GLFW_MOD_ALT != 0;
     const mod = modNum(mods);
     const has = hasMod(mods);
-    const mok = ctx.modify_other_keys;
+    if (ctx.modify_other_keys != 0) {
+        if (encodeOtherKey(ctx.modify_other_keys, key, mods, buf)) |seq| return seq;
+    }
 
     return switch (key) {
         // Arrow keys
@@ -589,7 +781,6 @@ pub inline fn encodeKey(
 
         // Enter <CR>
         c.GLFW_KEY_ENTER, c.GLFW_KEY_KP_ENTER => {
-            if (mok >= 2 and has) return fmtMok(buf, mod, 13);
             if (alt) {
                 buf[0] = 0x1b;
                 buf[1] = '\r';
@@ -600,7 +791,6 @@ pub inline fn encodeKey(
 
         // Backspace
         c.GLFW_KEY_BACKSPACE => {
-            if (mok >= 2 and has) return fmtMok(buf, mod, 127);
             if (ctrl) return "\x08";
             if (alt) {
                 buf[0] = 0x1b;
@@ -613,7 +803,6 @@ pub inline fn encodeKey(
         // Tab
         c.GLFW_KEY_TAB => {
             if (shift) return "\x1b[Z"; // Shift+Tab = backtab (always)
-            if (mok >= 2 and has) return fmtMok(buf, mod, 9);
             if (alt) {
                 buf[0] = 0x1b;
                 buf[1] = '\t';
@@ -624,14 +813,12 @@ pub inline fn encodeKey(
 
         // Escape
         c.GLFW_KEY_ESCAPE => {
-            if (mok >= 2 and has) return fmtMok(buf, mod, 27);
             return "\x1b";
         },
 
         // Space
         c.GLFW_KEY_SPACE => {
             if (ctrl) return "\x00"; // Ctrl+Space = NUL
-            if (mok >= 2 and has) return fmtMok(buf, mod, 32);
             if (alt) {
                 buf[0] = 0x1b;
                 buf[1] = ' ';
@@ -647,10 +834,6 @@ pub inline fn encodeKey(
             const ctrl_code: u8 = @intCast(key - c.GLFW_KEY_A + 1);
 
             if (ctrl) {
-                // level 2: Ctrl+Shift+letter sends CSI 27 ; mod ; UPPER ~
-                if (mok >= 2 and shift) return fmtMok(buf, mod, upper);
-                // level 1/2: Ctrl+Alt+letter sends CSI 27 ; mod ; lower ~
-                if (mok >= 1 and alt) return fmtMok(buf, mod, lower);
                 // standard: Alt+Ctrl+letter sends ESC + ^letter
                 if (alt) {
                     buf[0] = 0x1b;
@@ -663,8 +846,6 @@ pub inline fn encodeKey(
             }
 
             if (alt) {
-                // level 2: Alt+letter sends CSI 27 ; mod ; codepoint ~
-                if (mok >= 2) return fmtMok(buf, mod, if (shift) upper else lower);
                 // standard: Alt+letter sends ESC + letter
                 buf[0] = 0x1b;
                 buf[1] = if (shift) upper else lower;
@@ -679,7 +860,6 @@ pub inline fn encodeKey(
         c.GLFW_KEY_0...c.GLFW_KEY_9 => {
             const digit: u8 = @intCast('0' + (key - c.GLFW_KEY_0));
             if (ctrl or alt) {
-                if (mok >= 1) return fmtMok(buf, mod, digit);
                 // As in xterm on a US layout, with ESC first when Alt is held.
                 if (ctrl) if (ctrlDigit(digit)) |code| {
                     if (!alt) {

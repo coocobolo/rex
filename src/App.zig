@@ -2150,6 +2150,10 @@ const keyCb: c.GLFWkeyfun = struct {
         var buf: [32]u8 = undefined;
         const bytes = rex.input.encodeKey(key, mods, context, &buf);
         if (bytes.len > 0) {
+            // The key went out encoded, so its character must not follow
+            // (Shift+letter under modifyOtherKeys 2). The next key event
+            // clears the flag if no character comes.
+            app.skip_next_char = true;
             const seq = if (latency_trace.enabled) app.latencyBeginSend() else {};
             app.driver.sendBytes(bytes) catch |err| {
                 log.err("keyCallback: driver sendBytes failed: {}", .{err});
