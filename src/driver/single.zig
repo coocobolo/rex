@@ -49,24 +49,20 @@ pub fn Driver(comptime option: Option) type {
         terminal: TerminalType,
         frame_snapshot: FrameType,
         sync_start: ?std.Io.Clock.Timestamp = null,
-        sync_output_timeout_ms: u32 = 150,
+        sync_output_timeout_ms: u32,
         /// Bytes for the pty that the kernel hasn't accepted yet. Flushed on
         /// every write and at the start of each `pollAndDrain`.
         outbound: OutboundQueue = .init(OutboundQueue.default_limit),
 
         pub const Modes = SharedModes;
 
-        /// Initializes the SingleDriver with default 150ms synchronized output timeout.
-        pub fn init(allocator: Allocator, io: std.Io, pty: Pty, theme: Theme) !Self {
-            return initWithTimeout(allocator, io, pty, theme, 150);
-        }
-
-        /// Initializes the SingleDriver with a custom synchronized output timeout.
-        pub fn initWithTimeout(allocator: Allocator, io: std.Io, pty: Pty, theme: Theme, sync_output_timeout_ms: u32) !Self {
+        /// Creates the terminal with `options`. The driver owns `pty` from
+        /// here on and closes it in `deinit`.
+        pub fn init(allocator: Allocator, io: std.Io, pty: Pty, options: root.Options) !Self {
             var terminal = try TerminalType.create(allocator);
             errdefer terminal.destroy(allocator);
 
-            terminal.setTheme(theme);
+            terminal.setTheme(options.theme);
 
             var frame_snapshot = try FrameType.init(allocator);
             errdefer frame_snapshot.deinit(allocator);
@@ -77,7 +73,7 @@ pub fn Driver(comptime option: Option) type {
                 .pty = pty,
                 .terminal = terminal,
                 .frame_snapshot = frame_snapshot,
-                .sync_output_timeout_ms = sync_output_timeout_ms,
+                .sync_output_timeout_ms = options.sync_output_timeout_ms,
             };
         }
 
@@ -362,6 +358,8 @@ pub fn Driver(comptime option: Option) type {
 
 pub const SingleDriver = Driver;
 
+const test_options: root.Options = .{ .theme = Theme.graphite, .sync_output_timeout_ms = 150 };
+
 test "SingleDriver: init, deinit, and snapshot" {
     const testing = std.testing;
     const test_option: Option = .{
@@ -371,7 +369,7 @@ test "SingleDriver: init, deinit, and snapshot" {
     };
     const DriverType = Driver(test_option);
 
-    var driver = try DriverType.init(testing.allocator, testing.io, Pty.inactive, Theme.graphite);
+    var driver = try DriverType.init(testing.allocator, testing.io, Pty.inactive, test_options);
     defer driver.deinit();
 
     const frame = driver.snapshot();
@@ -403,7 +401,7 @@ test "SingleDriver: mock socketpair PTY input and pollAndDrain" {
         .error_read_fd = -1,
     };
 
-    var driver = try DriverType.init(testing.allocator, testing.io, mock_pty, Theme.graphite);
+    var driver = try DriverType.init(testing.allocator, testing.io, mock_pty, test_options);
     defer driver.deinit();
 
     // Send input from GUI to PTY
@@ -454,7 +452,7 @@ test "SingleDriver: DA1 reply drained back to mock PTY" {
         .error_read_fd = -1,
     };
 
-    var driver = try DriverType.init(testing.allocator, testing.io, mock_pty, Theme.graphite);
+    var driver = try DriverType.init(testing.allocator, testing.io, mock_pty, test_options);
     defer driver.deinit();
 
     // Child sends CSI c (DA1 query)
@@ -492,7 +490,7 @@ test "SingleDriver: extractSelectionText for stream and block selections" {
         .error_read_fd = -1,
     };
 
-    var driver = try DriverType.init(testing.allocator, testing.io, mock_pty, Theme.graphite);
+    var driver = try DriverType.init(testing.allocator, testing.io, mock_pty, test_options);
     defer driver.deinit();
 
     // Write text to terminal
@@ -547,7 +545,7 @@ test "SingleDriver: mouse_scroll primary viewport vs alternate alt_scroll" {
         .error_read_fd = -1,
     };
 
-    var driver = try DriverType.init(testing.allocator, testing.io, mock_pty, Theme.graphite);
+    var driver = try DriverType.init(testing.allocator, testing.io, mock_pty, test_options);
     defer driver.deinit();
 
     var i: usize = 0;
@@ -624,7 +622,7 @@ test "SingleDriver: a 1 MiB paste is delivered whole across pollAndDrain calls" 
     defer _ = system.close(sv[1]);
 
     const mock_pty: Pty = .{ .master = sv[0], .pid = -1, .stdout_read_fd = -1, .error_read_fd = -1 };
-    var driver = try Driver(opt).init(gpa, testing.io, mock_pty, Theme.graphite);
+    var driver = try Driver(opt).init(gpa, testing.io, mock_pty, test_options);
     defer driver.deinit();
 
     const payload = try gpa.alloc(u8, 1024 * 1024);
@@ -659,7 +657,7 @@ test "SingleDriver: pasted text can't end a bracketed paste early" {
     defer _ = system.close(sv[1]);
 
     const mock_pty: Pty = .{ .master = sv[0], .pid = -1, .stdout_read_fd = -1, .error_read_fd = -1 };
-    var driver = try Driver(opt).init(gpa, testing.io, mock_pty, Theme.graphite);
+    var driver = try Driver(opt).init(gpa, testing.io, mock_pty, test_options);
     defer driver.deinit();
 
     const malicious = "ls\x1b[201~rm -rf ~\n";
@@ -694,7 +692,7 @@ test "SingleDriver: a flood of queries is reported, the replies that fit arrive 
     defer _ = system.close(sv[1]);
 
     const mock_pty: Pty = .{ .master = sv[0], .pid = -1, .stdout_read_fd = -1, .error_read_fd = -1 };
-    var driver = try Driver(opt).init(gpa, testing.io, mock_pty, Theme.graphite);
+    var driver = try Driver(opt).init(gpa, testing.io, mock_pty, test_options);
     defer driver.deinit();
 
     // 300 CPR queries in one read: 1800 bytes of replies for a 1024-byte queue.

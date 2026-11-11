@@ -71,6 +71,17 @@ pub const SharedModes = packed struct(u32) {
     }
 };
 
+/// Settings both drivers start the terminal with. Every field without a
+/// default is the caller's to choose, since the defaults live in the
+/// config. Passed by value, so it holds no pointers. Read only when the
+/// driver starts; a setting that changes later takes its own route, as the
+/// theme does through `setTheme`.
+pub const Options = struct {
+    theme: Theme,
+    /// Longest a synchronized-output (mode 2026) hold lasts.
+    sync_output_timeout_ms: u32,
+};
+
 pub const resolveAnchor = Selection.resolveAnchor;
 pub const extractSelectionText = Selection.extractText;
 
@@ -277,7 +288,7 @@ test "driver: Driver polymorphic union dispatch" {
     };
 
     {
-        const s: Single(opt) = try .init(testing.allocator, testing.io, Pty.inactive, Theme.graphite);
+        const s: Single(opt) = try .init(testing.allocator, testing.io, Pty.inactive, .{ .theme = Theme.graphite, .sync_output_timeout_ms = 150 });
         var driver: Driver(opt) = .{ .single = s };
         defer driver.deinit();
 
@@ -292,7 +303,7 @@ test "driver: Driver polymorphic union dispatch" {
     }
 
     {
-        const th: *Threaded(opt) = try .create(testing.allocator, testing.io, Pty.inactive, Theme.graphite, 200, latency_trace.none);
+        const th: *Threaded(opt) = try .create(testing.allocator, testing.io, Pty.inactive, .{ .theme = Theme.graphite, .sync_output_timeout_ms = 200 }, latency_trace.none);
         var driver: Driver(opt) = .{ .threaded = th };
         defer driver.deinit();
 

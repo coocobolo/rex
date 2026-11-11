@@ -571,9 +571,13 @@ pub fn init(
         log.info("latency trace: writing to {s} on exit", .{latency_path});
     }
 
+    const driver_options: rex.driver.Options = .{
+        .theme = active_config.theme,
+        .sync_output_timeout_ms = active_config.threading.sync_output_timeout_ms,
+    };
     var driver: Driver = switch (active_config.threading.mode) {
-        .single => .{ .single = try SingleDriverType.initWithTimeout(gpa, io, pty, active_config.theme, active_config.threading.sync_output_timeout_ms) },
-        .multi => .{ .threaded = try ThreadedDriverType.create(gpa, io, pty, active_config.theme, active_config.threading.sync_output_timeout_ms, latency) },
+        .single => .{ .single = try SingleDriverType.init(gpa, io, pty, driver_options) },
+        .multi => .{ .threaded = try ThreadedDriverType.create(gpa, io, pty, driver_options, latency) },
     };
     errdefer driver.deinit();
 
@@ -2944,7 +2948,8 @@ test "Driver: single and threaded polymorphic dispatch" {
         .error_read_fd = -1,
     };
 
-    const single_driver = try SingleDriverType.init(allocator, testing.io, pty_single, .graphite);
+    const driver_options: rex.driver.Options = .{ .theme = .graphite, .sync_output_timeout_ms = 150 };
+    const single_driver = try SingleDriverType.init(allocator, testing.io, pty_single, driver_options);
     var driver_s: Driver = .{ .single = single_driver };
     defer driver_s.deinit();
 
@@ -2962,7 +2967,7 @@ test "Driver: single and threaded polymorphic dispatch" {
         .error_read_fd = -1,
     };
 
-    const threaded_driver = try ThreadedDriverType.create(allocator, testing.io, pty_multi, .graphite, 150, latency_trace.none);
+    const threaded_driver = try ThreadedDriverType.create(allocator, testing.io, pty_multi, driver_options, latency_trace.none);
     var driver_m: Driver = .{ .threaded = threaded_driver };
     defer driver_m.deinit();
 

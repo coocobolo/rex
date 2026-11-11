@@ -123,8 +123,9 @@ pub fn Driver(comptime option: Option) type {
         pub const Modes = SharedModes;
 
         /// Creates and starts the ThreadedDriver and its background worker thread.
+        /// The driver owns `pty` from here on and closes it in `destroy`.
         /// `latency` is `latency_trace.none` unless the caller traces.
-        pub fn create(allocator: Allocator, io: std.Io, pty: Pty, theme: Theme, sync_output_timeout_ms: u32, latency: latency_trace.Handle) !*Self {
+        pub fn create(allocator: Allocator, io: std.Io, pty: Pty, options: root.Options, latency: latency_trace.Handle) !*Self {
             const self = try allocator.create(Self);
             errdefer allocator.destroy(self);
 
@@ -148,7 +149,7 @@ pub fn Driver(comptime option: Option) type {
                 .shared_events = .{},
                 .shared_resize = std.atomic.Value(u32).init(0),
                 .shared_title_idx = std.atomic.Value(u8).init(0),
-                .sync_output_timeout_ms = sync_output_timeout_ms,
+                .sync_output_timeout_ms = options.sync_output_timeout_ms,
                 .last_frame = self.triple_buffer.acquireLatest(),
                 .terminal = null,
                 .terminal_mutex = .init,
@@ -156,7 +157,7 @@ pub fn Driver(comptime option: Option) type {
                 .latency = latency,
             };
 
-            const thread = try std.Thread.spawn(.{}, workerThreadMain, .{ self, theme });
+            const thread = try std.Thread.spawn(.{}, workerThreadMain, .{ self, options });
             self.thread = thread;
 
             return self;
@@ -184,7 +185,7 @@ pub fn Driver(comptime option: Option) type {
         }
 
         /// Background worker thread routine.
-        fn workerThreadMain(self: *Self, theme: Theme) void {
+        fn workerThreadMain(self: *Self, options: root.Options) void {
             var terminal = TerminalType.create(self.allocator) catch |err| {
                 log.err("worker: failed to create terminal: {}", .{err});
                 return;
@@ -202,7 +203,7 @@ pub fn Driver(comptime option: Option) type {
                 self.terminal_mutex.unlock(self.io);
             }
 
-            terminal.setTheme(theme);
+            terminal.setTheme(options.theme);
 
             var local_frame = FrameType.init(self.allocator) catch |err| {
                 log.err("worker: failed to allocate local frame: {}", .{err});
@@ -702,6 +703,8 @@ fn sleepNs(ns: u64) void {
     _ = system.nanosleep(&req, &rem);
 }
 
+const test_options: root.Options = .{ .theme = Theme.graphite, .sync_output_timeout_ms = 150 };
+
 test "readBudget: short turns only inside the echo window" {
     try std.testing.expectEqual(turn_budget, readBudget(5_000_000, 0));
     try std.testing.expectEqual(echo_budget, readBudget(5_000_000, 6_000_000));
@@ -737,7 +740,7 @@ test "ThreadedDriver: create, destroy and basic frame acquisition" {
         .error_read_fd = -1,
     };
 
-    var driver = try DriverType.create(testing.allocator, testing.io, mock_pty, Theme.graphite, 150, latency_trace.none);
+    var driver = try DriverType.create(testing.allocator, testing.io, mock_pty, test_options, latency_trace.none);
     defer {
         driver.pty.pid = -1;
         driver.destroy();
@@ -774,7 +777,7 @@ test "ThreadedDriver: async PTY input, frame update, and GUI reply" {
         .error_read_fd = -1,
     };
 
-    var driver = try DriverType.create(testing.allocator, testing.io, mock_pty, Theme.graphite, 150, latency_trace.none);
+    var driver = try DriverType.create(testing.allocator, testing.io, mock_pty, test_options, latency_trace.none);
     defer driver.destroy();
 
     // Simulate child outputting characters
@@ -836,7 +839,7 @@ test "ThreadedDriver: Mode 2026 synchronized output hold and release" {
         .error_read_fd = -1,
     };
 
-    var driver = try DriverType.create(testing.allocator, testing.io, mock_pty, Theme.graphite, 150, latency_trace.none);
+    var driver = try DriverType.create(testing.allocator, testing.io, mock_pty, test_options, latency_trace.none);
     defer driver.destroy();
 
     // Begin synchronized output: \x1b[?2026h, write text
@@ -896,7 +899,7 @@ test "ThreadedDriver: wakeup_fn callback and alternate screen alt_scroll" {
         .error_read_fd = -1,
     };
 
-    var driver = try DriverType.create(testing.allocator, testing.io, mock_pty, Theme.graphite, 150, latency_trace.none);
+    var driver = try DriverType.create(testing.allocator, testing.io, mock_pty, test_options, latency_trace.none);
     defer driver.destroy();
 
     test_wake_count.store(0, .release);
@@ -962,7 +965,7 @@ test "ThreadedDriver: a 1 MiB paste reaches a child that echoes it back" {
     defer _ = system.close(sv[1]);
 
     const mock_pty: Pty = .{ .master = sv[0], .pid = -1, .stdout_read_fd = -1, .error_read_fd = -1 };
-    var driver = try DriverType.create(gpa, testing.io, mock_pty, Theme.graphite, 150, latency_trace.none);
+    var driver = try DriverType.create(gpa, testing.io, mock_pty, test_options, latency_trace.none);
     defer driver.destroy();
 
     // Printable lines, so the echoed bytes are ordinary terminal output.
@@ -1013,7 +1016,7 @@ test "ThreadedDriver: pasted text can't end a bracketed paste early" {
     defer _ = system.close(sv[1]);
 
     const mock_pty: Pty = .{ .master = sv[0], .pid = -1, .stdout_read_fd = -1, .error_read_fd = -1 };
-    var driver = try DriverType.create(gpa, testing.io, mock_pty, Theme.graphite, 150, latency_trace.none);
+    var driver = try DriverType.create(gpa, testing.io, mock_pty, test_options, latency_trace.none);
     defer driver.destroy();
 
     // The child turns bracketed paste on; wait until the worker has seen it.
