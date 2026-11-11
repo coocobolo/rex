@@ -96,7 +96,7 @@ pub const Window = struct {
     /// On X11 the window grows by the display scale when it's created;
     /// on Wayland the compositor scales it.
     size: Dimension(u16) = .{ .width = 1920, .height = 1080 },
-    /// Window title. A running pomodoro is appended after it.
+    /// Window title.
     title: [:0]const u8 = "rex",
     /// The default look of every surface (`[surface]`): cards, toasts,
     /// banners and dialogs.

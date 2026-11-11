@@ -216,7 +216,6 @@ window_focused: bool = true,
 /// reported once and its end is reported too; null while syncs succeed.
 wellbeing_sync_error: ?wellbeing.Wellbeing.SyncError = null,
 frame_buffer_size: Dimension(u16),
-last_title: std.Io.Clock.Timestamp,
 
 // Environment data
 dirs: rex.dirs.Application,
@@ -641,7 +640,6 @@ pub fn init(
         .config_banner = startup_banner,
         .frame_buffer_size = .empty,
         .last_frame = now,
-        .last_title = now,
         .word_classifier = classifier,
     };
 
@@ -748,27 +746,7 @@ pub fn run(self: *App) !void {
             self.needs_redraw = true;
         }
         self.syncWellbeing(@intCast(now_real.raw.toSeconds()));
-        if (wb_res.phase_changed) {
-            self.ringBell();
-            self.last_title = now;
-            title_updated = true;
-            self.updateWindowTitle();
-        } else if (wb_res.alert != null) {
-            self.ringBell();
-            title_updated = true;
-            self.updateWindowTitle();
-        }
-
-        const title_elapsed = self.last_title.durationTo(now);
-        if (title_elapsed.raw.toMilliseconds() >= 1000) {
-            self.last_title = self.last_title.addDuration(.{
-                .raw = .fromNanoseconds(1_000_000_000),
-                .clock = .awake,
-            });
-            // update title every second even without a phase transition
-            title_updated = true;
-            self.updateWindowTitle();
-        }
+        if (wb_res.phase_changed or wb_res.alert != null) self.ringBell();
 
         var had_data = false;
         const driver_events = try self.driver.pollAndDrain();
@@ -1154,52 +1132,7 @@ fn buildSelectionState(self: *App, frame: *const FrameType) ?SelectionState {
 }
 
 fn updateWindowTitle(self: *App) void {
-    const base = self.config.window.title;
-    const focus_state = self.wellbeing_state.focus_state;
-    const has_focus = focus_state.phase != .idle;
-    const is_locked = self.wellbeing_state.input_locked;
-    const is_paused = self.wellbeing_state.isFocusPausedByAlert() or focus_state.paused;
-
-    if (!has_focus and !is_locked) {
-        return self.window.setWindowTitle(base);
-    }
-
-    var title_buf: [128]u8 = undefined;
-    const phase_label: []const u8 = switch (focus_state.phase) {
-        .task => "FOCUS",
-        .short_break => "BREAK",
-        .long_break => "LONG BREAK",
-        .idle => if (is_locked) "REST" else "",
-    };
-
-    const rem_s = if (has_focus)
-        (focus_state.remaining_ms + 999) / 1000
-    else
-        self.wellbeing_state.current_alert.remaining_s;
-
-    const mins = rem_s / 60;
-    const secs = rem_s % 60;
-
-    var formatted: [:0]const u8 = undefined;
-    if (is_locked and is_paused) {
-        formatted = std.fmt.bufPrintZ(&title_buf, "{s} │ {s} │ PAUSED │ LOCKED │ {d:0>2}:{d:0>2}", .{
-            base, phase_label, mins, secs,
-        }) catch base;
-    } else if (is_locked) {
-        formatted = std.fmt.bufPrintZ(&title_buf, "{s} │ {s} │ LOCKED │ {d:0>2}:{d:0>2}", .{
-            base, phase_label, mins, secs,
-        }) catch base;
-    } else if (is_paused) {
-        formatted = std.fmt.bufPrintZ(&title_buf, "{s} │ {s} │ PAUSED │ {d:0>2}:{d:0>2}", .{
-            base, phase_label, mins, secs,
-        }) catch base;
-    } else {
-        formatted = std.fmt.bufPrintZ(&title_buf, "{s} │ {s} │ {d:0>2}:{d:0>2}", .{
-            base, phase_label, mins, secs,
-        }) catch base;
-    }
-
-    self.window.setWindowTitle(formatted);
+    self.window.setWindowTitle(self.config.window.title);
 }
 
 /// Rings the X bell at the configured volume (window attention only where
@@ -1567,20 +1500,16 @@ fn handleAction(self: *App, action: rex.input.Action) void {
         .focus_toggle => {
             self.wellbeing_state.toggleFocus(self.wallMs());
             self.ringBell();
-            self.updateWindowTitle();
         },
         .focus_reset => {
             self.wellbeing_state.resetFocus(self.wallMs());
-            self.updateWindowTitle();
         },
         .focus_skip => {
             self.wellbeing_state.skipFocus(self.wallMs());
             self.ringBell();
-            self.updateWindowTitle();
         },
         .focus_toggle_phase_end => {
             self.wellbeing_state.toggleFocusPhaseEnd();
-            self.updateWindowTitle();
         },
         .wellbeing_dashboard => {
             if (self.wellbeing_state.option.dashboard.modal_enabled) {
@@ -1598,7 +1527,6 @@ fn handleAction(self: *App, action: rex.input.Action) void {
                     .prompt = "Wellbeing dashboard copied to clipboard.",
                     .remaining_s = 10,
                 };
-                self.updateWindowTitle();
             }
         },
         .wellbeing_clear => {
@@ -1609,7 +1537,6 @@ fn handleAction(self: *App, action: rex.input.Action) void {
                     .remaining_s = 10,
                 };
             }
-            self.updateWindowTitle();
         },
         .wellbeing_dismiss => {
             self.wellbeing_state.dismissAlert();
@@ -1618,7 +1545,6 @@ fn handleAction(self: *App, action: rex.input.Action) void {
             self.toast_queue.dismissAll();
             self.frame_builder.last_generation = null;
             self.needs_redraw = true;
-            self.updateWindowTitle();
         },
         .toast_dismiss => {
             if (self.toast_queue.isActive()) {
@@ -1637,7 +1563,6 @@ fn handleAction(self: *App, action: rex.input.Action) void {
             } else if (self.wellbeing_state.current_alert.kind != .none) {
                 self.wellbeing_state.skipFocus(self.wallMs());
                 self.ringBell();
-                self.updateWindowTitle();
                 self.needs_redraw = true;
             }
         },
@@ -2072,7 +1997,6 @@ fn handleDashboardKey(self: *App, k: rex.input.Key) void {
         .r => {
             if (self.wellbeing_overlay.active_tab == .pomodoro) {
                 self.wellbeing_state.resetFocus(self.wallMs());
-                self.updateWindowTitle();
             } else {
                 _ = self.purgeWellbeingHistory();
             }
@@ -2081,13 +2005,11 @@ fn handleDashboardKey(self: *App, k: rex.input.Key) void {
         },
         .p => {
             self.wellbeing_state.toggleFocus(self.wallMs());
-            self.updateWindowTitle();
             self.frame_builder.last_generation = null;
             self.needs_redraw = true;
         },
         .s => {
             self.wellbeing_state.skipFocus(self.wallMs());
-            self.updateWindowTitle();
             self.frame_builder.last_generation = null;
             self.needs_redraw = true;
         },
@@ -2385,23 +2307,19 @@ fn handleOverlayClick(self: *App, col: u16, row: u16) bool {
                             }
                             self.frame_builder.last_generation = null;
                             self.needs_redraw = true;
-                            self.updateWindowTitle();
                         },
                         .toggle_focus => {
                             self.wellbeing_state.toggleFocus(self.wallMs());
-                            self.updateWindowTitle();
                             self.frame_builder.last_generation = null;
                             self.needs_redraw = true;
                         },
                         .skip_focus => {
                             self.wellbeing_state.skipFocus(self.wallMs());
-                            self.updateWindowTitle();
                             self.frame_builder.last_generation = null;
                             self.needs_redraw = true;
                         },
                         .reset_focus => {
                             self.wellbeing_state.resetFocus(self.wallMs());
-                            self.updateWindowTitle();
                             self.frame_builder.last_generation = null;
                             self.needs_redraw = true;
                         },
