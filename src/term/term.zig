@@ -27,8 +27,13 @@ const utf8 = @import("../unicode/utf8.zig");
 
 const InputEngine = @import("InputEngine.zig");
 pub const Clipboard = @import("Clipboard.zig");
+pub const TitleStack = @import("TitleStack.zig");
 
 pub const max_title_len = 256;
+
+comptime {
+    std.debug.assert(TitleStack.max_len == max_title_len);
+}
 pub const max_answerback_len = 32;
 /// Longest TERM value XTGETTCAP can report (`TermName`).
 pub const max_term_name_len = 64;
@@ -546,6 +551,9 @@ pub fn Terminal(comptime option: Option) type {
         /// Icon name (OSC 1). Read it with `getIconName`.
         icon_name: [max_title_len:0]u8 = std.mem.zeroes([max_title_len:0]u8),
         icon_name_len: usize = 0,
+        /// Titles saved by XTWINOPS 22 for 23 to restore. RIS keeps them,
+        /// as xterm does.
+        title_stack: TitleStack = .{},
         /// ENQ reply, set by the user. RIS keeps it.
         answerback: [max_answerback_len]u8 = std.mem.zeroes([max_answerback_len]u8),
         answerback_len: u8 = 0,
@@ -1618,6 +1626,21 @@ pub fn Terminal(comptime option: Option) type {
             self.icon_name[len] = 0;
             self.icon_name_len = len;
             self.events.set(.icon_name);
+        }
+
+        /// XTWINOPS 22 (CSI 22 ; Ps t): saves `part` of the title and icon
+        /// name on the title stack.
+        pub fn pushTitle(self: *Self, part: TitleStack.Part) void {
+            self.title_stack.push(part, self.getTitle(), self.getIconName());
+        }
+
+        /// XTWINOPS 23 (CSI 23 ; Ps t): restores `part` from the title
+        /// stack, setting the `title` and `icon_name` events. Does nothing
+        /// when the stack is empty.
+        pub fn popTitle(self: *Self, part: TitleStack.Part) void {
+            const popped = self.title_stack.pop(part) orelse return;
+            if (popped.title) |title| self.setTitle(title);
+            if (popped.icon_name) |name| self.setIconName(name);
         }
 
         /// The title. Valid until the next `setTitle`.

@@ -4314,3 +4314,49 @@ test "osc 52: other OSCs still collect, before and after" {
     t.feed("\x1b]52\x07\x1b]5;x\x07");
     try testing.expect(!t.takeEvents().has(.clipboard));
 }
+
+test "csi: XTWINOPS 22 and 23 push and pop the title and icon name" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    t.feed("\x1b]0;shell\x07");
+    t.feed("\x1b[22;0t"); // push both, as vim does
+    t.feed("\x1b]2;vim notes.txt\x07\x1b]1;vim\x07");
+    _ = t.takeEvents();
+    t.feed("\x1b[23;0t"); // pop both
+    try testing.expectEqualStrings("shell", t.getTitle());
+    try testing.expectEqualStrings("shell", t.getIconName());
+    const events = t.takeEvents();
+    try testing.expect(events.has(.title));
+    try testing.expect(events.has(.icon_name));
+
+    // Ps defaults to 0; 2 is the title only.
+    t.feed("\x1b[22t\x1b]0;other\x07\x1b[23;2t");
+    try testing.expectEqualStrings("shell", t.getTitle());
+    try testing.expectEqualStrings("other", t.getIconName());
+}
+
+test "csi: XTWINOPS title stack ignores unknown parts, the slot parameter and an empty pop" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    t.feed("\x1b]2;kept\x07");
+    _ = t.takeEvents();
+    t.feed("\x1b[23t"); // empty stack
+    try testing.expectEqualStrings("kept", t.getTitle());
+    try testing.expect(!t.takeEvents().has(.title));
+
+    t.feed("\x1b[22;3t\x1b[22;0;1t"); // unknown part; direct slot access
+    t.feed("\x1b]2;changed\x07\x1b[23t");
+    try testing.expectEqualStrings("changed", t.getTitle());
+}
+
+test "csi: RIS keeps the title stack, as xterm does" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    t.feed("\x1b]2;before\x07\x1b[22;2t\x1bc");
+    try testing.expectEqualStrings("", t.getTitle());
+    t.feed("\x1b[23;2t");
+    try testing.expectEqualStrings("before", t.getTitle());
+}
