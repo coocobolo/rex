@@ -174,6 +174,11 @@ pub fn Driver(comptime option: Option) type {
                 self.thread = null;
             }
 
+            // The worker has stopped: free what it never took.
+            while (self.input_queue.pop()) |ev| switch (ev) {
+                .paste, .reply => |bytes| self.allocator.free(bytes),
+                else => {},
+            };
             self.pty.close(self.io);
             self.input_queue.deinit();
             self.triple_buffer.deinit(self.allocator);
@@ -473,6 +478,10 @@ pub fn Driver(comptime option: Option) type {
         fn processInputEvent(self: *Self, terminal: *TerminalType, reply_buf: *[term.Response.capacity]u8, out: *OutboundQueue, ev: InputEvent) void {
             switch (ev) {
                 .bytes => |b| self.queue(out, &.{b.data[0..b.len]}) catch {},
+                .reply => |bytes| {
+                    defer self.allocator.free(bytes);
+                    self.queue(out, &.{bytes}) catch {}; // `queue` logs the drop
+                },
                 .paste => |slice| {
                     defer self.allocator.free(slice);
                     // The mode is read here, on the worker, so it is current
@@ -656,6 +665,16 @@ pub fn Driver(comptime option: Option) type {
         /// when the worker is too far behind.
         pub fn sendBytes(self: *Self, slice: []const u8) error{InputQueueFull}!void {
             if (!self.input_queue.pushBytes(slice)) return error.InputQueueFull;
+        }
+
+        /// Queues a reply too big for the terminal's reply queue, to be
+        /// written as is. The bytes are copied.
+        pub fn sendReply(self: *Self, bytes: []const u8) !void {
+            const duped = try self.allocator.dupe(u8, bytes);
+            if (!self.input_queue.push(.{ .reply = duped })) {
+                self.allocator.free(duped);
+                return error.InputQueueFull;
+            }
         }
 
         /// Pastes clipboard text via the input queue.
@@ -968,6 +987,55 @@ test "ThreadedDriver: takeClipboard hands over an OSC 52 read with its C1 format
     }
     try testing.expect(request.?.read.targets.clipboard);
     try testing.expectEqual(.s7c1t, request.?.read.control_format);
+}
+
+test "ThreadedDriver: sendReply is written as is, even with bracketed paste on" {
+    const testing = std.testing;
+    const test_option: Option = .{ .max_rows = 24, .max_cols = 80, .max_scrollback = 100, .max_clipboard_bytes = 64 };
+
+    var sv: [2]posix.fd_t = undefined;
+    try testing.expectEqual(@as(c_int, 0), system.socketpair(posix.AF.UNIX, posix.SOCK.STREAM | posix.SOCK.NONBLOCK, 0, &sv));
+    defer _ = system.close(sv[1]);
+    const mock_pty: Pty = .{ .master = sv[0], .pid = -1, .stdout_read_fd = -1, .error_read_fd = -1 };
+
+    var driver = try Driver(test_option).create(testing.allocator, testing.io, mock_pty, test_options, latency_trace.none);
+    defer driver.destroy();
+
+    try writeAllTest(sv[1], "\x1b[?2004h");
+    var retries: usize = test_wait_ms;
+    while (retries > 0 and !driver.getModes().bracketed_paste) : (retries -= 1) {
+        _ = try driver.pollAndDrain();
+        sleepNs(1_000_000);
+    }
+    try testing.expect(driver.getModes().bracketed_paste);
+
+    const reply = "\x1b]52;c;aGk=\x1b\\";
+    try driver.sendReply(reply);
+    var buf: [64]u8 = undefined;
+    var len: usize = 0;
+    retries = test_wait_ms;
+    while (retries > 0 and len < reply.len) : (retries -= 1) {
+        const n = system.read(sv[1], buf[len..].ptr, buf.len - len);
+        if (n > 0) len += @intCast(n) else sleepNs(1_000_000);
+    }
+    try testing.expectEqualStrings(reply, buf[0..len]);
+}
+
+test "ThreadedDriver: destroy frees replies and pastes the worker never took" {
+    const testing = std.testing;
+    const test_option: Option = .{ .max_rows = 24, .max_cols = 80, .max_scrollback = 100, .max_clipboard_bytes = 64 };
+
+    var sv: [2]posix.fd_t = undefined;
+    try testing.expectEqual(@as(c_int, 0), system.socketpair(posix.AF.UNIX, posix.SOCK.STREAM | posix.SOCK.NONBLOCK, 0, &sv));
+    defer _ = system.close(sv[1]);
+    const mock_pty: Pty = .{ .master = sv[0], .pid = -1, .stdout_read_fd = -1, .error_read_fd = -1 };
+
+    // Whether the worker takes them first or not, testing.allocator fails
+    // the test on a leak.
+    var driver = try Driver(test_option).create(testing.allocator, testing.io, mock_pty, test_options, latency_trace.none);
+    try driver.sendReply("reply");
+    try driver.writePaste("paste");
+    driver.destroy();
 }
 
 test "ThreadedDriver: Mode 2026 synchronized output hold and release" {

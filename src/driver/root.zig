@@ -184,6 +184,15 @@ pub fn Driver(comptime option: Option) type {
             }
         }
 
+        /// Writes a reply too big for the terminal's reply queue (an OSC 52
+        /// read) to the PTY as is, never bracketed.
+        pub fn sendReply(self: *Self, bytes: []const u8) !void {
+            switch (self.*) {
+                .single => |*d| try d.sendReply(bytes),
+                .threaded => |d| try d.sendReply(bytes),
+            }
+        }
+
         /// Writes pasted clipboard text to the PTY.
         pub fn writePaste(self: *Self, text: []const u8) !void {
             switch (self.*) {

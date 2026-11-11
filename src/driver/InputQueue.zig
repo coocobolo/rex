@@ -23,6 +23,10 @@ pub const InputEvent = union(enum) {
     },
     /// Clipboard paste payload.
     paste: []const u8,
+    /// A terminal reply too big for the terminal's reply queue (an OSC 52
+    /// read), written as is: never bracketed like a paste. The threaded
+    /// driver owns and frees it.
+    reply: []const u8,
     /// Mouse button press or release.
     mouse_button: struct {
         col: u16,

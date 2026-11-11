@@ -131,3 +131,59 @@ test "Clipboard: no Pd, no request; a new sequence replaces a pending one" {
     try testing.expectEqual(Clipboard.Request{ .read = .{ .clipboard = true } }, cb.take()[0]);
     try testing.expectEqual(Clipboard.Request.none, cb.take()[0]);
 }
+
+/// Feeds `body` (the bytes after `52;`) split at `split`, or one byte at a
+/// time when `split` is null, and ends the sequence.
+fn feedSplit(cb: *Clipboard, body: []const u8, split: ?usize) bool {
+    cb.begin();
+    if (split) |k| {
+        cb.put(body[0..k]);
+        cb.put(body[k..]);
+    } else for (body) |b| cb.put(&.{b});
+    return cb.end();
+}
+
+test "Clipboard: every length, both paddings and every split decode to the original bytes" {
+    const max = 256;
+    var cb: Clipboard = try .init(testing.allocator, max);
+    defer cb.deinit(testing.allocator);
+    var prng: std.Random.DefaultPrng = .init(0x52);
+
+    var data: [max + 1]u8 = undefined;
+    var body_buf: [2 + std.base64.standard.Encoder.calcSize(max + 1)]u8 = undefined;
+    body_buf[0] = 'c';
+    body_buf[1] = ';';
+
+    // Short lengths cover every carry and padding state; the last ones
+    // cross the limit, and length 256 of the first pattern holds every
+    // byte value.
+    const lengths = [_][2]usize{ .{ 0, 70 }, .{ max - 6, max + 1 } };
+    for (lengths) |range| for (range[0]..range[1] + 1) |len| {
+        for (0..2) |pattern| {
+            for (data[0..len], 0..) |*b, i| b.* = if (pattern == 0) @truncate(i + len * 7) else prng.random().int(u8);
+            const codecs = [_]std.base64.Codecs{ std.base64.standard, std.base64.standard_no_pad };
+            for (codecs) |codec| {
+                const encoded = codec.Encoder.encode(body_buf[2..], data[0..len]);
+                const body = body_buf[0 .. 2 + encoded.len];
+                var split: usize = 0;
+                while (split <= body.len + 1) : (split += 1) {
+                    // body.len + 1 stands for one byte at a time.
+                    const at: ?usize = if (split <= body.len) split else null;
+                    errdefer std.debug.print("len {d} pattern {d} split {?d} body {s}\n", .{ len, pattern, at, body });
+                    const dropped = cb.dropped;
+                    const made = feedSplit(&cb, body, at);
+                    const request, const decoded = cb.take();
+                    if (len <= max) {
+                        try testing.expect(made);
+                        try testing.expectEqual(Clipboard.Request{ .write = .{ .clipboard = true } }, request);
+                        try testing.expectEqualSlices(u8, data[0..len], decoded);
+                    } else {
+                        try testing.expect(!made);
+                        try testing.expectEqual(Clipboard.Request.none, request);
+                        try testing.expectEqual(dropped + 1, cb.dropped);
+                    }
+                }
+            }
+        }
+    };
+}

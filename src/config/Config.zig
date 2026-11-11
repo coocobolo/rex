@@ -71,6 +71,9 @@ threading: Threading = .{},
 pub const Clipboard = struct {
     /// Whether an OSC 52 write replaces the clipboard.
     osc52_write: Policy = .allow,
+    /// Whether an OSC 52 read gets the clipboard's content; refused reads
+    /// get an empty reply.
+    osc52_read: Policy = .deny,
 
     pub const Policy = enum { allow, deny };
 };

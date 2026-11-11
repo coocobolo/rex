@@ -2130,42 +2130,107 @@ const ClipboardAction = union(enum) {
     ignore,
     /// Set these selections to the write's data.
     set: rex.terminal.term.Clipboard.Targets,
+    /// Reply with the content of the first of these selections that has
+    /// text: CLIPBOARD, then PRIMARY.
+    reply_selection: rex.terminal.term.Clipboard.Targets,
+    /// Reply with no data, so a waiting program (Neovim waits up to 10 s)
+    /// doesn't hang on a refused read.
     reply_empty,
 };
 
 fn clipboardAction(policy: Config.Clipboard, request: rex.driver.ClipboardRequest) ClipboardAction {
     return switch (request) {
         .write => |w| if (policy.osc52_write == .allow) .{ .set = w.targets } else .ignore,
-        // Reads are refused: the empty reply keeps a waiting program
-        // (Neovim waits up to 10 s) from hanging.
-        .read => .reply_empty,
+        .read => |r| if (policy.osc52_read == .allow) .{ .reply_selection = r.targets } else .reply_empty,
     };
+}
+
+const base64_encoder = std.base64.standard.Encoder;
+
+/// Length of an OSC 52 read reply carrying `text_len` bytes.
+fn readReplyLen(format: rex.terminal.term.ControlFormat, text_len: usize) usize {
+    const term_ns = rex.terminal.term;
+    return term_ns.seqIntroducer(.osc, format).len + "52;c;".len +
+        base64_encoder.calcSize(text_len) + term_ns.seqIntroducer(.st, format).len;
+}
+
+/// Writes `OSC 52 ; selection ; base64(text) ST` into `dest`, which holds
+/// exactly `readReplyLen(format, text.len)` bytes. Empty text is the empty
+/// reply.
+fn writeReadReply(dest: []u8, format: rex.terminal.term.ControlFormat, selection: u8, text: []const u8) []const u8 {
+    std.debug.assert(dest.len == readReplyLen(format, text.len));
+    const term_ns = rex.terminal.term;
+    var w: std.Io.Writer = .fixed(dest);
+    w.print("{s}52;{c};", .{ term_ns.seqIntroducer(.osc, format), selection }) catch unreachable; // sized above
+    const encoded = base64_encoder.encode(dest[w.end..][0..base64_encoder.calcSize(text.len)], text);
+    w.end += encoded.len;
+    w.writeAll(term_ns.seqIntroducer(.st, format)) catch unreachable;
+    return w.buffered();
 }
 
 /// Applies or answers the pending OSC 52 request.
 fn handleClipboard(self: *App) void {
     const request = self.driver.takeClipboard(self.clipboard_buf[0..terminal_option.max_clipboard_bytes]) orelse return;
-    switch (clipboardAction(self.config.clipboard, request)) {
+    serveClipboard(self.allocator, self.config.clipboard, request, &self.window, &self.driver, self.clipboard_buf);
+}
+
+/// Applies or answers one OSC 52 request (ADR 0006). A write's data lives in
+/// `buf`, which has room for the NUL GLFW needs. Main thread only.
+fn serveClipboard(
+    gpa: std.mem.Allocator,
+    policy: Config.Clipboard,
+    request: rex.driver.ClipboardRequest,
+    window: *Window,
+    driver: *Driver,
+    buf: *[terminal_option.max_clipboard_bytes + 1]u8,
+) void {
+    switch (clipboardAction(policy, request)) {
         .ignore => log.debug("OSC 52: ignored {t}", .{request}),
         .set => |targets| {
-            const len = request.write.data.len;
-            self.clipboard_buf[len] = 0;
-            const text = self.clipboard_buf[0..len :0];
-            if (targets.clipboard) self.window.setClipboard(text);
-            if (targets.primary) _ = self.window.setPrimarySelection(text);
+            const data = request.write.data;
+            // GLFW takes a NUL-terminated string: refuse rather than cut.
+            if (std.mem.indexOfScalar(u8, data, 0) != null) {
+                log.warn("OSC 52: ignored a {d}-byte write that contains a NUL byte", .{data.len});
+                return;
+            }
+            buf[data.len] = 0;
+            const text = buf[0..data.len :0];
+            if (targets.clipboard) window.setClipboard(text);
+            if (targets.primary) _ = window.setPrimarySelection(text);
+        },
+        .reply_selection => |targets| {
+            const format = request.read.control_format;
+            var selection: u8 = 'c';
+            var text: ?[:0]const u8 = null;
+            if (targets.clipboard) text = window.getClipboard();
+            if (text == null and targets.primary) {
+                selection = 'p';
+                text = window.getPrimarySelection();
+            }
+            const content = text orelse "";
+            if (content.len > terminal_option.max_clipboard_bytes) {
+                log.warn("OSC 52: the selection ({d} bytes) is over the {d}-byte limit; sent an empty reply", .{ content.len, terminal_option.max_clipboard_bytes });
+                return sendEmptyReply(driver, format, selection);
+            }
+            const reply = gpa.alloc(u8, readReplyLen(format, content.len)) catch {
+                log.err("OSC 52: out of memory for a {d}-byte reply; sent an empty reply", .{content.len});
+                return sendEmptyReply(driver, format, selection);
+            };
+            defer gpa.free(reply);
+            driver.sendReply(writeReadReply(reply, format, selection, content)) catch |err|
+                log.err("OSC 52: cannot send the reply: {}", .{err});
         },
         .reply_empty => {
             const read = request.read;
-            const term_ns = rex.terminal.term;
-            var buf: [16]u8 = undefined;
-            const reply = std.fmt.bufPrint(&buf, "{s}52;{c};{s}", .{
-                term_ns.seqIntroducer(.osc, read.control_format),
-                @as(u8, if (read.targets.clipboard) 'c' else 'p'),
-                term_ns.seqIntroducer(.st, read.control_format),
-            }) catch unreachable; // at most 2 + 5 + 2 bytes
-            self.driver.sendBytes(reply) catch |err| log.err("OSC 52: cannot send the empty reply: {}", .{err});
+            sendEmptyReply(driver, read.control_format, if (read.targets.clipboard) 'c' else 'p');
         },
     }
+}
+
+fn sendEmptyReply(driver: *Driver, format: rex.terminal.term.ControlFormat, selection: u8) void {
+    var buf: [16]u8 = undefined;
+    const reply = writeReadReply(buf[0..readReplyLen(format, 0)], format, selection, "");
+    driver.sendBytes(reply) catch |err| log.err("OSC 52: cannot send the empty reply: {}", .{err});
 }
 
 fn copySelectionToClipboard(self: *App) void {
@@ -2922,17 +2987,164 @@ test "reapInBackground: reaps a finished child without a zombie" {
     }
 }
 
-test "clipboardAction: writes follow the policy, reads get the empty reply" {
+test "clipboardAction: writes and reads follow the policy" {
     const write: rex.driver.ClipboardRequest = .{ .write = .{ .targets = .{ .clipboard = true }, .data = "hi" } };
     const primary: rex.driver.ClipboardRequest = .{ .write = .{ .targets = .{ .primary = true }, .data = "hi" } };
-    const read: rex.driver.ClipboardRequest = .{ .read = .{ .targets = .{ .clipboard = true }, .control_format = .s7c1t } };
     const both: rex.driver.ClipboardRequest = .{ .write = .{ .targets = .{ .clipboard = true, .primary = true }, .data = "" } };
-    try std.testing.expectEqual(ClipboardAction{ .set = .{ .clipboard = true } }, clipboardAction(.{ .osc52_write = .allow }, write));
-    try std.testing.expectEqual(ClipboardAction{ .set = .{ .primary = true } }, clipboardAction(.{ .osc52_write = .allow }, primary));
-    try std.testing.expectEqual(ClipboardAction{ .set = .{ .clipboard = true, .primary = true } }, clipboardAction(.{ .osc52_write = .allow }, both));
-    try std.testing.expectEqual(ClipboardAction.ignore, clipboardAction(.{ .osc52_write = .deny }, primary));
-    try std.testing.expectEqual(ClipboardAction.ignore, clipboardAction(.{ .osc52_write = .deny }, write));
-    try std.testing.expectEqual(ClipboardAction.reply_empty, clipboardAction(.{ .osc52_write = .allow }, read));
+    const read: rex.driver.ClipboardRequest = .{ .read = .{ .targets = .{ .clipboard = true }, .control_format = .s7c1t } };
+    const allow_all: Config.Clipboard = .{ .osc52_write = .allow, .osc52_read = .allow };
+    const deny_all: Config.Clipboard = .{ .osc52_write = .deny, .osc52_read = .deny };
+    try std.testing.expectEqual(ClipboardAction{ .set = .{ .clipboard = true } }, clipboardAction(allow_all, write));
+    try std.testing.expectEqual(ClipboardAction{ .set = .{ .primary = true } }, clipboardAction(allow_all, primary));
+    try std.testing.expectEqual(ClipboardAction{ .set = .{ .clipboard = true, .primary = true } }, clipboardAction(allow_all, both));
+    try std.testing.expectEqual(ClipboardAction.ignore, clipboardAction(deny_all, write));
+    try std.testing.expectEqual(ClipboardAction{ .reply_selection = .{ .clipboard = true } }, clipboardAction(allow_all, read));
+    try std.testing.expectEqual(ClipboardAction.reply_empty, clipboardAction(deny_all, read));
+    try std.testing.expectEqual(ClipboardAction.reply_empty, clipboardAction(.{}, read)); // the default
+}
+
+test "writeReadReply: exact bytes in 7-bit and 8-bit form, empty and not" {
+    var buf: [64]u8 = undefined;
+    try std.testing.expectEqualStrings("\x1b]52;c;aGVsbG8=\x1b\\", writeReadReply(buf[0..readReplyLen(.s7c1t, 5)], .s7c1t, 'c', "hello"));
+    try std.testing.expectEqualStrings("\x9d52;p;aGk=\x9c", writeReadReply(buf[0..readReplyLen(.s8c1t, 2)], .s8c1t, 'p', "hi"));
+    try std.testing.expectEqualStrings("\x1b]52;c;\x1b\\", writeReadReply(buf[0..readReplyLen(.s7c1t, 0)], .s7c1t, 'c', ""));
+}
+
+/// A single driver on a socket pair and the test's hidden GLFW window, for
+/// OSC 52 round trips through `serveClipboard`. `child` is the program's
+/// end of the pty.
+const ClipboardRig = struct {
+    driver: Driver,
+    child: posix.fd_t,
+    window: Window,
+    buf: *[terminal_option.max_clipboard_bytes + 1]u8,
+
+    fn init() !ClipboardRig {
+        try Window.testGlContext();
+        var sv: [2]posix.fd_t = undefined;
+        if (system.socketpair(posix.AF.UNIX, posix.SOCK.STREAM | posix.SOCK.NONBLOCK, 0, &sv) != 0) return error.SocketPair;
+        errdefer _ = system.close(sv[1]);
+        const pty: rex.termio.pty.Posix = .{ .master = sv[0], .pid = -1, .stdout_read_fd = -1, .error_read_fd = -1 };
+        var driver: Driver = .{ .single = try SingleDriverType.init(std.testing.allocator, std.testing.io, pty, .{ .theme = .graphite, .sync_output_timeout_ms = 150 }) };
+        errdefer driver.deinit();
+        return .{
+            .driver = driver,
+            .child = sv[1],
+            .window = .{ .handle = c.glfwGetCurrentContext().? },
+            .buf = try std.testing.allocator.create([terminal_option.max_clipboard_bytes + 1]u8),
+        };
+    }
+
+    fn deinit(self: *ClipboardRig) void {
+        std.testing.allocator.destroy(self.buf);
+        self.driver.deinit();
+        _ = system.close(self.child);
+    }
+
+    /// The program writes `bytes`; returns the request the terminal made.
+    fn program(self: *ClipboardRig, bytes: []const u8) !rex.driver.ClipboardRequest {
+        var done: usize = 0;
+        var tries: usize = 0;
+        while (tries < 10_000) : (tries += 1) {
+            if (done < bytes.len) {
+                const n = system.write(self.child, bytes[done..].ptr, bytes.len - done);
+                if (n > 0) done += @intCast(n);
+            }
+            const events = try self.driver.pollAndDrain();
+            if (events.has(.clipboard)) {
+                if (self.driver.takeClipboard(self.buf[0..terminal_option.max_clipboard_bytes])) |request| return request;
+            }
+        }
+        return error.NoClipboardRequest;
+    }
+
+    /// Everything the terminal sent the program, until `len` bytes or none
+    /// arrive for a while.
+    fn reply(self: *ClipboardRig, out: []u8, len: usize) ![]const u8 {
+        var got: usize = 0;
+        var idle: usize = 0;
+        while (got < len and idle < 1000) {
+            const n = system.read(self.child, out[got..].ptr, out.len - got);
+            if (n > 0) {
+                got += @intCast(n);
+                idle = 0;
+            } else {
+                idle += 1;
+                _ = try self.driver.pollAndDrain(); // flushes pending output
+            }
+        }
+        return out[0..got];
+    }
+};
+
+const clipboard_texts = [_][]const u8{
+    "a",
+    "hello",
+    "line one\nline two\ttabbed",
+    "h\u{e9}llo \u{2014} \u{4e16}\u{754c} \u{1f642}",
+    "x" ** 10_000,
+};
+
+test "OSC 52 copy: the program's text reaches CLIPBOARD and PRIMARY unchanged" {
+    var rig = try ClipboardRig.init();
+    defer rig.deinit();
+    if (c.glfwGetPlatform() != c.GLFW_PLATFORM_X11) return error.SkipZigTest;
+    const allow: Config.Clipboard = .{ .osc52_write = .allow, .osc52_read = .allow };
+    var seq: [16 + base64_encoder.calcSize(10_000)]u8 = undefined;
+
+    for (clipboard_texts) |text| for ("cp") |selection| {
+        errdefer std.debug.print("selection {c} text {d} bytes\n", .{ selection, text.len });
+        const head = try std.fmt.bufPrint(&seq, "\x1b]52;{c};", .{selection});
+        const encoded = base64_encoder.encode(seq[head.len..], text);
+        seq[head.len + encoded.len] = 0x07;
+        const request = try rig.program(seq[0 .. head.len + encoded.len + 1]);
+        serveClipboard(std.testing.allocator, allow, request, &rig.window, &rig.driver, rig.buf);
+        const got = if (selection == 'c') rig.window.getClipboard() else rig.window.getPrimarySelection();
+        try std.testing.expectEqualStrings(text, got.?);
+    };
+
+    // Refused writes leave the clipboard as it was; so does a NUL byte.
+    rig.window.setClipboard("kept");
+    const deny: Config.Clipboard = .{ .osc52_write = .deny };
+    serveClipboard(std.testing.allocator, deny, try rig.program("\x1b]52;c;aGk=\x07"), &rig.window, &rig.driver, rig.buf);
+    try std.testing.expectEqualStrings("kept", rig.window.getClipboard().?);
+    serveClipboard(std.testing.allocator, allow, try rig.program("\x1b]52;c;aABp\x07"), &rig.window, &rig.driver, rig.buf); // "h\x00i"
+    try std.testing.expectEqualStrings("kept", rig.window.getClipboard().?);
+}
+
+test "OSC 52 paste: the reply carries the selection's text unchanged" {
+    var rig = try ClipboardRig.init();
+    defer rig.deinit();
+    if (c.glfwGetPlatform() != c.GLFW_PLATFORM_X11) return error.SkipZigTest;
+    const allow: Config.Clipboard = .{ .osc52_write = .allow, .osc52_read = .allow };
+    var text_z: [10_001]u8 = undefined;
+    var out: [32 + base64_encoder.calcSize(10_000)]u8 = undefined;
+    var decoded: [10_000]u8 = undefined;
+
+    for (clipboard_texts) |text| for ("cp") |selection| {
+        errdefer std.debug.print("selection {c} text {d} bytes\n", .{ selection, text.len });
+        @memcpy(text_z[0..text.len], text);
+        text_z[text.len] = 0;
+        if (selection == 'c') rig.window.setClipboard(text_z[0..text.len :0]) else _ = rig.window.setPrimarySelection(text_z[0..text.len :0]);
+        const query = if (selection == 'c') "\x1b]52;c;?\x07" else "\x1b]52;p;?\x07";
+        serveClipboard(std.testing.allocator, allow, try rig.program(query), &rig.window, &rig.driver, rig.buf);
+
+        const want_len = readReplyLen(.s7c1t, text.len);
+        const reply = try rig.reply(&out, want_len);
+        try std.testing.expectEqual(want_len, reply.len);
+        const head = if (selection == 'c') "\x1b]52;c;" else "\x1b]52;p;";
+        try std.testing.expectEqualStrings(head, reply[0..head.len]);
+        try std.testing.expectEqualStrings("\x1b\\", reply[reply.len - 2 ..]);
+        const payload = reply[head.len .. reply.len - 2];
+        const size = try std.base64.standard.Decoder.calcSizeForSlice(payload);
+        try std.base64.standard.Decoder.decode(decoded[0..size], payload);
+        try std.testing.expectEqualStrings(text, decoded[0..size]);
+    };
+
+    // Refused reads get the empty reply, whatever is in the clipboard.
+    rig.window.setClipboard("secret");
+    serveClipboard(std.testing.allocator, .{}, try rig.program("\x1b]52;c;?\x07"), &rig.window, &rig.driver, rig.buf);
+    try std.testing.expectEqualStrings("\x1b]52;c;\x1b\\", try rig.reply(&out, readReplyLen(.s7c1t, 0)));
 }
 
 test "windowTitle: configured text wins, then the program's title, then the default" {

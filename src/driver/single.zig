@@ -196,6 +196,7 @@ pub fn Driver(comptime option: Option) type {
                 .paste => |text| {
                     try self.writePaste(text);
                 },
+                .reply => |bytes| try self.sendReply(bytes),
                 .mouse_button => |ev| {
                     self.terminal.sendMouse(ev.col, ev.row, ev.button, ev.mods, ev.press);
                     self.drainAndWriteReplies();
@@ -365,6 +366,11 @@ pub fn Driver(comptime option: Option) type {
 
         /// Queues raw bytes for the pty.
         pub fn sendBytes(self: *Self, bytes: []const u8) OutboundQueue.AppendError!void {
+            try self.send(&.{bytes});
+        }
+
+        /// Writes a reply too big for the terminal's reply queue, as is.
+        pub fn sendReply(self: *Self, bytes: []const u8) OutboundQueue.AppendError!void {
             try self.send(&.{bytes});
         }
 
@@ -559,6 +565,29 @@ test "SingleDriver: takeClipboard hands over an OSC 52 write once" {
     try testing.expect(request.write.targets.clipboard);
     try testing.expectEqualStrings("hello", request.write.data);
     try testing.expectEqual(null, driver.takeClipboard(&buf));
+}
+
+test "SingleDriver: sendReply is written as is, even with bracketed paste on" {
+    const testing = std.testing;
+    const test_option: Option = .{ .max_rows = 24, .max_cols = 80, .max_scrollback = 100, .max_clipboard_bytes = 64 };
+
+    var sv: [2]posix.fd_t = undefined;
+    try testing.expectEqual(@as(c_int, 0), system.socketpair(posix.AF.UNIX, posix.SOCK.STREAM | posix.SOCK.NONBLOCK, 0, &sv));
+    defer _ = system.close(sv[1]);
+    const mock_pty: Pty = .{ .master = sv[0], .pid = -1, .stdout_read_fd = -1, .error_read_fd = -1 };
+
+    var driver = try Driver(test_option).init(testing.allocator, testing.io, mock_pty, test_options);
+    defer driver.deinit();
+
+    _ = system.write(sv[1], "\x1b[?2004h", 8);
+    _ = try driver.pollAndDrain();
+    try testing.expect(driver.terminal.mode.bracketed_paste);
+
+    const reply = "\x1b]52;c;aGk=\x1b\\";
+    try driver.sendReply(reply);
+    var buf: [64]u8 = undefined;
+    const n = system.read(sv[1], &buf, buf.len);
+    try testing.expectEqualStrings(reply, buf[0..@intCast(n)]);
 }
 
 test "SingleDriver: extractSelectionText for stream and block selections" {

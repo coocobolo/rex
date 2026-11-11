@@ -123,6 +123,9 @@ pub extern "c" fn glfwGetX11Display() ?*Xlib.Display;
 /// Sets X11's PRIMARY selection, copying `string` (glfw3native.h, since
 /// 3.3). Main thread only, and only while GLFW runs on X11.
 extern "c" fn glfwSetX11SelectionString(string: [*:0]const u8) void;
+/// X11's PRIMARY selection as UTF-8, or null (glfw3native.h, since 3.3).
+/// GLFW owns it until the next selection call. Main thread, X11 only.
+extern "c" fn glfwGetX11SelectionString() ?[*:0]const u8;
 
 handle: *c.GLFWwindow,
 
@@ -361,6 +364,22 @@ pub fn glfwWaitEventsTimeout(timeout: f64) void {
 /// Sets the CLIPBOARD selection. GLFW copies `text`. Main thread only.
 pub fn setClipboard(self: *Window, text: [:0]const u8) void {
     c.glfwSetClipboardString(self.handle, text.ptr);
+}
+
+/// The CLIPBOARD selection as UTF-8, or null when it is empty or not text.
+/// GLFW owns it until the next clipboard call. Main thread only.
+pub fn getClipboard(self: *Window) ?[:0]const u8 {
+    const raw = c.glfwGetClipboardString(self.handle) orelse return null;
+    return std.mem.span(raw);
+}
+
+/// The PRIMARY selection as UTF-8 where GLFW can read it (X11), else null.
+/// GLFW owns it until the next selection call. Main thread only.
+pub fn getPrimarySelection(self: *Window) ?[:0]const u8 {
+    _ = self;
+    if (!has_x11 or c.glfwGetPlatform() != c.GLFW_PLATFORM_X11) return null;
+    const raw = glfwGetX11SelectionString() orelse return null;
+    return std.mem.span(raw);
 }
 
 /// Sets the PRIMARY selection where GLFW can: on X11. Elsewhere (Wayland,
