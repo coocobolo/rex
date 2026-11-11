@@ -303,10 +303,10 @@ pub const Osc = struct {
             104 => term.resetPaletteColor(data),
 
             // OSC 110 — Reset default foreground color
-            110 => term.active().palette.set(.foreground, null),
+            110 => term.palette.set(.foreground, null),
 
             // OSC 111 — Reset default background color
-            111 => term.active().palette.set(.background, null),
+            111 => term.palette.set(.background, null),
 
             // OSC 112 — Reset default cursor color
             112 => term.cursor_color = null,

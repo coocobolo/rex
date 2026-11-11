@@ -19,10 +19,10 @@ test "cellColors: SGR 7 and DECSCNM each swap, together they cancel" {
     const fg: [3]u8 = .{ 0x11, 0x11, 0x11 };
     const bg: [3]u8 = .{ 0x22, 0x22, 0x22 };
 
-    try testing.expectEqual([2][3]u8{ fg, bg }, Frame.cellColors(&screen.palette, screen.styles.get(row[0].style), row[0], false));
-    try testing.expectEqual([2][3]u8{ bg, fg }, Frame.cellColors(&screen.palette, screen.styles.get(row[1].style), row[1], false));
-    try testing.expectEqual([2][3]u8{ bg, fg }, Frame.cellColors(&screen.palette, screen.styles.get(row[0].style), row[0], true));
-    try testing.expectEqual([2][3]u8{ fg, bg }, Frame.cellColors(&screen.palette, screen.styles.get(row[1].style), row[1], true));
+    try testing.expectEqual([2][3]u8{ fg, bg }, Frame.cellColors(&t.palette, screen.styles.get(row[0].style), row[0], false));
+    try testing.expectEqual([2][3]u8{ bg, fg }, Frame.cellColors(&t.palette, screen.styles.get(row[1].style), row[1], false));
+    try testing.expectEqual([2][3]u8{ bg, fg }, Frame.cellColors(&t.palette, screen.styles.get(row[0].style), row[0], true));
+    try testing.expectEqual([2][3]u8{ fg, bg }, Frame.cellColors(&t.palette, screen.styles.get(row[1].style), row[1], true));
 }
 
 test "cursorColor: without OSC 12 the cursor is the default foreground" {
@@ -30,9 +30,8 @@ test "cursorColor: without OSC 12 the cursor is the default foreground" {
     defer t.destroy(testing.allocator);
 
     t.feed("\x1b]10;#111111\x07\x1b[31m");
-    const screen = t.active();
-    try testing.expectEqual([3]u8{ 0x11, 0x11, 0x11 }, Frame.cursorColor(&screen.palette, null));
-    try testing.expectEqual([3]u8{ 1, 2, 3 }, Frame.cursorColor(&screen.palette, .{ 1, 2, 3 }));
+    try testing.expectEqual([3]u8{ 0x11, 0x11, 0x11 }, Frame.cursorColor(&t.palette, null));
+    try testing.expectEqual([3]u8{ 1, 2, 3 }, Frame.cursorColor(&t.palette, .{ 1, 2, 3 }));
 }
 
 const Decoration = @import("Decoration.zig");
@@ -122,7 +121,7 @@ test "build: SGR text produces merged decoration runs" {
     var storage: [8]Decoration.Instance = undefined;
     var runs: std.ArrayListUnmanaged(Decoration.Instance) = .initBuffer(&storage);
     for (row[0..6], 0..) |cell, col| {
-        const colors = Frame.cellColors(&screen.palette, screen.styles.get(cell.style), cell, false);
+        const colors = Frame.cellColors(&t.palette, screen.styles.get(cell.style), cell, false);
         if (Frame.decorationInstance(&option, cell, null, colors[0], 255, @intCast(col), 0, 1)) |run| {
             Decoration.appendRun(&runs, run);
         }
@@ -195,6 +194,6 @@ test "build: SGR 58 reaches the underline through the cell's style" {
     const row = screen.row(0);
     const a = screen.styles.get(row[0].style);
     const b = screen.styles.get(row[1].style);
-    try testing.expectEqual([3]u8{ 200, 100, 50 }, screen.palette.resolveKeyRgb(a.underline, .foreground));
+    try testing.expectEqual([3]u8{ 200, 100, 50 }, t.palette.resolveKeyRgb(a.underline, .foreground));
     try testing.expectEqual(term.Style.default_key, b.underline);
 }

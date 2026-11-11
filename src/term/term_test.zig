@@ -1256,8 +1256,8 @@ test "styles: an indexed color keeps its color while truecolors stream past" {
     for (0..300) |i| feedColored(&t, &buf, @intCast(i + 1), 5);
     const style = cellStyle(&t, 0, 0);
     try testing.expectEqual(Color{ .indexed = 16 }, Style.decode(style.fg));
-    const rgb = t.active().palette.resolveKeyRgb(style.fg, .foreground);
-    try testing.expectEqual(t.active().palette.getIndexed(16).toArray(), rgb);
+    const rgb = t.palette.resolveKeyRgb(style.fg, .foreground);
+    try testing.expectEqual(t.palette.getIndexed(16).toArray(), rgb);
 }
 
 test "styles: a full table gives new text the nearest style and changes no cell" {
@@ -1513,4 +1513,39 @@ test "1049: entering still clears the alternate screen" {
     t.feed("\x1b[?47hX\x1b[?47l");
     t.feed("\x1b[?1049h");
     try testing.expectEqualDeep(Cell{}, t.alternate.cellAt(0, 0));
+}
+
+test "palette: an OSC 4 color set on the alternate screen stays after leaving it" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+    t.feed("\x1b[?1049h\x1b]4;1;#010203\x07\x1b[?1049l");
+    try testing.expectEqual(Rgb{ .r = 1, .g = 2, .b = 3 }, t.palette.getIndexed(1));
+}
+
+test "palette: OSC 10 and 11 set on the alternate screen stay after leaving it" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+    t.feed("\x1b[?1049h\x1b]10;#0a0b0c\x07\x1b]11;#0d0e0f\x07\x1b[?1049l");
+    try testing.expectEqual(Rgb{ .r = 0x0a, .g = 0x0b, .b = 0x0c }, t.palette.get(.foreground));
+    try testing.expectEqual(Rgb{ .r = 0x0d, .g = 0x0e, .b = 0x0f }, t.palette.get(.background));
+}
+
+test "palette: RIS drops OSC 4 overrides" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+    const red = t.palette.getIndexed(1);
+    t.feed("\x1b]4;1;#010203\x07\x1bc");
+    try testing.expectEqual(red, t.palette.getIndexed(1));
+}
+
+test "palette: an OSC 4 change alone reaches the next frame" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+    var frame = try Term.FrameType.init(alloc);
+    defer frame.deinit(alloc);
+    t.feed("A");
+    _ = t.snapshot(&frame);
+    t.feed("\x1b]4;1;#010203\x07");
+    _ = t.snapshot(&frame);
+    try testing.expectEqual(Rgb{ .r = 1, .g = 2, .b = 3 }, frame.palette.getIndexed(1));
 }

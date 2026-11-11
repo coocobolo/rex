@@ -478,6 +478,9 @@ pub fn Terminal(comptime option: Option) type {
         cursor_color: ?Color.Rgb = null,
         selection_foreground: ?Color.Rgb = null,
         selection_background: ?Color.Rgb = null,
+        /// The 256 colors and the default foreground and background, shared
+        /// by both screens as in xterm (one `Acolors` per terminal, #69).
+        palette: Palette = .empty,
 
         pub const ColorTarget = DynamicColor;
 
@@ -855,7 +858,7 @@ pub fn Terminal(comptime option: Option) type {
             self.mode.cursor_keys = false;
             self.mode.keypad_app = false;
             self.mode.modify_other_keys = 0;
-            self.active().palette.resetAllIndexed();
+            self.palette.resetAllIndexed();
             self.active().softReset();
         }
 
@@ -879,6 +882,7 @@ pub fn Terminal(comptime option: Option) type {
             self.cursor_color = null;
             self.selection_foreground = null;
             self.selection_background = null;
+            self.palette.reset();
 
             self.alternate.hardReset();
             self.primary.hardReset();
@@ -1218,7 +1222,7 @@ pub fn Terminal(comptime option: Option) type {
             target.active_rows = scr.active_rows;
             target.active_cols = scr.active_cols;
             target.generation = scr.generation;
-            target.palette = scr.palette;
+            target.palette = self.palette;
             // IDs stay valid while referenced, so the frame needs the table
             // only when it changed or the screen did (ADR 0005).
             if (needs_full or target.style_generation != scr.styles.generation) {
@@ -1360,10 +1364,10 @@ pub fn Terminal(comptime option: Option) type {
                 rest = if (semi2 < rest.len) rest[semi2 + 1 ..] else "";
 
                 if (std.mem.eql(u8, spec, "?")) {
-                    const color = self.active().palette.getIndexed(idx);
+                    const color = self.palette.getIndexed(idx);
                     self.reply(.{ .palette_color = .{ .index = idx, .rgb = color } });
                 } else if (Rgb.parseSpec(spec)) |c| {
-                    self.active().palette.setIndexed(idx, c);
+                    self.palette.setIndexed(idx, c);
                 }
             }
         }
@@ -1415,18 +1419,18 @@ pub fn Terminal(comptime option: Option) type {
 
             if (std.mem.eql(u8, data, "?")) {
                 const color: Rgb = switch (target) {
-                    .fg => self.active().palette.get(.foreground),
-                    .bg => self.active().palette.get(.background),
-                    .selection_bg => self.selection_background orelse self.active().palette.builtin_selection_background,
-                    .selection_fg => self.selection_foreground orelse self.active().palette.builtin_selection_foreground,
-                    .cursor => self.cursor_color orelse self.active().palette.get(.foreground),
+                    .fg => self.palette.get(.foreground),
+                    .bg => self.palette.get(.background),
+                    .selection_bg => self.selection_background orelse self.palette.builtin_selection_background,
+                    .selection_fg => self.selection_foreground orelse self.palette.builtin_selection_foreground,
+                    .cursor => self.cursor_color orelse self.palette.get(.foreground),
                 };
 
                 self.reply(.{ .dynamic_color = .{ .slot = target, .rgb = color } });
             } else if (Rgb.parseSpec(spec)) |color| {
                 switch (target) {
-                    .fg => self.active().palette.set(.foreground, color),
-                    .bg => self.active().palette.set(.background, color),
+                    .fg => self.palette.set(.foreground, color),
+                    .bg => self.palette.set(.background, color),
                     .cursor => self.cursor_color = color,
                     .selection_bg => self.selection_background = color,
                     .selection_fg => self.selection_foreground = color,
@@ -1434,23 +1438,22 @@ pub fn Terminal(comptime option: Option) type {
             }
         }
 
-        /// Applies `theme` to both screens.
+        /// Applies `theme` to the palette.
         pub fn setTheme(self: *Self, theme: Theme) void {
-            self.primary.palette.setTheme(theme);
-            self.alternate.palette.setTheme(theme);
+            self.palette.setTheme(theme);
         }
 
         /// OSC 104: resets each listed palette entry, or all of them when
         /// `data` is empty. Bad entries are skipped.
         pub fn resetPaletteColor(self: *Self, data: []const u8) void {
             if (std.mem.trim(u8, data, " ").len == 0) {
-                self.active().palette.resetAllIndexed();
+                self.palette.resetAllIndexed();
                 return;
             }
             var it = std.mem.splitScalar(u8, data, ';');
             while (it.next()) |field| {
                 const idx = std.fmt.parseInt(u8, std.mem.trim(u8, field, " "), 10) catch continue;
-                self.active().palette.resetIndexed(idx);
+                self.palette.resetIndexed(idx);
             }
         }
     };

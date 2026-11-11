@@ -17,7 +17,6 @@ const Attr = @import("cell.zig").Attr;
 const Charset = @import("cell.zig").Charset;
 const CharsetState = @import("cell.zig").CharsetState;
 
-const Palette = @import("Palette.zig").Palette;
 const Style = @import("Style.zig");
 const Option = @import("term.zig").Option;
 
@@ -278,10 +277,6 @@ pub fn Screen(comptime option: Option) type {
 
         line_attrs: [ring_rows]LineAttr = std.mem.zeroes([ring_rows]LineAttr),
 
-        // Title stack buffer moved in App/Terminal instead, because
-        // it's window terminal behavior.
-        palette: Palette,
-
         /// Colors of this screen's cells, the pen's `id` and `blank_id`
         /// (ADR 0005). Owned; 288 KiB allocated by `create`.
         styles: Style.Table,
@@ -359,7 +354,6 @@ pub fn Screen(comptime option: Option) type {
                 .row_map = row_map,
                 .cells = cells,
                 .scratch_cells = scratch_cells,
-                .palette = .empty,
                 .tab_stops = comptime defaultTabStops(),
                 .scroll_bottom = default_scroll_bottom,
                 .scrollback_used = if (is_scrollback_used) 0 else {},
@@ -2958,8 +2952,6 @@ pub fn Screen(comptime option: Option) type {
 
             self.resetTabStops();
 
-            // Reset palette before clearing cells (cells reference palette indices).
-            self.palette.reset();
             self.last_char = 0;
 
             // Content is about to be wiped unconditionally below, so there is

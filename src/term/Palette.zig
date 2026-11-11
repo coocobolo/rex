@@ -5,7 +5,8 @@ const Rgb = Color.Rgb;
 const ansi = @import("../color/ansi.zig");
 const Theme = @import("../color/Theme.zig");
 
-/// Per-screen color palette: what a `Style.Key` resolves to.
+/// The terminal's color palette, shared by both screens: what a
+/// `Style.Key` resolves to.
 ///
 /// The 256 xterm colors (`indexed`, the theme for 0-15, OSC 4 overrides on
 /// top) and the default foreground and background (theme, OSC 10/11).

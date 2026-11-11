@@ -489,7 +489,7 @@ test "escape: ESC c resets OSC 4 colors and the style table" {
 
     t.feed("\x1bc");
 
-    try testing.expectEqual(Rgb.fromU32(@import("../color/ansi.zig").indexed(1)), t.active().palette.getIndexed(1));
+    try testing.expectEqual(Rgb.fromU32(@import("../color/ansi.zig").indexed(1)), t.palette.getIndexed(1));
     try testing.expectEqual(0, t.active().styles.count());
     try testing.expect(t.active().cursor.attr.colors.isDefault());
 }
@@ -3215,12 +3215,12 @@ test "sgr: 58 leaves fg, bg and the palette alone" {
     var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
-    const before = t.active().palette.indexed;
+    const before = t.palette.indexed;
     t.feed("\x1b[58:2::1:2:3m");
     const attr = t.active().cursor.attr;
     try testing.expectEqual(Style.default_key, attr.colors.fg);
     try testing.expectEqual(Style.default_key, attr.colors.bg);
-    try testing.expectEqual(before, t.active().palette.indexed);
+    try testing.expectEqual(before, t.palette.indexed);
 }
 
 test "sgr: 59 and 0 reset the underline color" {
@@ -3688,7 +3688,7 @@ test "m2: DECSTR resets each item xterm resets" {
     t.feed("\x1b[?25l\x1b[4h\x1b[2;5r\x1b[?6h\x1b[?7l\x1b[?45h\x1b[4 q\x1b[?1h\x1b=");
     t.feed("\x1b(0\x0e\x1b[1;31m\x1b[3;4H\x1b7\x1b]4;1;#010203\x07");
     t.mode.modify_other_keys = 2;
-    const red = t.active().palette.indexed_default[1];
+    const red = t.palette.indexed_default[1];
     t.feed("\x1b[!p");
 
     const s = t.active();
@@ -3699,7 +3699,7 @@ test "m2: DECSTR resets each item xterm resets" {
     try testing.expect(!s.mode.reverse_wrap); // startup value, off
     try testing.expectEqual(Cursor.Style.default, s.cursor.style); // InitCursorShape
     try testing.expectEqual(0, t.mode.modify_other_keys);
-    try testing.expectEqual(red, s.palette.getIndexed(1)); // ResetAnsiColorRequest
+    try testing.expectEqual(red, t.palette.getIndexed(1)); // ResetAnsiColorRequest
     try testing.expect(!t.mode.cursor_keys); // DECCKM: normal
     try testing.expect(!t.mode.keypad_app); // DECNKM: numeric
     try testing.expectEqual(0, s.scroll_top); // DECSTBM: full page
@@ -3736,7 +3736,7 @@ test "color: OSC 4 on 16-255 applies to text drawn after it" {
 
     t.feed("\x1b]4;100;#0a0b0c;255;#010203\x07");
     t.feed("\x1b[38;5;100mX\x1b[48;5;255mY");
-    const p = &t.active().palette;
+    const p = &t.palette;
     const row = t.active().row(0);
     const styles = &t.active().styles;
     try testing.expectEqual([3]u8{ 10, 11, 12 }, p.resolveKeyRgb(styles.get(row[0].style).fg, .foreground));
@@ -3749,7 +3749,7 @@ test "color: OSC 104 with no argument resets all 256 indices" {
 
     t.feed("\x1b]4;1;#010101;200;#020202;255;#030303\x07");
     t.feed("\x1b]104\x07");
-    const p = &t.active().palette;
+    const p = &t.palette;
     for ([_]u8{ 1, 200, 255 }) |n| {
         try testing.expectEqual(Rgb.fromU32(ansi.indexed(n)), p.getIndexed(n));
     }
@@ -3761,7 +3761,7 @@ test "color: OSC 104 resets each index in its list" {
 
     t.feed("\x1b]4;1;#010101;2;#020202;200;#030303\x07");
     t.feed("\x1b]104;1;200\x07");
-    const p = &t.active().palette;
+    const p = &t.palette;
     try testing.expectEqual(Rgb.fromU32(ansi.indexed(1)), p.getIndexed(1));
     try testing.expectEqual(Rgb{ .r = 2, .g = 2, .b = 2 }, p.getIndexed(2));
     try testing.expectEqual(Rgb.fromU32(ansi.indexed(200)), p.getIndexed(200));
@@ -3784,7 +3784,7 @@ test "color: the theme applies to both screens" {
 
     t.setTheme(test_theme);
     t.feed("\x1b[?1049h");
-    const p = &t.active().palette;
+    const p = &t.palette;
     try testing.expectEqual(test_theme.background, p.get(.background));
     try testing.expectEqual(test_theme.foreground, p.get(.foreground));
     try testing.expectEqual(test_theme.ansi[1], p.getIndexed(1));
