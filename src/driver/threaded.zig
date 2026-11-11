@@ -682,6 +682,23 @@ pub fn Driver(comptime option: Option) type {
             return buf[0..self.title_len :0];
         }
 
+        /// Takes the pending OSC 52 request, copying a write's data into
+        /// `buf`. Null when none is pending or the worker has stopped.
+        pub fn takeClipboard(self: *Self, buf: *[option.max_clipboard_bytes]u8) ?root.ClipboardRequest {
+            self.terminal_mutex.lockUncancelable(self.io);
+            defer self.terminal_mutex.unlock(self.io);
+            const terminal = self.terminal orelse return null;
+            const request, const data = terminal.takeClipboard();
+            return switch (request) {
+                .none => null,
+                .write => |targets| blk: {
+                    @memcpy(buf[0..data.len], data);
+                    break :blk .{ .write = .{ .targets = targets, .data = buf[0..data.len] } };
+                },
+                .read => |targets| .{ .read = .{ .targets = targets, .control_format = terminal.control_format } },
+            };
+        }
+
         /// Returns the child process PID.
         pub fn getPid(self: *const Self) posix.pid_t {
             return self.pty_pid;
@@ -926,6 +943,31 @@ test "ThreadedDriver: copyTitle never returns a mix of two titles" {
         try testing.expect(first == 'a' or first == 'b');
         for (title) |c| try testing.expectEqual(first, c);
     }
+}
+
+test "ThreadedDriver: takeClipboard hands over an OSC 52 read with its C1 format" {
+    const testing = std.testing;
+    const test_option: Option = .{ .max_rows = 24, .max_cols = 80, .max_scrollback = 100, .max_clipboard_bytes = 64 };
+
+    var sv: [2]posix.fd_t = undefined;
+    try testing.expectEqual(@as(c_int, 0), system.socketpair(posix.AF.UNIX, posix.SOCK.STREAM | posix.SOCK.NONBLOCK, 0, &sv));
+    defer _ = system.close(sv[1]);
+    const mock_pty: Pty = .{ .master = sv[0], .pid = -1, .stdout_read_fd = -1, .error_read_fd = -1 };
+
+    var driver = try Driver(test_option).create(testing.allocator, testing.io, mock_pty, test_options, latency_trace.none);
+    defer driver.destroy();
+
+    try writeAllTest(sv[1], "\x1b]52;c;?\x1b\\");
+    var buf: [test_option.max_clipboard_bytes]u8 = undefined;
+    var request: ?root.ClipboardRequest = null;
+    var retries: usize = test_wait_ms;
+    while (retries > 0 and request == null) : (retries -= 1) {
+        const events = try driver.pollAndDrain();
+        if (events.has(.clipboard)) request = driver.takeClipboard(&buf);
+        if (request == null) sleepNs(1_000_000);
+    }
+    try testing.expect(request.?.read.targets.clipboard);
+    try testing.expectEqual(.s7c1t, request.?.read.control_format);
 }
 
 test "ThreadedDriver: Mode 2026 synchronized output hold and release" {

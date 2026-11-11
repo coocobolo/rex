@@ -42,6 +42,7 @@ pub const Section = enum {
     @"wellbeing.privacy",
     scroll,
     selection,
+    clipboard,
     shell,
     keybinds,
     env,
@@ -295,6 +296,7 @@ pub const table = [_]Key{
 
     .{ .section = .selection, .name = "extra_word_characters", .field = "selection.classifier.extra_word_chars", .kind = .word_characters },
 
+    .{ .section = .clipboard, .name = "osc52_write", .field = "clipboard.osc52_write" },
     .{ .section = .shell, .name = "program", .field = "shell.program", .kind = .program_path, .null_keyword = .auto, .reload = .restart },
     .{ .section = .shell, .name = "argument", .field = "shell.arguments", .kind = .shell_argument, .reload = .restart },
     .{ .section = .shell, .name = "working_directory", .field = "shell.working_directory", .kind = .directory_path, .null_keyword = .inherit, .reload = .restart },

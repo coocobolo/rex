@@ -26,6 +26,7 @@ const wc = @import("../unicode/wcwidth.zig");
 const utf8 = @import("../unicode/utf8.zig");
 
 const InputEngine = @import("InputEngine.zig");
+pub const Clipboard = @import("Clipboard.zig");
 
 pub const max_title_len = 256;
 pub const max_answerback_len = 32;
@@ -57,8 +58,8 @@ pub const Reply = union(enum) {
     /// ENQ: the configured answerback string, sent as is.
     answerback: []const u8,
     /// DA1 (CSI c), also sent for DECID (ESC Z) as xterm does: VT220 with
-    /// ANSI colour (22). Clipboard (52, not an xterm code) is left out
-    /// until OSC 52 works (#70).
+    /// ANSI colour (22) and clipboard access (52), which OSC 52 writes
+    /// provide (#83).
     primary_attributes,
     /// DA2 (CSI > c): CSI > 1 ; 0 ; 0 c.
     secondary_attributes,
@@ -236,6 +237,9 @@ pub const Option = struct {
     ambiguous_width: wc.AmbiguousWidth = .narrow,
     name: []const u8 = "rex",
     version: []const u8 = "0.1.0",
+    /// Most decoded bytes one OSC 52 write can hold; a larger write is
+    /// dropped whole (ADR 0006). Allocated once in `Terminal.create`.
+    max_clipboard_bytes: usize = 1 << 20,
 
     /// 4096 ring rows, a power of two.
     pub const compact = Option{
@@ -346,7 +350,9 @@ pub const EventBits = packed struct(u32) {
     hard_reset: bool = false,
     _pad_host: u2 = 0,
     resize: bool = false,
-    _pad: u23 = 0,
+    /// An OSC 52 request is pending; take it with `takeClipboard`.
+    clipboard: bool = false,
+    _pad: u22 = 0,
 };
 
 pub const EventSet = flag_set.IntegerSet(EventBits);
@@ -553,6 +559,11 @@ pub fn Terminal(comptime option: Option) type {
         conformance_level: ConformanceLevel = .level3,
         control_format: ControlFormat = .s7c1t,
 
+        /// Where the bytes of the OSC in progress go: `osc_buf`, or, once
+        /// it starts with `52;`, the clipboard decoder.
+        osc_mode: enum { collect, clipboard } = .collect,
+        /// OSC 52 decoding and the pending clipboard request.
+        clipboard: Clipboard,
         /// The OSC string being collected. One longer than the buffer is dropped.
         osc_buf: [1024]u8 = undefined,
         osc_len: usize = 0,
@@ -577,23 +588,29 @@ pub fn Terminal(comptime option: Option) type {
 
         pub const ColorTarget = DynamicColor;
 
-        /// Allocates both screens. Release with `destroy`.
+        /// Allocates both screens and the clipboard buffer. Release with
+        /// `destroy`.
         pub fn create(alloc: std.mem.Allocator) !Self {
             var primary: ScreenType = try .create(alloc);
             errdefer primary.destroy(alloc);
+            var alternate: ScreenType = try .create(alloc);
+            errdefer alternate.destroy(alloc);
 
             return .{
                 .primary = primary,
-                .alternate = try .create(alloc),
+                .alternate = alternate,
+                .clipboard = try .init(alloc, option.max_clipboard_bytes),
                 .parser = .{},
                 .events = .{},
             };
         }
 
-        /// Frees both screens. `alloc` must be the one `create` used.
+        /// Frees both screens and the clipboard buffer. `alloc` must be the
+        /// one `create` used.
         pub fn destroy(self: *Self, alloc: std.mem.Allocator) void {
             self.primary.destroy(alloc);
             self.alternate.destroy(alloc);
+            self.clipboard.deinit(alloc);
             self.* = undefined;
         }
 
@@ -815,11 +832,16 @@ pub fn Terminal(comptime option: Option) type {
         }
 
         pub fn oscStart(self: *Self) void {
+            self.osc_mode = .collect;
             self.osc_len = 0;
             self.osc_overflow = false;
         }
 
         pub fn oscPut(self: *Self, byte: u8) void {
+            switch (self.osc_mode) {
+                .clipboard => return self.clipboard.put(&.{byte}),
+                .collect => {},
+            }
             if (self.osc_overflow) return;
 
             if (self.osc_len == self.osc_buf.len) {
@@ -829,9 +851,31 @@ pub fn Terminal(comptime option: Option) type {
 
             self.osc_buf[self.osc_len] = byte;
             self.osc_len += 1;
+
+            if (self.osc_len == osc52_prefix.len and std.mem.eql(u8, self.osc_buf[0..self.osc_len], osc52_prefix)) {
+                self.osc_mode = .clipboard;
+                self.clipboard.begin();
+            }
         }
 
+        /// OSC 52 data goes to the clipboard decoder instead of `osc_buf`.
+        const osc52_prefix = "52;";
+
         pub fn oscPutSlice(self: *Self, bytes: []const u8) void {
+            var rest = bytes;
+            // The first bytes decide whether this is OSC 52.
+            while (self.osc_mode == .collect and self.osc_len < osc52_prefix.len and rest.len > 0) {
+                self.oscPut(rest[0]);
+                rest = rest[1..];
+            }
+            if (rest.len == 0) return;
+            switch (self.osc_mode) {
+                .clipboard => return self.clipboard.put(rest),
+                .collect => self.oscCollect(rest),
+            }
+        }
+
+        fn oscCollect(self: *Self, bytes: []const u8) void {
             if (self.osc_overflow) return;
 
             const remaining = self.osc_buf.len - self.osc_len;
@@ -844,6 +888,15 @@ pub fn Terminal(comptime option: Option) type {
         }
 
         pub fn oscEnd(self: *Self) void {
+            switch (self.osc_mode) {
+                .clipboard => {
+                    self.osc_mode = .collect;
+                    self.osc_len = 0;
+                    if (self.clipboard.end()) self.events.set(.clipboard);
+                    return;
+                },
+                .collect => {},
+            }
             if (self.osc_overflow) {
                 self.osc_overflow = false;
                 self.osc_len = 0;
@@ -915,6 +968,12 @@ pub fn Terminal(comptime option: Option) type {
             self.dcs_kind = .unknown;
             self.dcs_len = 0;
             self.dcs_overflow = false;
+        }
+
+        /// The pending OSC 52 request and, for a write, its data, valid
+        /// until the next OSC 52. Leaves no request pending.
+        pub fn takeClipboard(self: *Self) struct { Clipboard.Request, []const u8 } {
+            return self.clipboard.take();
         }
 
         /// Sets the ENQ reply, cut to `max_answerback_len` bytes on a
@@ -1384,7 +1443,7 @@ pub fn Terminal(comptime option: Option) type {
         pub fn reply(self: *Self, r: Reply) void {
             switch (r) {
                 .answerback => |bytes| self.response.append(bytes),
-                .primary_attributes => self.replyFmt(.csi, "?62;22c", .{}),
+                .primary_attributes => self.replyFmt(.csi, "?62;22;52c", .{}),
                 .secondary_attributes => self.replyFmt(.csi, ">1;0;0c", .{}),
                 .status_ok => self.replyFmt(.csi, "0n", .{}),
                 .cursor_position => |at| self.replyFmt(.csi, "{d};{d}R", .{ @as(u32, at.row) + 1, @as(u32, at.col) + 1 }),

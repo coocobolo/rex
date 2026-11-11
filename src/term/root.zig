@@ -31,6 +31,7 @@ test {
     _ = @import("input_engine_test.zig");
     _ = @import("grapheme_test.zig");
     _ = @import("palette_test.zig");
+    _ = @import("clipboard_test.zig");
     _ = @import("Cursor.zig");
     _ = @import("charset.zig");
     _ = @import("Style.zig");

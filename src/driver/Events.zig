@@ -14,6 +14,8 @@ const Events = @This();
 ///
 /// Bit 0 through 5 hold terminal emulation protocol events parsed from incoming ANSI streams.
 /// Bit 6 and 7 hold host OS process and PTY events. Bit 8 indicates a pending resize payload.
+/// Bit 9 says an OSC 52 request is pending. Terminal bits keep the terminal's positions, so
+/// `accumulateTerm` copies them as one integer.
 pub const Bits = packed struct(u32) {
     // Protocol events (bits 0..5)
     bell: bool = false,
@@ -29,9 +31,18 @@ pub const Bits = packed struct(u32) {
 
     /// Transport bit indicating a resize payload is queued (bit 8).
     resize: bool = false,
+    /// An OSC 52 request is pending; take it with `takeClipboard` (bit 9).
+    clipboard: bool = false,
 
-    _pad: u23 = 0,
+    _pad: u22 = 0,
 };
+
+comptime {
+    for (@typeInfo(term.term.EventBits).@"struct".fields) |field| {
+        if (field.name[0] == '_') continue;
+        std.debug.assert(@bitOffsetOf(term.term.EventBits, field.name) == @bitOffsetOf(Bits, field.name));
+    }
+}
 
 pub const Set = IntegerSet(Bits);
 pub const EventBits = Bits;

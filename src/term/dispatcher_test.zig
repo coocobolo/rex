@@ -20,6 +20,7 @@ const Theme = @import("../color/Theme.zig");
 const max_title_len = @import("term.zig").max_title_len;
 const max_term_name_len = @import("term.zig").max_term_name_len;
 const TermName = @import("term.zig").TermName;
+const Clipboard = @import("term.zig").Clipboard;
 
 const test_option = @import("test_fixtures.zig").test_option;
 
@@ -2847,7 +2848,7 @@ test "csi: DA1 reports a VT220 with colour and no clipboard until OSC 52 works" 
     t.feed("\x1b[0c");
 
     try testing.expect(t.hasReplies());
-    try testing.expectEqualStrings("\x1b[?62;22c", t.response.slice());
+    try testing.expectEqualStrings("\x1b[?62;22;52c", t.response.slice());
 }
 
 test "esc: DECID answers exactly like DA1" {
@@ -2869,7 +2870,7 @@ test "esc: DECID answers with 8-bit controls under s8c1t" {
 
     t.control_format = .s8c1t;
     t.feed("\x1bZ");
-    try testing.expectEqualStrings("\x9b?62;22c", t.response.slice());
+    try testing.expectEqualStrings("\x9b?62;22;52c", t.response.slice());
 }
 
 test "csi: DA2 reports the terminal type and version" {
@@ -4265,4 +4266,51 @@ test "esc: RIS empties the title and icon name" {
     t.feed("\x1bc");
     try testing.expectEqualStrings("", t.getTitle());
     try testing.expectEqualStrings("", t.getIconName());
+}
+
+test "osc 52: a write arrives decoded, ended by BEL or ST, split anywhere" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    for ([_][]const u8{
+        "\x1b]52;c;aGVsbG8=\x07",
+        "\x1b]52;c;aGVsbG8=\x1b\\",
+    }) |seq| {
+        // Whole, then one byte per feed.
+        for (0..2) |split| {
+            if (split == 0) t.feed(seq) else for (seq) |b| t.feed(&.{b});
+            try testing.expect(t.takeEvents().has(.clipboard));
+            const request, const data = t.takeClipboard();
+            try testing.expectEqual(Clipboard.Targets{ .clipboard = true }, request.write);
+            try testing.expectEqualStrings("hello", data);
+        }
+    }
+}
+
+test "osc 52: a query is a read request; a write too big is dropped" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    t.feed("\x1b]52;p;?\x07");
+    try testing.expect(t.takeEvents().has(.clipboard));
+    try testing.expectEqual(Clipboard.Request{ .read = .{ .primary = true } }, t.takeClipboard()[0]);
+
+    // test_option holds 64 decoded bytes; 66 do not fit.
+    t.feed("\x1b]52;c;" ++ "QUJD" ** 22 ++ "\x07");
+    try testing.expect(!t.takeEvents().has(.clipboard));
+    try testing.expectEqual(Clipboard.Request.none, t.takeClipboard()[0]);
+    try testing.expectEqual(@as(u32, 1), t.clipboard.dropped);
+}
+
+test "osc 52: other OSCs still collect, before and after" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    t.feed("\x1b]2;one\x07\x1b]52;c;aGk=\x07\x1b]2;two\x07");
+    try testing.expectEqualStrings("two", t.getTitle());
+    try testing.expectEqualStrings("hi", t.takeClipboard()[1]);
+    _ = t.takeEvents();
+    // `52` alone and `5;` are not OSC 52.
+    t.feed("\x1b]52\x07\x1b]5;x\x07");
+    try testing.expect(!t.takeEvents().has(.clipboard));
 }

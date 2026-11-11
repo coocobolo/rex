@@ -84,6 +84,15 @@ pub const Options = struct {
     term_name: term.term.TermName = .empty,
 };
 
+/// An OSC 52 request taken from the terminal (ADR 0006).
+pub const ClipboardRequest = union(enum) {
+    /// Set the targets to `data`, a slice of the caller's buffer. Empty
+    /// data clears them.
+    write: struct { targets: term.term.Clipboard.Targets, data: []const u8 },
+    /// Reply with the targets' content, framed in `control_format`.
+    read: struct { targets: term.term.Clipboard.Targets, control_format: term.term.ControlFormat },
+};
+
 pub const resolveAnchor = Selection.resolveAnchor;
 pub const extractSelectionText = Selection.extractText;
 
@@ -188,6 +197,15 @@ pub fn Driver(comptime option: Option) type {
             return switch (self.*) {
                 .single => |*d| d.getModes(),
                 .threaded => |d| d.getModes(),
+            };
+        }
+
+        /// Takes the pending OSC 52 request, copying a write's data into
+        /// `buf`. Null when none is pending.
+        pub fn takeClipboard(self: *Self, buf: *[option.max_clipboard_bytes]u8) ?ClipboardRequest {
+            return switch (self.*) {
+                .single => |*d| d.takeClipboard(buf),
+                .threaded => |d| d.takeClipboard(buf),
             };
         }
 

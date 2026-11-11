@@ -98,7 +98,8 @@ fn sameTerminalOption(a: TerminalOption, b: TerminalOption) bool {
         a.max_scrollback == b.max_scrollback and
         a.ambiguous_width == b.ambiguous_width and
         std.mem.eql(u8, a.name, b.name) and
-        std.mem.eql(u8, a.version, b.version);
+        std.mem.eql(u8, a.version, b.version) and
+        a.max_clipboard_bytes == b.max_clipboard_bytes;
 }
 
 pub const FrameBuilderType = FrameBuilder(terminal_option);
@@ -216,6 +217,9 @@ window_focused: bool = true,
 /// reported once and its end is reported too; null while syncs succeed.
 wellbeing_sync_error: ?wellbeing.Wellbeing.SyncError = null,
 frame_buffer_size: Dimension(u16),
+/// Main-thread copy of an OSC 52 write, with room for the NUL GLFW needs.
+/// Owned; freed in `deinit`.
+clipboard_buf: *[terminal_option.max_clipboard_bytes + 1]u8,
 
 // Environment data
 dirs: rex.dirs.Application,
@@ -587,6 +591,9 @@ pub fn init(
     };
     errdefer driver.deinit();
 
+    const clipboard_buf = try gpa.create([terminal_option.max_clipboard_bytes + 1]u8);
+    errdefer gpa.destroy(clipboard_buf);
+
     driver.setWakeupFn(Window.glfwPostEmptyEvent);
 
     const background_color = active_config.theme.background;
@@ -639,6 +646,7 @@ pub fn init(
         .toast_queue = .{},
         .config_banner = startup_banner,
         .frame_buffer_size = .empty,
+        .clipboard_buf = clipboard_buf,
         .last_frame = now,
         .word_classifier = classifier,
     };
@@ -657,6 +665,7 @@ pub fn deinit(self: *App, gpa: std.mem.Allocator) void {
     self.rasterizer.destroy(gpa);
     self.window.deinit();
     self.driver.deinit();
+    gpa.destroy(self.clipboard_buf);
     if (latency_trace.enabled) {
         // The driver's worker has been joined, so the trace is complete.
         if (self.latency.?.writeFile(self.io, self.latency_path)) {
@@ -783,6 +792,8 @@ pub fn run(self: *App) !void {
             self.selection = .empty;
             self.needs_redraw = true;
         }
+
+        if (f.clipboard) self.handleClipboard();
 
         if (f.title or f.hard_reset) {
             title_updated = true;
@@ -2114,6 +2125,43 @@ fn mouseCellPos(self: *App, xpos: f32, ypos: f32) struct { u16, u16 } {
     return .{ col, row };
 }
 
+/// What App does with an OSC 52 request (ADR 0006).
+const ClipboardAction = enum { ignore, set_clipboard, reply_empty };
+
+fn clipboardAction(policy: Config.Clipboard, request: rex.driver.ClipboardRequest) ClipboardAction {
+    return switch (request) {
+        // PRIMARY comes in a later stage; until then only CLIPBOARD is set.
+        .write => |w| if (policy.osc52_write == .allow and w.targets.clipboard) .set_clipboard else .ignore,
+        // Reads are refused: the empty reply keeps a waiting program
+        // (Neovim waits up to 10 s) from hanging.
+        .read => .reply_empty,
+    };
+}
+
+/// Applies or answers the pending OSC 52 request.
+fn handleClipboard(self: *App) void {
+    const request = self.driver.takeClipboard(self.clipboard_buf[0..terminal_option.max_clipboard_bytes]) orelse return;
+    switch (clipboardAction(self.config.clipboard, request)) {
+        .ignore => log.debug("OSC 52: ignored {t}", .{request}),
+        .set_clipboard => {
+            const len = request.write.data.len;
+            self.clipboard_buf[len] = 0;
+            c.glfwSetClipboardString(self.window.handle, self.clipboard_buf[0..len :0].ptr);
+        },
+        .reply_empty => {
+            const read = request.read;
+            const term_ns = rex.terminal.term;
+            var buf: [16]u8 = undefined;
+            const reply = std.fmt.bufPrint(&buf, "{s}52;{c};{s}", .{
+                term_ns.seqIntroducer(.osc, read.control_format),
+                @as(u8, if (read.targets.clipboard) 'c' else 'p'),
+                term_ns.seqIntroducer(.st, read.control_format),
+            }) catch unreachable; // at most 2 + 5 + 2 bytes
+            self.driver.sendBytes(reply) catch |err| log.err("OSC 52: cannot send the empty reply: {}", .{err});
+        },
+    }
+}
+
 fn copySelectionToClipboard(self: *App) void {
     var buf: [max_copy_size]u8 = undefined;
     const len = self.driver.copySelectionText(self.selection, &buf);
@@ -2866,6 +2914,16 @@ test "reapInBackground: reaps a finished child without a zombie" {
         if (tries == 200) return error.ChildNotReaped;
         std.Io.sleep(std.testing.io, .fromMilliseconds(10), .awake) catch {};
     }
+}
+
+test "clipboardAction: writes follow the policy, reads get the empty reply" {
+    const write: rex.driver.ClipboardRequest = .{ .write = .{ .targets = .{ .clipboard = true }, .data = "hi" } };
+    const primary: rex.driver.ClipboardRequest = .{ .write = .{ .targets = .{ .primary = true }, .data = "hi" } };
+    const read: rex.driver.ClipboardRequest = .{ .read = .{ .targets = .{ .clipboard = true }, .control_format = .s7c1t } };
+    try std.testing.expectEqual(.set_clipboard, clipboardAction(.{ .osc52_write = .allow }, write));
+    try std.testing.expectEqual(.ignore, clipboardAction(.{ .osc52_write = .deny }, write));
+    try std.testing.expectEqual(.ignore, clipboardAction(.{ .osc52_write = .allow }, primary));
+    try std.testing.expectEqual(.reply_empty, clipboardAction(.{ .osc52_write = .allow }, read));
 }
 
 test "windowTitle: configured text wins, then the program's title, then the default" {

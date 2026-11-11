@@ -335,6 +335,21 @@ pub fn Driver(comptime option: Option) type {
             };
         }
 
+        /// Takes the pending OSC 52 request, copying a write's data into
+        /// `buf`. Null when none is pending.
+        pub fn takeClipboard(self: *Self, buf: *[option.max_clipboard_bytes]u8) ?root.ClipboardRequest {
+            const terminal = &self.terminal;
+            const request, const data = terminal.takeClipboard();
+            return switch (request) {
+                .none => null,
+                .write => |targets| blk: {
+                    @memcpy(buf[0..data.len], data);
+                    break :blk .{ .write = .{ .targets = targets, .data = buf[0..data.len] } };
+                },
+                .read => |targets| .{ .read = .{ .targets = targets, .control_format = terminal.control_format } },
+            };
+        }
+
         /// Copies the title set by OSC 0 or 2 into `buf` and returns it.
         pub fn copyTitle(self: *const Self, buf: *[term.max_title_len:0]u8) [:0]const u8 {
             const title = self.terminal.getTitle();
@@ -470,7 +485,7 @@ test "SingleDriver: DA1 reply drained back to mock PTY" {
     const n = system.read(sv[1], &reply_buf, reply_buf.len);
     try testing.expect(n > 0);
     const n_u: usize = @intCast(n);
-    try testing.expectEqualStrings("\x1b[?62;22c", reply_buf[0..n_u]);
+    try testing.expectEqualStrings("\x1b[?62;22;52c", reply_buf[0..n_u]);
 }
 
 test "SingleDriver: XTGETTCAP reports the TERM from Options" {
@@ -520,6 +535,30 @@ test "SingleDriver: copyTitle returns the title a program set, and RIS empties i
     _ = system.write(sv[1], "\x1bc", 2); // RIS
     _ = try driver.pollAndDrain();
     try testing.expectEqualStrings("", driver.copyTitle(&buf));
+}
+
+test "SingleDriver: takeClipboard hands over an OSC 52 write once" {
+    const testing = std.testing;
+    const test_option: Option = .{ .max_rows = 24, .max_cols = 80, .max_scrollback = 100, .max_clipboard_bytes = 64 };
+
+    var sv: [2]posix.fd_t = undefined;
+    try testing.expectEqual(@as(c_int, 0), system.socketpair(posix.AF.UNIX, posix.SOCK.STREAM | posix.SOCK.NONBLOCK, 0, &sv));
+    defer _ = system.close(sv[1]);
+    const mock_pty: Pty = .{ .master = sv[0], .pid = -1, .stdout_read_fd = -1, .error_read_fd = -1 };
+
+    var driver = try Driver(test_option).init(testing.allocator, testing.io, mock_pty, test_options);
+    defer driver.deinit();
+
+    const osc = "\x1b]52;c;aGVsbG8=\x07";
+    _ = system.write(sv[1], osc, osc.len);
+    const events = try driver.pollAndDrain();
+    try testing.expect(events.has(.clipboard));
+
+    var buf: [test_option.max_clipboard_bytes]u8 = undefined;
+    const request = driver.takeClipboard(&buf).?;
+    try testing.expect(request.write.targets.clipboard);
+    try testing.expectEqualStrings("hello", request.write.data);
+    try testing.expectEqual(null, driver.takeClipboard(&buf));
 }
 
 test "SingleDriver: extractSelectionText for stream and block selections" {

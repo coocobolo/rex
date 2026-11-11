@@ -49,6 +49,7 @@ scroll: struct {
     wheel_lines: u32 = 3,
 } = .{},
 selection: Selection,
+clipboard: Clipboard = .{},
 /// Stores list of plain environment variable using "KEY=VALUE" format
 environments: []const PlainVar,
 /// Grid limits and identity: max_rows (200), max_cols (220),
@@ -65,6 +66,14 @@ terminal: TerminalOption = default_terminal,
 /// Threading configuration: .single for in-loop synchronous execution,
 /// or .multi for dedicated background worker thread with wait-free triple buffer.
 threading: Threading = .{},
+
+/// What programs may do with the clipboard through OSC 52 (ADR 0006).
+pub const Clipboard = struct {
+    /// Whether an OSC 52 write replaces the clipboard.
+    osc52_write: Policy = .allow,
+
+    pub const Policy = enum { allow, deny };
+};
 
 /// Blink timing of SGR 5 and SGR 6 text.
 pub const Blink = struct {

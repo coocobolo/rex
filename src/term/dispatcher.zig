@@ -317,7 +317,7 @@ pub const Osc = struct {
             17 => term.setOrQueryColor(data, .selection_bg),
             19 => term.setOrQueryColor(data, .selection_fg),
 
-            52 => {}, // TODO: clipboard
+            52 => {}, // only `52` without `;`: OSC 52 data goes to `Clipboard` (Terminal.oscPut)
 
             // OSC 104 ; n — Reset palette color n (no arg = reset all)
             104 => term.resetPaletteColor(data),
