@@ -510,7 +510,7 @@ pub fn Driver(comptime option: Option) type {
                             terminal.sendMouse(mev.col, mev.row, mev.button, 0, true);
                             self.drainRepliesToPty(terminal, reply_buf, out);
                         }
-                    } else if (terminal.active_buffer == .alternate) {
+                    } else if (terminal.active_buffer == .alternate and terminal.mode.alt_scroll) {
                         const seq = if (terminal.mode.cursor_keys)
                             (if (mev.button == 64) "\x1bOA" else "\x1bOB")
                         else
@@ -1171,6 +1171,38 @@ test "ThreadedDriver: wakeup_fn callback and alternate screen alt_scroll" {
     try testing.expect(n_read > 0);
     const n_u: usize = @intCast(n_read);
     try testing.expectEqualStrings("\x1b[A", read_buf[0..n_u]);
+}
+
+test "ThreadedDriver: the wheel on the alternate screen follows mode 1007" {
+    const testing = std.testing;
+    const test_option: Option = .{ .max_rows = 24, .max_cols = 80, .max_scrollback = 100 };
+
+    var sv: [2]posix.fd_t = undefined;
+    try testing.expectEqual(@as(c_int, 0), system.socketpair(posix.AF.UNIX, posix.SOCK.STREAM | posix.SOCK.NONBLOCK, 0, &sv));
+    defer _ = system.close(sv[1]);
+    const mock_pty: Pty = .{ .master = sv[0], .pid = -1, .stdout_read_fd = -1, .error_read_fd = -1 };
+
+    var driver = try Driver(test_option).create(testing.allocator, testing.io, mock_pty, test_options, latency_trace.none);
+    defer driver.destroy();
+
+    // The title change is how the test knows the worker applied the modes.
+    try writeAllTest(sv[1], "\x1b[?1049h\x1b[?1007l\x1b]2;off\x07");
+    try testing.expectEqualStrings("off", try waitForTitle(test_option, driver, "off"));
+    try testing.expect(driver.sendInput(.{ .mouse_scroll = .{ .col = 5, .row = 5, .button = 64, .steps = 2 } }));
+    sleepNs(20_000_000);
+    var read_buf: [32]u8 = undefined;
+    try testing.expect(system.read(sv[1], &read_buf, read_buf.len) <= 0);
+
+    try writeAllTest(sv[1], "\x1b[?1007h\x1b]2;on\x07");
+    try testing.expectEqualStrings("on", try waitForTitle(test_option, driver, "on"));
+    try testing.expect(driver.sendInput(.{ .mouse_scroll = .{ .col = 5, .row = 5, .button = 64, .steps = 1 } }));
+    var n_read: isize = -1;
+    var retries: usize = test_wait_ms;
+    while (retries > 0 and n_read <= 0) : (retries -= 1) {
+        n_read = system.read(sv[1], &read_buf, read_buf.len);
+        if (n_read <= 0) sleepNs(1_000_000);
+    }
+    try testing.expectEqualStrings("\x1b[A", read_buf[0..@intCast(n_read)]);
 }
 
 test "ThreadedDriver: a 1 MiB paste reaches a child that echoes it back" {

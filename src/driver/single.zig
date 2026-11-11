@@ -216,7 +216,7 @@ pub fn Driver(comptime option: Option) type {
                             self.terminal.sendMouse(ev.col, ev.row, ev.button, 0, true);
                             self.drainAndWriteReplies();
                         }
-                    } else if (self.terminal.active_buffer == .alternate) {
+                    } else if (self.terminal.active_buffer == .alternate and self.terminal.mode.alt_scroll) {
                         const seq = if (self.terminal.mode.cursor_keys)
                             (if (ev.button == 64) "\x1bOA" else "\x1bOB")
                         else
@@ -730,6 +730,18 @@ test "SingleDriver: mouse_scroll primary viewport vs alternate alt_scroll" {
     n_read = system.read(sv[1], &read_buf, read_buf.len);
     try testing.expectEqual(@as(isize, 3), n_read);
     try testing.expectEqualStrings("\x1b[B", read_buf[0..3]);
+
+    // With mode 1007 reset the wheel sends nothing; set again, arrows.
+    _ = system.write(sv[1], "\x1b[?1007l", 8);
+    _ = try driver.pollAndDrain();
+    try driver.sendInput(.{ .mouse_scroll = .{ .col = 5, .row = 5, .button = 64, .steps = 2 } });
+    try testing.expect(system.read(sv[1], &read_buf, read_buf.len) <= 0);
+
+    _ = system.write(sv[1], "\x1b[?1007h", 8);
+    _ = try driver.pollAndDrain();
+    try driver.sendInput(.{ .mouse_scroll = .{ .col = 5, .row = 5, .button = 64, .steps = 1 } });
+    n_read = system.read(sv[1], &read_buf, read_buf.len);
+    try testing.expectEqualStrings("\x1b[A", read_buf[0..@intCast(n_read)]);
 }
 
 test "SingleDriver: a 1 MiB paste is delivered whole across pollAndDrain calls" {

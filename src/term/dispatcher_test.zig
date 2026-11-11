@@ -4360,3 +4360,25 @@ test "csi: RIS keeps the title stack, as xterm does" {
     t.feed("\x1b[23;2t");
     try testing.expectEqualStrings("before", t.getTitle());
 }
+
+test "csi: mode 1007 is on by default, set and reset by DECSET, kept by DECSTR, reset by RIS" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+    t.control_format = .s7c1t;
+
+    t.feed("\x1b[?1007$p");
+    try testing.expectEqualStrings("\x1b[?1007;1$y", t.response.slice());
+    t.response.clear();
+
+    t.feed("\x1b[?1007l\x1b[?1007$p");
+    try testing.expect(!t.mode.alt_scroll);
+    try testing.expectEqualStrings("\x1b[?1007;2$y", t.response.slice());
+    t.response.clear();
+
+    t.feed("\x1b[!p"); // DECSTR leaves it, as xterm does
+    try testing.expect(!t.mode.alt_scroll);
+    t.feed("\x1bc"); // RIS: back to the default
+    try testing.expect(t.mode.alt_scroll);
+    t.feed("\x1b[?1007l\x1b[?1007h");
+    try testing.expect(t.mode.alt_scroll);
+}

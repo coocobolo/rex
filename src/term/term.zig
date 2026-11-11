@@ -143,8 +143,11 @@ pub const Mode = struct {
     /// xterm modifyOtherKeys level (CSI > 4 ; Pv m): 0 off, 1 partial,
     /// 2 full.
     modify_other_keys: u2 = 0,
-    /// Alternate scroll (xterm mode 1007). Nothing sets it yet.
-    alt_scroll: bool = false,
+    /// Alternate scroll (CSI ? 1007 h): on the alternate screen, with mouse
+    /// reporting off, the wheel sends cursor up and down keys instead of
+    /// scrolling. On by default, unlike xterm's `alternateScroll`
+    /// resource (default false), so full-screen programs scroll as before.
+    alt_scroll: bool = true,
     /// DECCOLM (CSI ? 3 h): 132 columns.
     column_132: bool = false,
     /// CSI ? 40 h: allow DECCOLM to switch columns.
@@ -1136,6 +1139,7 @@ pub fn Terminal(comptime option: Option) type {
                 45 => .of(screen_mode.reverse_wrap),
                 47, 1047, 1049 => .of(self.active_buffer == .alternate),
                 1004 => .of(self.mode.focus_events),
+                1007 => .of(self.mode.alt_scroll),
                 9 => .of(self.mode.mouse_tracking == .x10),
                 1000 => .of(self.mode.mouse_tracking == .normal),
                 1002 => .of(self.mode.mouse_tracking == .button_motion),
@@ -1220,6 +1224,7 @@ pub fn Terminal(comptime option: Option) type {
 
                 1004 => self.mode.focus_events = set, // focus in/out
                 1006 => self.mode.mouse_sgr = set, // SGR mouse encoding
+                1007 => self.mode.alt_scroll = set, // alternate scroll
 
                 // Alternate screen; xterm clears it when leaving, not when
                 // entering (ctlseqs, `charproc.c` srm_OPT_ALTBUF).
