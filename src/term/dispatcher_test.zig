@@ -4218,7 +4218,11 @@ test "dcs: XTGETTCAP stops at the first unknown or malformed name" {
     defer t.destroy(alloc);
     t.control_format = .s7c1t;
 
-    try expectTermcap(&t, "6B637575", "\x1bP0+r6B637575\x1b\\"); // kcuu1 prefix "kcuu": no key capabilities
+    try expectTermcap(&t, "6B637575", "\x1bP0+r6B637575\x1b\\"); // "kcuu" is not a name, "kcuu1" is
+    try expectTermcap(&t, "6B663133", "\x1bP0+r6B663133\x1b\\"); // kf13: Rex has no F13 key
+    // Keypad names are unknown, as in xterm 390.
+    try expectTermcap(&t, "6B7031", "\x1bP0+r6B7031\x1b\\"); // kp1
+    try expectTermcap(&t, "6B656E74", "\x1bP0+r6B656E74\x1b\\"); // kent
     try expectTermcap(&t, "436F;5463;524742", "\x1bP1+r436F=323536;5463\x1b\\"); // Tc is not answered
     try expectTermcap(&t, "436", "\x1bP0+r436\x1b\\"); // odd digit count
     try expectTermcap(&t, "436Fx;524742", "\x1bP0+r436F\x1b\\"); // ends on a non-hex byte
@@ -4234,6 +4238,100 @@ test "dcs: XTGETTCAP answers in 8-bit controls under s8c1t" {
     defer t.destroy(alloc);
     t.control_format = .s8c1t;
     try expectTermcap(&t, "524742", "\x901+r524742=38\x9c");
+}
+
+fn hexUpper(comptime bytes: []const u8) []const u8 {
+    comptime {
+        var out: []const u8 = "";
+        for (bytes) |b| out = out ++ std.fmt.comptimePrint("{X:0>2}", .{b});
+        return out;
+    }
+}
+
+/// Asks for `name` and expects `value`, both given unencoded.
+fn expectKeyCap(t: *Term, comptime name: []const u8, comptime value: []const u8) !void {
+    const intro = if (t.control_format == .s8c1t) "\x90" else "\x1bP";
+    const st = if (t.control_format == .s8c1t) "\x9c" else "\x1b\\";
+    var buf: [128]u8 = undefined;
+    const reply = try std.fmt.bufPrint(&buf, "{s}1+r{s}={s}{s}", .{ intro, comptime hexUpper(name), comptime hexUpper(value), st });
+    try expectTermcap(t, comptime hexUpper(name), reply);
+}
+
+// The key values below were compared with the replies of xterm 390 run
+// with allowTcapOps on (2026-11-11). One differs on purpose: xterm 390
+// answers `kDN` with Shift+Up's bytes.
+
+test "dcs: XTGETTCAP answers key names with the bytes the key sends" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+    t.control_format = .s7c1t;
+
+    try expectKeyCap(&t, "kcuu1", "\x1b[A");
+    try expectKeyCap(&t, "ku", "\x1b[A"); // termcap name
+    try expectKeyCap(&t, "kcub1", "\x1b[D");
+    try expectKeyCap(&t, "khome", "\x1b[H");
+    try expectKeyCap(&t, "kend", "\x1b[F");
+    try expectKeyCap(&t, "kf1", "\x1bOP");
+    try expectKeyCap(&t, "kf5", "\x1b[15~");
+    try expectKeyCap(&t, "kf12", "\x1b[24~");
+    try expectKeyCap(&t, "F2", "\x1b[24~");
+    try expectKeyCap(&t, "k;", "\x1b[21~");
+    try expectKeyCap(&t, "kdch1", "\x1b[3~");
+    try expectKeyCap(&t, "kich1", "\x1b[2~");
+    try expectKeyCap(&t, "knp", "\x1b[6~");
+    try expectKeyCap(&t, "kpp", "\x1b[5~");
+    try expectKeyCap(&t, "kcbt", "\x1b[Z");
+    try expectKeyCap(&t, "kbs", "\x7f");
+}
+
+test "dcs: XTGETTCAP answers shifted and modified key names" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+    t.control_format = .s7c1t;
+
+    try expectKeyCap(&t, "kind", "\x1b[1;2B"); // Shift+Down
+    try expectKeyCap(&t, "kri", "\x1b[1;2A");
+    try expectKeyCap(&t, "kHOM", "\x1b[1;2H");
+    try expectKeyCap(&t, "#2", "\x1b[1;2H");
+    try expectKeyCap(&t, "kLFT", "\x1b[1;2D");
+    try expectKeyCap(&t, "kNXT", "\x1b[6;2~");
+    try expectKeyCap(&t, "kDC", "\x1b[3;2~");
+    try expectKeyCap(&t, "kDN3", "\x1b[1;3B"); // Alt
+    try expectKeyCap(&t, "kUP5", "\x1b[1;5A"); // Ctrl
+    try expectKeyCap(&t, "kRIT6", "\x1b[1;6C"); // Shift+Ctrl
+    try expectKeyCap(&t, "kEND8", "\x1b[1;8F"); // Shift+Alt+Ctrl
+    try expectKeyCap(&t, "kIC7", "\x1b[2;7~"); // Alt+Ctrl
+    // No suffix 2 or 9: the bare name is the shifted key.
+    try expectTermcap(&t, "6B444E32", "\x1bP0+r6B444E32\x1b\\"); // kDN2
+    try expectTermcap(&t, "6B444E39", "\x1bP0+r6B444E39\x1b\\"); // kDN9
+}
+
+test "dcs: XTGETTCAP key values follow the key modes" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+    t.control_format = .s7c1t;
+
+    t.feed("\x1b[?1h"); // DECCKM
+    try expectKeyCap(&t, "kcuu1", "\x1bOA");
+    try expectKeyCap(&t, "kri", "\x1b[1;2A"); // a modified cursor key stays CSI
+    try expectKeyCap(&t, "khome", "\x1bOH");
+    try expectKeyCap(&t, "kend", "\x1bOF");
+    t.feed("\x1b[?1l");
+    try expectKeyCap(&t, "kcuu1", "\x1b[A");
+
+    // Under 8-bit controls the value has the 8-bit introducer too.
+    t.control_format = .s8c1t;
+    try expectKeyCap(&t, "kcuu1", "\x9bA");
+    try expectKeyCap(&t, "kf1", "\x8fP");
+    try expectKeyCap(&t, "kDC", "\x9b3;2~");
+}
+
+test "dcs: XTGETTCAP mixes key names with the other names" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+    t.control_format = .s7c1t;
+    // Co ; kcuu1 ; RGB
+    try expectTermcap(&t, "436F;6B63757531;524742", "\x1bP1+r436F=323536;6B63757531=1B5B41;524742=38\x1b\\");
 }
 
 test "dcs: XTGETTCAP drops replies that do not fit and overlong requests" {

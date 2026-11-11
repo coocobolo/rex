@@ -26,6 +26,9 @@ const wc = @import("../unicode/wcwidth.zig");
 const utf8 = @import("../unicode/utf8.zig");
 
 const InputEngine = @import("InputEngine.zig");
+const Key = @import("../input/key.zig").Key;
+const Modifiers = @import("../input/key.zig").Modifiers;
+const key_encoder = @import("../input/encode.zig");
 pub const Clipboard = @import("Clipboard.zig");
 pub const Title = @import("Title.zig");
 
@@ -489,16 +492,108 @@ pub const TermName = struct {
     }
 };
 
-/// A capability XTGETTCAP can report.
-const Termcap = enum { colors, rgb, name };
+/// A capability XTGETTCAP can report: a fixed value, or a key, whose
+/// value is what the key encoder sends for it in the current modes.
+const Termcap = union(enum) {
+    colors,
+    rgb,
+    name,
+    key: struct { key: Key, mods: Modifiers = .none },
+};
+
+/// Key capabilities by their terminfo and termcap names, from xterm's
+/// table (`xtermcap.c`), for the keys Rex has. Left out, so reported as
+/// unknown: F13 and up, Help, Find, Select, Clear and Undo, which `Key`
+/// lacks, and `kent` and the keypad names (`kp1`, `kpADD`, ...), which
+/// xterm 390 reports as unknown too.
+const key_caps = [_]struct { names: []const []const u8, key: Key, shift: bool = false }{
+    .{ .names = &.{ "khome", "kh" }, .key = .home },
+    .{ .names = &.{ "kend", "@7" }, .key = .end },
+    .{ .names = &.{ "kcub1", "kl" }, .key = .left },
+    .{ .names = &.{ "kcuf1", "kr" }, .key = .right },
+    .{ .names = &.{ "kcuu1", "ku" }, .key = .up },
+    .{ .names = &.{ "kcud1", "kd" }, .key = .down },
+    .{ .names = &.{ "kind", "kF" }, .key = .down, .shift = true },
+    .{ .names = &.{ "kri", "kR" }, .key = .up, .shift = true },
+    .{ .names = &.{ "kf1", "k1" }, .key = .f1 },
+    .{ .names = &.{ "kf2", "k2" }, .key = .f2 },
+    .{ .names = &.{ "kf3", "k3" }, .key = .f3 },
+    .{ .names = &.{ "kf4", "k4" }, .key = .f4 },
+    .{ .names = &.{ "kf5", "k5" }, .key = .f5 },
+    .{ .names = &.{ "kf6", "k6" }, .key = .f6 },
+    .{ .names = &.{ "kf7", "k7" }, .key = .f7 },
+    .{ .names = &.{ "kf8", "k8" }, .key = .f8 },
+    .{ .names = &.{ "kf9", "k9" }, .key = .f9 },
+    .{ .names = &.{ "kf10", "k;" }, .key = .f10 },
+    .{ .names = &.{ "kf11", "F1" }, .key = .f11 },
+    .{ .names = &.{ "kf12", "F2" }, .key = .f12 },
+    .{ .names = &.{ "kcbt", "kB" }, .key = .tab, .shift = true },
+    .{ .names = &.{ "kdch1", "kD" }, .key = .delete },
+    .{ .names = &.{ "kich1", "kI" }, .key = .insert },
+    .{ .names = &.{ "knp", "kN" }, .key = .page_down },
+    .{ .names = &.{ "kpp", "kP" }, .key = .page_up },
+    .{ .names = &.{ "kbs", "kb" }, .key = .backspace },
+    // Termcap names of shifted keys; their terminfo names are in
+    // `modified_key_caps`.
+    .{ .names = &.{"#2"}, .key = .home, .shift = true },
+    .{ .names = &.{"*7"}, .key = .end, .shift = true },
+    .{ .names = &.{"#4"}, .key = .left, .shift = true },
+    .{ .names = &.{"%i"}, .key = .right, .shift = true },
+    .{ .names = &.{"%c"}, .key = .page_down, .shift = true },
+    .{ .names = &.{"%e"}, .key = .page_up, .shift = true },
+};
+
+/// ncurses' names for modified keys (xterm's `DGRP`): the bare name is
+/// the key with Shift, and a suffix 3 to 8 is xterm's modifier parameter
+/// (1 + Shift + 2 Alt + 4 Ctrl), so `kDN5` is Ctrl+Down.
+const modified_key_caps = [_]struct { []const u8, Key }{
+    .{ "kDN", .down },     .{ "kLFT", .left },  .{ "kRIT", .right },
+    .{ "kUP", .up },       .{ "kDC", .delete }, .{ "kEND", .end },
+    .{ "kHOM", .home },    .{ "kIC", .insert }, .{ "kNXT", .page_down },
+    .{ "kPRV", .page_up },
+};
+
+const TermcapEntry = struct { []const u8, Termcap };
+
+const termcap_entries = blk: {
+    var names: usize = 5;
+    for (key_caps) |cap| names += cap.names.len;
+    names += modified_key_caps.len * 7;
+
+    var entries: [names]TermcapEntry = undefined;
+    entries[0..5].* = .{
+        .{ "Co", .colors }, .{ "colors", .colors }, .{ "RGB", .rgb },
+        .{ "TN", .name },   .{ "name", .name },
+    };
+    var n: usize = 5;
+    for (key_caps) |cap| for (cap.names) |name| {
+        entries[n] = .{ name, .{ .key = .{ .key = cap.key, .mods = .{ .shift = cap.shift } } } };
+        n += 1;
+    };
+    for (modified_key_caps) |cap| for (2..9) |param| {
+        const bits = param - 1;
+        const name = if (param == 2) cap[0] else cap[0] ++ .{'0' + param};
+        entries[n] = .{ name, .{ .key = .{ .key = cap[1], .mods = .{
+            .shift = bits & 1 != 0,
+            .alt = bits & 2 != 0,
+            .ctrl = bits & 4 != 0,
+        } } } };
+        n += 1;
+    };
+    std.debug.assert(n == names);
+    break :blk entries;
+};
+
+/// The longest capability name, which sizes `parseTermcapName`'s buffer.
+const max_termcap_name_len = blk: {
+    var max: usize = 0;
+    for (termcap_entries) |entry| max = @max(max, entry[0].len);
+    break :blk max;
+};
 
 /// Termcap and terminfo names for each `Termcap`, as in xterm's table
 /// (`xtermcap.c`).
-const termcap_names: std.StaticStringMap(Termcap) = .initComptime(.{
-    .{ "Co", .colors }, .{ "colors", .colors },
-    .{ "RGB", .rgb },   .{ "TN", .name },
-    .{ "name", .name },
-});
+const termcap_names: std.StaticStringMap(Termcap) = .initComptime(termcap_entries);
 
 /// The first name of an XTGETTCAP request: `hex`, the run of hex digits
 /// xterm consumes (`xstrings.c` x_decode_hex), echoed as received, and the
@@ -512,8 +607,7 @@ fn parseTermcapName(request: []const u8) TermcapName {
     while (end < request.len and std.ascii.isHex(request[end])) end += 1;
     const hex = request[0..end];
     const terminated = end == request.len or request[end] == ';';
-    // Longer than every name in `termcap_names`.
-    var buf: [8]u8 = undefined;
+    var buf: [max_termcap_name_len]u8 = undefined;
     if (!terminated or hex.len == 0 or hex.len % 2 != 0 or hex.len / 2 > buf.len) {
         return .{ .hex = hex, .cap = null };
     }
@@ -1540,8 +1634,11 @@ pub fn Terminal(comptime option: Option) type {
         /// as received and values hex-encoded. The leading digit is 0 when
         /// the first name is unknown; the first unknown name is echoed
         /// without a value and ends the list. Rex answers `Co`/`colors`,
-        /// `RGB` and `TN`/`name`, not key capabilities (xterm answers
-        /// those through its key encoder). A reply longer than the
+        /// `RGB`, `TN`/`name` and the key capabilities in `key_caps` and
+        /// `modified_key_caps`. A key's value is what the key encoder
+        /// sends for it in the current modes, which is how xterm answers
+        /// (a synthesized key press through `Input`); a key that sends
+        /// nothing has an empty value. A reply longer than the
         /// response queue is dropped and counted.
         fn requestTermcap(self: *Self, request: []const u8) void {
             var w = self.response.writer();
@@ -1554,8 +1651,9 @@ pub fn Terminal(comptime option: Option) type {
 
         fn writeTermcap(self: *const Self, w: *std.Io.Writer, request: []const u8) std.Io.Writer.Error!void {
             var rest = request;
+            var key_buf: [key_encoder.max_len]u8 = undefined;
             var name = parseTermcapName(rest);
-            var value = self.termcapValue(name.cap);
+            var value = self.termcapValue(name.cap, &key_buf);
             try w.writeAll(seqIntroducer(.dcs, self.control_format));
             try w.writeAll(if (value != null) "1+r" else "0+r");
             while (rest.len > 0 and name.hex.len > 0) {
@@ -1569,17 +1667,32 @@ pub fn Terminal(comptime option: Option) type {
                 try w.writeByte(';');
                 rest = rest[1..];
                 name = parseTermcapName(rest);
-                value = self.termcapValue(name.cap);
+                value = self.termcapValue(name.cap, &key_buf);
             }
             try w.writeAll(seqIntroducer(.st, self.control_format));
         }
 
         /// The plain value of `cap`, or null when Rex has none to report.
-        fn termcapValue(self: *const Self, cap: ?Termcap) ?[]const u8 {
+        /// The value of `cap`, or null when Rex has none. A key's value
+        /// is written to `key_buf`.
+        fn termcapValue(self: *const Self, cap: ?Termcap, key_buf: *[key_encoder.max_len]u8) ?[]const u8 {
             return switch (cap orelse return null) {
                 .colors => "256",
                 .rgb => "8", // direct colour, 8 bits per channel
                 .name => if (self.term_name.len == 0) null else self.term_name.slice(),
+                .key => |chord| key_encoder.encode(chord.key, chord.mods, self.keyModes(), key_buf),
+            };
+        }
+
+        /// The modes the key encoder needs, as a key press would see
+        /// them now.
+        fn keyModes(self: *const Self) key_encoder.Modes {
+            return .{
+                // `setModifyOtherKeys` never stores a level above 2.
+                .modify_other_keys = std.enums.fromInt(key_encoder.ModifyOtherKeys, self.mode.modify_other_keys) orelse .off,
+                .cursor_keys = self.mode.cursor_keys,
+                .keypad_app = self.mode.keypad_app,
+                .eight_bit_controls = self.control_format == .s8c1t,
             };
         }
 
