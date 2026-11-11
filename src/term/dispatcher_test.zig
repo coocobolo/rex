@@ -4066,3 +4066,33 @@ test "csi: CSI ? Ps p without the $ is not DECRQM" {
     t.feed("\x1b[?2026p");
     try testing.expect(!t.hasReplies());
 }
+
+test "csi: XTMODKEYS sets and resets modifyOtherKeys" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    t.feed("\x1b[>4;2m");
+    try testing.expectEqual(2, t.mode.modify_other_keys);
+    t.feed("\x1b[>4;1m");
+    try testing.expectEqual(1, t.mode.modify_other_keys);
+    t.feed("\x1b[>4m"); // Pv omitted: initial value
+    try testing.expectEqual(0, t.mode.modify_other_keys);
+
+    t.feed("\x1b[>4;2m\x1b[>m"); // no parameters: every resource
+    try testing.expectEqual(0, t.mode.modify_other_keys);
+
+    t.feed("\x1b[>4;2m\x1b[>4n"); // disable
+    try testing.expectEqual(0, t.mode.modify_other_keys);
+}
+
+test "csi: XTMODKEYS ignores unsupported levels and other resources" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    t.feed("\x1b[>4;1m\x1b[>4;3m"); // level 3 is not supported
+    try testing.expectEqual(1, t.mode.modify_other_keys);
+    t.feed("\x1b[>1;2m\x1b[>2;2m"); // modifyCursorKeys, modifyFunctionKeys
+    try testing.expectEqual(1, t.mode.modify_other_keys);
+    t.feed("\x1b[>1n");
+    try testing.expectEqual(1, t.mode.modify_other_keys);
+}

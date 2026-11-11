@@ -245,6 +245,16 @@ pub const Csi = struct {
 
             // DA2 / CSI > c.
             0x3E63 => if (p1_0 == 0) terminal.reply(.secondary_attributes),
+            // XTMODKEYS / CSI > Pp ; Pv m. Only modifyOtherKeys (Pp 4) is
+            // implemented; no parameters resets every resource.
+            0x3E6D => if (parameters.len == 0) {
+                terminal.setModifyOtherKeys(null);
+            } else if (p1_0 == 4) {
+                terminal.setModifyOtherKeys(if (parameters.len < 2) null else p2_0);
+            },
+            // CSI > Pp n disables a key modifier resource (xterm's -1);
+            // for modifyOtherKeys that is level 0.
+            0x3E6E => if (p1_0 == 4) terminal.setModifyOtherKeys(null),
 
             0x3E70 => terminal.xtversion(), // XTVERSION / CSI > Ps q
             0x2071 => terminal.setCursorStyle(p1_0), // DECSCUSR / CSI Ps SP q
