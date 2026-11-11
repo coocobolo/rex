@@ -80,6 +80,8 @@ pub const Options = struct {
     theme: Theme,
     /// Longest a synchronized-output (mode 2026) hold lasts.
     sync_output_timeout_ms: u32,
+    /// The TERM the shell started with, reported by XTGETTCAP `TN`.
+    term_name: term.term.TermName = .empty,
 };
 
 pub const resolveAnchor = Selection.resolveAnchor;

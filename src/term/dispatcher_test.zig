@@ -18,6 +18,8 @@ const ansi = @import("../color/ansi.zig");
 const Theme = @import("../color/Theme.zig");
 
 const max_title_len = @import("term.zig").max_title_len;
+const max_term_name_len = @import("term.zig").max_term_name_len;
+const TermName = @import("term.zig").TermName;
 
 const test_option = @import("test_fixtures.zig").test_option;
 
@@ -4175,4 +4177,82 @@ test "dcs: an overlong DECRQSS gets no reply" {
     var t = try Term.create(alloc);
     defer t.destroy(alloc);
     try expectStatusString(&t, "m" ** 2000, "");
+}
+
+fn expectTermcap(t: *Term, request: []const u8, reply: []const u8) !void {
+    t.response.clear();
+    t.feed("\x1bP+q");
+    t.feed(request);
+    t.feed("\x1b\\");
+    try testing.expectEqualStrings(reply, t.response.slice());
+}
+
+test "dcs: XTGETTCAP reports colors, RGB and the terminal name hex-encoded" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+    t.control_format = .s7c1t;
+    t.setTermName(try .init("xterm-256color"));
+
+    try expectTermcap(&t, "436F", "\x1bP1+r436F=323536\x1b\\"); // Co=256
+    try expectTermcap(&t, "636F6C6F7273", "\x1bP1+r636F6C6F7273=323536\x1b\\"); // colors
+    try expectTermcap(&t, "524742", "\x1bP1+r524742=38\x1b\\"); // RGB=8
+    // TN=xterm-256color; lower-case digits are echoed as received.
+    try expectTermcap(&t, "544E", "\x1bP1+r544E=787465726D2D323536636F6C6F72\x1b\\");
+    try expectTermcap(&t, "6e616d65", "\x1bP1+r6e616d65=787465726D2D323536636F6C6F72\x1b\\");
+}
+
+test "dcs: XTGETTCAP answers several names in one reply" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+    t.control_format = .s7c1t;
+    t.setTermName(try .init("rex"));
+
+    try expectTermcap(&t, "436F;524742;544E", "\x1bP1+r436F=323536;524742=38;544E=726578\x1b\\");
+    // A trailing `;` is echoed, as xterm does.
+    try expectTermcap(&t, "436F;", "\x1bP1+r436F=323536;\x1b\\");
+}
+
+test "dcs: XTGETTCAP stops at the first unknown or malformed name" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+    t.control_format = .s7c1t;
+
+    try expectTermcap(&t, "6B637575", "\x1bP0+r6B637575\x1b\\"); // kcuu1 prefix "kcuu": no key capabilities
+    try expectTermcap(&t, "436F;5463;524742", "\x1bP1+r436F=323536;5463\x1b\\"); // Tc is not answered
+    try expectTermcap(&t, "436", "\x1bP0+r436\x1b\\"); // odd digit count
+    try expectTermcap(&t, "436Fx;524742", "\x1bP0+r436F\x1b\\"); // ends on a non-hex byte
+    try expectTermcap(&t, "x436F", "\x1bP0+r\x1b\\"); // no digits
+    try expectTermcap(&t, "", "\x1bP0+r\x1b\\");
+    try expectTermcap(&t, "436F;;524742", "\x1bP1+r436F=323536;\x1b\\"); // empty second name
+    // Without a terminal name, TN is unknown rather than wrong.
+    try expectTermcap(&t, "544E", "\x1bP0+r544E\x1b\\");
+}
+
+test "dcs: XTGETTCAP answers in 8-bit controls under s8c1t" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+    t.control_format = .s8c1t;
+    try expectTermcap(&t, "524742", "\x901+r524742=38\x9c");
+}
+
+test "dcs: XTGETTCAP drops replies that do not fit and overlong requests" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+    t.control_format = .s7c1t;
+
+    // 1,023 request bytes fit the DCS buffer, but 204 answers do not fit
+    // the 1,024-byte response queue.
+    const request = "436F;" ** 204 ++ "436";
+    try expectTermcap(&t, request, "");
+    try testing.expectEqual(@as(u32, 1), t.response.dropped);
+
+    try expectTermcap(&t, "436F;" ** 300, ""); // longer than the DCS buffer
+    try testing.expectEqual(@as(u32, 1), t.response.dropped);
+}
+
+test "TermName refuses a name it would have to cut" {
+    try testing.expectError(error.TermNameTooLong, TermName.init("x" ** (max_term_name_len + 1)));
+    const longest: TermName = try .init("x" ** max_term_name_len);
+    try testing.expectEqualStrings("x" ** max_term_name_len, longest.slice());
+    try testing.expectEqualStrings("", TermName.empty.slice());
 }

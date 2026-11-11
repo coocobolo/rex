@@ -29,6 +29,8 @@ const InputEngine = @import("InputEngine.zig");
 
 pub const max_title_len = 256;
 pub const max_answerback_len = 32;
+/// Longest TERM value XTGETTCAP can report (`TermName`).
+pub const max_term_name_len = 64;
 
 const log = std.log.scoped(.term);
 
@@ -300,6 +302,19 @@ pub const Response = struct {
         self.len += written.len;
     }
 
+    /// A writer over the free space, for a reply built in place. Queue
+    /// what it wrote with `commit`; a write that fails leaves the queue
+    /// as it was.
+    pub fn writer(self: *Response) std.Io.Writer {
+        return .fixed(self.buf[self.len..]);
+    }
+
+    /// Queues what `w`, from `writer`, wrote as one reply.
+    pub fn commit(self: *Response, w: *const std.Io.Writer) void {
+        std.debug.assert(self.len + w.end <= capacity);
+        self.len += w.end;
+    }
+
     /// The queued replies, oldest first. Valid until the next write
     /// or `clear`.
     pub fn slice(self: *const Response) []const u8 {
@@ -437,6 +452,65 @@ pub fn seqIntroducer(comptime target: SequenceType, c1_mode: ControlFormat) []co
     return sequence_table[@intFromEnum(c1_mode)][@intFromEnum(target)];
 }
 
+/// A TERM value, copied, for XTGETTCAP `TN`. It holds no pointers, so it
+/// can cross threads and outlive the config it came from.
+pub const TermName = struct {
+    buf: [max_term_name_len]u8 = undefined,
+    len: u8 = 0,
+
+    comptime {
+        std.debug.assert(max_term_name_len <= std.math.maxInt(u8));
+    }
+
+    /// No name: XTGETTCAP treats `TN` as unknown.
+    pub const empty: TermName = .{};
+
+    /// Copies `name`. A name longer than `max_term_name_len` is refused,
+    /// not cut, so `TN` is never answered with a wrong name.
+    pub fn init(name: []const u8) error{TermNameTooLong}!TermName {
+        if (name.len > max_term_name_len) return error.TermNameTooLong;
+        var result: TermName = .{ .len = @intCast(name.len) };
+        @memcpy(result.buf[0..name.len], name);
+        return result;
+    }
+
+    pub fn slice(self: *const TermName) []const u8 {
+        return self.buf[0..self.len];
+    }
+};
+
+/// A capability XTGETTCAP can report.
+const Termcap = enum { colors, rgb, name };
+
+/// Termcap and terminfo names for each `Termcap`, as in xterm's table
+/// (`xtermcap.c`).
+const termcap_names: std.StaticStringMap(Termcap) = .initComptime(.{
+    .{ "Co", .colors }, .{ "colors", .colors },
+    .{ "RGB", .rgb },   .{ "TN", .name },
+    .{ "name", .name },
+});
+
+/// The first name of an XTGETTCAP request: `hex`, the run of hex digits
+/// xterm consumes (`xstrings.c` x_decode_hex), echoed as received, and the
+/// capability it names. `cap` is null when the digits are odd in number,
+/// the run ends on something other than `;` or the end of the request,
+/// or the name is not one Rex answers.
+const TermcapName = struct { hex: []const u8, cap: ?Termcap };
+
+fn parseTermcapName(request: []const u8) TermcapName {
+    var end: usize = 0;
+    while (end < request.len and std.ascii.isHex(request[end])) end += 1;
+    const hex = request[0..end];
+    const terminated = end == request.len or request[end] == ';';
+    // Longer than every name in `termcap_names`.
+    var buf: [8]u8 = undefined;
+    if (!terminated or hex.len == 0 or hex.len % 2 != 0 or hex.len / 2 > buf.len) {
+        return .{ .hex = hex, .cap = null };
+    }
+    const name = std.fmt.hexToBytes(&buf, hex) catch unreachable; // even, hex, fits
+    return .{ .hex = hex, .cap = termcap_names.get(name) };
+}
+
 /// A terminal: feed it pty output, then read `active()` and `events`.
 ///
 /// It allocates only in `create` and does no I/O. It holds no pointers
@@ -469,6 +543,9 @@ pub fn Terminal(comptime option: Option) type {
         /// ENQ reply, set by the user. RIS keeps it.
         answerback: [max_answerback_len]u8 = std.mem.zeroes([max_answerback_len]u8),
         answerback_len: u8 = 0,
+        /// The TERM value the shell started with, reported by XTGETTCAP
+        /// `TN`. Set by the host; RIS keeps it.
+        term_name: TermName = .empty,
 
         parser: Parser(Self, .{}),
         events: Events = .{},
@@ -485,7 +562,7 @@ pub fn Terminal(comptime option: Option) type {
         dcs_buf: [1024]u8 = undefined,
         dcs_len: usize = 0,
         dcs_overflow: bool = false,
-        dcs_kind: enum { unknown, decrqss, sixel } = .unknown,
+        dcs_kind: enum { unknown, decrqss, xtgettcap, sixel } = .unknown,
 
         /// UTF-8 decoding, grapheme clustering and widths for text.
         input: InputEngine = .init(option.ambiguous_width),
@@ -791,6 +868,8 @@ pub fn Terminal(comptime option: Option) type {
             // Identify the DCS type by intermediate + final
             if (intermediates.len == 1 and intermediates[0] == '$' and final == 'q') {
                 self.dcs_kind = .decrqss; // DECRQSS; request status string
+            } else if (intermediates.len == 1 and intermediates[0] == '+' and final == 'q') {
+                self.dcs_kind = .xtgettcap; // XTGETTCAP; request termcap/terminfo string
             } else if (final == 'q' and intermediates.len == 0) {
                 self.dcs_kind = .sixel; // SIXEL graphics
             } else {
@@ -827,6 +906,7 @@ pub fn Terminal(comptime option: Option) type {
             if (!self.dcs_overflow) {
                 switch (self.dcs_kind) {
                     .decrqss => self.requestStatusString(self.dcs_buf[0..self.dcs_len]),
+                    .xtgettcap => self.requestTermcap(self.dcs_buf[0..self.dcs_len]),
                     .sixel => {}, // FIXME dispatcher.Dcs.sixel(option, self, data),
                     .unknown => {},
                 }
@@ -843,6 +923,12 @@ pub fn Terminal(comptime option: Option) type {
             const len = utf8.truncateLen(s, max_answerback_len);
             @memcpy(self.answerback[0..len], s[0..len]);
             self.answerback_len = @intCast(len);
+        }
+
+        /// Sets the name XTGETTCAP reports for `TN` and `name`: the TERM
+        /// value the shell was started with.
+        pub fn setTermName(self: *Self, name: TermName) void {
+            self.term_name = name;
         }
 
         /// The ENQ reply. Valid until the next `setAnswerback`.
@@ -1379,6 +1465,55 @@ pub fn Terminal(comptime option: Option) type {
             }
             try w.writeAll(request);
             return true;
+        }
+
+        /// XTGETTCAP (DCS + q Pt ST): replies with the value of each
+        /// hex-encoded name in `Pt`, separated by `;`, as xterm does
+        /// (`misc.c` do_dcs): `DCS 1 + r name=value;... ST`, names echoed
+        /// as received and values hex-encoded. The leading digit is 0 when
+        /// the first name is unknown; the first unknown name is echoed
+        /// without a value and ends the list. Rex answers `Co`/`colors`,
+        /// `RGB` and `TN`/`name`, not key capabilities (xterm answers
+        /// those through its key encoder). A reply longer than the
+        /// response queue is dropped and counted.
+        fn requestTermcap(self: *Self, request: []const u8) void {
+            var w = self.response.writer();
+            if (self.writeTermcap(&w, request)) |_| {
+                self.response.commit(&w);
+            } else |_| {
+                self.response.dropped +|= 1;
+            }
+        }
+
+        fn writeTermcap(self: *const Self, w: *std.Io.Writer, request: []const u8) std.Io.Writer.Error!void {
+            var rest = request;
+            var name = parseTermcapName(rest);
+            var value = self.termcapValue(name.cap);
+            try w.writeAll(seqIntroducer(.dcs, self.control_format));
+            try w.writeAll(if (value != null) "1+r" else "0+r");
+            while (rest.len > 0 and name.hex.len > 0) {
+                try w.writeAll(name.hex);
+                const bytes = value orelse break;
+                try w.writeByte('=');
+                for (bytes) |b| try w.print("{X:0>2}", .{b});
+                // A known name ends the request or is followed by `;`.
+                rest = rest[name.hex.len..];
+                if (rest.len == 0) break;
+                try w.writeByte(';');
+                rest = rest[1..];
+                name = parseTermcapName(rest);
+                value = self.termcapValue(name.cap);
+            }
+            try w.writeAll(seqIntroducer(.st, self.control_format));
+        }
+
+        /// The plain value of `cap`, or null when Rex has none to report.
+        fn termcapValue(self: *const Self, cap: ?Termcap) ?[]const u8 {
+            return switch (cap orelse return null) {
+                .colors => "256",
+                .rgb => "8", // direct colour, 8 bits per channel
+                .name => if (self.term_name.len == 0) null else self.term_name.slice(),
+            };
         }
 
         /// Queues the XTVERSION reply.

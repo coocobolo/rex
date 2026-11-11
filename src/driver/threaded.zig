@@ -204,6 +204,7 @@ pub fn Driver(comptime option: Option) type {
             }
 
             terminal.setTheme(options.theme);
+            terminal.setTermName(options.term_name);
 
             var local_frame = FrameType.init(self.allocator) catch |err| {
                 log.err("worker: failed to allocate local frame: {}", .{err});
@@ -814,6 +815,37 @@ test "ThreadedDriver: async PTY input, frame update, and GUI reply" {
     try testing.expect(n_read > 0);
     const n_u: usize = @intCast(n_read);
     try testing.expectEqualStrings("input_test", read_buf[0..n_u]);
+}
+
+test "ThreadedDriver: XTGETTCAP reports the TERM from Options" {
+    const testing = std.testing;
+    const test_option: Option = .{ .max_rows = 24, .max_cols = 80, .max_scrollback = 100 };
+
+    var sv: [2]posix.fd_t = undefined;
+    try testing.expectEqual(@as(c_int, 0), system.socketpair(posix.AF.UNIX, posix.SOCK.STREAM | posix.SOCK.NONBLOCK, 0, &sv));
+    defer _ = system.close(sv[1]);
+    const mock_pty: Pty = .{ .master = sv[0], .pid = -1, .stdout_read_fd = -1, .error_read_fd = -1 };
+
+    var options = test_options;
+    options.term_name = try .init("rex");
+    var driver = try Driver(test_option).create(testing.allocator, testing.io, mock_pty, options, latency_trace.none);
+    defer driver.destroy();
+
+    const query = "\x1bP+q544E\x1b\\"; // TN
+    _ = system.write(sv[1], query, query.len);
+
+    const expected = "\x1bP1+r544E=726578\x1b\\";
+    var reply_buf: [64]u8 = undefined;
+    var len: usize = 0;
+    var retries: usize = test_wait_ms;
+    while (retries > 0 and len < expected.len) : (retries -= 1) {
+        const n = system.read(sv[1], reply_buf[len..].ptr, reply_buf.len - len);
+        if (n > 0) len += @intCast(n) else {
+            std.Thread.yield() catch {};
+            sleepNs(1_000_000);
+        }
+    }
+    try testing.expectEqualStrings(expected, reply_buf[0..len]);
 }
 
 test "ThreadedDriver: Mode 2026 synchronized output hold and release" {

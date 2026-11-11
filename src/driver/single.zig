@@ -63,6 +63,7 @@ pub fn Driver(comptime option: Option) type {
             errdefer terminal.destroy(allocator);
 
             terminal.setTheme(options.theme);
+            terminal.setTermName(options.term_name);
 
             var frame_snapshot = try FrameType.init(allocator);
             errdefer frame_snapshot.deinit(allocator);
@@ -467,6 +468,30 @@ test "SingleDriver: DA1 reply drained back to mock PTY" {
     try testing.expect(n > 0);
     const n_u: usize = @intCast(n);
     try testing.expectEqualStrings("\x1b[?62;22c", reply_buf[0..n_u]);
+}
+
+test "SingleDriver: XTGETTCAP reports the TERM from Options" {
+    const testing = std.testing;
+    const test_option: Option = .{ .max_rows = 24, .max_cols = 80, .max_scrollback = 100 };
+
+    var sv: [2]posix.fd_t = undefined;
+    try testing.expectEqual(@as(c_int, 0), system.socketpair(posix.AF.UNIX, posix.SOCK.STREAM | posix.SOCK.NONBLOCK, 0, &sv));
+    defer _ = system.close(sv[1]);
+    const mock_pty: Pty = .{ .master = sv[0], .pid = -1, .stdout_read_fd = -1, .error_read_fd = -1 };
+
+    var options = test_options;
+    options.term_name = try .init("rex");
+    var driver = try Driver(test_option).init(testing.allocator, testing.io, mock_pty, options);
+    defer driver.deinit();
+
+    const query = "\x1bP+q544E\x1b\\"; // TN
+    _ = system.write(sv[1], query, query.len);
+    _ = try driver.pollAndDrain();
+
+    var reply_buf: [64]u8 = undefined;
+    const n = system.read(sv[1], &reply_buf, reply_buf.len);
+    try testing.expect(n > 0);
+    try testing.expectEqualStrings("\x1bP1+r544E=726578\x1b\\", reply_buf[0..@intCast(n)]);
 }
 
 test "SingleDriver: extractSelectionText for stream and block selections" {

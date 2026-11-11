@@ -68,6 +68,7 @@ const Color = rex.terminal.cell.Color;
 const Terminal = rex.terminal.Terminal;
 const MouseButton = rex.terminal.term.MouseButton;
 const HeldButtons = rex.terminal.term.HeldButtons;
+const TermName = rex.terminal.term.TermName;
 const TerminalOption = rex.terminal.Option;
 const Screen = rex.terminal.screen.Screen;
 const Response = rex.terminal.Response;
@@ -571,9 +572,15 @@ pub fn init(
         log.info("latency trace: writing to {s} on exit", .{latency_path});
     }
 
+    // XTGETTCAP reports the TERM the shell got, config override included.
+    const term_name: TermName = TermName.init(envmap.get("TERM") orelse "") catch blk: {
+        log.warn("TERM is longer than {d} bytes; XTGETTCAP will not report it", .{rex.terminal.term.max_term_name_len});
+        break :blk .empty;
+    };
     const driver_options: rex.driver.Options = .{
         .theme = active_config.theme,
         .sync_output_timeout_ms = active_config.threading.sync_output_timeout_ms,
+        .term_name = term_name,
     };
     var driver: Driver = switch (active_config.threading.mode) {
         .single => .{ .single = try SingleDriverType.init(gpa, io, pty, driver_options) },
