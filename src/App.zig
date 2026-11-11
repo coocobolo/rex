@@ -58,7 +58,6 @@ const Rasterizer = rex.FreeType.Rasterizer;
 
 const input = rex.input;
 const Binding = input.Binding;
-const KeyContext = rex.glfw_key_encoder.KeyContext;
 
 const Pty = rex.termio.Pty;
 const latency_trace = rex.driver.latency_trace;
@@ -2094,14 +2093,16 @@ const keyCb: c.GLFWkeyfun = struct {
 
         // Terminal key encoding
         const driver_modes = app.driver.getModes();
-        const context: KeyContext = .{
-            .modify_other_keys = driver_modes.modify_other_keys,
+        const key_modes: input.encode.Modes = .{
+            // The terminal never stores a level above 2.
+            .modify_other_keys = std.enums.fromInt(input.encode.ModifyOtherKeys, driver_modes.modify_other_keys) orelse .off,
             .cursor_keys = driver_modes.cursor_keys,
             .keypad_app = driver_modes.keypad_app,
         };
 
-        var buf: [32]u8 = undefined;
-        const bytes = rex.glfw_key_encoder.encodeKey(key, mods, context, &buf);
+        var buf: [input.encode.max_len]u8 = undefined;
+        // A key Rex has no name for sends nothing by itself.
+        const bytes = if (maybe_key) |k| input.encode.encode(k, key_mods, key_modes, &buf) else "";
         if (bytes.len > 0) {
             // The key went out encoded, so its character must not follow
             // (Shift+letter under modifyOtherKeys 2). The next key event
