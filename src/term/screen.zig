@@ -79,9 +79,9 @@ fn rightHalf(left: Cell) Cell {
 /// [Memory Layout]
 ///
 /// Cells are stored in a flat heap-allocated array of `ring_rows * max_cols`
-/// elements, where `ring_rows = max_rows + max_scrollback`. The array is
-/// treated as a circular buffer: logical row `r` maps to physical index
-/// `(scroll_offset + r) % ring_rows`.
+/// elements, where `ring_rows` is `max_rows + max_scrollback` rounded up to
+/// a power of two. The array is treated as a circular buffer: logical row
+/// `r` maps to physical index `(scroll_offset + r) % ring_rows`.
 ///
 /// [Scrollback]
 ///

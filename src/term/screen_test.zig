@@ -40,7 +40,7 @@ const PrimaryScreen = Screen(.{
     .max_scrollback = test_max_scrollback,
 }); // with scrollback
 
-// Screen rounds its ring up to a power of two (see `nextPowerOfTwo` in screen.zig).
+// Screen rounds its ring up to a power of two (`ring_rows` in screen.zig).
 const alt_ring_rows = std.math.ceilPowerOfTwoAssert(usize, test_max_rows);
 const primary_ring_rows = std.math.ceilPowerOfTwoAssert(usize, test_max_rows + test_max_scrollback);
 
