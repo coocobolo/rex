@@ -261,6 +261,14 @@ pub const Csi = struct {
             0x2170 => terminal.softReset(), // DECSTR / CSI ! p
             0x2270 => terminal.decscl(p1_0, p2_0), // DECSCL | CSI Ps;Pc " p
 
+            // DECRQM / CSI Ps $ p (ANSI mode)
+            0x2470 => terminal.reply(.{ .mode_report = .{ .mode = p1_0, .state = terminal.ansiModeReport(p1_0) } }),
+            // DECRQM / CSI ? Ps $ p (DEC private mode). The key keeps only
+            // the first intermediate, so the `$` is checked here.
+            0x3F70 => if (intermediates.len == 2 and intermediates[1] == '$') {
+                terminal.reply(.{ .dec_mode_report = .{ .mode = p1_0, .state = terminal.decModeReport(p1_0) } });
+            },
+
             // DEC DSR / CSI ? Ps n
             0x3F6E => switch (p1_0) {
                 6 => terminal.reply(.{ .dec_cursor_position = reportedPosition(option, screen) }), // DECXCPR

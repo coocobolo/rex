@@ -3994,3 +3994,75 @@ test "csi: DECXCPR adds page 1 at conformance level 4" {
     t.feed("\x1b[6n"); // CPR has no page
     try testing.expectEqualStrings("\x1b[2;3R", t.response.slice());
 }
+
+test "csi: DECRQM reports DEC private modes (DECRPM)" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+    t.control_format = .s7c1t;
+
+    t.feed("\x1b[?2026$p");
+    try testing.expectEqualStrings("\x1b[?2026;2$y", t.response.slice());
+    t.response.clear();
+
+    t.feed("\x1b[?2026h\x1b[?2026$p");
+    try testing.expectEqualStrings("\x1b[?2026;1$y", t.response.slice());
+    t.response.clear();
+
+    t.feed("\x1b[?25$p");
+    try testing.expectEqualStrings("\x1b[?25;1$y", t.response.slice());
+    t.response.clear();
+
+    t.feed("\x1b[?9999$p");
+    try testing.expectEqualStrings("\x1b[?9999;0$y", t.response.slice());
+}
+
+test "csi: DECRQM reports cursor blink (mode 12) from the cursor style" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+    t.control_format = .s7c1t;
+
+    t.feed("\x1b[2 q\x1b[?12$p"); // steady block
+    try testing.expectEqualStrings("\x1b[?12;2$y", t.response.slice());
+    t.response.clear();
+    t.feed("\x1b[1 q\x1b[?12$p"); // blinking block
+    try testing.expectEqualStrings("\x1b[?12;1$y", t.response.slice());
+}
+
+test "csi: DECRQM reports ANSI modes (DECRPM)" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+    t.control_format = .s7c1t;
+
+    const cases = [_]struct { query: []const u8, reply: []const u8 }{
+        .{ .query = "\x1b[4$p", .reply = "\x1b[4;2$y" }, // IRM off
+        .{ .query = "\x1b[4h\x1b[4$p", .reply = "\x1b[4;1$y" }, // IRM on
+        .{ .query = "\x1b[20$p", .reply = "\x1b[20;2$y" }, // LNM off
+        .{ .query = "\x1b[2$p", .reply = "\x1b[2;4$y" }, // KAM, never locked
+        .{ .query = "\x1b[12$p", .reply = "\x1b[12;3$y" }, // SRM, no local echo
+        .{ .query = "\x1b[99$p", .reply = "\x1b[99;0$y" },
+    };
+    for (cases) |c| {
+        t.feed(c.query);
+        try testing.expectEqualStrings(c.reply, t.response.slice());
+        t.response.clear();
+    }
+}
+
+test "csi: DECRQM answers with 8-bit controls under s8c1t" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+    t.control_format = .s8c1t;
+
+    t.feed("\x1b[?2026$p");
+    try testing.expectEqualStrings("\x9b?2026;2$y", t.response.slice());
+    t.response.clear();
+    t.feed("\x1b[20$p");
+    try testing.expectEqualStrings("\x9b20;2$y", t.response.slice());
+}
+
+test "csi: CSI ? Ps p without the $ is not DECRQM" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+    t.feed("\x1b[?2026p");
+    try testing.expect(!t.hasReplies());
+}

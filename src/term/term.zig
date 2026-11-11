@@ -68,6 +68,12 @@ pub const Reply = union(enum) {
     dec_cursor_position: CellPosition,
     /// XTVERSION (CSI > q): DCS > | name version ST.
     xtversion,
+    /// DECRPM for an ANSI mode, answering DECRQM (CSI Ps $ p):
+    /// CSI Ps ; Pm $ y.
+    mode_report: ModeState,
+    /// DECRPM for a DEC private mode, answering DECRQM (CSI ? Ps $ p):
+    /// CSI ? Ps ; Pm $ y.
+    dec_mode_report: ModeState,
     /// OSC 4 query reply, with the palette's 8-bit channels.
     palette_color: struct { index: u8, rgb: Rgb },
     /// OSC 10-19 query reply. Each 8-bit channel is widened to 16 bits
@@ -82,6 +88,8 @@ pub const Reply = union(enum) {
     /// Largest 0-based row or column the X10 encoding can carry: the
     /// byte is 32 + 1 + position and must fit in a u8.
     pub const mouse_x10_max: u16 = 255 - 32 - 1;
+
+    pub const ModeState = struct { mode: u16, state: DecModeReport };
 };
 
 /// A mode's state as DECRPM reports it (VT510): the reply's Ps value.
@@ -933,11 +941,27 @@ pub fn Terminal(comptime option: Option) type {
             }
         }
 
+        /// The state of ANSI mode `mode`, as DECRPM reports it. IRM and
+        /// LNM are real state; the rest follow xterm (`misc.c`
+        /// do_ansi_rqm), with KAM and SRM fixed because Rex never locks
+        /// the keyboard or echoes locally.
+        pub fn ansiModeReport(self: *Self, mode: u16) DecModeReport {
+            return switch (mode) {
+                4 => .of(self.active().mode.insert), // IRM
+                20 => .of(self.mode.linefeed), // LNM
+                3 => .reset, // CRM
+                1, 2, 5, 7, 10, 11, 13...19 => .permanently_reset, // GATM, KAM, SRTM, VEM, HEM, PUM, FEAM..EBM
+                12 => .permanently_set, // SRM: no local echo
+                else => .not_recognized,
+            };
+        }
+
         /// The state of DEC private mode `mode`, as DECRPM reports it.
-        /// Modes without stored state, 12 included, are `.not_recognized`.
+        /// Modes without stored state are `.not_recognized`.
         pub fn decModeReport(self: *Self, mode: u16) DecModeReport {
             const screen_mode = self.active().mode;
             return switch (mode) {
+                12 => .of(self.active().cursor.style.blink() == .on), // cursor blink, from DECSCUSR or ?12
                 1 => .of(self.mode.cursor_keys), // DECCKM
                 3 => .of(self.mode.column_132), // DECCOLM
                 5 => .of(screen_mode.reverse_video), // DECSCNM
@@ -1263,6 +1287,8 @@ pub fn Terminal(comptime option: Option) type {
                     else => self.replyFmt(.csi, "?{d};{d}R", .{ @as(u32, at.row) + 1, @as(u32, at.col) + 1 }),
                 },
                 .xtversion => self.replyFmt(.dcs, ">|{s} {s}", .{ option.name, option.version }),
+                .mode_report => |m| self.replyFmt(.csi, "{d};{d}$y", .{ m.mode, @intFromEnum(m.state) }),
+                .dec_mode_report => |m| self.replyFmt(.csi, "?{d};{d}$y", .{ m.mode, @intFromEnum(m.state) }),
                 .palette_color => |c| self.replyFmt(.osc, "4;{d};rgb:{x:0>2}/{x:0>2}/{x:0>2}", .{ c.index, c.rgb.r, c.rgb.g, c.rgb.b }),
                 .dynamic_color => |c| self.replyFmt(.osc, "{d};rgb:{x:0>4}/{x:0>4}/{x:0>4}", .{
                     @intFromEnum(c.slot),
