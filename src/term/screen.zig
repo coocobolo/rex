@@ -262,14 +262,16 @@ pub fn Screen(comptime option: Option) type {
 
         // Dirty tracking
 
-        /// Monotonically increasing generation counter. Incremented by `bump()`
-        /// on any visible state change. The renderer compares this against
-        /// `last_generation` to decide whether to rebuild the instance buffer.
+        /// Changes whenever visible state may have changed; `snapshot` and
+        /// the renderer compare it for inequality (it wraps), never order.
         ///
-        /// [NOTE!]
-        /// The renderer that used `generation` > `last_generation` to detact
-        /// changes, it will break on u32 wraparound after ~4 billion increments.
-        /// Use `generation != last_generation` instead.
+        /// Three layers bump it today, redundantly by design: every
+        /// state-changing `Screen` operation bumps after it marks its rows
+        /// dirty; `Terminal.feed` and `Terminal.end` bump once at the end;
+        /// the drivers bump after host actions (resize, theme, hard reset,
+        /// viewport offset). Operations the host calls directly without a
+        /// driver bump, such as `scrollViewportBack`/`Forward`, rely on their
+        /// own. Removing the per-operation bumps needs that audit first (#73).
         generation: u32 = 0,
 
         mode: Mode = .{},
@@ -2251,6 +2253,16 @@ pub fn Screen(comptime option: Option) type {
         ///
         /// CSI n G  (1-based from PTY)
         /// screen.cursorCol(col - 1);
+        /// Moves the cursor to row `target`, keeping its column: marks the
+        /// old and new rows dirty and ends a pending wrap, as every cursor
+        /// movement does. Callers clamp `target` and bump the generation.
+        inline fn setCursorRow(self: *Self, target: u16) void {
+            self.dirty_rows.set(self.cursor.row);
+            self.dirty_rows.set(target);
+            self.cursor.row = target;
+            self.cursor.wrap_pending = false;
+        }
+
         pub fn cursorPos(self: *Self, row_pos: usize, col_pos: usize) void {
             // in origin mode, cursorPos(0, 0) moves to scroll_topm not row 0.
             // The effectiveTop() called handles this. top + row where top = scroll_top mode is on.
@@ -2263,16 +2275,8 @@ pub fn Screen(comptime option: Option) type {
             const target_row: u16 = @intCast(@min(top + row_pos, bottom));
             const target_col: u16 = @intCast(@min(col_pos, self.active_cols - 1));
 
-            if (self.cursor.row != target_row) {
-                self.dirty_rows.set(self.cursor.row);
-                self.dirty_rows.set(target_row);
-            } else {
-                self.dirty_rows.set(target_row);
-            }
-
-            self.cursor.row = target_row;
+            self.setCursorRow(target_row);
             self.cursor.col = target_col;
-            self.cursor.wrap_pending = false;
             self.bump();
         }
 
@@ -2292,15 +2296,7 @@ pub fn Screen(comptime option: Option) type {
         // cursorRow: move to absolute row (0-based), clamp to active_rows-1
         // Does NOT respect DECOM — VPA is always absolute.
         pub fn cursorRow(self: *Self, n: u16) void {
-            const target_row: u16 = @min(n, self.active_rows - 1);
-            if (self.cursor.row != target_row) {
-                self.dirty_rows.set(self.cursor.row);
-                self.dirty_rows.set(target_row);
-            } else {
-                self.dirty_rows.set(target_row);
-            }
-            self.cursor.row = target_row;
-            self.cursor.wrap_pending = false;
+            self.setCursorRow(@min(n, self.active_rows - 1));
             self.bump();
         }
 
@@ -2313,14 +2309,7 @@ pub fn Screen(comptime option: Option) type {
             const top: usize = if (cursor_row >= self.scroll_top) self.scroll_top else 0;
             const target_row: u16 = @intCast(@max(cursor_row -| n, top));
 
-            if (self.cursor.row != target_row) {
-                self.dirty_rows.set(cursor_row);
-                self.dirty_rows.set(target_row);
-            } else {
-                self.dirty_rows.set(target_row);
-            }
-            self.cursor.row = target_row;
-            self.cursor.wrap_pending = false;
+            self.setCursorRow(target_row);
             self.bump();
         }
 
@@ -2336,14 +2325,7 @@ pub fn Screen(comptime option: Option) type {
                 self.active_rows - 1;
             const target_row: u16 = @intCast(@min(cursor_row + n, bottom));
 
-            if (self.cursor.row != target_row) {
-                self.dirty_rows.set(cursor_row);
-                self.dirty_rows.set(target_row);
-            } else {
-                self.dirty_rows.set(target_row);
-            }
-            self.cursor.row = target_row;
-            self.cursor.wrap_pending = false;
+            self.setCursorRow(target_row);
             self.bump();
         }
 
@@ -2421,10 +2403,7 @@ pub fn Screen(comptime option: Option) type {
                 self.scrollUp(1);
             } else {
                 // Outside or above the bottom, just move the cursor down.
-                self.dirty_rows.set(self.cursor.row);
-                self.cursor.row = @min(self.cursor.row + 1, self.active_rows - 1);
-                self.cursor.wrap_pending = false;
-                self.dirty_rows.set(self.cursor.row);
+                self.setCursorRow(@min(self.cursor.row + 1, self.active_rows - 1));
                 self.bump();
             }
         }
@@ -2453,10 +2432,7 @@ pub fn Screen(comptime option: Option) type {
                 // redraws both the old and new cursor rows dirty so the renderer
                 // Saturating substraction handles the edge case where the cursor is
                 // above scroll_top (valid without DECOM, where cursor can roam freely).
-                self.dirty_rows.set(self.cursor.row);
-                self.cursor.row -|= 1;
-                self.dirty_rows.set(self.cursor.row);
-                self.cached_row_phys = max_u16;
+                self.setCursorRow(self.cursor.row -| 1);
                 self.bump();
             }
         }
@@ -2854,14 +2830,8 @@ pub fn Screen(comptime option: Option) type {
             const count = if (n == 0) 1 else n;
             const limit: usize = if (self.cursor.origin) self.scroll_bottom else self.active_rows - 1;
 
-            const old_row: usize = self.cursor.row;
-            const new_row: usize = @min(old_row + count, limit);
-
-            self.dirty_rows.set(old_row);
-            self.cursor.row = @intCast(new_row);
+            self.setCursorRow(@intCast(@min(@as(usize, self.cursor.row) + count, limit)));
             self.cursor.col = 0;
-            self.cursor.wrap_pending = false;
-            self.dirty_rows.set(new_row);
             self.bump();
         }
 
@@ -2876,16 +2846,10 @@ pub fn Screen(comptime option: Option) type {
         pub fn cursorPrevLine(self: *Self, n: usize) void {
             const count = if (n == 0) @as(usize, 1) else n;
             const limit: usize = if (self.cursor.origin) self.scroll_top else 0;
-            const old_row: usize = self.cursor.row;
             // Saturating subtraction prevents underflow; @max enforces
             // the lower bound when origin mode is active (limit = scroll_top > 0).
-            const new_row: usize = @max(old_row -| count, limit);
-
-            self.dirty_rows.set(old_row);
-            self.cursor.row = @intCast(new_row);
+            self.setCursorRow(@intCast(@max(@as(usize, self.cursor.row) -| count, limit)));
             self.cursor.col = 0;
-            self.cursor.wrap_pending = false;
-            self.dirty_rows.set(new_row);
             self.bump();
         }
 
