@@ -13,7 +13,7 @@ const CellPosition = @import("term.zig").CellPosition;
 const Palette = @import("Palette.zig").Palette;
 const Screen = @import("screen.zig").Screen;
 const sgr = @import("sgr.zig");
-const TitleStack = @import("TitleStack.zig");
+const Title = @import("Title.zig");
 
 /// helper: get param value or default fallback, skipping sub-params
 /// The cursor position CPR and DECXCPR report: under DECOM the row counts
@@ -266,8 +266,8 @@ pub const Csi = struct {
             // 23 pops. xterm's third parameter (direct access to a slot) is
             // not supported, so a sequence with one does nothing.
             't' => if (parameters.len <= 2) switch (p1_0) {
-                22 => if (std.enums.fromInt(TitleStack.Part, p2_0)) |part| terminal.pushTitle(part),
-                23 => if (std.enums.fromInt(TitleStack.Part, p2_0)) |part| terminal.popTitle(part),
+                22 => if (std.enums.fromInt(Title.Part, p2_0)) |part| terminal.pushTitle(part),
+                23 => if (std.enums.fromInt(Title.Part, p2_0)) |part| terminal.popTitle(part),
                 else => {},
             },
 

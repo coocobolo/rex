@@ -18,8 +18,8 @@ pub fn expectTerminal(t: anytype) !void {
     try testing.expect(t.response.len <= term.Response.capacity);
     try testing.expect(t.osc_len <= t.osc_buf.len);
     try testing.expect(t.dcs_len <= t.dcs_buf.len);
-    try testing.expect(t.title_len <= term.max_title_len);
-    try testing.expect(t.icon_name_len <= term.max_title_len);
+    try testing.expect(t.getTitle().len <= term.max_title_len);
+    try testing.expect(t.getIconName().len <= term.max_title_len);
     try testing.expect(t.answerback_len <= term.max_answerback_len);
     try testing.expect(t.parser.param_len <= t.parser.params.len);
     try testing.expect(t.parser.intermediate_len <= t.parser.intermediates.len);
@@ -91,7 +91,7 @@ fn expectLive(table: anytype, id: anytype) !void {
 /// `feed` calls does not change the result.
 pub fn expectSameTerminal(a: anytype, b: anytype) !void {
     try testing.expectEqual(a.active_buffer, b.active_buffer);
-    try testing.expectEqualStrings(a.title[0..a.title_len], b.title[0..b.title_len]);
+    try testing.expectEqualStrings(a.getTitle(), b.getTitle());
     try expectSameScreen(&a.primary, &b.primary);
     try expectSameScreen(&a.alternate, &b.alternate);
 }

@@ -115,8 +115,8 @@ fn run(src: *Source) !void {
         const old_title = title[0..t.getTitle().len];
         @memcpy(old_title, t.getTitle());
         var icon: [term.max_title_len]u8 = undefined;
-        const old_icon = icon[0..t.icon_name_len];
-        @memcpy(old_icon, t.icon_name[0..t.icon_name_len]);
+        const old_icon = icon[0..t.getIconName().len];
+        @memcpy(old_icon, t.getIconName());
 
         t.feed(out.items);
         try invariants.expectTerminal(&t);
@@ -124,7 +124,7 @@ fn run(src: *Source) !void {
         if (built.end == .bel or built.end == .st) try testing.expectEqual(.ground, t.parser.state);
         if (built.setsTitle() and built.dropped()) {
             try testing.expectEqualStrings(old_title, t.getTitle());
-            try testing.expectEqualStrings(old_icon, t.icon_name[0..t.icon_name_len]);
+            try testing.expectEqualStrings(old_icon, t.getIconName());
         }
         t.events.clear();
     }

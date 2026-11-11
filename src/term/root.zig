@@ -32,7 +32,7 @@ test {
     _ = @import("grapheme_test.zig");
     _ = @import("palette_test.zig");
     _ = @import("clipboard_test.zig");
-    _ = @import("title_stack_test.zig");
+    _ = @import("title_test.zig");
     _ = @import("Cursor.zig");
     _ = @import("charset.zig");
     _ = @import("Style.zig");

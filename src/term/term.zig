@@ -27,13 +27,9 @@ const utf8 = @import("../unicode/utf8.zig");
 
 const InputEngine = @import("InputEngine.zig");
 pub const Clipboard = @import("Clipboard.zig");
-pub const TitleStack = @import("TitleStack.zig");
+pub const Title = @import("Title.zig");
 
-pub const max_title_len = 256;
-
-comptime {
-    std.debug.assert(TitleStack.max_len == max_title_len);
-}
+pub const max_title_len = Title.max_len;
 pub const max_answerback_len = 32;
 /// Longest TERM value XTGETTCAP can report (`TermName`).
 pub const max_term_name_len = 64;
@@ -548,15 +544,9 @@ pub fn Terminal(comptime option: Option) type {
         active_buffer: ScreenBuffer = .primary,
         mode: Mode = .{},
 
-        /// Window title (OSC 0 and 2). Read it with `getTitle`.
-        title: [max_title_len:0]u8 = std.mem.zeroes([max_title_len:0]u8),
-        title_len: usize = 0,
-        /// Icon name (OSC 1). Read it with `getIconName`.
-        icon_name: [max_title_len:0]u8 = std.mem.zeroes([max_title_len:0]u8),
-        icon_name_len: usize = 0,
-        /// Titles saved by XTWINOPS 22 for 23 to restore. RIS keeps them,
-        /// as xterm does.
-        title_stack: TitleStack = .{},
+        /// The window title (OSC 0 and 2), the icon name (OSC 1) and the
+        /// titles XTWINOPS 22 saved for 23 to restore.
+        title: Title = .{},
         /// ENQ reply, set by the user. RIS keeps it.
         answerback: [max_answerback_len]u8 = std.mem.zeroes([max_answerback_len]u8),
         answerback_len: u8 = 0,
@@ -1048,11 +1038,7 @@ pub fn Terminal(comptime option: Option) type {
 
             self.input.reset();
 
-            // getTitle and getIconName slice up to a NUL at the length.
-            self.title_len = 0;
-            self.title[0] = 0;
-            self.icon_name_len = 0;
-            self.icon_name[0] = 0;
+            self.title.reset();
 
             self.cursor_color = null;
             self.selection_foreground = null;
@@ -1622,46 +1608,42 @@ pub fn Terminal(comptime option: Option) type {
         /// Sets the title (OSC 0 and 2), cut to `max_title_len` bytes on
         /// a UTF-8 boundary.
         pub fn setTitle(self: *Self, title: []const u8) void {
-            const len = utf8.truncateLen(title, max_title_len);
-            @memcpy(self.title[0..len], title[0..len]);
-            self.title[len] = 0;
-            self.title_len = len;
+            self.title.set(title);
             self.events.set(.title);
         }
 
         /// Sets the icon name (OSC 1), cut to `max_title_len` bytes on a
         /// UTF-8 boundary.
         pub fn setIconName(self: *Self, name: []const u8) void {
-            const len = utf8.truncateLen(name, max_title_len);
-            @memcpy(self.icon_name[0..len], name[0..len]);
-            self.icon_name[len] = 0;
-            self.icon_name_len = len;
+            self.title.setIconName(name);
             self.events.set(.icon_name);
         }
 
         /// XTWINOPS 22 (CSI 22 ; Ps t): saves `part` of the title and icon
         /// name on the title stack.
-        pub fn pushTitle(self: *Self, part: TitleStack.Part) void {
-            self.title_stack.push(part, self.getTitle(), self.getIconName());
+        pub fn pushTitle(self: *Self, part: Title.Part) void {
+            self.title.push(part);
         }
 
         /// XTWINOPS 23 (CSI 23 ; Ps t): restores `part` from the title
-        /// stack, setting the `title` and `icon_name` events. Does nothing
-        /// when the stack is empty.
-        pub fn popTitle(self: *Self, part: TitleStack.Part) void {
-            const popped = self.title_stack.pop(part) orelse return;
-            if (popped.title) |title| self.setTitle(title);
-            if (popped.icon_name) |name| self.setIconName(name);
+        /// stack, setting the `title` and `icon_name` events for the parts
+        /// it restored. Does nothing when the stack is empty.
+        pub fn popTitle(self: *Self, part: Title.Part) void {
+            const restored = self.title.pop(part);
+            if (restored.title) self.events.set(.title);
+            if (restored.icon_name) self.events.set(.icon_name);
         }
 
-        /// The title. Valid until the next `setTitle`.
-        pub fn getTitle(self: *const Self) [:0]const u8 {
-            return self.title[0..self.title_len :0];
+        /// The title. Valid until the next `setTitle`, `popTitle` or
+        /// `hardReset`.
+        pub fn getTitle(self: *const Self) []const u8 {
+            return self.title.get();
         }
 
-        /// The icon name. Valid until the next `setIconName`.
-        pub fn getIconName(self: *const Self) [:0]const u8 {
-            return self.icon_name[0..self.icon_name_len :0];
+        /// The icon name. Valid until the next `setIconName`, `popTitle`
+        /// or `hardReset`.
+        pub fn getIconName(self: *const Self) []const u8 {
+            return self.title.getIconName();
         }
 
         /// OSC 4 (n ; spec pairs): sets each palette entry, or replies

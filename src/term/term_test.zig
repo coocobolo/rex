@@ -119,7 +119,7 @@ test "setTitle: empty string clears title" {
     t.setTitle("");
 
     try testing.expectEqualStrings("", t.getTitle());
-    try testing.expectEqual(@as(usize, 0), t.title_len);
+    try testing.expectEqual(0, t.getTitle().len);
 }
 
 test "setTitle: truncates at max_title_len" {
@@ -130,9 +130,7 @@ test "setTitle: truncates at max_title_len" {
     const long: [max_title_len + 32]u8 = [_]u8{'A'} ** (max_title_len + 32);
     t.setTitle(&long);
 
-    try testing.expectEqual(max_title_len, t.title_len);
-    // Null terminator must be in bounds.
-    try testing.expectEqual(@as(u8, 0), t.title[max_title_len]);
+    try testing.expectEqual(max_title_len, t.getTitle().len);
 }
 
 test "setTitle: a character across the limit is dropped whole" {
@@ -143,7 +141,6 @@ test "setTitle: a character across the limit is dropped whole" {
     const head = "A" ** (max_title_len - 2);
     t.setTitle(head ++ "\u{4e16}");
     try testing.expectEqualStrings(head, t.getTitle());
-    try testing.expectEqual(0, t.title[head.len]);
 
     // A 2-byte character that ends exactly at the limit is kept.
     t.setTitle(head ++ "\u{e9}" ++ "B");
@@ -166,17 +163,6 @@ test "setAnswerback: a character across the limit is dropped whole" {
     const head = "x" ** (max_answerback_len - 1);
     t.setAnswerback(head ++ "\u{e9}");
     try testing.expectEqualStrings(head, t.getAnswerback());
-}
-
-test "getTitle: returns null-terminated slice" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
-
-    t.setTitle("zig");
-
-    const s = t.getTitle();
-    // sentinel-terminated: s.ptr[s.len] == 0
-    try testing.expectEqual(@as(u8, 0), s.ptr[s.len]);
 }
 
 test "setIconName/getIconName: round-trip" {
@@ -790,8 +776,8 @@ test "hardReset: title and icon name cleared" {
     t.setIconName("icon");
     t.hardReset();
 
-    try testing.expectEqual(0, t.title_len);
-    try testing.expectEqual(0, t.icon_name_len);
+    try testing.expectEqual(0, t.getTitle().len);
+    try testing.expectEqual(0, t.getIconName().len);
 }
 
 test "hardReset: events cleared" {
