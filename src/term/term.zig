@@ -19,6 +19,7 @@ const Frame = @import("Frame.zig").Frame;
 const Charset = @import("cell.zig").Charset;
 const Screen = @import("screen.zig").Screen;
 const dispatcher = @import("dispatcher.zig");
+const sgr = @import("sgr.zig");
 
 const flag_set = @import("../flag_set.zig");
 const wc = @import("../unicode/wcwidth.zig");
@@ -68,6 +69,12 @@ pub const Reply = union(enum) {
     dec_cursor_position: CellPosition,
     /// XTVERSION (CSI > q): DCS > | name version ST.
     xtversion,
+    /// DECRQSS reply to a request Rex answers: DCS 1 $ r Pt ST, where Pt
+    /// is the control that sets the requested state (xterm's `1` for
+    /// valid; the VT420 manual uses the opposite digits).
+    status_string: []const u8,
+    /// DECRQSS reply to an unknown or unsupported request: DCS 0 $ r ST.
+    status_string_invalid,
     /// DECRPM for an ANSI mode, answering DECRQM (CSI Ps $ p):
     /// CSI Ps ; Pm $ y.
     mode_report: ModeState,
@@ -819,7 +826,7 @@ pub fn Terminal(comptime option: Option) type {
         pub fn unhook(self: *Self) void {
             if (!self.dcs_overflow) {
                 switch (self.dcs_kind) {
-                    .decrqss => {}, // FIXME dispatcher.Dcs.decrqss(option, self, data),
+                    .decrqss => self.requestStatusString(self.dcs_buf[0..self.dcs_len]),
                     .sixel => {}, // FIXME dispatcher.Dcs.sixel(option, self, data),
                     .unknown => {},
                 }
@@ -1297,6 +1304,8 @@ pub fn Terminal(comptime option: Option) type {
                     else => self.replyFmt(.csi, "?{d};{d}R", .{ @as(u32, at.row) + 1, @as(u32, at.col) + 1 }),
                 },
                 .xtversion => self.replyFmt(.dcs, ">|{s} {s}", .{ option.name, option.version }),
+                .status_string => |pt| self.replyFmt(.dcs, "1$r{s}", .{pt}),
+                .status_string_invalid => self.replyFmt(.dcs, "0$r", .{}),
                 .mode_report => |m| self.replyFmt(.csi, "{d};{d}$y", .{ m.mode, @intFromEnum(m.state) }),
                 .dec_mode_report => |m| self.replyFmt(.csi, "?{d};{d}$y", .{ m.mode, @intFromEnum(m.state) }),
                 .palette_color => |c| self.replyFmt(.osc, "4;{d};rgb:{x:0>2}/{x:0>2}/{x:0>2}", .{ c.index, c.rgb.r, c.rgb.g, c.rgb.b }),
@@ -1335,6 +1344,41 @@ pub fn Terminal(comptime option: Option) type {
                 .csi, .st => "",
             };
             self.response.print("{s}" ++ fmt ++ "{s}", .{seqIntroducer(intro, c1)} ++ args ++ .{st});
+        }
+
+        /// DECRQSS (DCS $ q Pt ST): replies with the control that sets the
+        /// state `request` names, as xterm does (`misc.c` do_dcs), for SGR
+        /// (`m`), DECSCUSR (` q`), DECSTBM (`r`), DECSCL (`" p`) and DECSCA
+        /// (`" q`). Anything else, DECSCL at level 1 included (xterm sends
+        /// nothing there), gets the invalid reply.
+        fn requestStatusString(self: *Self, request: []const u8) void {
+            // The longest reply, an SGR with every attribute and three RGB
+            // colors, is under 100 bytes.
+            var buf: [160]u8 = undefined;
+            var w: std.Io.Writer = .fixed(&buf);
+            const valid = self.writeStatusString(&w, request) catch unreachable;
+            if (valid) self.reply(.{ .status_string = w.buffered() }) else self.reply(.status_string_invalid);
+        }
+
+        fn writeStatusString(self: *Self, w: *std.Io.Writer, request: []const u8) std.Io.Writer.Error!bool {
+            const screen = self.active();
+            if (std.mem.eql(u8, request, "m")) {
+                try sgr.format(w, screen.cursor.attr);
+            } else if (std.mem.eql(u8, request, " q")) {
+                try w.print("{d}", .{@as(u8, @intFromEnum(screen.cursor.style)) + 1});
+            } else if (std.mem.eql(u8, request, "r")) {
+                try w.print("{d};{d}", .{ @as(u32, screen.scroll_top) + 1, @as(u32, screen.scroll_bottom) + 1 });
+            } else if (std.mem.eql(u8, request, "\"p")) {
+                if (self.conformance_level == .level1) return false;
+                const seven_bit: u8 = if (self.control_format == .s7c1t) 1 else 0;
+                try w.print("{d};{d}", .{ @intFromEnum(self.conformance_level), seven_bit });
+            } else if (std.mem.eql(u8, request, "\"q")) {
+                try w.writeAll("0"); // no protected attribute (DECSCA)
+            } else {
+                return false;
+            }
+            try w.writeAll(request);
+            return true;
         }
 
         /// Queues the XTVERSION reply.

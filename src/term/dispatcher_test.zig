@@ -4109,3 +4109,70 @@ test "csi: XTVERSION answers CSI > q only" {
     t.feed("\x1b[>0p\x1b[>1q"); // XTSMPOINTER; XTVERSION with Ps 1
     try testing.expect(!t.hasReplies());
 }
+
+fn expectStatusString(t: *Term, request: []const u8, reply: []const u8) !void {
+    t.response.clear();
+    t.feed("\x1bP$q");
+    t.feed(request);
+    t.feed("\x1b\\");
+    try testing.expectEqualStrings(reply, t.response.slice());
+}
+
+test "dcs: DECRQSS reports the SGR pen as xterm writes it" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+    t.control_format = .s7c1t;
+
+    try expectStatusString(&t, "m", "\x1bP1$r0m\x1b\\");
+
+    t.feed("\x1b[1;4:3;5;7;2;3;9;53;31;48:5:200;58:2::1:2:3m");
+    try expectStatusString(&t, "m", "\x1bP1$r0;1;4:3;5;7;2;3;9;53;31;48:5:200;58:2::1:2:3m\x1b\\");
+
+    t.feed("\x1b[0;21;6;8;38;2;10;20;30;104m");
+    try expectStatusString(&t, "m", "\x1bP1$r0;8;21;6;38:2::10:20:30;104m\x1b\\");
+
+    t.feed("\x1b[0;4;97;40;58:5:9m");
+    try expectStatusString(&t, "m", "\x1bP1$r0;4;97;40;58:5:9m\x1b\\");
+}
+
+test "dcs: DECRQSS reports DECSCUSR, DECSTBM, DECSCL and DECSCA" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+    t.control_format = .s7c1t;
+
+    try expectStatusString(&t, " q", "\x1bP1$r1 q\x1b\\"); // blinking block
+    t.feed("\x1b[4 q");
+    try expectStatusString(&t, " q", "\x1bP1$r4 q\x1b\\");
+
+    try expectStatusString(&t, "r", "\x1bP1$r1;12r\x1b\\");
+    t.feed("\x1b[3;8r");
+    try expectStatusString(&t, "r", "\x1bP1$r3;8r\x1b\\");
+
+    try expectStatusString(&t, "\"p", "\x1bP1$r63;1\"p\x1b\\");
+    try expectStatusString(&t, "\"q", "\x1bP1$r0\"q\x1b\\");
+}
+
+test "dcs: DECRQSS answers in 8-bit controls under s8c1t" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+    t.feed("\x1b[62;2\"p"); // DECSCL VT200, 8-bit controls
+    try expectStatusString(&t, "\"p", "\x901$r62;0\"p\x9c");
+}
+
+test "dcs: DECRQSS rejects requests Rex has no state for" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+    t.control_format = .s7c1t;
+
+    try expectStatusString(&t, "s", "\x1bP0$r\x1b\\"); // DECSLRM
+    try expectStatusString(&t, "t", "\x1bP0$r\x1b\\"); // DECSLPP
+    try expectStatusString(&t, "", "\x1bP0$r\x1b\\");
+    t.feed("\x1b[61\"p"); // VT100: xterm sends nothing for DECSCL
+    try expectStatusString(&t, "\"p", "\x1bP0$r\x1b\\");
+}
+
+test "dcs: an overlong DECRQSS gets no reply" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+    try expectStatusString(&t, "m" ** 2000, "");
+}

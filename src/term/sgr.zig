@@ -196,3 +196,51 @@ fn parseExtColor(
         else => return index + 1, // unknown kind; skip kind only
     }
 }
+
+/// Writes the SGR parameters that recreate `attr` from a reset pen, for
+/// the DECRQSS reply: `0`, then the attributes and colors in the order and
+/// syntax of xterm's `xtermFormatSGR` (`misc.c`), then what only Rex has
+/// (curly, dotted and dashed underlines as 4:3 to 4:5, rapid blink 6,
+/// overline 53, underline color 58). No final `m`.
+pub fn format(w: *std.Io.Writer, attr: Attr) std.Io.Writer.Error!void {
+    const f = attr.flags;
+    try w.writeAll("0");
+    if (f.bold) try w.writeAll(";1");
+    switch (f.underline) {
+        .none, .double => {},
+        .single => try w.writeAll(";4"),
+        .curly, .dotted, .dashed => try w.print(";4:{d}", .{@intFromEnum(f.underline)}),
+    }
+    if (f.blink) try w.writeAll(";5");
+    if (f.reverse) try w.writeAll(";7");
+    if (f.invisible) try w.writeAll(";8");
+    if (f.dim) try w.writeAll(";2");
+    if (f.italic) try w.writeAll(";3");
+    if (f.strikethrough) try w.writeAll(";9");
+    if (f.underline == .double) try w.writeAll(";21");
+    if (f.blink_rapid) try w.writeAll(";6");
+    if (f.overline) try w.writeAll(";53");
+    try formatColor(w, .fg, Style.decode(attr.colors.fg));
+    try formatColor(w, .bg, Style.decode(attr.colors.bg));
+    try formatColor(w, .underline, Style.decode(attr.colors.underline));
+}
+
+/// One color as xterm writes it: 30-37/90-97 (40-47/100-107) for the 16
+/// colors, else 38:5:n or 38:2::r:g:b (48, 58). Default writes nothing.
+fn formatColor(w: *std.Io.Writer, target: ColorTarget, color: Color) std.Io.Writer.Error!void {
+    const extended: u8 = switch (target) {
+        .fg => 38,
+        .bg => 48,
+        .underline => 58,
+    };
+    switch (color) {
+        .default => {},
+        .indexed => |n| if (n < 16 and target != .underline) {
+            const base: u8 = if (target == .fg) 30 else 40;
+            try w.print(";{d}", .{if (n < 8) base + n else base + 60 + (n - 8)});
+        } else {
+            try w.print(";{d}:5:{d}", .{ extended, n });
+        },
+        .rgb => |c| try w.print(";{d}:2::{d}:{d}:{d}", .{ extended, c.r, c.g, c.b }),
+    }
+}
