@@ -10,6 +10,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const posix = std.posix;
 const term = @import("../term/root.zig");
+const ModifyOtherKeys = @import("../input/encode.zig").ModifyOtherKeys;
 const Option = term.Option;
 const termio = @import("../termio/root.zig");
 const Pty = termio.pty.Posix;
@@ -52,7 +53,7 @@ test {
 pub const SharedModes = packed struct(u32) {
     cursor_keys: bool = false,
     keypad_app: bool = false,
-    modify_other_keys: u2 = 0,
+    modify_other_keys: ModifyOtherKeys = .off,
     mouse_reporting: bool = false,
     bracketed_paste: bool = false,
     focus_events: bool = false,
@@ -260,7 +261,7 @@ test "driver: SharedModes packing and bit conversion" {
     var modes = SharedModes{
         .cursor_keys = true,
         .keypad_app = true,
-        .modify_other_keys = 2,
+        .modify_other_keys = .full,
         .mouse_reporting = true,
         .bracketed_paste = true,
         .focus_events = true,
@@ -273,7 +274,7 @@ test "driver: SharedModes packing and bit conversion" {
 
     try testing.expect(unpacked.cursor_keys);
     try testing.expect(unpacked.keypad_app);
-    try testing.expectEqual(@as(u2, 2), unpacked.modify_other_keys);
+    try testing.expectEqual(.full, unpacked.modify_other_keys);
     try testing.expect(unpacked.mouse_reporting);
     try testing.expect(unpacked.bracketed_paste);
     try testing.expect(unpacked.focus_events);

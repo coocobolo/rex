@@ -139,9 +139,8 @@ pub const Mode = struct {
     focus_events: bool = false,
     /// Synchronized output (CSI ? 2026 h).
     synchronized_output: bool = false,
-    /// xterm modifyOtherKeys level (CSI > 4 ; Pv m): 0 off, 1 partial,
-    /// 2 full.
-    modify_other_keys: u2 = 0,
+    /// xterm modifyOtherKeys level (CSI > 4 ; Pv m).
+    modify_other_keys: key_encoder.ModifyOtherKeys = .off,
     /// Alternate scroll (CSI ? 1007 h): on the alternate screen, with mouse
     /// reporting off, the wheel sends cursor up and down keys instead of
     /// scrolling. On by default, unlike xterm's `alternateScroll`
@@ -1113,7 +1112,7 @@ pub fn Terminal(comptime option: Option) type {
         pub fn softReset(self: *Self) void {
             self.mode.cursor_keys = false;
             self.mode.keypad_app = false;
-            self.mode.modify_other_keys = 0;
+            self.mode.modify_other_keys = .off;
             self.palette.resetAllIndexed();
             self.active().softReset();
         }
@@ -1237,9 +1236,7 @@ pub fn Terminal(comptime option: Option) type {
         /// does (`charproc.c` CASE_SET_MOD_FKEYS). Levels above 2 are
         /// ignored: the key encoder supports 0 to 2.
         pub fn setModifyOtherKeys(self: *Self, level: ?u16) void {
-            const value = level orelse 0;
-            if (value > 2) return;
-            self.mode.modify_other_keys = @intCast(value);
+            self.mode.modify_other_keys = std.enums.fromInt(key_encoder.ModifyOtherKeys, level orelse 0) orelse return;
         }
 
         /// DECSET (CSI ? h) and DECRST (CSI ? l). Unknown modes are
@@ -1688,8 +1685,7 @@ pub fn Terminal(comptime option: Option) type {
         /// them now.
         fn keyModes(self: *const Self) key_encoder.Modes {
             return .{
-                // `setModifyOtherKeys` never stores a level above 2.
-                .modify_other_keys = std.enums.fromInt(key_encoder.ModifyOtherKeys, self.mode.modify_other_keys) orelse .off,
+                .modify_other_keys = self.mode.modify_other_keys,
                 .cursor_keys = self.mode.cursor_keys,
                 .keypad_app = self.mode.keypad_app,
                 .eight_bit_controls = self.control_format == .s8c1t,

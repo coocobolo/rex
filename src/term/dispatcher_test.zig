@@ -3687,7 +3687,7 @@ test "m2: DECSTR resets each item xterm resets" {
     // red, DECSC, modifyOtherKeys, an OSC 4 color.
     t.feed("\x1b[?25l\x1b[4h\x1b[2;5r\x1b[?6h\x1b[?7l\x1b[?45h\x1b[4 q\x1b[?1h\x1b=");
     t.feed("\x1b(0\x0e\x1b[1;31m\x1b[3;4H\x1b7\x1b]4;1;#010203\x07");
-    t.mode.modify_other_keys = 2;
+    t.mode.modify_other_keys = .full;
     const red = t.palette.indexed_default[1];
     t.feed("\x1b[!p");
 
@@ -3698,7 +3698,7 @@ test "m2: DECSTR resets each item xterm resets" {
     try testing.expect(s.mode.auto_wrap); // DECAWM: startup value, on
     try testing.expect(!s.mode.reverse_wrap); // startup value, off
     try testing.expectEqual(Cursor.Style.default, s.cursor.style); // InitCursorShape
-    try testing.expectEqual(0, t.mode.modify_other_keys);
+    try testing.expectEqual(.off, t.mode.modify_other_keys);
     try testing.expectEqual(red, t.palette.getIndexed(1)); // ResetAnsiColorRequest
     try testing.expect(!t.mode.cursor_keys); // DECCKM: normal
     try testing.expect(!t.mode.keypad_app); // DECNKM: numeric
@@ -4075,17 +4075,17 @@ test "csi: XTMODKEYS sets and resets modifyOtherKeys" {
     defer t.destroy(alloc);
 
     t.feed("\x1b[>4;2m");
-    try testing.expectEqual(2, t.mode.modify_other_keys);
+    try testing.expectEqual(.full, t.mode.modify_other_keys);
     t.feed("\x1b[>4;1m");
-    try testing.expectEqual(1, t.mode.modify_other_keys);
+    try testing.expectEqual(.partial, t.mode.modify_other_keys);
     t.feed("\x1b[>4m"); // Pv omitted: initial value
-    try testing.expectEqual(0, t.mode.modify_other_keys);
+    try testing.expectEqual(.off, t.mode.modify_other_keys);
 
     t.feed("\x1b[>4;2m\x1b[>m"); // no parameters: every resource
-    try testing.expectEqual(0, t.mode.modify_other_keys);
+    try testing.expectEqual(.off, t.mode.modify_other_keys);
 
     t.feed("\x1b[>4;2m\x1b[>4n"); // disable
-    try testing.expectEqual(0, t.mode.modify_other_keys);
+    try testing.expectEqual(.off, t.mode.modify_other_keys);
 }
 
 test "csi: XTMODKEYS ignores unsupported levels and other resources" {
@@ -4093,11 +4093,11 @@ test "csi: XTMODKEYS ignores unsupported levels and other resources" {
     defer t.destroy(alloc);
 
     t.feed("\x1b[>4;1m\x1b[>4;3m"); // level 3 is not supported
-    try testing.expectEqual(1, t.mode.modify_other_keys);
+    try testing.expectEqual(.partial, t.mode.modify_other_keys);
     t.feed("\x1b[>1;2m\x1b[>2;2m"); // modifyCursorKeys, modifyFunctionKeys
-    try testing.expectEqual(1, t.mode.modify_other_keys);
+    try testing.expectEqual(.partial, t.mode.modify_other_keys);
     t.feed("\x1b[>1n");
-    try testing.expectEqual(1, t.mode.modify_other_keys);
+    try testing.expectEqual(.partial, t.mode.modify_other_keys);
 }
 
 test "csi: XTVERSION answers CSI > q only" {

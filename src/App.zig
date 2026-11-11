@@ -2094,8 +2094,7 @@ const keyCb: c.GLFWkeyfun = struct {
         // Terminal key encoding
         const driver_modes = app.driver.getModes();
         const key_modes: input.encode.Modes = .{
-            // The terminal never stores a level above 2.
-            .modify_other_keys = std.enums.fromInt(input.encode.ModifyOtherKeys, driver_modes.modify_other_keys) orelse .off,
+            .modify_other_keys = driver_modes.modify_other_keys,
             .cursor_keys = driver_modes.cursor_keys,
             .keypad_app = driver_modes.keypad_app,
             .eight_bit_controls = driver_modes.eight_bit_controls,
