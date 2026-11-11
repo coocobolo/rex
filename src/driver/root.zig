@@ -58,7 +58,9 @@ pub const SharedModes = packed struct(u32) {
     focus_events: bool = false,
     reports_wheel: bool = false,
     reports_motion: bool = false,
-    _pad: u23 = 0,
+    /// S8C1T: replies and key sequences use 8-bit C1 controls.
+    eight_bit_controls: bool = false,
+    _pad: u22 = 0,
 
     /// Bitcast helper to u32 for atomic storage.
     pub inline fn toU32(self: SharedModes) u32 {

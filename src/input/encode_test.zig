@@ -157,3 +157,32 @@ test "encode: modifyOtherKeys 0 keeps the usual bytes" {
         .{ .level = .off, .key = .left_bracket, .mods = ctrl, .expected = "\x1b" },
     });
 }
+
+test "encode: 8-bit controls send CSI and SS3 as one byte, and leave ESC prefixes alone" {
+    const eight: encode.Modes = .{ .eight_bit_controls = true };
+    try expectKey("\x9bA", .up, 0, eight);
+    try expectKey("\x9b1;5A", .up, ctrl, eight);
+    try expectKey("\x8fA", .up, 0, .{ .eight_bit_controls = true, .cursor_keys = true });
+    try expectKey("\x8fP", .f1, 0, eight);
+    try expectKey("\x9b1;2P", .f1, shift, eight);
+    try expectKey("\x9b15~", .f5, 0, eight);
+    try expectKey("\x9b3;3~", .delete, alt, eight);
+    try expectKey("\x9bZ", .tab, shift, eight);
+    try expectKey("\x8fp", .kp_0, 0, .{ .eight_bit_controls = true, .keypad_app = true });
+    try expectKey("\x9b27;5;97~", .a, ctrl, .{ .eight_bit_controls = true, .modify_other_keys = .full });
+    // Alt's ESC is a prefix, not CSI or SS3, even before `[` and `O`.
+    try expectKey("\x1b[", .left_bracket, alt, eight);
+    try expectKey("\x1bO", .o, alt | shift, eight);
+    try expectKey("\x1b\r", .enter, alt, eight);
+    try expectKey("\x1b", .escape, 0, eight);
+}
+
+test "encode: 7-bit controls for the same keys" {
+    try expectKey("\x1b[A", .up, 0, .{});
+    try expectKey("\x1bOA", .up, 0, .{ .cursor_keys = true });
+    try expectKey("\x1bOP", .f1, 0, .{});
+    try expectKey("\x1b[15~", .f5, 0, .{});
+    try expectKey("\x1b[3;3~", .delete, alt, .{});
+    try expectKey("\x1b[Z", .tab, shift, .{});
+    try expectKey("\x1bOp", .kp_0, 0, .{ .keypad_app = true });
+}

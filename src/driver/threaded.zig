@@ -584,6 +584,7 @@ pub fn Driver(comptime option: Option) type {
                 .focus_events = terminal.mode.focus_events,
                 .reports_wheel = terminal.mode.mouse_tracking.reportsWheel(),
                 .reports_motion = terminal.mode.mouse_tracking.reportsMotion(),
+                .eight_bit_controls = terminal.control_format == .s8c1t,
             };
             self.shared_modes.store(@bitCast(modes), .release);
         }

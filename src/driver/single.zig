@@ -333,6 +333,7 @@ pub fn Driver(comptime option: Option) type {
                 .focus_events = self.terminal.mode.focus_events,
                 .reports_wheel = self.terminal.mode.mouse_tracking.reportsWheel(),
                 .reports_motion = self.terminal.mode.mouse_tracking.reportsMotion(),
+                .eight_bit_controls = self.terminal.control_format == .s8c1t,
             };
         }
 

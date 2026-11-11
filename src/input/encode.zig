@@ -27,6 +27,8 @@ pub const Modes = struct {
     cursor_keys: bool = false,
     /// DECKPAM: the keypad sends SS3 sequences instead of characters.
     keypad_app: bool = false,
+    /// S8C1T: CSI and SS3 go out as one 8-bit byte each.
+    eight_bit_controls: bool = false,
 };
 
 /// xterm's modifier parameter: 1 + Shift + 2 Alt + 4 Ctrl + 8 Super, so 1
@@ -55,35 +57,68 @@ fn ctrlDigit(digit: u8) ?u8 {
     };
 }
 
-/// Format [CSI num ~] | [CSI num ; mod ~]
-fn fmtTilde(buf: *[max_len]u8, num: u16, mod: u8) []const u8 {
-    if (mod <= 1) return std.fmt.bufPrint(buf, "\x1b[{d}~", .{num}) catch "";
-    return std.fmt.bufPrint(buf, "\x1b[{d};{d}~", .{ num, mod }) catch "";
-}
+/// Where a sequence is written, and in which form its introducer goes
+/// out. xterm sends key sequences through the same path as its replies
+/// (`charproc.c` unparseseq), so under 8-bit controls CSI and SS3 are the
+/// single bytes 0x9B and 0x8F. The ESC that Alt puts before a key's byte
+/// is not an introducer and stays ESC.
+const Out = struct {
+    buf: *[max_len]u8,
+    eight_bit: bool,
 
-/// Format [CSI letter] | [CSI 1 ; mod letter]  (arrows, Home, End)
-fn fmtCsi1(buf: *[max_len]u8, letter: u8, mod: u8) []const u8 {
-    if (mod <= 1) {
-        buf[0] = 0x1b;
-        buf[1] = '[';
-        buf[2] = letter;
-        return buf[0..3];
+    /// Writes CSI (`[`) or SS3 (`O`) and returns its length.
+    fn introducer(self: Out, comptime final: u8) usize {
+        if (self.eight_bit) {
+            self.buf[0] = final + 0x40;
+            return 1;
+        }
+        self.buf[0] = 0x1b;
+        self.buf[1] = final;
+        return 2;
     }
-    return std.fmt.bufPrint(buf, "\x1b[1;{d}{c}", .{ mod, letter }) catch "";
-}
 
-/// Format SS3 letter  (application cursor / F1-F4 without modifier)
-fn fmtSs3(buf: *[max_len]u8, letter: u8) []const u8 {
-    buf[0] = 0x1b;
-    buf[1] = 'O';
-    buf[2] = letter;
-    return buf[0..3];
-}
+    /// The introducer, then `fmt`. No sequence comes near `max_len`: the
+    /// longest is CSI 27 ; 8 ; 127 ~, 12 bytes.
+    fn print(self: Out, comptime final: u8, comptime fmt: []const u8, args: anytype) []const u8 {
+        const n = self.introducer(final);
+        const rest = std.fmt.bufPrint(self.buf[n..], fmt, args) catch unreachable;
+        return self.buf[0 .. n + rest.len];
+    }
 
-/// Format CSI 27 ; mod ; codepoint ~  (modifyOtherKeys level 1/2)
-fn fmtMok(buf: *[max_len]u8, mod: u8, cp: u21) []const u8 {
-    return std.fmt.bufPrint(buf, "\x1b[27;{d};{d}~", .{ mod, cp }) catch "";
-}
+    /// CSI num ~, or CSI num ; mod ~ with a modifier.
+    fn tilde(self: Out, num: u16, mod: u8) []const u8 {
+        if (mod <= 1) return self.print('[', "{d}~", .{num});
+        return self.print('[', "{d};{d}~", .{ num, mod });
+    }
+
+    /// CSI letter, or CSI 1 ; mod letter with a modifier.
+    fn csi(self: Out, letter: u8, mod: u8) []const u8 {
+        if (mod <= 1) return self.print('[', "{c}", .{letter});
+        return self.print('[', "1;{d}{c}", .{ mod, letter });
+    }
+
+    /// SS3 letter.
+    fn ss3(self: Out, letter: u8) []const u8 {
+        return self.print('O', "{c}", .{letter});
+    }
+
+    /// CSI 27 ; mod ; code ~, the modifyOtherKeys form.
+    fn otherKey(self: Out, mod: u8, code: u8) []const u8 {
+        return self.print('[', "27;{d};{d}~", .{ mod, code });
+    }
+
+    /// ESC then `byte`: what Alt adds to a key's byte.
+    fn escThen(self: Out, byte: u8) []const u8 {
+        self.buf[0] = 0x1b;
+        self.buf[1] = byte;
+        return self.buf[0..2];
+    }
+
+    fn one(self: Out, byte: u8) []const u8 {
+        self.buf[0] = byte;
+        return self.buf[0..1];
+    }
+};
 
 // modifyOtherKeys, ported from xterm 412 `input.c` (ModifyOtherKeys,
 // allowedCharModifiers, filterAltMeta and the check in Input) with xterm's
@@ -274,7 +309,7 @@ fn usLayout(key: Key) ?[2]u8 {
 
 /// The modifyOtherKeys sequence for `key`, or null when it is not an
 /// ordinary key or xterm would send it the usual way.
-fn encodeOtherKey(level: Level, key: Key, mods: Modifiers, buf: *[max_len]u8) ?[]const u8 {
+fn encodeOtherKey(level: Level, key: Key, mods: Modifiers, out: Out) ?[]const u8 {
     if (mods.super) return null;
     const event: ModState = .{ .shift = mods.shift, .alt = mods.alt, .ctrl = mods.ctrl };
     const other: OtherKey = switch (key) {
@@ -285,38 +320,26 @@ fn encodeOtherKey(level: Level, key: Key, mods: Modifiers, buf: *[max_len]u8) ?[
         else => .{ .char = (usLayout(key) orelse return null)[@intFromBool(event.shift)] },
     };
     const report = otherKeyReport(level, event, other) orelse return null;
-    return fmtMok(buf, report.param, report.code);
-}
-
-/// ESC then `byte`: what Alt adds to a key's byte.
-fn escThen(buf: *[max_len]u8, byte: u8) []const u8 {
-    buf[0] = 0x1b;
-    buf[1] = byte;
-    return buf[0..2];
-}
-
-fn one(buf: *[max_len]u8, byte: u8) []const u8 {
-    buf[0] = byte;
-    return buf[0..1];
+    return out.otherKey(report.param, report.code);
 }
 
 /// A cursor key: SS3 `letter` in application mode, else CSI `letter`, and
 /// always CSI 1 ; mod `letter` with a modifier.
-fn cursorKey(buf: *[max_len]u8, letter: u8, mod: u8, modes: Modes) []const u8 {
-    if (mod > 1) return fmtCsi1(buf, letter, mod);
-    return if (modes.cursor_keys) fmtSs3(buf, letter) else fmtCsi1(buf, letter, 1);
+fn cursorKey(out: Out, letter: u8, mod: u8, modes: Modes) []const u8 {
+    if (mod > 1) return out.csi(letter, mod);
+    return if (modes.cursor_keys) out.ss3(letter) else out.csi(letter, 1);
 }
 
 /// F1 to F4: SS3 `letter`, or CSI 1 ; mod `letter` with a modifier.
-fn pfKey(buf: *[max_len]u8, letter: u8, mod: u8) []const u8 {
-    return if (mod > 1) fmtCsi1(buf, letter, mod) else fmtSs3(buf, letter);
+fn pfKey(out: Out, letter: u8, mod: u8) []const u8 {
+    return if (mod > 1) out.csi(letter, mod) else out.ss3(letter);
 }
 
 /// A punctuation key: `ctrl_code` with Ctrl, ESC `char` with Alt, else
 /// left to the character event.
-fn punctuation(buf: *[max_len]u8, mods: Modifiers, ctrl_code: u8, char: u8) []const u8 {
-    if (mods.ctrl) return one(buf, ctrl_code);
-    if (mods.alt) return escThen(buf, char);
+fn punctuation(out: Out, mods: Modifiers, ctrl_code: u8, char: u8) []const u8 {
+    if (mods.ctrl) return out.one(ctrl_code);
+    if (mods.alt) return out.escThen(char);
     return "";
 }
 
@@ -326,75 +349,76 @@ fn punctuation(buf: *[max_len]u8, mods: Modifiers, ctrl_code: u8, char: u8) []co
 /// character arrives as text.
 pub fn encode(key: Key, mods: Modifiers, modes: Modes, buf: *[max_len]u8) []const u8 {
     const mod = modifierParam(mods);
+    const out: Out = .{ .buf = buf, .eight_bit = modes.eight_bit_controls };
     if (modes.modify_other_keys != .off) {
-        if (encodeOtherKey(modes.modify_other_keys, key, mods, buf)) |seq| return seq;
+        if (encodeOtherKey(modes.modify_other_keys, key, mods, out)) |seq| return seq;
     }
 
     if (offsetIn(key, .a, .z)) |i| {
-        if (mods.ctrl) return if (mods.alt) escThen(buf, i + 1) else one(buf, i + 1);
-        if (mods.alt) return escThen(buf, (if (mods.shift) @as(u8, 'A') else 'a') + i);
+        if (mods.ctrl) return if (mods.alt) out.escThen(i + 1) else out.one(i + 1);
+        if (mods.alt) return out.escThen((if (mods.shift) @as(u8, 'A') else 'a') + i);
         return "";
     }
     if (offsetIn(key, .num_0, .num_9)) |i| {
         const digit = '0' + i;
         // As in xterm on a US layout, with ESC first when Alt is held.
         if (mods.ctrl) if (ctrlDigit(digit)) |code| {
-            return if (mods.alt) escThen(buf, code) else one(buf, code);
+            return if (mods.alt) out.escThen(code) else out.one(code);
         };
-        if (mods.alt) return escThen(buf, digit);
+        if (mods.alt) return out.escThen(digit);
         return "";
     }
     if (offsetIn(key, .kp_0, .kp_9)) |i| {
-        return if (modes.keypad_app) fmtSs3(buf, 'p' + i) else "";
+        return if (modes.keypad_app) out.ss3('p' + i) else "";
     }
 
     return switch (key) {
-        .up => cursorKey(buf, 'A', mod, modes),
-        .down => cursorKey(buf, 'B', mod, modes),
-        .right => cursorKey(buf, 'C', mod, modes),
-        .left => cursorKey(buf, 'D', mod, modes),
+        .up => cursorKey(out, 'A', mod, modes),
+        .down => cursorKey(out, 'B', mod, modes),
+        .right => cursorKey(out, 'C', mod, modes),
+        .left => cursorKey(out, 'D', mod, modes),
 
-        .f1 => pfKey(buf, 'P', mod),
-        .f2 => pfKey(buf, 'Q', mod),
-        .f3 => pfKey(buf, 'R', mod),
-        .f4 => pfKey(buf, 'S', mod),
-        .f5 => fmtTilde(buf, 15, mod),
-        .f6 => fmtTilde(buf, 17, mod),
-        .f7 => fmtTilde(buf, 18, mod),
-        .f8 => fmtTilde(buf, 19, mod),
-        .f9 => fmtTilde(buf, 20, mod),
-        .f10 => fmtTilde(buf, 21, mod),
-        .f11 => fmtTilde(buf, 23, mod),
-        .f12 => fmtTilde(buf, 24, mod),
+        .f1 => pfKey(out, 'P', mod),
+        .f2 => pfKey(out, 'Q', mod),
+        .f3 => pfKey(out, 'R', mod),
+        .f4 => pfKey(out, 'S', mod),
+        .f5 => out.tilde(15, mod),
+        .f6 => out.tilde(17, mod),
+        .f7 => out.tilde(18, mod),
+        .f8 => out.tilde(19, mod),
+        .f9 => out.tilde(20, mod),
+        .f10 => out.tilde(21, mod),
+        .f11 => out.tilde(23, mod),
+        .f12 => out.tilde(24, mod),
 
-        .home => fmtCsi1(buf, 'H', mod),
-        .end => fmtCsi1(buf, 'F', mod),
-        .insert => fmtTilde(buf, 2, mod),
-        .delete => fmtTilde(buf, 3, mod),
-        .page_up => fmtTilde(buf, 5, mod),
-        .page_down => fmtTilde(buf, 6, mod),
+        .home => out.csi('H', mod),
+        .end => out.csi('F', mod),
+        .insert => out.tilde(2, mod),
+        .delete => out.tilde(3, mod),
+        .page_up => out.tilde(5, mod),
+        .page_down => out.tilde(6, mod),
 
-        .enter, .kp_enter => if (mods.alt) escThen(buf, '\r') else "\r",
-        .backspace => if (mods.ctrl) "\x08" else if (mods.alt) escThen(buf, 0x7f) else "\x7f",
+        .enter, .kp_enter => if (mods.alt) out.escThen('\r') else "\r",
+        .backspace => if (mods.ctrl) "\x08" else if (mods.alt) out.escThen(0x7f) else "\x7f",
         // Shift+Tab is always the back tab.
-        .tab => if (mods.shift) "\x1b[Z" else if (mods.alt) escThen(buf, '\t') else "\t",
+        .tab => if (mods.shift) out.csi('Z', 1) else if (mods.alt) out.escThen('\t') else "\t",
         .escape => "\x1b",
-        .space => punctuation(buf, mods, 0x00, ' '),
+        .space => punctuation(out, mods, 0x00, ' '),
 
         // Outside keypad application mode these arrive as characters.
-        .kp_decimal => if (modes.keypad_app) fmtSs3(buf, 'n') else "",
-        .kp_divide => if (modes.keypad_app) fmtSs3(buf, 'o') else "",
-        .kp_multiply => if (modes.keypad_app) fmtSs3(buf, 'j') else "",
-        .kp_subtract => if (modes.keypad_app) fmtSs3(buf, 'm') else "",
-        .kp_add => if (modes.keypad_app) fmtSs3(buf, 'k') else "",
-        .kp_equal => if (modes.keypad_app) fmtSs3(buf, 'X') else "",
+        .kp_decimal => if (modes.keypad_app) out.ss3('n') else "",
+        .kp_divide => if (modes.keypad_app) out.ss3('o') else "",
+        .kp_multiply => if (modes.keypad_app) out.ss3('j') else "",
+        .kp_subtract => if (modes.keypad_app) out.ss3('m') else "",
+        .kp_add => if (modes.keypad_app) out.ss3('k') else "",
+        .kp_equal => if (modes.keypad_app) out.ss3('X') else "",
 
-        .left_bracket => punctuation(buf, mods, 0x1b, '['), // Ctrl+[ is ESC
-        .backslash => punctuation(buf, mods, 0x1c, '\\'), // FS
-        .right_bracket => punctuation(buf, mods, 0x1d, ']'), // GS
-        .grave_accent => punctuation(buf, mods, 0x00, '`'), // NUL, as in xterm
-        .minus => punctuation(buf, mods, 0x1f, '-'), // US
-        .slash => punctuation(buf, mods, 0x1f, '/'), // US, as Ctrl+-
+        .left_bracket => punctuation(out, mods, 0x1b, '['), // Ctrl+[ is ESC
+        .backslash => punctuation(out, mods, 0x1c, '\\'), // FS
+        .right_bracket => punctuation(out, mods, 0x1d, ']'), // GS
+        .grave_accent => punctuation(out, mods, 0x00, '`'), // NUL, as in xterm
+        .minus => punctuation(out, mods, 0x1f, '-'), // US
+        .slash => punctuation(out, mods, 0x1f, '/'), // US, as Ctrl+-
 
         else => "",
     };

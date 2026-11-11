@@ -2098,6 +2098,7 @@ const keyCb: c.GLFWkeyfun = struct {
             .modify_other_keys = std.enums.fromInt(input.encode.ModifyOtherKeys, driver_modes.modify_other_keys) orelse .off,
             .cursor_keys = driver_modes.cursor_keys,
             .keypad_app = driver_modes.keypad_app,
+            .eight_bit_controls = driver_modes.eight_bit_controls,
         };
 
         var buf: [input.encode.max_len]u8 = undefined;
