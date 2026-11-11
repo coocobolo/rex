@@ -650,12 +650,12 @@ test "softReset: active screen modes reset" {
     t.active().mode.reverse_wrap = true;
     t.softReset();
 
-    // VT510 DECSTR table: DECAWM off; DECSCNM and reverse wrap untouched.
-    try testing.expect(!t.active().mode.auto_wrap);
+    // xterm: DECAWM and reverse wrap back to startup values; DECSCNM kept.
+    try testing.expect(t.active().mode.auto_wrap);
     try testing.expect(!t.active().mode.insert);
     try testing.expect(t.active().mode.cursor_visibility);
     try testing.expect(t.active().mode.reverse_video);
-    try testing.expect(t.active().mode.reverse_wrap);
+    try testing.expect(!t.active().mode.reverse_wrap);
 }
 
 test "softReset: active screen non-targeted modes survive" {

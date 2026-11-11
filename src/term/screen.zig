@@ -2867,13 +2867,16 @@ pub fn Screen(comptime option: Option) type {
 
         /// Soft Terminal Reset (DECSTR / CSI ! p), screen part.
         ///
-        /// Resets exactly the screen items of the VT510 DECSTR table
-        /// (DEC STD 070): DECTCEM visible, IRM replace, DECOM absolute,
-        /// DECAWM off, DECSTBM full page, G0-G3/GL/GR default, SGR normal,
-        /// and the DECSC save slot to home with default attributes and
-        /// charsets. Everything else stays, including DECSCNM, cursor
-        /// blink and style, tab stops, cells, line attributes and the
-        /// cursor position. `Terminal.softReset` does the terminal items.
+        /// Follows xterm (`charproc.c` ReallyReset): DECTCEM visible, IRM
+        /// replace, DECOM absolute, DECSTBM full page, G0-G3/GL/GR default,
+        /// SGR normal, the DECSC save slot to home with default attributes
+        /// and charsets, DECAWM and reverse wrap back to their startup
+        /// values (on and off) and the cursor style to the default. The
+        /// VT510 table (DEC STD 070) turns DECAWM off instead; xterm's
+        /// `rs2`/`is2` send DECSTR, so that would stop wrapping after
+        /// `reset` or `tput init`. Everything else stays, including
+        /// DECSCNM, tab stops, cells, line attributes and the cursor
+        /// position. `Terminal.softReset` does the terminal items.
         pub fn softReset(self: *Self) void {
             self.scroll_top = 0;
             self.scroll_bottom = @intCast(self.active_rows - 1);
@@ -2883,11 +2886,14 @@ pub fn Screen(comptime option: Option) type {
             self.cursor.attr = .{};
             self.cursor.charset = .{};
             self.cursor.origin = false;
-            self.cursor.wrap_pending = false; // DECAWM goes off below
+            self.cursor.wrap_pending = false;
+
+            self.cursor.style = .default;
 
             self.mode.cursor_visibility = true;
             self.mode.insert = false;
-            self.mode.auto_wrap = false;
+            self.mode.auto_wrap = true;
+            self.mode.reverse_wrap = false;
 
             self.saved_cursor = .{};
             self.charset_is_identity = true;

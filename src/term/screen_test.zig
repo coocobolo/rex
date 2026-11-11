@@ -6257,16 +6257,14 @@ test "softReset: line_attrs survive" {
     try testing.expectEqual(LineAttr.double_bottom, s.line_attrs[s.physRow(4)]);
 }
 
-test "softReset: auto_wrap off (VT510 DECSTR table)" {
+test "softReset: auto_wrap back on (xterm startup value)" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
     defer s.destroy(alloc);
 
     s.mode.auto_wrap = false;
     s.softReset();
-    s.mode.auto_wrap = true;
-    s.softReset();
-    try testing.expect(!s.mode.auto_wrap);
+    try testing.expect(s.mode.auto_wrap);
 }
 
 test "softReset: cursor_visible reset to true" {
@@ -6289,14 +6287,14 @@ test "softReset: reverse_video survives" {
     try testing.expect(s.mode.reverse_video);
 }
 
-test "softReset: reverse_wrap survives" {
+test "softReset: reverse_wrap off (xterm startup value)" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
     defer s.destroy(alloc);
 
     s.mode.reverse_wrap = true;
     s.softReset();
-    try testing.expect(s.mode.reverse_wrap);
+    try testing.expect(!s.mode.reverse_wrap);
 }
 
 test "hardReset: all cells cleared to blank" {

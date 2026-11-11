@@ -847,12 +847,15 @@ pub fn Terminal(comptime option: Option) type {
             self.active().markDirty(self.active().cursor.row);
         }
 
-        /// DECSTR (CSI ! p), per the VT510 table. It resets DECCKM, the
-        /// keypad mode and the active screen's state. Other modes, mouse
-        /// tracking included, survive.
+        /// DECSTR (CSI ! p), as xterm does it (`charproc.c` ReallyReset).
+        /// It resets DECCKM, the keypad mode, modifyOtherKeys, the OSC 4
+        /// colors and the active screen's state (`Screen.softReset`).
+        /// Other modes, mouse tracking included, survive.
         pub fn softReset(self: *Self) void {
             self.mode.cursor_keys = false;
             self.mode.keypad_app = false;
+            self.mode.modify_other_keys = 0;
+            self.active().palette.resetAllIndexed();
             self.active().softReset();
         }
 
