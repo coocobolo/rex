@@ -93,9 +93,12 @@ pub fn Driver(comptime option: Option) type {
         shared_modes: std.atomic.Value(u32) align(64),
         shared_events: EventSet.Atomic align(64),
         shared_resize: std.atomic.Value(u32) align(64),
-        shared_title: [2][term.max_title_len]u8 align(64) = undefined,
-        shared_title_len: [2]u16 = .{ 0, 0 },
-        shared_title_idx: std.atomic.Value(u8) align(64),
+        /// The terminal's title, copied in by the worker on each `title`
+        /// event and out by the GUI in `copyTitle`. `title_mutex` guards
+        /// both fields; each side holds it only for one copy.
+        title_mutex: std.Io.Mutex = .init,
+        title_len: u16 = 0,
+        title: [term.max_title_len]u8 = undefined,
         sync_output_timeout_ms: u32,
         /// Consumer-local cached frame pointer updated on GUI thread; aligned to 64B to prevent false sharing with worker atomics.
         last_frame: ?*const FrameType align(64) = null,
@@ -116,7 +119,6 @@ pub fn Driver(comptime option: Option) type {
             std.debug.assert(@offsetOf(Self, "last_frame") / 64 != @offsetOf(Self, "shared_modes") / 64);
             std.debug.assert(@offsetOf(Self, "last_frame") / 64 != @offsetOf(Self, "shared_events") / 64);
             std.debug.assert(@offsetOf(Self, "last_frame") / 64 != @offsetOf(Self, "shared_resize") / 64);
-            std.debug.assert(@offsetOf(Self, "last_frame") / 64 != @offsetOf(Self, "shared_title_idx") / 64);
             std.debug.assert(@offsetOf(Self, "shared_modes") / 64 != @offsetOf(Self, "shared_events") / 64);
         }
 
@@ -148,7 +150,6 @@ pub fn Driver(comptime option: Option) type {
                 .shared_modes = std.atomic.Value(u32).init(0),
                 .shared_events = .{},
                 .shared_resize = std.atomic.Value(u32).init(0),
-                .shared_title_idx = std.atomic.Value(u8).init(0),
                 .sync_output_timeout_ms = options.sync_output_timeout_ms,
                 .last_frame = self.triple_buffer.acquireLatest(),
                 .terminal = null,
@@ -582,14 +583,13 @@ pub fn Driver(comptime option: Option) type {
             const term_ev = terminal.takeEvents();
             var ev = EventSet.fromInt(term_ev.flags.toInt());
 
-            if (term_ev.has(.title)) {
-                const cur_idx = self.shared_title_idx.load(.monotonic);
-                const next_idx = 1 - cur_idx;
+            // RIS empties the title without a `title` event.
+            if (term_ev.has(.title) or term_ev.has(.hard_reset)) {
                 const title = terminal.getTitle();
-                const len: usize = @min(title.len, term.max_title_len);
-                @memcpy(self.shared_title[next_idx][0..len], title[0..len]);
-                self.shared_title_len[next_idx] = @intCast(len);
-                self.shared_title_idx.store(next_idx, .release);
+                self.title_mutex.lockUncancelable(self.io);
+                defer self.title_mutex.unlock(self.io);
+                @memcpy(self.title[0..title.len], title);
+                self.title_len = @intCast(title.len);
             }
 
             if (term_ev.has(.resize)) {
@@ -672,10 +672,14 @@ pub fn Driver(comptime option: Option) type {
             return @bitCast(self.shared_modes.load(.acquire));
         }
 
-        /// Returns the current window title snapshot.
-        pub fn getTitle(self: *const Self) []const u8 {
-            const idx = self.shared_title_idx.load(.acquire);
-            return self.shared_title[idx][0..self.shared_title_len[idx]];
+        /// Copies the title the terminal last reported into `buf` and
+        /// returns it. Empty until a program sets one or after RIS.
+        pub fn copyTitle(self: *Self, buf: *[term.max_title_len:0]u8) [:0]const u8 {
+            self.title_mutex.lockUncancelable(self.io);
+            defer self.title_mutex.unlock(self.io);
+            @memcpy(buf[0..self.title_len], self.title[0..self.title_len]);
+            buf[self.title_len] = 0;
+            return buf[0..self.title_len :0];
         }
 
         /// Returns the child process PID.
@@ -846,6 +850,82 @@ test "ThreadedDriver: XTGETTCAP reports the TERM from Options" {
         }
     }
     try testing.expectEqualStrings(expected, reply_buf[0..len]);
+}
+
+/// Writes all of `bytes` to the nonblocking `fd`, waiting while it is full.
+fn writeAllTest(fd: posix.fd_t, bytes: []const u8) !void {
+    var done: usize = 0;
+    var retries: usize = test_wait_ms;
+    while (done < bytes.len) {
+        const n = system.write(fd, bytes[done..].ptr, bytes.len - done);
+        if (n > 0) {
+            done += @intCast(n);
+            continue;
+        }
+        retries = std.math.sub(usize, retries, 1) catch return error.Timeout;
+        sleepNs(1_000_000);
+    }
+}
+
+fn waitForTitle(comptime opt: Option, driver: *Driver(opt), want: []const u8) ![]const u8 {
+    var buf: [term.max_title_len:0]u8 = undefined;
+    var retries: usize = test_wait_ms;
+    while (retries > 0) : (retries -= 1) {
+        _ = try driver.pollAndDrain();
+        if (std.mem.eql(u8, driver.copyTitle(&buf), want)) break;
+        sleepNs(1_000_000);
+    }
+    return driver.copyTitle(&buf);
+}
+
+test "ThreadedDriver: copyTitle returns the title a program set, and RIS empties it" {
+    const testing = std.testing;
+    const test_option: Option = .{ .max_rows = 24, .max_cols = 80, .max_scrollback = 100 };
+
+    var sv: [2]posix.fd_t = undefined;
+    try testing.expectEqual(@as(c_int, 0), system.socketpair(posix.AF.UNIX, posix.SOCK.STREAM | posix.SOCK.NONBLOCK, 0, &sv));
+    defer _ = system.close(sv[1]);
+    const mock_pty: Pty = .{ .master = sv[0], .pid = -1, .stdout_read_fd = -1, .error_read_fd = -1 };
+
+    var driver = try Driver(test_option).create(testing.allocator, testing.io, mock_pty, test_options, latency_trace.none);
+    defer driver.destroy();
+
+    var buf: [term.max_title_len:0]u8 = undefined;
+    try testing.expectEqualStrings("", driver.copyTitle(&buf));
+
+    try writeAllTest(sv[1], "\x1b]2;vim notes.txt\x07");
+    try testing.expectEqualStrings("vim notes.txt", try waitForTitle(test_option, driver, "vim notes.txt"));
+
+    try writeAllTest(sv[1], "\x1bc"); // RIS
+    try testing.expectEqualStrings("", try waitForTitle(test_option, driver, ""));
+}
+
+test "ThreadedDriver: copyTitle never returns a mix of two titles" {
+    const testing = std.testing;
+    const test_option: Option = .{ .max_rows = 24, .max_cols = 80, .max_scrollback = 100 };
+
+    var sv: [2]posix.fd_t = undefined;
+    try testing.expectEqual(@as(c_int, 0), system.socketpair(posix.AF.UNIX, posix.SOCK.STREAM | posix.SOCK.NONBLOCK, 0, &sv));
+    defer _ = system.close(sv[1]);
+    const mock_pty: Pty = .{ .master = sv[0], .pid = -1, .stdout_read_fd = -1, .error_read_fd = -1 };
+
+    var driver = try Driver(test_option).create(testing.allocator, testing.io, mock_pty, test_options, latency_trace.none);
+    defer driver.destroy();
+
+    // Two full-length titles, alternating, while the GUI side copies.
+    const a = "\x1b]2;" ++ "a" ** term.max_title_len ++ "\x07";
+    const b = "\x1b]2;" ++ "b" ** term.max_title_len ++ "\x07";
+    var buf: [term.max_title_len:0]u8 = undefined;
+    for (0..200) |i| {
+        try writeAllTest(sv[1], if (i % 2 == 0) a else b);
+        _ = try driver.pollAndDrain();
+        const title = driver.copyTitle(&buf);
+        if (title.len == 0) continue; // before the first title arrives
+        try testing.expectEqual(term.max_title_len, title.len);
+        const first = title[0];
+        try testing.expect(first == 'a' or first == 'b');
+        for (title) |c| try testing.expectEqual(first, c);
+    }
 }
 
 test "ThreadedDriver: Mode 2026 synchronized output hold and release" {

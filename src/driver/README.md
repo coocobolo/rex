@@ -30,7 +30,7 @@ All driver events are declared in `src/driver/events.zig` inside a packed 32-bit
 | Bit | Field | Category | Description |
 | --- | --- | --- | --- |
 | `0` | `bell` | Emulation | ASCII `\x07` (`BEL`) arrived; triggers an audible chime or visual bell alert. |
-| `1` | `title` | Emulation | `OSC 0` or `2` updated the window title; double-buffered across threads. |
+| `1` | `title` | Emulation | `OSC 0` or `2` updated the title; read it with `copyTitle`. |
 | `2` | `icon_name` | Emulation | `OSC 1` changed the window icon name. |
 | `3` | `cursor_color` | Emulation | `OSC 12` changed the active cursor color. |
 | `4` | `selection_reset` | Emulation | Screen buffer swap or `RIS` reset invalidating current selection highlight. |
@@ -58,4 +58,4 @@ Check each modification against these rules:
 - **Flat layouts with zero allocations.** Resizing, polling, and frame swaps must never allocate on the heap. Frame snapshots and triple buffers are embedded directly into driver structs.
 - **Cache line isolation.** Cross-thread atomic variables (`shared_events`, `shared_modes`, `shared_resize`) must be aligned to 64 bytes (`align(64)`) to eliminate false sharing.
 - **Branchless event accumulation.** Drivers accumulate VT events via `dst.accumulateTerm(src)`, which uses `IntegerSet.setUnion` for a single-cycle bitwise `OR`.
-- **Title double-buffering.** Title strings are double-buffered (`shared_title: [2][max_title_len]u8`) and synchronized via an atomic index (`shared_title_idx`) with acquire/release semantics.
+- **Title under its own mutex.** The worker copies the terminal's title into `title` on a `title` or `hard_reset` event, and the GUI copies it out with `copyTitle`, both under `title_mutex`. Each side holds it for one copy of at most `max_title_len` bytes. Not `terminal_mutex`, which the worker holds for a whole processing chunk. The GUI never keeps a slice into driver memory.

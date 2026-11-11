@@ -335,9 +335,12 @@ pub fn Driver(comptime option: Option) type {
             };
         }
 
-        /// Returns the window title set by OSC 0/2.
-        pub fn getTitle(self: *const Self) []const u8 {
-            return self.terminal.getTitle();
+        /// Copies the title set by OSC 0 or 2 into `buf` and returns it.
+        pub fn copyTitle(self: *const Self, buf: *[term.max_title_len:0]u8) [:0]const u8 {
+            const title = self.terminal.getTitle();
+            @memcpy(buf[0..title.len], title);
+            buf[title.len] = 0;
+            return buf[0..title.len :0];
         }
 
         /// Returns the child process PID.
@@ -492,6 +495,31 @@ test "SingleDriver: XTGETTCAP reports the TERM from Options" {
     const n = system.read(sv[1], &reply_buf, reply_buf.len);
     try testing.expect(n > 0);
     try testing.expectEqualStrings("\x1bP1+r544E=726578\x1b\\", reply_buf[0..@intCast(n)]);
+}
+
+test "SingleDriver: copyTitle returns the title a program set, and RIS empties it" {
+    const testing = std.testing;
+    const test_option: Option = .{ .max_rows = 24, .max_cols = 80, .max_scrollback = 100 };
+
+    var sv: [2]posix.fd_t = undefined;
+    try testing.expectEqual(@as(c_int, 0), system.socketpair(posix.AF.UNIX, posix.SOCK.STREAM | posix.SOCK.NONBLOCK, 0, &sv));
+    defer _ = system.close(sv[1]);
+    const mock_pty: Pty = .{ .master = sv[0], .pid = -1, .stdout_read_fd = -1, .error_read_fd = -1 };
+
+    var driver = try Driver(test_option).init(testing.allocator, testing.io, mock_pty, test_options);
+    defer driver.deinit();
+
+    var buf: [term.max_title_len:0]u8 = undefined;
+    try testing.expectEqualStrings("", driver.copyTitle(&buf));
+
+    const osc = "\x1b]0;htop\x1b\\";
+    _ = system.write(sv[1], osc, osc.len);
+    _ = try driver.pollAndDrain();
+    try testing.expectEqualStrings("htop", driver.copyTitle(&buf));
+
+    _ = system.write(sv[1], "\x1bc", 2); // RIS
+    _ = try driver.pollAndDrain();
+    try testing.expectEqualStrings("", driver.copyTitle(&buf));
 }
 
 test "SingleDriver: extractSelectionText for stream and block selections" {

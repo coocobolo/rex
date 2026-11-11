@@ -193,6 +193,29 @@ test "apply: word characters are printable ASCII" {
     try std.testing.expectEqualStrings("", config.selection.classifier.extra_word_chars);
 }
 
+test "apply: text is UTF-8 without control characters, auto is null" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    var ctx = no_alloc_ctx;
+    ctx.arena = arena.allocator();
+    var config = testConfig();
+    const index = keys.lookup(.window, "title").?;
+    try std.testing.expectEqual(null, config.window.title);
+
+    try keys.apply(&config, ctx, index, "\"Rex \u{2014} work\"");
+    try std.testing.expectEqualStrings("Rex \u{2014} work", config.window.title.?);
+    try keys.apply(&config, ctx, index, "\"auto\""); // quoted: the literal text
+    try std.testing.expectEqualStrings("auto", config.window.title.?);
+    try keys.apply(&config, ctx, index, "auto");
+    try std.testing.expectEqual(null, config.window.title);
+
+    for ([_][]const u8{ "\"a\\tb\"", "\"\\x00\"", "\"\\x7f\"", "\"\\xff\"" }) |text| {
+        errdefer std.debug.print("accepted {s}\n", .{text});
+        try std.testing.expectError(error.InvalidValue, keys.apply(&config, ctx, index, text));
+    }
+    try std.testing.expectEqual(null, config.window.title);
+}
+
 test "apply: an optional field's keyword sets null" {
     var config = testConfig();
     try applyText(&config, .@"wellbeing.screen_time", "daily_limit", "6h");
@@ -311,6 +334,7 @@ test "writeExpected: describes each kind" {
         .{ .bell, "enabled", "true or false" },
         .{ .window, "on_close", "one of: ask, ask_if_running, close" },
         .{ .window, "platform", "one of: auto, wayland, x11" },
+        .{ .window, "title", "text, like \"rex\", or auto" },
         .{ .window, "width", "a whole number from 1 to 65535" },
         .{ .bell, "volume", "a number from 0 to 1" },
         .{ .surface, "corner_radius", "a number of at least 0, like 4.5" },

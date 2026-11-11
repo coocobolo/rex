@@ -78,6 +78,9 @@ pub const Blink = struct {
 
 /// The window and the UI drawn in it.
 pub const Window = struct {
+    /// The title while `title` is `auto` and no program has set one.
+    pub const default_title: [:0]const u8 = "rex";
+
     platform: Platform = .auto,
     background: Background.Option,
     bell: Bell = .{},
@@ -96,8 +99,9 @@ pub const Window = struct {
     /// On X11 the window grows by the display scale when it's created;
     /// on Wayland the compositor scales it.
     size: Dimension(u16) = .{ .width = 1920, .height = 1080 },
-    /// Window title.
-    title: [:0]const u8 = "rex",
+    /// Window title; null (`auto`) shows the title programs set with OSC 0
+    /// and 2, or `default_title` until they set one.
+    title: ?[:0]const u8 = null,
     /// The default look of every surface (`[surface]`): cards, toasts,
     /// banners and dialogs.
     surface: Surface = .{},

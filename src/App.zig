@@ -511,7 +511,7 @@ pub fn init(
     var win: Window = try .init(.{
         .width = active_config.window.size.width,
         .height = active_config.window.size.height,
-        .title = active_config.window.title,
+        .title = active_config.window.title orelse Config.Window.default_title,
         .platform = platform,
     });
     errdefer win.deinit();
@@ -784,7 +784,7 @@ pub fn run(self: *App) !void {
             self.needs_redraw = true;
         }
 
-        if (f.title) {
+        if (f.title or f.hard_reset) {
             title_updated = true;
             self.updateWindowTitle();
         }
@@ -1132,7 +1132,15 @@ fn buildSelectionState(self: *App, frame: *const FrameType) ?SelectionState {
 }
 
 fn updateWindowTitle(self: *App) void {
-    self.window.setWindowTitle(self.config.window.title);
+    var buf: [rex.terminal.max_title_len:0]u8 = undefined;
+    self.window.setWindowTitle(windowTitle(self.config.window.title, self.driver.copyTitle(&buf)));
+}
+
+/// The title to show: the configured text when it is set, else the title
+/// the program set, else `Config.Window.default_title`.
+fn windowTitle(configured: ?[:0]const u8, program: [:0]const u8) [:0]const u8 {
+    if (configured) |text| return text;
+    return if (program.len > 0) program else Config.Window.default_title;
 }
 
 /// Rings the X bell at the configured volume (window attention only where
@@ -1435,6 +1443,7 @@ pub fn reloadConfig(self: *App) void {
     self.background_color = .{ bg.r, bg.g, bg.b, self.config.window.background.alpha };
     self.renderer.background.option.alpha = self.config.window.background.alpha;
     self.driver.setTheme(self.config.theme);
+    self.updateWindowTitle();
     self.frame_builder.last_generation = null;
 
     self.frame_builder.dim_alpha = renderer_mod.Frame.alphaByte(self.config.window.dim_alpha);
@@ -2857,6 +2866,13 @@ test "reapInBackground: reaps a finished child without a zombie" {
         if (tries == 200) return error.ChildNotReaped;
         std.Io.sleep(std.testing.io, .fromMilliseconds(10), .awake) catch {};
     }
+}
+
+test "windowTitle: configured text wins, then the program's title, then the default" {
+    try std.testing.expectEqualStrings("fixed", windowTitle("fixed", "vim"));
+    try std.testing.expectEqualStrings("fixed", windowTitle("fixed", ""));
+    try std.testing.expectEqualStrings("vim", windowTitle(null, "vim"));
+    try std.testing.expectEqualStrings(Config.Window.default_title, windowTitle(null, ""));
 }
 
 test "Driver: single and threaded polymorphic dispatch" {

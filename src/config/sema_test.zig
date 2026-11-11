@@ -137,14 +137,14 @@ test "apply: unknown keys suggest a close name in the same section" {
 test "apply: retired, duplicate and missing values" {
     var a = try Applied.init(
         \\[window]
-        \\title = rex
+        \\background_blur = 4
         \\width = 800
         \\width = 900
         \\height =
     );
     defer a.deinit();
     try a.expectErrors(&.{
-        .{ .retired_key, 1, "'title' was removed: not implemented yet" },
+        .{ .retired_key, 1, "'background_blur' was removed: not implemented yet" },
         .{ .duplicate_key, 3, "'width' is set more than once; the last value is used" },
         .{ .missing_value, 4, "window.height has no value, expected a whole number from 1 to 65535" },
     });

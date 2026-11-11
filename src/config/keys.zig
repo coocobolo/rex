@@ -85,6 +85,10 @@ pub const Kind = enum {
     /// Printable ASCII characters (`!` to `~`), copied into a `[]const u8`
     /// field; quote them when they include `#`. `""` is none.
     word_characters,
+    /// UTF-8 text without control characters, copied into a `[:0]const u8`
+    /// field; quote it when it has spaces or `#`. A quoted keyword (`"auto"`)
+    /// is the literal text.
+    text,
     /// A list of program arguments, one per line, with `font_fallback`'s
     /// rules (F2): the first line in a file replaces the lower layer's list,
     /// `none` empties it, `default` restores the base list; a quoted value is
@@ -199,6 +203,7 @@ pub const table = [_]Key{
     // The size the window opens with.
     .{ .section = .window, .name = "width", .field = "window.size.width", .bounds = at_least_one, .reload = .restart },
     .{ .section = .window, .name = "height", .field = "window.size.height", .bounds = at_least_one, .reload = .restart },
+    .{ .section = .window, .name = "title", .field = "window.title", .kind = .text, .null_keyword = .auto },
 
     .{ .section = .bell, .name = "enabled", .field = "window.bell.enabled" },
     .{ .section = .bell, .name = "volume", .field = "window.bell.volume", .kind = .fraction },
@@ -310,7 +315,6 @@ pub const Retired = struct {
 /// real keys when implemented; the others belong to removed features (#47).
 pub const retired = [_]Retired{
     .{ .section = .window, .name = "background_blur", .fate = .{ .removed = "not implemented yet" } },
-    .{ .section = .window, .name = "title", .fate = .{ .removed = "not implemented yet" } },
     .{ .section = .wellbeing, .name = "eyesight_interval", .fate = .{ .renamed = "wellbeing.eyesight.interval" } },
     .{ .section = .wellbeing, .name = "movement_interval", .fate = .{ .renamed = "wellbeing.movement.interval" } },
     .{ .section = .wellbeing, .name = "hydration_interval", .fate = .{ .removed = "hydration and posture reminders were removed" } },
@@ -371,7 +375,6 @@ pub const internal = [_][]const u8{
     "selection.classifier.non_ascii",
     "selection.classifier.control",
     // UI copy and glyphs not exposed yet.
-    "window.title",
     "window.toast.icon_style",
     "window.toast.dismiss_str",
     "window.toast.action_prompt",
@@ -480,6 +483,7 @@ fn writeExpectedKey(comptime key: Key, w: *std.Io.Writer) std.Io.Writer.Error!vo
         .directory_path => try w.writeAll("a path to a directory"),
         .shell_argument => try w.writeAll("a program argument, one per line, or none"),
         .word_characters => try w.writeAll("printable ASCII characters, like \"-./~@\", or \"\""),
+        .text => try w.writeAll("text, like \"rex\""),
     }
     if (key.null_keyword) |keyword| try w.print(", or {t}", .{keyword});
 }
@@ -626,6 +630,13 @@ fn applyKey(comptime key: Key, config: *Config, ctx: Context, text: []const u8) 
         fieldPtr(Config, key.field, config).* = try ctx.arena.dupe(u8, chars);
         return;
     }
+    if (key.kind == .text) {
+        const chars = try unquote(ctx.arena, text);
+        if (!std.unicode.utf8ValidateSlice(chars)) return error.InvalidValue;
+        for (chars) |c| if (c < ' ' or c == 0x7f) return error.InvalidValue;
+        fieldPtr(Config, key.field, config).* = try ctx.arena.dupeZ(u8, chars);
+        return;
+    }
     if (key.kind == .program_path) {
         const path = try unquote(ctx.arena, text);
         if (!std.fs.path.isAbsolute(path) and !std.mem.startsWith(u8, path, "~/")) return error.InvalidValue;
@@ -718,7 +729,7 @@ fn checkRow(comptime key: Key, comptime T: type) void {
         .theme => Value == Theme,
         .font_fallback => Value == []const FontConfig.Face,
         .path => Value == [*:0]const u8 or Value == FontConfig.Face,
-        .program_path, .directory_path => Value == [:0]const u8,
+        .program_path, .directory_path, .text => Value == [:0]const u8,
         .shell_argument => Value == []const [:0]const u8,
         .word_characters => Value == []const u8,
     };
@@ -749,7 +760,7 @@ fn parseValue(comptime key: Key, comptime V: type, text: []const u8) Error!V {
         },
         .theme => return theme_presets.get(text) orelse error.InvalidValue,
         .font_fallback, .shell_argument => unreachable, // Sema handles list rows
-        .path, .program_path, .directory_path, .word_characters => unreachable, // applyKey handles them
+        .path, .program_path, .directory_path, .word_characters, .text => unreachable, // applyKey handles them
     }
 }
 

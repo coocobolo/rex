@@ -191,11 +191,12 @@ pub fn Driver(comptime option: Option) type {
             };
         }
 
-        /// Returns the current window title snapshot.
-        pub fn getTitle(self: *const Self) []const u8 {
+        /// Copies the terminal's title into `buf` and returns it. Empty
+        /// until a program sets one with OSC 0 or 2, and after RIS.
+        pub fn copyTitle(self: *const Self, buf: *[term.max_title_len:0]u8) [:0]const u8 {
             return switch (self.*) {
-                .single => |*d| d.getTitle(),
-                .threaded => |d| d.getTitle(),
+                .single => |*d| d.copyTitle(buf),
+                .threaded => |d| d.copyTitle(buf),
             };
         }
 
