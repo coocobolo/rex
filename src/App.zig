@@ -3109,6 +3109,10 @@ test "OSC 52 copy: the program's text reaches CLIPBOARD and PRIMARY unchanged" {
     const deny: Config.Clipboard = .{ .osc52_write = .deny };
     serveClipboard(std.testing.allocator, deny, try rig.program("\x1b]52;c;aGk=\x07"), &rig.window, &rig.driver, rig.buf);
     try std.testing.expectEqualStrings("kept", rig.window.getClipboard().?);
+    // The NUL write is refused with a warning, which this test expects.
+    const shown = std.testing.log_level;
+    std.testing.log_level = .err;
+    defer std.testing.log_level = shown;
     serveClipboard(std.testing.allocator, allow, try rig.program("\x1b]52;c;aABp\x07"), &rig.window, &rig.driver, rig.buf); // "h\x00i"
     try std.testing.expectEqualStrings("kept", rig.window.getClipboard().?);
 }
