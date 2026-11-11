@@ -197,3 +197,17 @@ test "encode: Home and End follow DECCKM like the arrows, as in xterm" {
     try expectKey("\x1b[1;5F", .end, ctrl, .{ .cursor_keys = true });
     try expectKey("\x8fH", .home, 0, .{ .cursor_keys = true, .eight_bit_controls = true });
 }
+
+test "encode: keypad Enter sends SS3 M in keypad application mode" {
+    const app: encode.Modes = .{ .keypad_app = true };
+    try expectKey("\x1bOM", .kp_enter, 0, app);
+    try expectKey("\x1bO5M", .kp_enter, ctrl, app);
+    try expectKey("\x1bO2M", .kp_enter, shift, app);
+    try expectKey("\x1bO3M", .kp_enter, alt, app);
+    try expectKey("\x8fM", .kp_enter, 0, .{ .keypad_app = true, .eight_bit_controls = true });
+    // The main Enter key is not a keypad key.
+    try expectKey("\r", .enter, 0, app);
+    // Numeric mode is unchanged.
+    try expectKey("\r", .kp_enter, 0, .{});
+    try expectKey("\r", .kp_enter, ctrl, .{});
+}

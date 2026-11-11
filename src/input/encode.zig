@@ -102,6 +102,13 @@ const Out = struct {
         return self.print('O', "{c}", .{letter});
     }
 
+    /// SS3 letter, or SS3 mod letter with a modifier: the keypad in
+    /// application mode (`input.c`, the IsKeypadKey branch of Input).
+    fn keypad(self: Out, letter: u8, mod: u8) []const u8 {
+        if (mod <= 1) return self.ss3(letter);
+        return self.print('O', "{d}{c}", .{ mod, letter });
+    }
+
     /// CSI 27 ; mod ; code ~, the modifyOtherKeys form.
     fn otherKey(self: Out, mod: u8, code: u8) []const u8 {
         return self.print('[', "27;{d};{d}~", .{ mod, code });
@@ -399,7 +406,10 @@ pub fn encode(key: Key, mods: Modifiers, modes: Modes, buf: *[max_len]u8) []cons
         .page_up => out.tilde(5, mod),
         .page_down => out.tilde(6, mod),
 
-        .enter, .kp_enter => if (mods.alt) out.escThen('\r') else "\r",
+        .enter => if (mods.alt) out.escThen('\r') else "\r",
+        // In keypad application mode xterm sends SS3 M, with the modifier
+        // parameter before the M (measured on xterm 390).
+        .kp_enter => if (modes.keypad_app) out.keypad('M', mod) else if (mods.alt) out.escThen('\r') else "\r",
         .backspace => if (mods.ctrl) "\x08" else if (mods.alt) out.escThen(0x7f) else "\x7f",
         // Shift+Tab is always the back tab.
         .tab => if (mods.shift) out.csi('Z', 1) else if (mods.alt) out.escThen('\t') else "\t",
