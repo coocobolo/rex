@@ -8,7 +8,7 @@ pub const Modifiers = packed struct(u8) {
     ctrl: bool = false,
     alt: bool = false,
     super: bool = false,
-    _pad: u4 = 0,
+    _: u4 = 0,
 
     pub const none: Modifiers = .{};
 

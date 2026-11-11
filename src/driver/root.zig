@@ -61,17 +61,7 @@ pub const SharedModes = packed struct(u32) {
     reports_motion: bool = false,
     /// S8C1T: replies and key sequences use 8-bit C1 controls.
     eight_bit_controls: bool = false,
-    _pad: u22 = 0,
-
-    /// Bitcast helper to u32 for atomic storage.
-    pub inline fn toU32(self: SharedModes) u32 {
-        return @bitCast(self);
-    }
-
-    /// Bitcast helper from u32 from atomic storage.
-    pub inline fn fromU32(val: u32) SharedModes {
-        return @bitCast(val);
-    }
+    _: u22 = 0,
 };
 
 /// Settings both drivers start the terminal with. Every field without a
@@ -258,7 +248,7 @@ pub fn Driver(comptime option: Option) type {
 
 test "driver: SharedModes packing and bit conversion" {
     const testing = std.testing;
-    var modes = SharedModes{
+    const modes = SharedModes{
         .cursor_keys = true,
         .keypad_app = true,
         .modify_other_keys = .full,
@@ -269,8 +259,8 @@ test "driver: SharedModes packing and bit conversion" {
         .reports_motion = true,
     };
 
-    const raw = modes.toU32();
-    const unpacked = SharedModes.fromU32(raw);
+    const raw: u32 = @bitCast(modes);
+    const unpacked: SharedModes = @bitCast(raw);
 
     try testing.expect(unpacked.cursor_keys);
     try testing.expect(unpacked.keypad_app);
