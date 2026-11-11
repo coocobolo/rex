@@ -978,8 +978,11 @@ pub fn Terminal(comptime option: Option) type {
 
             self.input.reset();
 
+            // getTitle and getIconName slice up to a NUL at the length.
             self.title_len = 0;
+            self.title[0] = 0;
             self.icon_name_len = 0;
+            self.icon_name[0] = 0;
 
             self.cursor_color = null;
             self.selection_foreground = null;

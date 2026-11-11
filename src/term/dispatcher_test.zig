@@ -4256,3 +4256,13 @@ test "TermName refuses a name it would have to cut" {
     try testing.expectEqualStrings("x" ** max_term_name_len, longest.slice());
     try testing.expectEqualStrings("", TermName.empty.slice());
 }
+
+test "esc: RIS empties the title and icon name" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+    t.feed("\x1b]0;htop\x07");
+    try testing.expectEqualStrings("htop", t.getTitle());
+    t.feed("\x1bc");
+    try testing.expectEqualStrings("", t.getTitle());
+    try testing.expectEqualStrings("", t.getIconName());
+}
