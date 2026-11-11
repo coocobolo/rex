@@ -1549,3 +1549,20 @@ test "palette: an OSC 4 change alone reaches the next frame" {
     _ = t.snapshot(&frame);
     try testing.expectEqual(Rgb{ .r = 1, .g = 2, .b = 3 }, frame.palette.getIndexed(1));
 }
+
+test "resize: a terminal without scrollback resizes the primary screen too" {
+    const NoScrollback = Terminal(.{
+        .max_rows = 8,
+        .max_cols = 16,
+        .max_scrollback = 0,
+        .name = "test",
+        .version = "0.0.1",
+    });
+    var t = try NoScrollback.create(alloc);
+    defer t.destroy(alloc);
+
+    t.resize(6, 10);
+    try testing.expectEqual(@as(u16, 6), t.primary.active_rows);
+    try testing.expectEqual(@as(u16, 10), t.primary.active_cols);
+    try testing.expectEqual(@as(u16, 10), t.alternate.active_cols);
+}

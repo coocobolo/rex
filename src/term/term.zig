@@ -1310,9 +1310,10 @@ pub fn Terminal(comptime option: Option) type {
             const r: u16 = @intCast(std.math.clamp(rows, 1, option.max_rows));
             const c: u16 = @intCast(std.math.clamp(cols, 1, option.max_cols));
 
-            if (c != self.primary.active_cols) {
-                self.primary.reflowBuffer(r, c);
-            } else {
+            if (c != self.primary.active_cols) self.primary.reflowBuffer(r, c);
+            // `reflowBuffer` does nothing without scrollback, so the primary
+            // would keep its old width while the pty gets the new one.
+            if (self.primary.active_rows != r or self.primary.active_cols != c) {
                 self.primary.setActive(r, c);
             }
 
