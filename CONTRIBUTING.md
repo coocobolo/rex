@@ -43,7 +43,9 @@ or `none` in the config stays as written. With the faces missing and
 Check each file you touch against this list.
 
 - **One concern per file.** A `//!` header says what the file owns and
-  what it must not touch. `term/` never imports `renderer/`.
+  what it must not touch. `term/` never imports `renderer/`; it depends
+  only on `vt/`, `unicode/`, `color/` and `input/`, and `input/` names no
+  GLFW (ADR 0007).
 - **A pure parser.** `vt/` turns bytes into actions and holds no
   terminal state.
 - **Typed invariants.** Use enums and distinct types, not magic
