@@ -2837,7 +2837,7 @@ test "csi: DECXCPR report cursor position" {
     try testing.expectEqualStrings("\x1b[?6;11R", t.response.slice());
 }
 
-test "csi: DA1 reports a VT220 with colour and clipboard" {
+test "csi: DA1 reports a VT220 with colour and no clipboard until OSC 52 works" {
     var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
@@ -2845,7 +2845,7 @@ test "csi: DA1 reports a VT220 with colour and clipboard" {
     t.feed("\x1b[0c");
 
     try testing.expect(t.hasReplies());
-    try testing.expectEqualStrings("\x1b[?62;22;52c", t.response.slice());
+    try testing.expectEqualStrings("\x1b[?62;22c", t.response.slice());
 }
 
 test "esc: DECID answers exactly like DA1" {
@@ -2867,7 +2867,7 @@ test "esc: DECID answers with 8-bit controls under s8c1t" {
 
     t.control_format = .s8c1t;
     t.feed("\x1bZ");
-    try testing.expectEqualStrings("\x9b?62;22;52c", t.response.slice());
+    try testing.expectEqualStrings("\x9b?62;22c", t.response.slice());
 }
 
 test "csi: DA2 reports the terminal type and version" {

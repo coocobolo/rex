@@ -468,7 +468,7 @@ test "SingleDriver: DA1 reply drained back to mock PTY" {
     const n = system.read(sv[1], &reply_buf, reply_buf.len);
     try testing.expect(n > 0);
     const n_u: usize = @intCast(n);
-    try testing.expectEqualStrings("\x1b[?62;22;52c", reply_buf[0..n_u]);
+    try testing.expectEqualStrings("\x1b[?62;22c", reply_buf[0..n_u]);
 }
 
 test "SingleDriver: extractSelectionText for stream and block selections" {
