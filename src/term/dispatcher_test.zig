@@ -3699,7 +3699,6 @@ test "m2: DECSTR leaves everything outside the VT510 DECSTR table alone" {
     // reverse wrap, modifyOtherKeys, a tab stop, text, line attribute.
     t.feed("\x1b[?5h\x1b[4 q\x1b[?12h\x1b[20h\x1b[?8l\x1b[3g\x1b[1;5H\x1bH");
     t.feed("\x1b[H\x1b#6AB\x1b[2;3H");
-    t.active().mode.cursor_blink = true;
     t.feed("\x1b[?45h");
     t.mode.modify_other_keys = 2;
     const style = t.active().cursor.style;
@@ -3707,7 +3706,6 @@ test "m2: DECSTR leaves everything outside the VT510 DECSTR table alone" {
 
     const s = t.active();
     try testing.expect(s.mode.reverse_video);
-    try testing.expect(s.mode.cursor_blink);
     try testing.expectEqual(style, s.cursor.style);
     try testing.expect(t.mode.linefeed);
     try testing.expect(!t.mode.auto_repeat);

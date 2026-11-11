@@ -92,13 +92,12 @@ pub const Saved = struct {
     /// stale by DECRC, which interns the colors again.
     flags: AttrFlags = .{},
     colors: Colors = .default,
-    style: Style = .steady_block,
     charset: CharsetState = .{},
     charset_is_identity: bool = true,
 };
 
 comptime {
-    std.debug.assert(28 == @sizeOf(Saved));
+    std.debug.assert(24 == @sizeOf(Saved));
 }
 
 test "Cursor: position and style shape" {
@@ -117,6 +116,5 @@ test "Cursor: position and style shape" {
     const saved = Saved{};
     try std.testing.expectEqual(0, saved.row);
     try std.testing.expectEqual(0, saved.col);
-    try std.testing.expectEqual(Cursor.Style.steady_block, saved.style);
-    try std.testing.expectEqual(28, @sizeOf(Saved));
+    try std.testing.expectEqual(24, @sizeOf(Saved));
 }

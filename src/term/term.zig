@@ -301,8 +301,6 @@ pub const Response = struct {
     }
 };
 
-pub const ResponseQueue = Response;
-
 /// What a `feed` asks the caller to do. Coalesced host signals inspected
 /// by the caller on each update.
 /// Strongly typed bit flags for terminal emulation protocol events.
@@ -1005,7 +1003,7 @@ pub fn Terminal(comptime option: Option) type {
                             const alt = &self.alternate;
                             alt.scroll_offset = 0;
                             alt.row_map_is_identity = true;
-                            alt.cached_row_phys = std.math.maxInt(u16);
+                            alt.cached_row = std.math.maxInt(u16);
                             alt.mode = .{};
                             alt.cursor = .{};
                             alt.scroll_top = 0;
@@ -1037,7 +1035,7 @@ pub fn Terminal(comptime option: Option) type {
                             // Reset ring buffer, must happen before any physRow-dependent ops
                             alt.scroll_offset = 0;
                             alt.row_map_is_identity = true;
-                            alt.cached_row_phys = std.math.maxInt(u16);
+                            alt.cached_row = std.math.maxInt(u16);
                             // Reset cursor and scroll region
                             alt.cursor = .{};
                             alt.mode = .{};

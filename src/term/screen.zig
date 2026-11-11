@@ -44,15 +44,13 @@ pub const LineAttr = enum(u8) {
 };
 
 /// Per screen, each screen has its own copy
-pub const Mode = packed struct {
+pub const Mode = packed struct(u8) {
     auto_wrap: bool = true, // DECAWM / CSI ? 7 h/l
     insert: bool = false, // IRM / CSI 4 h/l     (ANSI mode 4)
     cursor_visibility: bool = true, // DECTCEM  CSI ? 25 h/l
-    cursor_blink: bool = false, // xterm     CSI ? 12 h/l
     reverse_video: bool = false, // DECSCNM  CSI ? 5 h/l
-    smooth_scroll: bool = false, // DECSCLM  CSI ? 4 h/l   (DEC private mode 4)
     reverse_wrap: bool = false, // xterm reverse wraparound  CSI ? 45 h/l
-    _pad: u7 = 0, // 11 bits used; pad to 16 bits
+    _pad: u3 = 0,
 };
 
 /// Sets `n` cells at `dest` to `Cell{}`, the blank with default colors.
@@ -74,15 +72,6 @@ comptime {
 /// no codepoint, whatever kind of wide cell `left` is.
 fn rightHalf(left: Cell) Cell {
     return .{ .kind = .wide_right, .style = left.style, .flags = left.flags };
-}
-
-fn nextPowerOfTwo(comptime n: usize) usize {
-    if (n <= 1) return 1;
-
-    var result: usize = 1;
-    while (result < n) : (result <<= 1) {}
-
-    return result;
 }
 
 /// A terminal screen backed bya ring-buffer cell grid with scrollback history.
@@ -162,7 +151,7 @@ pub fn Screen(comptime option: Option) type {
 
     // Total rows in the ring buffer (active capacity + scrollback capacity)
     const logical_ring_rows = max_rows + max_scrollback;
-    const ring_rows = nextPowerOfTwo(logical_ring_rows);
+    const ring_rows = std.math.ceilPowerOfTwoAssert(usize, logical_ring_rows);
     const ring_mask = ring_rows - 1;
 
     const max_u16: usize = std.math.maxInt(u16);
@@ -188,7 +177,6 @@ pub fn Screen(comptime option: Option) type {
         const Self = @This();
 
         // Instrumentation only, gated so release builds pay nothing.
-        pub const instrument = optimize_mode == .Debug or @hasDecl(option, "instrument_calls");
 
         pub const Rotation = enum { left, right };
 
@@ -328,7 +316,7 @@ pub fn Screen(comptime option: Option) type {
         /// `grapheme_table` size that triggers the next `compactGraphemes`.
         grapheme_compact_at: u32 = grapheme_compact_min,
 
-        cached_row_phys: u16 = std.math.maxInt(u16),
+        cached_row: u16 = std.math.maxInt(u16),
         cached_row_slice: []Cell = &.{},
 
         // batching: bool = false,
@@ -1004,8 +992,8 @@ pub fn Screen(comptime option: Option) type {
         }
 
         inline fn currentRow(self: *Self) []Cell {
-            if (self.cursor.row != self.cached_row_phys) {
-                self.cached_row_phys = self.cursor.row;
+            if (self.cursor.row != self.cached_row) {
+                self.cached_row = self.cursor.row;
                 self.cached_row_slice = self.rowMut(self.cursor.row);
             }
             return self.cached_row_slice;
@@ -1181,11 +1169,7 @@ pub fn Screen(comptime option: Option) type {
                 self.writeChar(self.penCell(kind, self.last_char));
             }
 
-            // FIXME called bump every writeChar bad for hot-paths.
-            // This case can be addressed later by batching the writes.
-
-            // NOTE last_char is intentionally NOT updated here.
-            // NOTE writeChar calls bump() each iteration that's fine.
+            // last_char is intentionally not updated here.
         }
 
         /// Scans left/right from `col` on the given anchor's row, extending while
@@ -1659,7 +1643,7 @@ pub fn Screen(comptime option: Option) type {
                 self.dirty_rows.setRangeValue(.{ .start = region_top, .end = region_bottom + 1 }, true);
             }
 
-            self.cached_row_phys = max_u16; // ring buffer rotated, cache is stale
+            self.cached_row = max_u16; // ring buffer rotated, cache is stale
             return true;
         }
 
@@ -1672,11 +1656,9 @@ pub fn Screen(comptime option: Option) type {
         ///    Clearing the newly exposed bottom row is unavoidable.
         ///
         /// Partial-region scroll:
-        ///    O(region_height × active_cols), a single forward bulk-copy pass
-        ///    shifts all rows up by `count` positions, then clears the vacated
-        ///    bottom rows. This is optimal for a flat cell array; avoiding the
-        ///    copy entirely would require a row-indirection table at the cost of
-        ///    an extra pointer chase on every cell access.
+        ///    O(region_height) for the row map: `rotateRowMapRegion` rotates
+        ///    the region's entries in `row_map`, then the vacated bottom rows
+        ///    are cleared. No cells are copied.
         ///
         /// In both cases `count = min(n, region_height)` so over-scrolling is safe.
         pub inline fn scrollUp(self: *Self, n: usize) void {
@@ -1711,7 +1693,7 @@ pub fn Screen(comptime option: Option) type {
             }
 
             self.dirty_rows.setRangeValue(.{ .start = region_top, .end = region_bot + 1 }, true);
-            self.cached_row_phys = max_u16; // row_map rotated, cache is stale
+            self.cached_row = max_u16; // row_map rotated, cache is stale
             self.bump();
         }
 
@@ -1796,15 +1778,14 @@ pub fn Screen(comptime option: Option) type {
                         const phys = self.physRow(r);
                         @memset(self.cells[phys * max_cols ..][0..self.active_cols], blank);
                         self.line_attrs[phys] = .normal;
-                        //                         @memset(self.rowMutRaw(r)[0..self.active_cols], blank);
-                        //                         self.line_attrs[self.physRow(r)] = .normal;
                     }
                     // The intern table is not reset here: scrollback cells
                     // still reference it. `compactGraphemes` reclaims it.
                 },
                 3 => {
                     // Erase scrollback history without touching the active area.
-                    // On alternate screen (max_scrollback=0) this is a no-op; correct per xterm behavior.
+                    // Both screens share one type, so this clears the alternate
+                    // screen's scrollback too when it is active.
                     if (comptime is_scrollback_used) {
                         self.scrollback_used = 0;
                         self.viewport_offset = 0;
@@ -1954,14 +1935,15 @@ pub fn Screen(comptime option: Option) type {
                 self.cursor.wrap_pending = false;
             }
 
-            self.cached_row_phys = max_u16;
+            self.cached_row = max_u16;
             self.bump();
         }
 
         /// Reflows the entire screen history and active area to `new_rows x new_cols`.
         pub fn reflowBuffer(self: *Self, new_rows: usize, new_cols: usize) void {
-            // Precondition: alternate screen / zero-scrollback never reflow (TUI
-            // apps manage their own grid).
+            // A screen without scrollback has no history to reflow. The
+            // alternate screen is never reflowed: `Terminal.resize` calls
+            // `setActive` for it, since TUI apps repaint their own grid.
             if (comptime !is_scrollback_used) return;
 
             // No-op if columns haven't changed or dimensions are empty
@@ -2190,7 +2172,7 @@ pub fn Screen(comptime option: Option) type {
             self.row_map_is_identity = true;
             for (0..ring_rows) |i| self.row_map[i] = @intCast(i);
             @memset(&self.line_attrs, .normal);
-            self.cached_row_phys = max_u16;
+            self.cached_row = max_u16;
             self.dirty_rows = .full;
             self.bump();
         }
@@ -2691,7 +2673,7 @@ pub fn Screen(comptime option: Option) type {
 
             // Mark all affected rows dirty
             self.dirty_rows.setRangeValue(.{ .start = r, .end = region_bottom + 1 }, true);
-            self.cached_row_phys = max_u16;
+            self.cached_row = max_u16;
             self.bump();
         }
 
@@ -2758,7 +2740,7 @@ pub fn Screen(comptime option: Option) type {
             self.cursor.wrap_pending = false;
             self.dirty_rows.setRangeValue(.{ .start = r, .end = region_bottom + 1 }, true);
             // for (r..region_bottom + 1) |dirty_r| self.dirty_rows.set(dirty_r);
-            self.cached_row_phys = max_u16;
+            self.cached_row = max_u16;
             self.bump();
         }
 
@@ -2879,41 +2861,6 @@ pub fn Screen(comptime option: Option) type {
             self.bump();
         }
 
-        /// Cursor Next Line (CNL / CSI Ps E).
-        ///
-        /// Moves the cursor down `n` lines and resets the column to 0.
-        /// Does NOT scroll the cursor clamps at `active_rows-1`
-        /// (or `scroll_bottom` when origin mode is active).
-        ///
-        /// `n=0` is treated as `n=1` (ECMA-48 S8.3.36 default parameter rule).
-        /// `wrap_pending` is cleared. Old and new cursor rows are marked dirty.
-        pub fn cursorNextLine(self: *Self, n: usize) void {
-            const count = if (n == 0) 1 else n;
-            const limit: usize = if (self.cursor.origin) self.scroll_bottom else self.active_rows - 1;
-
-            self.setCursorRow(@intCast(@min(@as(usize, self.cursor.row) + count, limit)));
-            self.cursor.col = 0;
-            self.bump();
-        }
-
-        /// Cursor Previous Line (CPL / CSI Ps F).
-        ///
-        /// Moves the cursor up `n` lines and resets the column to 0.
-        /// Does NOT scroll — the cursor clamps at row 0
-        /// (or `scroll_top` when origin mode is active).
-        ///
-        /// `n = 0` is treated as `n = 1` (ECMA-48 §8.3.55 default parameter rule).
-        /// `wrap_pending` is cleared. Old and new cursor rows are marked dirty.
-        pub fn cursorPrevLine(self: *Self, n: usize) void {
-            const count = if (n == 0) @as(usize, 1) else n;
-            const limit: usize = if (self.cursor.origin) self.scroll_top else 0;
-            // Saturating subtraction prevents underflow; @max enforces
-            // the lower bound when origin mode is active (limit = scroll_top > 0).
-            self.setCursorRow(@intCast(@max(@as(usize, self.cursor.row) -| count, limit)));
-            self.cursor.col = 0;
-            self.bump();
-        }
-
         /// Soft Terminal Reset (DECSTR / CSI ! p), screen part.
         ///
         /// Resets exactly the screen items of the VT510 DECSTR table
@@ -2941,7 +2888,7 @@ pub fn Screen(comptime option: Option) type {
             self.saved_cursor = .{};
             self.charset_is_identity = true;
 
-            self.cached_row_phys = max_u16;
+            self.cached_row = max_u16;
             self.setDirtyAll();
             self.bump();
         }
@@ -2996,21 +2943,9 @@ pub fn Screen(comptime option: Option) type {
             }
 
             self.charset_is_identity = true;
-            self.cached_row_phys = max_u16;
+            self.cached_row = max_u16;
             self.setDirtyAll();
             self.bump();
-
-            self.debugDumpLineAttrs();
-        }
-
-        pub fn debugDumpLineAttrs(self: *const Self) void {
-            for (0..self.active_rows) |r| {
-                const phys = self.physRow(@intCast(r));
-                const attr = self.line_attrs[phys];
-                if (attr != .normal) {
-                    log.debug("row {} (phys {}) has line_attr: {}\n", .{ r, phys, attr });
-                }
-            }
         }
     };
 }

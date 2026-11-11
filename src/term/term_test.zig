@@ -662,14 +662,10 @@ test "softReset: active screen non-targeted modes survive" {
     var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
-    t.active().mode.cursor_blink = true;
-    t.active().mode.smooth_scroll = true;
     t.mode.column_132 = true;
     t.softReset();
 
     // DECSTR must NOT touch these
-    try testing.expect(t.active().mode.cursor_blink);
-    try testing.expect(t.active().mode.smooth_scroll);
     try testing.expect(t.mode.column_132);
 }
 

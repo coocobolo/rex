@@ -169,7 +169,7 @@ pub const Csi = struct {
 
             'E' => {
                 // CNL / CSI Ps E (down N, column 0)
-                // cursorUp clears `wrap_pending`.
+                // cursorDown clears `wrap_pending`.
                 screen.cursorDown(p1);
                 screen.cursor.col = 0;
             },

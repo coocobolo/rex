@@ -22,8 +22,7 @@ pub const Charset = enum(u4) {
     // 15 reserved
 
     /// Map the final byte of ESC ( X / ESC ) X / ESC * X / ESC + X to a Charset.
-    /// Returns null for unrecognized designators.
-    /// Fallbacks to ascii if mismatch.
+    /// Unrecognized designators map to ASCII.
     pub fn charsetFromByte(byte: u8) Charset {
         return switch (byte) {
             '0' => .dec_special,
