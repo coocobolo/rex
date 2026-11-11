@@ -9,11 +9,10 @@
 //! `send_to_pty` takes an argument and is reserved (F14).
 
 const std = @import("std");
-const input = @import("../input.zig");
-const Key = input.Key;
-const Modifiers = input.Modifiers;
-const Action = input.Action;
-const Binding = input.Binding;
+const Key = @import("../input/key.zig").Key;
+const Modifiers = @import("../input/key.zig").Modifiers;
+const Action = @import("../input/binding.zig").Action;
+const Binding = @import("../input/binding.zig").Binding;
 
 pub const Error = error{
     /// Not modifiers plus exactly one key, or an unknown or repeated name.
@@ -32,20 +31,13 @@ const key_names = blk: {
     var n: usize = 0;
     for (fields) |field| {
         const key: Key = @enumFromInt(field.value);
-        if (isModifierKey(key)) continue;
+        if (key.isModifier()) continue;
         const name = if (std.mem.startsWith(u8, field.name, "num_")) field.name["num_".len..] else field.name;
         kvs[n] = .{ name, key };
         n += 1;
     }
     break :blk std.StaticStringMap(Key).initComptime(kvs[0..n]);
 };
-
-fn isModifierKey(key: Key) bool {
-    return switch (key) {
-        .left_shift, .right_shift, .left_control, .right_control, .left_alt, .right_alt, .left_super, .right_super => true,
-        else => false,
-    };
-}
 
 /// The actions by name: every `Action` tag without a payload.
 const action_names = blk: {

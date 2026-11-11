@@ -1141,7 +1141,7 @@ pub fn Terminal(comptime option: Option) type {
         /// XTMODKEYS for modifyOtherKeys (CSI > 4 ; Pv m): sets the level,
         /// or resets it to 0 when `level` is null (Pv omitted), as xterm
         /// does (`charproc.c` CASE_SET_MOD_FKEYS). Levels above 2 are
-        /// ignored: the encoder (`input.zig`) supports 0 to 2.
+        /// ignored: the key encoder supports 0 to 2.
         pub fn setModifyOtherKeys(self: *Self, level: ?u16) void {
             const value = level orelse 0;
             if (value > 2) return;

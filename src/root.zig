@@ -5,7 +5,8 @@
 const std = @import("std");
 
 pub const App = @import("App.zig");
-pub const input = @import("input.zig");
+pub const input = @import("input/root.zig");
+pub const glfw_key_encoder = @import("glfw_key_encoder.zig");
 pub const Selection = @import("Selection.zig");
 
 pub const color = @import("color/root.zig");
@@ -27,7 +28,8 @@ test {
     _ = @import("color/root.zig");
     _ = @import("ui/root.zig");
     _ = @import("fuzz/root.zig");
-    _ = @import("input_test.zig");
+    _ = @import("input/root.zig");
+    _ = @import("glfw_key_encoder_test.zig");
     _ = @import("driver/root.zig");
     _ = @import("config/root.zig");
     _ = @import("flag_set.zig");

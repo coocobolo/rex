@@ -12,7 +12,7 @@ const Ast = @import("Ast.zig");
 const keys = @import("keys.zig");
 const Config = @import("Config.zig");
 const keybind = @import("keybind.zig");
-const Binding = @import("../input.zig").Binding;
+const Binding = @import("../input/binding.zig").Binding;
 const Face = @import("../freetype/Config.zig").Face;
 const PlainVar = @import("../env/root.zig").PlainVar;
 

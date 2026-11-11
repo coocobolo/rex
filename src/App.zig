@@ -58,7 +58,7 @@ const Rasterizer = rex.FreeType.Rasterizer;
 
 const input = rex.input;
 const Binding = input.Binding;
-const KeyContext = input.KeyContext;
+const KeyContext = rex.glfw_key_encoder.KeyContext;
 
 const Pty = rex.termio.Pty;
 const latency_trace = rex.driver.latency_trace;
@@ -2074,8 +2074,8 @@ const keyCb: c.GLFWkeyfun = struct {
         const pressed_at = if (latency_trace.enabled) latency_trace.now(app.io) else {};
         app.wellbeing_state.recordActivity();
 
-        const maybe_key = rex.input.Key.fromGlfw(key);
-        const key_mods = rex.input.Modifiers.fromGlfw(mods);
+        const maybe_key = rex.renderer.glfw_key.key(key);
+        const key_mods = rex.renderer.glfw_key.modifiers(mods);
 
         if (app.routeKeyToUi(maybe_key, key_mods)) {
             app.skip_next_char = true;
@@ -2085,7 +2085,7 @@ const keyCb: c.GLFWkeyfun = struct {
 
         // A bare modifier keeps the selection, since it may start a
         // combination such as Ctrl+Shift+C.
-        if (!input.isModifierKey(key)) {
+        if (maybe_key == null or !maybe_key.?.isModifier()) {
             app.selection = .empty;
             app.needs_redraw = true;
             // Its bytes may come from here or from the char callback.
@@ -2101,7 +2101,7 @@ const keyCb: c.GLFWkeyfun = struct {
         };
 
         var buf: [32]u8 = undefined;
-        const bytes = rex.input.encodeKey(key, mods, context, &buf);
+        const bytes = rex.glfw_key_encoder.encodeKey(key, mods, context, &buf);
         if (bytes.len > 0) {
             // The key went out encoded, so its character must not follow
             // (Shift+letter under modifyOtherKeys 2). The next key event

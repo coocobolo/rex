@@ -3,7 +3,7 @@ const Ast = @import("Ast.zig");
 const Sema = @import("Sema.zig");
 const keys = @import("keys.zig");
 const Config = @import("Config.zig");
-const Binding = @import("../input.zig").Binding;
+const Binding = @import("../input/binding.zig").Binding;
 const test_config = @import("test_fixtures.zig").test_config;
 
 const gpa = std.testing.allocator;

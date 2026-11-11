@@ -5,7 +5,7 @@
 //! preferences belong here; `main.zig` puts its own on top.
 
 const Config = @import("Config.zig");
-const default_keymap = @import("../input.zig").default_keymap;
+const default_keymap = @import("../input/binding.zig").default_keymap;
 
 /// The documented default config file: every key with the value in
 /// `default` (checked by default_test.zig), except `[font] file`,
