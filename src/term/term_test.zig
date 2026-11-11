@@ -43,7 +43,8 @@ test "Terminal: moving by value keeps state and active screen" {
 
     try testing.expectEqual(.alternate, b.active_buffer);
     try testing.expectEqual(&b.alternate, b.active());
-    try testing.expectEqual(@as(u21, 'C'), b.active().cellAt(0, 0).codepoint);
+    // The cursor keeps its column across the switch (xterm).
+    try testing.expectEqual(@as(u21, 'C'), b.active().cellAt(0, 2).codepoint);
 
     b.feed("\x1b[?1049l" ++ "D");
     try testing.expectEqual(&b.primary, b.active());
@@ -877,8 +878,9 @@ test "Terminal: snapshot live view, dirty rows and buffer switch" {
     t.feed("\x1b[?1049h");
     try testing.expect(t.snapshot(&frame));
     try testing.expect(frame.is_alternate);
-    try testing.expectEqual(@as(u16, 0), frame.cursor.row);
-    try testing.expectEqual(@as(u16, 0), frame.cursor.col);
+    // The cursor stays where it was (xterm); only the cells change.
+    try testing.expectEqual(@as(u16, 1), frame.cursor.row);
+    try testing.expectEqual(@as(u16, 5), frame.cursor.col);
 
     // Switch back to primary.
     t.feed("\x1b[?1049l");
@@ -1565,4 +1567,65 @@ test "resize: a terminal without scrollback resizes the primary screen too" {
     try testing.expectEqual(@as(u16, 6), t.primary.active_rows);
     try testing.expectEqual(@as(u16, 10), t.primary.active_cols);
     try testing.expectEqual(@as(u16, 10), t.alternate.active_cols);
+}
+
+test "1049: entering keeps the cursor, pen, modes, shape, margins and tab stops (xterm)" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+    // Pen, DECTCEM off, DECAWM off, reverse wrap, underline cursor, region
+    // rows 2-9, DECOM, a tab stop cleared, G0 = DEC graphics.
+    t.feed("\x1b[38;2;9;8;7m\x1b[?25l\x1b[?7l\x1b[?45h\x1b[4 q\x1b[2;9r\x1b[?6h");
+    t.feed("\x1b[1;9H\x1b[g\x1b(0\x1b[3;5H");
+    const before = t.primary.cursor;
+    t.feed("\x1b[?1049h");
+
+    const s = t.active();
+    try testing.expectEqual(&t.alternate, s);
+    try testing.expectEqual(before.row, s.cursor.row);
+    try testing.expectEqual(before.col, s.cursor.col);
+    try testing.expect(s.cursor.origin);
+    try testing.expectEqual(before.style, s.cursor.style);
+    try testing.expectEqual(before.charset, s.cursor.charset);
+    try testing.expect(!s.mode.cursor_visibility);
+    try testing.expect(!s.mode.auto_wrap);
+    try testing.expect(s.mode.reverse_wrap);
+    try testing.expectEqual(@as(u16, 1), s.scroll_top);
+    try testing.expectEqual(@as(u16, 8), s.scroll_bottom);
+    try testing.expect(!s.tab_stops.isSet(8));
+
+    // The pen keeps its colors and is valid in the alternate table.
+    try testing.expect(s.styles.get(s.cursor.attr.id).eql(s.cursor.attr.colors));
+    t.feed("x");
+    try testing.expectEqual(Color.fromRgb(9, 8, 7), Style.decode(cellStyle(&t, before.row, before.col).fg));
+}
+
+test "47: modes changed on the alternate screen stay after leaving it (xterm)" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+    t.feed("\x1b[?47h\x1b[?25l\x1b[?7l\x1b[5;7H\x1b[?47l");
+    const s = t.active();
+    try testing.expectEqual(&t.primary, s);
+    try testing.expect(!s.mode.cursor_visibility);
+    try testing.expect(!s.mode.auto_wrap);
+    try testing.expectEqual(@as(u16, 4), s.cursor.row);
+    try testing.expectEqual(@as(u16, 6), s.cursor.col);
+}
+
+test "1049: leaving restores the primary cursor from DECSC but keeps modes (xterm)" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+    t.feed("\x1b[3;4H\x1b[?1049h\x1b[10;10H\x1b[?7l\x1b[?1049l");
+    const s = t.active();
+    try testing.expectEqual(@as(u16, 2), s.cursor.row);
+    try testing.expectEqual(@as(u16, 3), s.cursor.col);
+    try testing.expect(!s.mode.auto_wrap); // DECAWM is not part of DECSC
+}
+
+test "1049: entering clears a pending wrap (xterm ClearScreen)" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+    t.feed("A" ** test_option.max_cols);
+    try testing.expect(t.active().cursor.wrap_pending);
+    t.feed("\x1b[?1049h");
+    try testing.expect(!t.active().cursor.wrap_pending);
 }

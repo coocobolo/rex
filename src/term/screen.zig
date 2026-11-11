@@ -2899,8 +2899,9 @@ pub fn Screen(comptime option: Option) type {
 
         /// Blanks the active area and drops the scrollback, the line
         /// attributes, the graphemes and the style table, for the
-        /// alternate screen's 1047 and 1049 clears. Cursor, modes and
-        /// margins are kept; the pen is interned again because its IDs
+        /// alternate screen's 1047 and 1049 clears. Cursor position, modes
+        /// and margins are kept and a pending wrap is cleared, as xterm's
+        /// ClearScreen does; the pen is interned again because its IDs
         /// pointed into the old table.
         pub fn clearForAltScreen(self: *Self) void {
             // The ring goes back to identity before the clear, which writes
@@ -2920,6 +2921,7 @@ pub fn Screen(comptime option: Option) type {
 
             self.styles.reset();
             self.internPen();
+            self.cursor.wrap_pending = false;
 
             if (comptime is_scrollback_used) {
                 self.scrollback_used = 0;

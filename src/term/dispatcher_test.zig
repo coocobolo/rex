@@ -913,18 +913,15 @@ test "escape: 96-char G1 designation overrides prior 94-char G1 designation" {
     try testing.expectEqual(.iso_latin1, t.active().cursor.charset.g1);
 }
 
-test "escape: 96-char G2 designation is per-screen" {
-    // TODO: re-enable once CSI ? 1049 h/l alt-screen switch is implemented
-    // const t = try Term.create(alloc);
-    // defer t.destroy(alloc);
-    //
-    // t.feed("\x1b\x2e\x41"); // ESC . A, primary G2 = iso_latin1
-    // t.feed("\x1b[?1049h"); // switch to alt screen
-    // // alt screen G2 should be default (ascii)
-    // try testing.expectEqual(.ascii, t.active().cursor.charset.g2);
-    //
-    // t.feed("\x1b[?1049l"); // switch back to primary
-    // try testing.expectEqual(.iso_latin1, t.active().cursor.charset.g2);
+test "escape: a 96-char G2 designation carries across a screen switch (xterm)" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    t.feed("\x1b\x2e\x41"); // ESC . A, G2 = iso_latin1
+    t.feed("\x1b[?47h");
+    try testing.expectEqual(.iso_latin1, t.active().cursor.charset.g2);
+    t.feed("\x1b\x2eB\x1b[?47l"); // G2 = ascii on the alternate screen
+    try testing.expectEqual(.ascii, t.active().cursor.charset.g2);
 }
 
 test "csi: ANSI SC save cursor" {

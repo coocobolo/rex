@@ -893,28 +893,34 @@ pub fn Terminal(comptime option: Option) type {
             self.events.set(.selection_reset);
         }
 
+        /// Makes the other screen active and carries the terminal-wide
+        /// state over to it. In xterm only the cells and the DECSC slot
+        /// belong to a buffer (`charproc.c` SwitchBufs, `cursor.c`
+        /// CursorSave); modes, the cursor with its pen, shape and
+        /// charsets, the margins and the tab stops stay. Rex keeps them in
+        /// each `Screen`, so the inactive screen's copies are stale until
+        /// the next switch (#69; moving them to `Terminal` is #77).
         fn switchScreen(self: *Self, to_alt: bool) void {
             const target: ScreenBuffer = if (to_alt) .alternate else .primary;
             if (self.active_buffer == target) return;
+            const from = self.active();
             self.active_buffer = target;
+            const to = self.active();
 
-            // OSC 10-19 colors belong to the terminal, not a screen, so
-            // the cursor color stays.
-            self.active().dirty_rows = .full;
+            // `resize` sizes both screens alike, so the cursor and margins fit.
+            std.debug.assert(from.active_rows == to.active_rows and from.active_cols == to.active_cols);
+            to.mode = from.mode;
+            to.cursor = from.cursor;
+            to.scroll_top = from.scroll_top;
+            to.scroll_bottom = from.scroll_bottom;
+            to.tab_stops = from.tab_stops;
+            to.charset_is_identity = from.charset_is_identity;
+            // The pen's IDs point into the other screen's style table.
+            to.internPen();
+
+            // OSC 10-19 colors and the palette belong to the terminal.
+            to.dirty_rows = .full;
             self.events.set(.selection_reset);
-        }
-
-        /// Puts the alternate screen's cursor, modes and margins back to
-        /// their defaults on entry. xterm keeps these terminal-wide
-        /// instead (#69 item 1).
-        fn resetAltCursor(self: *Self) void {
-            const alt = &self.alternate;
-            // The default pen holds the default style IDs, valid in any table.
-            alt.cursor = .{};
-            alt.mode = .{};
-            alt.scroll_top = 0;
-            alt.scroll_bottom = @intCast(alt.active_rows - 1);
-            alt.charset_is_identity = true;
         }
 
         /// SM (CSI h) and RM (CSI l). Unknown modes are ignored.
@@ -1021,10 +1027,7 @@ pub fn Terminal(comptime option: Option) type {
                 // entering (ctlseqs, `charproc.c` srm_OPT_ALTBUF).
                 1047 => {
                     switch (set) {
-                        true => {
-                            self.switchScreen(true);
-                            self.resetAltCursor();
-                        },
+                        true => self.switchScreen(true),
                         false => {
                             if (self.active_buffer == .alternate) self.alternate.clearForAltScreen();
                             self.switchScreen(false);
@@ -1041,7 +1044,6 @@ pub fn Terminal(comptime option: Option) type {
                         true => {
                             self.primary.saveCursor();
                             self.switchScreen(true);
-                            self.resetAltCursor();
                             self.alternate.clearForAltScreen();
                         },
                         false => {
