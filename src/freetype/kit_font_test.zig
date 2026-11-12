@@ -66,6 +66,33 @@ test "KitFont: glyphs rasterize, and bad UTF-8 measures as replacement character
     try testing.expectEqual(font.width("\u{FFFD}\u{FFFD}", .sm), font.width("\xff\xfe", .sm));
 }
 
+test "KitFont: remembered kerning and advances follow the scale" {
+    var font = try KitFont.create(inter, .{});
+    defer font.destroy();
+
+    // Asked twice: the second answer comes from the table.
+    const pair = font.kern(.lg_semibold, 'A', 'V');
+    try testing.expect(pair < -1);
+    try testing.expectEqual(pair, font.kern(.lg_semibold, 'A', 'V'));
+    try testing.expectEqual(0, font.kern(.lg_semibold, 'n', 'n'));
+    // The multiplication sign of a close button, and a pair outside ASCII.
+    const times = font.advance(.sm, 0xD7);
+    try testing.expect(times > 4);
+    try testing.expectEqual(times, font.advance(.sm, 0xD7));
+    try testing.expect(font.advance(.lg_semibold, 0xD7) > times);
+    try testing.expectEqual(0, font.kern(.sm, 0xD7, 0xD7));
+
+    try font.setScale(2);
+    try testing.expectApproxEqAbs(pair * 2, font.kern(.lg_semibold, 'A', 'V'), 0.05);
+    try testing.expectApproxEqAbs(times * 2, font.advance(.sm, 0xD7), 0.05);
+}
+
+test "KitFont: its size" {
+    // Nearly all of it is the kerning table: five styles of 95 by 95
+    // pairs, two bytes each.
+    try testing.expectEqual(95536, @sizeOf(KitFont));
+}
+
 test "KitFont: is the kit's measurer" {
     var font = try KitFont.create(inter, .{});
     defer font.destroy();

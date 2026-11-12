@@ -14,11 +14,13 @@ const update = dialog.update;
 
 const byte_width = 7;
 
-fn fixedWidth(_: *const anyopaque, bytes: []const u8, _: text.Style) f32 {
+fn fixedWidth(_: *anyopaque, bytes: []const u8, _: text.Style) f32 {
     return @floatFromInt(bytes.len * byte_width);
 }
 
-const measurer: text.Measurer = .{ .context = &byte_width, .widthFn = fixedWidth };
+/// `fixedWidth` keeps no state.
+var no_state: u8 = 0;
+const measurer: text.Measurer = .{ .context = &no_state, .widthFn = fixedWidth };
 
 fn sample() dialog.Request {
     return .{

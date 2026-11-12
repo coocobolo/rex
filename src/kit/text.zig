@@ -42,13 +42,14 @@ pub const Style = enum(u8) {
     }
 };
 
-/// Measures text for layout. `context` is the implementation's own state
-/// and must outlive every call; the kit never frees it. A function pointer
-/// instead of a generic parameter, so the kit compiles once and depends on
-/// no font code.
+/// Measures text for layout. `context` is the implementation's own state,
+/// which it may change (a font caches what it looks up) and which must
+/// outlive every call; the kit never frees it. A function pointer instead
+/// of a generic parameter, so the kit compiles once and depends on no font
+/// code.
 pub const Measurer = struct {
-    context: *const anyopaque,
-    widthFn: *const fn (context: *const anyopaque, bytes: []const u8, style: Style) f32,
+    context: *anyopaque,
+    widthFn: *const fn (context: *anyopaque, bytes: []const u8, style: Style) f32,
 
     /// Width in logical pixels of `bytes` set on one line in `style`.
     pub fn width(self: Measurer, bytes: []const u8, style: Style) f32 {

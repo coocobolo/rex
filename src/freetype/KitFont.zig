@@ -67,6 +67,34 @@ kerning: Kerning,
 /// Advance of each ASCII code point in physical pixels, per style, so
 /// measuring ordinary UI text loads no glyph.
 ascii_advance: [style_count][128]f32,
+/// Glyph index of each printable ASCII code point, per style.
+ascii_glyph: [style_count][printable]c.FT_UInt,
+/// Kerning of pairs of printable ASCII in 26.6 physical pixels, per style,
+/// indexed by `pairIndex`; `unknown_kern` until a pair is first asked for.
+/// Asking FreeType walks the font's GPOS table, and layout measures the
+/// same text several times a frame.
+ascii_kern: [style_count][printable * printable]i16,
+/// Advances of code points outside ASCII, which cost a glyph load each.
+/// Direct-mapped: a second code point with the same hash replaces the
+/// first.
+other_advance: [other_capacity]OtherAdvance,
+
+/// Printable ASCII: U+0020 to U+007E.
+const printable = 0x7F - 0x20;
+const unknown_kern = std.math.minInt(i16);
+const other_capacity = 64;
+
+const OtherAdvance = struct {
+    advance: f32,
+    /// 0 for an empty slot: U+0000 is ASCII and never stored here.
+    codepoint: u21,
+    style: text.Style,
+};
+
+fn pairIndex(left: u21, right: u21) ?usize {
+    if (left < 0x20 or left >= 0x7F or right < 0x20 or right >= 0x7F) return null;
+    return @as(usize, left - 0x20) * printable + (right - 0x20);
+}
 
 /// Opens a face for every text style.
 pub fn create(files: Files, options: Options) ft.FtError!KitFont {
@@ -76,6 +104,9 @@ pub fn create(files: Files, options: Options) ft.FtError!KitFont {
         .scale = options.scale,
         .kerning = options.kerning,
         .ascii_advance = undefined,
+        .ascii_glyph = undefined,
+        .ascii_kern = undefined,
+        .other_advance = undefined,
     };
     // Closing the library closes every face it opened (FT_Done_Library).
     errdefer ft.doneFreeType(self.library) catch {};
@@ -106,7 +137,22 @@ pub fn setScale(self: *KitFont, scale: f32) ft.FtError!void {
         for (&self.ascii_advance[@intFromEnum(style)], 0..) |*advance_px, codepoint| {
             advance_px.* = loadAdvance(ft_face, @intCast(codepoint));
         }
+        for (&self.ascii_glyph[@intFromEnum(style)], 0x20..) |*glyph, codepoint| {
+            glyph.* = c.FT_Get_Char_Index(ft_face, codepoint);
+        }
     }
+    // Kerning and the other advances are in pixels at the old scale.
+    for (&self.ascii_kern) |*table| @memset(table, unknown_kern);
+    @memset(&self.other_advance, .{ .advance = 0, .codepoint = 0, .style = .sm });
+}
+
+/// FreeType's adjustment between two glyphs in 26.6 pixels, 0 when either
+/// is missing or the font does not kern the pair.
+fn kernGlyphs(ft_face: c.FT_Face, left: c.FT_UInt, right: c.FT_UInt) c.FT_Pos {
+    if (left == 0 or right == 0) return 0;
+    var delta: c.FT_Vector = undefined;
+    if (c.FT_Get_Kerning(ft_face, left, right, c.FT_KERNING_UNFITTED, &delta) != 0) return 0;
+    return delta.x;
 }
 
 fn faceOf(self: *const KitFont, style: text.Style) c.FT_Face {
@@ -122,23 +168,33 @@ fn loadAdvance(ft_face: c.FT_Face, codepoint: u21) f32 {
 }
 
 /// How far the pen moves after `codepoint`, in physical pixels.
-pub fn advance(self: *const KitFont, style: text.Style, codepoint: u21) f32 {
+pub fn advance(self: *KitFont, style: text.Style, codepoint: u21) f32 {
     if (codepoint < 128) return self.ascii_advance[@intFromEnum(style)][codepoint];
-    return loadAdvance(self.faceOf(style), codepoint);
+    const slot = &self.other_advance[(codepoint *% 31 +% @intFromEnum(style)) % other_capacity];
+    if (slot.codepoint != codepoint or slot.style != style) {
+        slot.* = .{ .advance = loadAdvance(self.faceOf(style), codepoint), .codepoint = codepoint, .style = style };
+    }
+    return slot.advance;
 }
 
 /// The adjustment between `left` and `right` in physical pixels, negative
 /// to pull them together. 0 with kerning off or for a pair the font does
 /// not kern.
-pub fn kern(self: *const KitFont, style: text.Style, left: u21, right: u21) f32 {
+pub fn kern(self: *KitFont, style: text.Style, left: u21, right: u21) f32 {
     if (self.kerning == .off) return 0;
     const ft_face = self.faceOf(style);
-    const left_index = c.FT_Get_Char_Index(ft_face, left);
-    const right_index = c.FT_Get_Char_Index(ft_face, right);
-    if (left_index == 0 or right_index == 0) return 0;
-    var delta: c.FT_Vector = undefined;
-    if (c.FT_Get_Kerning(ft_face, left_index, right_index, c.FT_KERNING_UNFITTED, &delta) != 0) return 0;
-    return @as(f32, @floatFromInt(delta.x)) / 64.0;
+    if (pairIndex(left, right)) |index| {
+        const slot = &self.ascii_kern[@intFromEnum(style)][index];
+        if (slot.* == unknown_kern) {
+            const glyphs = &self.ascii_glyph[@intFromEnum(style)];
+            // Font units never reach the sentinel: a pair kerned by 512
+            // pixels does not exist.
+            slot.* = std.math.lossyCast(i16, @max(kernGlyphs(ft_face, glyphs[left - 0x20], glyphs[right - 0x20]), unknown_kern + 1));
+        }
+        return @as(f32, @floatFromInt(slot.*)) / 64.0;
+    }
+    const delta = kernGlyphs(ft_face, c.FT_Get_Char_Index(ft_face, left), c.FT_Get_Char_Index(ft_face, right));
+    return @as(f32, @floatFromInt(delta)) / 64.0;
 }
 
 /// Distance from the top of a line box to the baseline in physical
@@ -153,7 +209,7 @@ pub fn baseline(self: *const KitFont, style: text.Style) f32 {
 }
 
 /// Width of `bytes` on one line, in logical pixels.
-pub fn width(self: *const KitFont, bytes: []const u8, style: text.Style) f32 {
+pub fn width(self: *KitFont, bytes: []const u8, style: text.Style) f32 {
     var total: f32 = 0;
     var previous: ?u21 = null;
     var codepoints: text.Codepoints = .init(bytes);
@@ -165,14 +221,14 @@ pub fn width(self: *const KitFont, bytes: []const u8, style: text.Style) f32 {
     return total / self.scale;
 }
 
-fn widthErased(context: *const anyopaque, bytes: []const u8, style: text.Style) f32 {
-    const self: *const KitFont = @ptrCast(@alignCast(context));
+fn widthErased(context: *anyopaque, bytes: []const u8, style: text.Style) f32 {
+    const self: *KitFont = @ptrCast(@alignCast(context));
     return self.width(bytes, style);
 }
 
 /// The kit's view of this font. Valid while the font is alive and not
 /// moved.
-pub fn measurer(self: *const KitFont) text.Measurer {
+pub fn measurer(self: *KitFont) text.Measurer {
     return .{ .context = self, .widthFn = widthErased };
 }
 

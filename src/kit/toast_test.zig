@@ -13,11 +13,13 @@ const update = toast.update;
 
 const byte_width = 7;
 
-fn fixedWidth(_: *const anyopaque, bytes: []const u8, _: text.Style) f32 {
+fn fixedWidth(_: *anyopaque, bytes: []const u8, _: text.Style) f32 {
     return @floatFromInt(bytes.len * byte_width);
 }
 
-const measurer: text.Measurer = .{ .context = &byte_width, .widthFn = fixedWidth };
+/// `fixedWidth` keeps no state.
+var no_state: u8 = 0;
+const measurer: text.Measurer = .{ .context = &no_state, .widthFn = fixedWidth };
 
 fn push(state: *State, title: []const u8) bool {
     return update(state, .{ .push = .{ .title = title, .duration_ms = 4000 } });
