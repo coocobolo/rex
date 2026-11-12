@@ -21,18 +21,25 @@ the version, and run `zig build check-fonts`.
 
 ## Inter (the UI font)
 
-Inter 4.1, the variable upright face (`InterVariable.ttf`) and
+Inter 4.1, the static upright faces `Inter-Regular.ttf`,
+`Inter-Medium.ttf` and `Inter-SemiBold.ttf` (`extras/ttf/`) and
 `LICENSE.txt` of the
 [v4.1 release](https://github.com/rsms/inter/releases/download/v4.1/Inter-4.1.zip),
 copied unchanged (the license as `OFL-Inter.txt`), under the SIL Open Font
-License 1.1. The UI kit sets its text in it (ADR 0009). SHA-256:
+License 1.1. The UI kit sets its text in them (ADR 0009). SHA-256:
 
 ```
-4989b125924991b90d05b2d16e0e388c48f7d5bb8b30539bbf9c755278d0ccaf  InterVariable.ttf
+40d692fce188e4471e2b3cba937be967878f631ad3ebbbdcd587687c7ebe0c82  Inter-Regular.ttf
+97ad806f526e41546d46365bb3a393145f75b7b1568913db74549ad8b8dba872  Inter-Medium.ttf
+78a843fade9d4612a5567302fb595b56976eb5fcebf4fea5a5912d638bafcde3  Inter-SemiBold.ttf
 262481e844521b326f5ecd053e59b98c8b2da78c8ee1bdbb6e8174305e54935a  OFL-Inter.txt
 ```
 
-Its license file starts "Copyright (c) 2016 ..." with the project URL,
-while the font's name table says "Copyright 2016 The Inter Project
-Authors"; `check-fonts` compares the two without the "(c)" and the URL.
+The static faces, not `InterVariable.ttf`: FreeType's GPOS kerning reads
+only plain x-advance pairs, and the variable face stores its class pairs
+with variation data, so it gets no kerning (measured 2026-11-12: A V is
+0 px there and about -1 px at 14 px in the static faces).
 
+The license file starts "Copyright (c) 2016 ..." with the project URL,
+while the fonts' name tables say "Copyright 2016 The Inter Project
+Authors"; `check-fonts` compares the two without the "(c)" and the URL.
