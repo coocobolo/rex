@@ -16,6 +16,8 @@ const text = @import("../kit/text.zig");
 const tree_zig = @import("../kit/tree.zig");
 const Tree = tree_zig.Tree;
 const layout = @import("../kit/layout.zig");
+const memory = @import("../kit/memory.zig");
+const toast_stack = @import("../kit/toast.zig");
 
 const inter: KitFont.Files = .{
     .regular = "assets/fonts/Inter-Regular.ttf",
@@ -30,7 +32,13 @@ const view_height = 440;
 const terminal_dark: Color = .rgb(0x101014);
 const terminal_light: Color = .rgb(0xfbfaf7);
 
-const Scene = enum { overlay, dialog };
+const Scene = enum {
+    /// Hand-built banner and toasts, as approved in the token preview.
+    overlay,
+    dialog,
+    /// The app's toast stack (`kit/toast.zig`), its newest toast halfway in.
+    toasts,
+};
 
 const Marks = struct {
     toast: tree_zig.Index = tree_zig.none,
@@ -81,7 +89,7 @@ fn button(tree: *Tree, label: []const u8, fill: Color, border: Color, foreground
     return box;
 }
 
-fn build(tree: *Tree, scene: Scene, theme: *const Theme) !Marks {
+fn build(tree: *Tree, scene: Scene, theme: *const Theme, toasts: *const toast_stack.State) !Marks {
     var marks: Marks = .{};
     switch (scene) {
         .overlay => {
@@ -128,6 +136,7 @@ fn build(tree: *Tree, scene: Scene, theme: *const Theme) !Marks {
             tree.close(scrim);
             marks.dialog = dialog;
         },
+        .toasts => _ = try toast_stack.view(toasts, tree, theme),
     }
     return marks;
 }
@@ -193,6 +202,15 @@ const Rendered = struct {
     tree_len: tree_zig.Index,
     marks: Marks,
     instances: u32,
+    /// The texts of the `toasts` scene live here.
+    toasts: toast_stack.State,
+
+    fn card(self: *const Rendered, serial: u32) tree_zig.Rect {
+        for (self.tree_nodes[0..self.tree_len]) |node| {
+            if (node.box.id == toast_stack.cardId(serial)) return node.rect;
+        }
+        unreachable; // the scene shows every toast it pushed
+    }
 
     fn rect(self: *const Rendered, index: tree_zig.Index) tree_zig.Rect {
         return self.tree_nodes[index].rect;
@@ -219,8 +237,25 @@ fn render(scene: Scene, variant: Theme.Variant, background: Color, scale: f32, k
     var result: Rendered = undefined;
     var lines: [64]text.Line = undefined;
     var tree: Tree = .init(&result.tree_nodes, &lines);
-    result.marks = try build(&tree, scene, variant.theme());
+    result.toasts = .empty;
+    const pushes = [_]toast_stack.Push{
+        .{ .title = "Couldn\u{2019}t save wellbeing data", .description = "AccessDenied in /home/user/.local/state/rex/wellbeing", .kind = .err, .duration_ms = 5000 },
+        .{ .title = "Configuration reloaded", .kind = .success, .duration_ms = 5000 },
+        .{ .title = "Font: 14 (18 px at 125%, cell 11x22)", .duration_ms = 5000 },
+    };
+    for (pushes) |push| {
+        // The earlier ones finish entering; the last is left halfway.
+        _ = toast_stack.update(&result.toasts, .{ .tick = Theme.duration });
+        _ = toast_stack.update(&result.toasts, .{ .push = push });
+    }
+    _ = toast_stack.update(&result.toasts, .{ .tick = Theme.duration / 2 });
+
+    result.marks = try build(&tree, scene, variant.theme(), &result.toasts);
     try layout.layout(&tree, font.measurer(), view_width, view_height);
+    if (scene == .toasts) {
+        var table: memory.Table = .empty;
+        _ = try toast_stack.place(&result.toasts, &tree, 0, &table, 0);
+    }
     result.tree_len = tree.len;
 
     const width: u32 = @intFromFloat(@round(view_width * scale));
@@ -295,6 +330,31 @@ test "KitPainter: a toast is a filled, bordered box with text, over an untouched
     }
 }
 
+test "KitPainter: the toast stack, with its newest toast halfway in" {
+    for ([_]f32{ 1, 1.25, 1.5 }) |scale| {
+        var rendered = try render(.toasts, .dark, terminal_dark, scale, .pairs);
+        defer rendered.frame.deinit();
+        const frame = &rendered.frame;
+        const theme = &Theme.dark;
+        var name_buffer: [48]u8 = undefined;
+        try frame.save(try std.fmt.bufPrint(&name_buffer, "toasts-dark-{d}", .{@as(u32, @intFromFloat(scale * 100))}));
+
+        const entries = rendered.toasts.visible();
+        try testing.expectEqual(3, entries.len);
+        // At rest: the popover color inside the padding.
+        const settled = rendered.card(entries[1].serial);
+        try testing.expectEqual(rgb(theme.popover), frame.at(settled.x + 6, settled.y + settled.h / 2));
+        // Halfway in time it is 87.5% present: between the terminal and the
+        // popover color, nearer the popover.
+        const entering = rendered.card(entries[2].serial);
+        const blended = frame.at(entering.x + 6, entering.y + entering.h / 2);
+        try testing.expect(blended[0] > terminal_dark.r + 3 and blended[0] < theme.popover.r);
+        // The stack keeps its margin: 24 px from the right edge.
+        try testing.expectEqual(view_width - 24, settled.x + settled.w);
+        try testing.expectEqual(rgb(terminal_dark), frame.at(view_width - 12, settled.y + settled.h / 2));
+    }
+}
+
 test "KitPainter: a dialog sits on a scrim that darkens the terminal behind it" {
     var rendered = try render(.dialog, .light, terminal_light, 1, .pairs);
     defer rendered.frame.deinit();
@@ -322,6 +382,7 @@ test "KitPainter: screenshots of the remaining variants" {
         .{ .dialog, .dark, terminal_dark, 1.5, .pairs, "dialog-dark-150" },
         .{ .dialog, .dark, terminal_dark, 1, .off, "dialog-dark-100-no-kerning" },
         .{ .overlay, .dark, terminal_dark, 1, .off, "overlay-dark-100-no-kerning" },
+        .{ .toasts, .light, terminal_light, 1, .pairs, "toasts-light-100" },
     };
     for (shots) |shot| {
         var rendered = try render(shot[0], shot[1], shot[2], shot[3], shot[4]);
