@@ -1,4 +1,6 @@
 //! The copyright in a font's name table is the first line of its OFL file.
+//! The two are compared without a "(c)" marker and without a trailing
+//! "(url)": Inter's license has both and its name table has neither.
 //!
 //! Groups are separated by `--`. The first path of a group is the license,
 //! and every font after it must carry that same copyright. `zig build` runs
@@ -38,9 +40,33 @@ fn match(io: std.Io, gpa: std.mem.Allocator, ofl_path: []const u8, font_path: []
     const ofl = try readFile(io, gpa, ofl_path);
     const line_end = std.mem.indexOfScalar(u8, ofl, '\n') orelse ofl.len;
     const first = std.mem.trim(u8, ofl[0..line_end], " \t\r");
-    if (!std.mem.eql(u8, notice, first)) {
+    if (!std.mem.eql(u8, try holder(gpa, notice), try holder(gpa, first))) {
         std.log.err("{s}\n  name table: {s}\n  {s}: {s}", .{ font_path, notice, ofl_path, first });
         return error.LicenseMismatch;
+    }
+}
+
+/// A copyright notice without a "(c)" marker and a trailing "(url)".
+fn holder(gpa: std.mem.Allocator, notice: []const u8) ![]u8 {
+    var text = std.mem.trim(u8, notice, " \t\r");
+    if (std.mem.endsWith(u8, text, ")")) {
+        if (std.mem.lastIndexOf(u8, text, " (")) |open| text = text[0..open];
+    }
+    return std.mem.replaceOwned(u8, gpa, text, "(c) ", "");
+}
+
+test holder {
+    const gpa = std.testing.allocator;
+    const cases = [_][2][]const u8{
+        .{ "Copyright (c) 2016 The Inter Project Authors (https://github.com/rsms/inter)", "Copyright 2016 The Inter Project Authors" },
+        .{ "Copyright 2016 The Inter Project Authors", "Copyright 2016 The Inter Project Authors" },
+        .{ "Copyright 2022 The Noto Project Authors (https://github.com/notofonts/latin-greek-cyrillic)", "Copyright 2022 The Noto Project Authors" },
+        .{ "  Copyright (c) 2020 Someone  ", "Copyright 2020 Someone" },
+    };
+    for (cases) |case| {
+        const got = try holder(gpa, case[0]);
+        defer gpa.free(got);
+        try std.testing.expectEqualStrings(case[1], got);
     }
 }
 

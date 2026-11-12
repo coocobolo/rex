@@ -61,6 +61,9 @@ pub fn build(b: *std.Build) !void {
             "-DFT2_BUILD_LIBRARY",
             "-DFT_CONFIG_OPTION_USE_PNG",
             "-DFT_CONFIG_OPTION_USE_ZLIB",
+            // Pair kerning from GPOS, for the UI font: Inter has no
+            // legacy `kern` table. Only `FT_Get_Kerning` reads it.
+            "-DTT_CONFIG_OPTION_GPOS_KERNING",
         },
     });
     freetype_lib.root_module.addIncludePath(freetype_dep.path("include"));
@@ -201,6 +204,8 @@ pub fn build(b: *std.Build) !void {
         "assets/fonts/GoogleSansCode[wght].ttf",
         "assets/fonts/GoogleSansCode-Italic[wght].ttf",
         "assets/fonts/OFL-GoogleSansCode.txt",
+        "assets/fonts/InterVariable.ttf",
+        "assets/fonts/OFL-Inter.txt",
         "testdata/font/NotoColorEmoji.ttf",
         "testdata/font/OFL-NotoColorEmoji.txt",
     };
@@ -221,6 +226,9 @@ pub fn build(b: *std.Build) !void {
     check_run.addFileArg(b.path("assets/fonts/OFL-GoogleSansCode.txt"));
     check_run.addFileArg(b.path("assets/fonts/GoogleSansCode[wght].ttf"));
     check_run.addFileArg(b.path("assets/fonts/GoogleSansCode-Italic[wght].ttf"));
+    check_run.addArg("--");
+    check_run.addFileArg(b.path("assets/fonts/OFL-Inter.txt"));
+    check_run.addFileArg(b.path("assets/fonts/InterVariable.ttf"));
     check_run.addArg("--");
     check_run.addFileArg(b.path("testdata/font/OFL-NotoSans.txt"));
     check_run.addFileArg(b.path("testdata/font/NotoSans-Italic.ttf"));
