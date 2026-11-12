@@ -1012,6 +1012,12 @@ pub fn Screen(comptime option: Option) type {
             // Fetch row_mut AFTER deferred wrap, cursor.row may have changed.
             const row_mut = self.currentRow();
 
+            // When the shift happens, the wide character under the cursor
+            // moves right and the cursor cell is a stale copy until it is
+            // overwritten. Blanking "its" other half would erase the moved
+            // half and leave the partner behind. The repairs after the
+            // write see the row as it will stand.
+            var shifted = false;
             if (self.mode.insert) {
                 const shift = kind.columnSpan();
                 if (cursor_col + shift < self.active_cols) {
@@ -1020,6 +1026,7 @@ pub fn Screen(comptime option: Option) type {
                         row_mut[cursor_col + shift .. self.active_cols],
                         row_mut[cursor_col .. self.active_cols - shift],
                     );
+                    shifted = true;
                 }
                 // A wide character pushed past the end loses its right half.
                 self.repairWideBoundary(row_mut[0..self.active_cols], self.active_cols);
@@ -1059,7 +1066,7 @@ pub fn Screen(comptime option: Option) type {
             // Split-wide-char guard: overwriting a right-half placeholder
             // Blank the orphaned left half so the renderer doesn't see a
             // dangling wide cell.
-            if (needs_blank_left_half) {
+            if (!shifted and needs_blank_left_half) {
                 row_mut[cursor_col - 1] = Cell{ .style = self.blankFor(cell.style) };
             }
 
@@ -1098,12 +1105,12 @@ pub fn Screen(comptime option: Option) type {
 
             // Split-wide-char guard our right-half slot contains a left-half
             // of another wide char, blank its orphaned right half.
-            if (needs_blank_right_of_right) {
+            if (!shifted and needs_blank_right_of_right) {
                 @branchHint(.unlikely);
                 row_mut[cursor_col + 2] = Cell{ .style = self.blankFor(cell.style) };
             }
 
-            if (needs_blank_right_of_self) {
+            if (!shifted and needs_blank_right_of_self) {
                 @branchHint(.unlikely);
                 row_mut[cursor_col + 1] = Cell{ .style = self.blankFor(cell.style) };
             }
@@ -1116,8 +1123,11 @@ pub fn Screen(comptime option: Option) type {
                 row_mut[cursor_col + 1] = rightHalf(cell);
             }
             if (self.mode.insert) {
-                // The shifted cells start right after the new one.
-                self.repairWideBoundary(row_mut[0..self.active_cols], cursor_col + kind.columnSpan());
+                const cells = row_mut[0..self.active_cols];
+                // The cursor, in case the write landed on one half, and the
+                // first shifted cell, in case a pair moved or fell off.
+                self.repairWideBoundary(cells, cursor_col);
+                self.repairWideBoundary(cells, cursor_col + kind.columnSpan());
             }
 
             // Advance cursor

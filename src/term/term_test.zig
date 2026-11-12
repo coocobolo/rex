@@ -1386,6 +1386,19 @@ test "ICH pushing a wide character into the last column leaves no left half" {
     try expectNoSplitWide(&t, 0);
 }
 
+test "insert mode at column 0 keeps a shifted wide character whole" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+    // One row, cursor on the last column, insert mode on. The next
+    // graphic wraps, scrolls, and is inserted at column 0 of a row that
+    // still holds a wide character.
+    t.resize(1, 6);
+    t.feed("\xff\xff\xff@@\x1b[4h");
+    t.feed("\x13\xe4\x8f\xb6\xd6\xa6\x96\xcd\xd8\x0b\xb3z\xdd\xc8");
+    try expectNoSplitWide(&t, 0);
+    try testing.expectEqual(@as(u32, 'z'), t.active().cellAt(0, 0).codepoint);
+}
+
 test "insert-mode printing pushes a wide character off the row whole" {
     var t = try Term.create(alloc);
     defer t.destroy(alloc);

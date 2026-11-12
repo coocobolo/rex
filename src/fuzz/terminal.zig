@@ -151,7 +151,10 @@ const seeds = [_][]const u8{
     "\x1b[38;5;196m\x1b[48;2;1;2;3m\x1b[58:2::4:5:6m\x1b[4:3mX\x1b[m",
 };
 
-const regressions = [_][]const u8{@embedFile("testdata/terminal/crash-fe798e15b4b2153a.bin")};
+const regressions = [_][]const u8{
+    @embedFile("testdata/terminal/crash-fe798e15b4b2153a.bin"),
+    @embedFile("testdata/terminal/crash-3ba3d87de729075b.bin"),
+};
 
 test "fuzz terminal" {
     try harness.fuzz(run, &seeds, &regressions);
