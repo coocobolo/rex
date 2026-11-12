@@ -12,6 +12,7 @@ pub const c = @cImport({
 
 pub const FontConfig = @import("Config.zig");
 pub const Rasterizer = @import("Rasterizer.zig");
+pub const KitFont = @import("KitFont.zig");
 
 comptime {
     std.testing.refAllDecls(@This());
@@ -19,6 +20,7 @@ comptime {
 
 test {
     _ = @import("config_test.zig");
+    _ = @import("kit_font_test.zig");
 }
 
 /// Convert FreeType error code to human-readable string.

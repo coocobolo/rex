@@ -56,6 +56,39 @@ pub const Measurer = struct {
     }
 };
 
+/// The code points of UTF-8 text, for measuring and painting. A byte that
+/// does not start a valid sequence yields U+FFFD and is skipped alone, so
+/// text from a program (a title, a path) can never stall or trap the UI.
+pub const Codepoints = struct {
+    bytes: []const u8,
+    index: usize = 0,
+
+    pub const replacement: u21 = 0xFFFD;
+
+    pub fn init(bytes: []const u8) Codepoints {
+        return .{ .bytes = bytes };
+    }
+
+    pub fn next(self: *Codepoints) ?u21 {
+        if (self.index >= self.bytes.len) return null;
+        const rest = self.bytes[self.index..];
+        const len = std.unicode.utf8ByteSequenceLength(rest[0]) catch {
+            self.index += 1;
+            return replacement;
+        };
+        if (len > rest.len) {
+            self.index += 1;
+            return replacement;
+        }
+        const codepoint = std.unicode.utf8Decode(rest[0..len]) catch {
+            self.index += 1;
+            return replacement;
+        };
+        self.index += len;
+        return codepoint;
+    }
+};
+
 /// One line of a wrapped text: a byte range of the text and its width.
 /// The range excludes the space or line feed the line was broken at.
 pub const Line = struct {
