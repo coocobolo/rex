@@ -34,6 +34,14 @@ pub const Color = packed struct(u32) {
         result.a = @intCast((@as(u32, percent) * 255 + 50) / 100);
         return result;
     }
+
+    /// The same color with its alpha scaled by `presence`, 0 (gone) to 1
+    /// (unchanged): how a surface fades in and out.
+    pub fn fade(self: Color, presence: f32) Color {
+        var result = self;
+        result.a = @intFromFloat(@round(@as(f32, @floatFromInt(self.a)) * presence));
+        return result;
+    }
 };
 
 /// Window background of a settings or dashboard window.

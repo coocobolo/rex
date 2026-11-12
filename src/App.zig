@@ -24,6 +24,7 @@ const system = posix.system;
 
 const rex = @import("root.zig");
 const KitOverlay = @import("KitOverlay.zig");
+const kit_dialog = @import("kit/dialog.zig");
 
 const unicode = rex.unicode;
 
@@ -904,30 +905,33 @@ fn renderFrame(self: *App) !bool {
         self.wellbeing_overlay.lock_screen_active = false;
         self.wellbeing_overlay.last_toast_layout = null;
 
-        const drawer: Drawer = .{
-            .allocator = self.allocator,
-            .atlas = atlas,
-            .rasterizer = &self.rasterizer,
-            .gray_buffer = &self.wellbeing_overlay.gray_buffer,
-            .color_buffer = &self.wellbeing_overlay.color_buffer,
-        };
-        var actions: [2]Modal.Action = undefined;
-        _ = Modal.render(
-            quitConfirmModalRequest(
-                self.config.window.surfaceFor(.modal),
-                self.config.window.modal,
-                self.config.window.quit_dialog,
-                &actions,
-            ),
-            tokens,
-            total_cols,
-            total_rows,
-            &self.wellbeing_overlay.bg_buffer,
-            &self.wellbeing_overlay.card_buffer,
-            drawer,
-            &self.quit_modal_focus,
-            &self.hotspots,
-        );
+        // With the kit on, the prompt is the kit's dialog, built below.
+        if (self.kit == null) {
+            const drawer: Drawer = .{
+                .allocator = self.allocator,
+                .atlas = atlas,
+                .rasterizer = &self.rasterizer,
+                .gray_buffer = &self.wellbeing_overlay.gray_buffer,
+                .color_buffer = &self.wellbeing_overlay.color_buffer,
+            };
+            var actions: [2]Modal.Action = undefined;
+            _ = Modal.render(
+                quitConfirmModalRequest(
+                    self.config.window.surfaceFor(.modal),
+                    self.config.window.modal,
+                    self.config.window.quit_dialog,
+                    &actions,
+                ),
+                tokens,
+                total_cols,
+                total_rows,
+                &self.wellbeing_overlay.bg_buffer,
+                &self.wellbeing_overlay.card_buffer,
+                drawer,
+                &self.quit_modal_focus,
+                &self.hotspots,
+            );
+        }
     } else {
         self.wellbeing_overlay.build(
             self.allocator,
@@ -987,7 +991,8 @@ fn renderFrame(self: *App) !bool {
     }
 
     if (self.kit) |kit| {
-        const kit_changed = if (self.quit_confirm_open or self.wellbeing_overlay.lock_screen_active)
+        // The lock screen covers the kit's UI too.
+        const kit_changed = if (self.wellbeing_overlay.lock_screen_active)
             kit.skipFrame()
         else changed: {
             const size = self.window.frameBufferSize(f32);
@@ -998,6 +1003,8 @@ fn renderFrame(self: *App) !bool {
             break :changed kit.buildFrame(atlas, size.width / self.content_scale, size.height / self.content_scale, background);
         };
         if (kit_changed) frame.dirty.overlay = true;
+        // A dialog the kit could not build was dropped.
+        self.syncQuitPrompt();
     }
 
     const banner_active = self.config_banner != null and self.config.window.banner.enabled;
@@ -1011,7 +1018,7 @@ fn renderFrame(self: *App) !bool {
         frame.overlay_card_instances = self.wellbeing_overlay.card_buffer.items;
         frame.overlay_gray_instances = self.wellbeing_overlay.gray_buffer.items;
         frame.overlay_color_instances = self.wellbeing_overlay.color_buffer.items;
-        const has_modal = self.quit_confirm_open or self.wellbeing_overlay.dashboard_open;
+        const has_modal = (self.quit_confirm_open and self.kit == null) or self.wellbeing_overlay.dashboard_open;
         frame.overlay_has_modal = has_modal;
         frame.modal_blur = self.config.window.modal.blur;
         frame.modal_blur_radius = self.config.window.modal.blur_radius;
@@ -1951,6 +1958,74 @@ pub fn requestQuit(self: *App) void {
     };
     self.quit_modal_focus = FocusGroup.init(2, initial_idx);
     self.quit_confirm_open = true;
+    if (self.kit) |kit| {
+        // The body names the program that closing would end, and says
+        // nothing of one when `ask` asks at an idle shell.
+        var name_buf: [32]u8 = undefined;
+        const running = switch (self.config.window.on_close) {
+            .close => false,
+            // `ask` above was true, so `programRunning` already was.
+            .ask_if_running => true,
+            .ask => self.programRunning(),
+        };
+        const program = if (running) self.foregroundProgram(&name_buf) else null;
+        var body_buf: [kit_dialog.body_capacity]u8 = undefined;
+        _ = kit.openDialog(.{
+            .title = "Close this window?",
+            .body = quitDialogBodyFor(running, program, &body_buf),
+            .confirm_label = "Close window",
+            .cancel_label = "Cancel",
+            .focus = switch (self.config.window.modal.default_focus) {
+                .confirm => .confirm,
+                .cancel => .cancel,
+            },
+        });
+    }
+    self.frame_builder.last_generation = null;
+    self.needs_redraw = true;
+}
+
+/// The body of the quit dialog. `running` is whether a program other than
+/// the shell is in the foreground, and `program` its name, when that could
+/// be read. The result is a literal or lies in `buf`.
+fn quitDialogBodyFor(running: bool, program: ?[]const u8, buf: []u8) []const u8 {
+    if (!running) return "Closing the window ends the shell.";
+    const name = program orelse return "A program is still running. Closing the window ends it.";
+    return std.fmt.bufPrint(buf, "A program is still running: {s}. Closing the window ends it.", .{name}) catch
+        "A program is still running. Closing the window ends it.";
+}
+
+/// The name of the program in the terminal's foreground, in `buf`, or
+/// null when that is the shell, cannot be read, or is not printable ASCII.
+fn foregroundProgram(self: *const App, buf: []u8) ?[]const u8 {
+    const group = rex.termio.pty.foregroundGroup(self.driver.getMasterFd()) orelse return null;
+    if (group == self.driver.getPid()) return null;
+    const name = rex.termio.pty.foregroundComm(self.driver.getMasterFd(), buf) orelse return null;
+    for (name) |byte| if (byte < 0x20 or byte > 0x7e) return null;
+    return name;
+}
+
+/// Applies a confirm-dialog outcome. `.confirm` closes the window.
+fn applyDialogOutcome(self: *App, outcome: kit_dialog.Outcome) void {
+    switch (outcome) {
+        .quiet => {},
+        .redraw, .closed => {
+            self.frame_builder.last_generation = null;
+            self.needs_redraw = true;
+        },
+        .confirm => self.confirmQuit(),
+    }
+    self.syncQuitPrompt();
+}
+
+/// Drops the quit prompt as soon as the kit's dialog stops taking input,
+/// which is when it starts to leave, not when it has faded out: a close
+/// request during the fade asks again instead of counting as the answer,
+/// and keys go back to the terminal at once.
+fn syncQuitPrompt(self: *App) void {
+    const kit = self.kit orelse return;
+    if (!self.quit_confirm_open or kit.dialogTakesInput()) return;
+    self.quit_confirm_open = false;
     self.frame_builder.last_generation = null;
     self.needs_redraw = true;
 }
@@ -2005,6 +2080,20 @@ fn routeKeyToUi(self: *App, maybe_key: ?rex.input.Key, mods: rex.input.Modifiers
 }
 
 fn handleQuitModalKey(self: *App, k: rex.input.Key, mods: rex.input.Modifiers) void {
+    if (self.kit) |kit| {
+        // Y, Q, N and Backspace are this prompt's own shortcuts.
+        const event: ?kit_dialog.Event = switch (k) {
+            .tab => .{ .focus = if (mods.shift) .previous else .next },
+            .left, .up => .{ .focus = .previous },
+            .right, .down => .{ .focus = .next },
+            .enter, .kp_enter, .space => .activate,
+            .y, .q => .{ .choose = .confirm },
+            .escape, .n, .backspace => .cancel,
+            else => null,
+        };
+        if (event) |ev| self.applyDialogOutcome(kit.dialogInput(ev));
+        return;
+    }
     switch (k) {
         .tab => {
             if (mods.shift) {
@@ -2462,6 +2551,17 @@ const mouseButtonCb: c.GLFWmousebuttonfun = struct {
                     .taken => return,
                     .changed => {
                         app.needs_redraw = true;
+                        // A click on Cancel started the dialog's leave.
+                        app.syncQuitPrompt();
+                        return;
+                    },
+                    .confirm => {
+                        app.confirmQuit();
+                        return;
+                    },
+                    .scrim => {
+                        const event: kit_dialog.Event = if (app.config.window.modal.on_outside_click == .close) .cancel else .blur;
+                        app.applyDialogOutcome(kit.dialogInput(event));
                         return;
                     },
                 };
@@ -2801,7 +2901,9 @@ const cursorPosCb: c.GLFWcursorposfun = struct {
 
         app.mouse_x = @floatCast(xpos);
         app.mouse_y = @floatCast(ypos);
-        if (app.kit) |kit| kit.pointerMoved(app.mouse_x / app.content_scale, app.mouse_y / app.content_scale);
+        if (app.kit) |kit| {
+            if (kit.pointerMoved(app.mouse_x / app.content_scale, app.mouse_y / app.content_scale)) app.needs_redraw = true;
+        }
 
         // update scrollbar hover detection
         app.updateScrollbarHover();
@@ -3336,6 +3438,17 @@ test "ScrollAccumulator: smooth line accumulation and direction reversal" {
     try testing.expectEqual(@as(f64, 0), accum_y);
     accum_y += y_offset * @as(f64, @floatFromInt(wheel_lines));
     try testing.expectApproxEqAbs(@as(f64, -0.6), accum_y, 0.0001);
+}
+
+test "quit dialog copy: the running program, or the idle ask" {
+    const testing = std.testing;
+    var buf: [kit_dialog.body_capacity]u8 = undefined;
+    try testing.expectEqualStrings("Closing the window ends the shell.", quitDialogBodyFor(false, null, &buf));
+    try testing.expectEqualStrings("A program is still running. Closing the window ends it.", quitDialogBodyFor(true, null, &buf));
+    try testing.expectEqualStrings(
+        "A program is still running: nvim. Closing the window ends it.",
+        quitDialogBodyFor(true, "nvim", &buf),
+    );
 }
 
 test "App: quitConfirmModalRequest layout and hitTest" {

@@ -670,6 +670,24 @@ pub fn foregroundGroup(master: posix.fd_t) ?posix.pid_t {
     return if (group > 0) group else null;
 }
 
+/// The name of the terminal's foreground program: the `comm` of the
+/// foreground group's leader, from `/proc/<pid>/comm`, at most 15 bytes
+/// (proc_pid_comm(5)). Null when there is no foreground group or the file
+/// cannot be read, as when the leader has exited. The result lies in `out`.
+pub fn foregroundComm(master: posix.fd_t, out: []u8) ?[]const u8 {
+    if (out.len == 0) return null;
+    const group = foregroundGroup(master) orelse return null;
+    var path_buf: [64]u8 = undefined;
+    const path = std.fmt.bufPrintZ(&path_buf, "/proc/{d}/comm", .{group}) catch return null;
+    const fd = system.open(path.ptr, .{ .ACCMODE = .RDONLY, .CLOEXEC = true }, @as(posix.mode_t, 0));
+    if (fd < 0) return null;
+    defer _ = system.close(fd);
+    const n = system.read(fd, out.ptr, out.len);
+    if (n <= 0) return null;
+    const trimmed = std.mem.trimEnd(u8, out[0..@intCast(n)], "\r\n \x00");
+    return if (trimmed.len > 0) trimmed else null;
+}
+
 /// A setup step in the child that failed, and its errno.
 pub const SpawnFailure = struct {
     stage: ChildStage,

@@ -9,6 +9,7 @@ const system = posix.system;
 const Posix = @import("pty.zig").Posix;
 const SpawnFailure = @import("pty.zig").SpawnFailure;
 const foregroundGroup = @import("pty.zig").foregroundGroup;
+const foregroundComm = @import("pty.zig").foregroundComm;
 
 test "Posix: inactive" {
     var pty: Posix = .inactive;
@@ -78,7 +79,10 @@ test "foregroundGroup: the shell at its prompt, then a program it started" {
     try testing.expectEqual(@as(isize, command.len), system.write(pty.master, command, command.len));
     try testing.expect(waitForForeground(pty.master, pty.pid, false));
 
+    var comm: [32]u8 = undefined;
+    try testing.expectEqualStrings("sleep", foregroundComm(pty.master, &comm).?);
     try testing.expectEqual(null, foregroundGroup(-1));
+    try testing.expectEqual(null, foregroundComm(-1, &comm));
 }
 
 /// Polls up to ~2 s until the foreground group is (or is not) `pid`.

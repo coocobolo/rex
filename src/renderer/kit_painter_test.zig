@@ -17,6 +17,7 @@ const tree_zig = @import("../kit/tree.zig");
 const Tree = tree_zig.Tree;
 const layout = @import("../kit/layout.zig");
 const memory = @import("../kit/memory.zig");
+const dialog_ui = @import("../kit/dialog.zig");
 const toast_stack = @import("../kit/toast.zig");
 
 const inter: KitFont.Files = .{
@@ -35,7 +36,10 @@ const terminal_light: Color = .rgb(0xfbfaf7);
 const Scene = enum {
     /// Hand-built banner and toasts, as approved in the token preview.
     overlay,
+    /// The confirm dialog (`kit/dialog.zig`), fully in.
     dialog,
+    /// The same dialog after one Tab: the ring is on Cancel.
+    dialog_cancel_focused,
     /// The app's toast stack (`kit/toast.zig`), its newest toast halfway in.
     toasts,
 };
@@ -45,6 +49,7 @@ const Marks = struct {
     title: tree_zig.Index = tree_zig.none,
     dialog: tree_zig.Index = tree_zig.none,
     confirm: tree_zig.Index = tree_zig.none,
+    cancel: tree_zig.Index = tree_zig.none,
 };
 
 fn toast(tree: *Tree, theme: *const Theme, icon: Color, title: []const u8, description: []const u8, marks: ?*Marks) !void {
@@ -72,24 +77,7 @@ fn toast(tree: *Tree, theme: *const Theme, icon: Color, title: []const u8, descr
     }
 }
 
-fn button(tree: *Tree, label: []const u8, fill: Color, border: Color, foreground: Color) !tree_zig.Index {
-    const box = try tree.open(.{
-        .axis = .row,
-        .height = .{ .fixed = Theme.control },
-        .padding = .symmetric(16, 0),
-        .main = .center,
-        .cross = .center,
-        .fill = fill,
-        .border = border,
-        .border_width = Theme.border_width,
-        .radius = Theme.radius_md,
-    });
-    _ = try tree.text(label, .{ .color = foreground, .style = .sm_medium });
-    tree.close(box);
-    return box;
-}
-
-fn build(tree: *Tree, scene: Scene, theme: *const Theme, toasts: *const toast_stack.State) !Marks {
+fn build(tree: *Tree, scene: Scene, theme: *const Theme, toasts: *const toast_stack.State, dialog_state: *const dialog_ui.State) !Marks {
     var marks: Marks = .{};
     switch (scene) {
         .overlay => {
@@ -113,28 +101,11 @@ fn build(tree: *Tree, scene: Scene, theme: *const Theme, toasts: *const toast_st
             try toast(tree, theme, theme.success, "Copied 3 lines", "Selection is on the clipboard.", &marks);
             tree.close(stack);
         },
-        .dialog => {
-            const scrim = try tree.open(.{ .width = .fill, .height = .fill, .main = .center, .cross = .center, .fill = theme.scrim });
-            const dialog = try tree.open(.{
-                .width = .{ .fixed = 420 },
-                .padding = .all(24),
-                .gap = 16,
-                .fill = theme.popover,
-                .border = theme.border,
-                .border_width = Theme.border_width,
-                .radius = Theme.radius,
-            });
-            const heading = try tree.open(.{ .width = .fill, .gap = 6 });
-            _ = try tree.text("Close this window?", .{ .color = theme.foreground, .style = .lg_semibold });
-            _ = try tree.text("A program is still running: nvim. Closing the window ends it.", .{ .color = theme.muted_foreground, .width = .fill });
-            tree.close(heading);
-            const actions = try tree.open(.{ .axis = .row, .width = .fill, .main = .end, .gap = 8 });
-            _ = try button(tree, "Cancel", .transparent, theme.input, theme.foreground);
-            marks.confirm = try button(tree, "Close window", theme.destructive, .transparent, theme.destructive_foreground);
-            tree.close(actions);
-            tree.close(dialog);
-            tree.close(scrim);
-            marks.dialog = dialog;
+        .dialog, .dialog_cancel_focused => {
+            _ = try dialog_ui.view(dialog_state, tree, theme) orelse unreachable;
+            marks.dialog = nodeWithId(tree, dialog_ui.card_id);
+            marks.confirm = nodeWithId(tree, dialog_ui.Action.confirm.id());
+            marks.cancel = nodeWithId(tree, dialog_ui.Action.cancel.id());
         },
         .toasts => _ = try toast_stack.view(toasts, tree, theme),
     }
@@ -204,6 +175,8 @@ const Rendered = struct {
     instances: u32,
     /// The texts of the `toasts` scene live here.
     toasts: toast_stack.State,
+    /// The texts of the `dialog` scene live here.
+    dialog: dialog_ui.State,
 
     fn card(self: *const Rendered, serial: u32) tree_zig.Rect {
         for (self.tree_nodes[0..self.tree_len]) |node| {
@@ -216,6 +189,13 @@ const Rendered = struct {
         return self.tree_nodes[index].rect;
     }
 };
+
+fn nodeWithId(tree: *const Tree, id: tree_zig.Id) tree_zig.Index {
+    for (tree.nodes[0..tree.len], 0..) |node, index| {
+        if (node.box.id == id) return @intCast(index);
+    }
+    unreachable;
+}
 
 fn rgb(color: Color) [3]u8 {
     return .{ color.r, color.g, color.b };
@@ -238,6 +218,18 @@ fn render(scene: Scene, variant: Theme.Variant, background: Color, scale: f32, k
     var lines: [64]text.Line = undefined;
     var tree: Tree = .init(&result.tree_nodes, &lines);
     result.toasts = .empty;
+    result.dialog = .empty;
+    if (scene == .dialog or scene == .dialog_cancel_focused) {
+        _ = dialog_ui.update(&result.dialog, .{ .open = .{
+            .title = "Close this window?",
+            .body = "A program is still running: nvim. Closing the window ends it.",
+            .confirm_label = "Close window",
+            .cancel_label = "Cancel",
+        } });
+        // Fully in, so the shot is the resting dialog rather than a fade.
+        _ = dialog_ui.update(&result.dialog, .{ .tick = Theme.duration });
+        if (scene == .dialog_cancel_focused) _ = dialog_ui.update(&result.dialog, .{ .focus = .next });
+    }
     const pushes = [_]toast_stack.Push{
         .{ .title = "Couldn\u{2019}t save wellbeing data", .description = "AccessDenied in /home/user/.local/state/rex/wellbeing", .kind = .err, .duration_ms = 5000 },
         .{ .title = "Configuration reloaded", .kind = .success, .duration_ms = 5000 },
@@ -250,7 +242,7 @@ fn render(scene: Scene, variant: Theme.Variant, background: Color, scale: f32, k
     }
     _ = toast_stack.update(&result.toasts, .{ .tick = Theme.duration / 2 });
 
-    result.marks = try build(&tree, scene, variant.theme(), &result.toasts);
+    result.marks = try build(&tree, scene, variant.theme(), &result.toasts, &result.dialog);
     try layout.layout(&tree, font.measurer(), view_width, view_height);
     if (scene == .toasts) {
         var table: memory.Table = .empty;
@@ -367,10 +359,34 @@ test "KitPainter: a dialog sits on a scrim that darkens the terminal behind it" 
     // Black at 50% over the terminal background, within rounding.
     const dimmed = frame.at(20, 20);
     try testing.expectApproxEqAbs(@as(f32, @floatFromInt(terminal_light.r)) / 2, @as(f32, @floatFromInt(dimmed[0])), 2);
-    // The destructive button is filled with its token, behind its label.
+    // The confirm button is the destructive token, sampled in its padding.
     const confirm = rendered.rect(rendered.marks.confirm);
     try testing.expectEqual(rgb(theme.destructive), frame.at(confirm.x + 6, confirm.y + confirm.h / 2));
     try testing.expect(frame.countNot(confirm, rgb(theme.destructive)) > 100);
+}
+
+test "KitPainter: the focus ring is a band around a button, not a fill behind it" {
+    for ([_]f32{ 1, 1.25, 1.5 }) |scale| {
+        var rendered = try render(.dialog_cancel_focused, .dark, terminal_dark, scale, .pairs);
+        defer rendered.frame.deinit();
+        const frame = &rendered.frame;
+        const theme = &Theme.dark;
+        var name_buffer: [48]u8 = undefined;
+        try frame.save(try std.fmt.bufPrint(&name_buffer, "dialog-dark-{d}-cancel-focused", .{@as(u32, @intFromFloat(scale * 100))}));
+
+        const cancel = rendered.rect(rendered.marks.cancel);
+        const middle = cancel.y + cancel.h / 2;
+        // Cancel is an outline button: inside its padding the card shows.
+        try testing.expectEqual(rgb(theme.popover), frame.at(cancel.x + 6, middle));
+        // Two pixels outside its edge is the ring: lighter than the card.
+        const ring = frame.at(cancel.x - 2, middle);
+        try testing.expect(ring[0] > theme.popover.r + 20);
+        // Past the ring's three pixels, the card again.
+        try testing.expectEqual(rgb(theme.popover), frame.at(cancel.x - 5, middle));
+        // Confirm lost the ring.
+        const confirm = rendered.rect(rendered.marks.confirm);
+        try testing.expectEqual(rgb(theme.popover), frame.at(confirm.x - 2, confirm.y + confirm.h / 2));
+    }
 }
 
 test "KitPainter: screenshots of the remaining variants" {

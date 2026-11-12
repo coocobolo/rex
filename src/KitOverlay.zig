@@ -1,8 +1,8 @@
 //! The UI kit's surfaces inside a terminal window (trial of ADR 0009):
-//! today only the toast stack. It owns the UI font, the painter, the node
-//! array and each surface's state, and is what `App` talks to. `App` only
-//! creates one when `REX_UI_KIT=1` is in the environment, so the default
-//! window pays nothing for it.
+//! the toast stack and one confirm dialog. It owns the UI font, the
+//! painter, the node array and each surface's state, and is what `App`
+//! talks to. `App` only creates one when `REX_UI_KIT=1` is in the
+//! environment, so the default window pays nothing for it.
 //!
 //! One frame is `buildFrame` (view, layout, motion, paint into the
 //! painter's instance array) and, after the terminal is drawn, `draw`.
@@ -22,7 +22,9 @@ const KitFont = @import("freetype/KitFont.zig");
 const Theme = @import("kit/Theme.zig");
 const layout = @import("kit/layout.zig");
 const memory = @import("kit/memory.zig");
+const motion_zig = @import("kit/motion.zig");
 const text = @import("kit/text.zig");
+const confirm = @import("kit/dialog.zig");
 const toast = @import("kit/toast.zig");
 const tree_zig = @import("kit/tree.zig");
 
@@ -40,6 +42,7 @@ lines: [line_capacity]text.Line = undefined,
 /// The last built frame, for hit-testing. Empty after `skipFrame`.
 tree: tree_zig.Tree,
 toasts: toast.State = .empty,
+dialog: confirm.State = .empty,
 /// Where each toast was last drawn.
 table: memory.Table = .empty,
 /// Milliseconds ticked since the last built frame while a toast was
@@ -49,6 +52,12 @@ table: memory.Table = .empty,
 elapsed_ms: u32 = 0,
 /// Whether the last built frame left a toast short of its place.
 motion: toast.Motion = .settled,
+
+comptime {
+    // A frame shows the dialog or the toast stack, never both, so `nodes`
+    // is sized for the stack and the dialog has to fit in it.
+    if (confirm.node_max > toast.node_max) @compileError("dialog does not fit the kit node buffer");
+}
 
 pub const CreateError = Allocator.Error || @import("freetype/root.zig").FtError || @import("renderer/Shader.zig").Error;
 
@@ -78,29 +87,71 @@ pub fn push(self: *KitOverlay, request: toast.Push) bool {
     return toast.update(&self.toasts, .{ .push = request });
 }
 
+/// Asks `request` in the confirm dialog. Returns whether a redraw is due.
+/// A dialog that is already up keeps its own question.
+pub fn openDialog(self: *KitOverlay, request: confirm.Request) bool {
+    return confirm.update(&self.dialog, .{ .open = request }) == .redraw;
+}
+
+/// Sends the dialog an event the caller made from a key or a click, and
+/// returns what it did: on `.confirm` the caller does what was asked.
+pub fn dialogInput(self: *KitOverlay, event: confirm.Event) confirm.Outcome {
+    return confirm.update(&self.dialog, event);
+}
+
+/// Whether the dialog is up and taking keys and clicks. False from the
+/// moment it starts to fade out: input is the terminal's again by then.
+pub fn dialogTakesInput(self: *const KitOverlay) bool {
+    return switch (self.dialog.phase) {
+        .entering, .open => true,
+        .closed, .leaving => false,
+    };
+}
+
 /// Advances timers and motion by `dt_ms`. Returns whether a redraw is due.
+/// While the dialog is up the toasts' glide stands still, so the time
+/// the dialog took is not spent on it in one step afterwards.
 pub fn tick(self: *KitOverlay, dt_ms: u64) bool {
     const dt = std.math.lossyCast(u32, dt_ms);
-    self.elapsed_ms = switch (self.motion) {
-        .moving => self.elapsed_ms +| dt,
-        .settled => 0,
-    };
-    const changed = toast.update(&self.toasts, .{ .tick = dt });
-    return changed or self.motion == .moving;
+    const dialog_up = self.dialog.phase != .closed;
+    if (dialog_up) {
+        self.elapsed_ms = 0;
+        self.motion = .settled;
+    } else {
+        self.elapsed_ms = switch (self.motion) {
+            .moving => self.elapsed_ms +| dt,
+            .settled => 0,
+        };
+    }
+    const toasts_changed = toast.update(&self.toasts, .{ .tick = dt });
+    if (!dialog_up) return toasts_changed or self.motion == .moving;
+    return toasts_changed or confirm.update(&self.dialog, .{ .tick = dt }) != .quiet;
 }
 
 /// Milliseconds until `tick` has something to do, or null when only an
 /// event can change what is shown.
 pub fn wakeMs(self: *const KitOverlay) ?u32 {
-    if (self.motion == .moving) return toast.frame_ms;
+    if (self.dialog.wakeMs()) |ms| return ms;
+    if (self.motion == .moving) return motion_zig.frame_ms;
     return self.toasts.wakeMs();
 }
 
-/// The pointer moved to `x`, `y` in logical pixels. Toasts keep their
-/// time while it is over one of them.
-pub fn pointerMoved(self: *KitOverlay, x: f32, y: f32) void {
-    const over = self.toasts.hit(self.tree.hitTest(x, y)) != .none;
+/// The pointer moved to `x`, `y` in logical pixels. Returns whether a
+/// redraw is due, which is when it came onto or off a dialog button.
+/// Toasts keep their time while it is over one of them.
+pub fn pointerMoved(self: *KitOverlay, x: f32, y: f32) bool {
+    const id = self.tree.hitTest(x, y);
+    if (self.dialog.phase != .closed) {
+        const action: ?confirm.Action = switch (confirm.hit(id) orelse return false) {
+            .confirm => .confirm,
+            .cancel => .cancel,
+            .scrim, .dialog => null,
+        };
+        return confirm.update(&self.dialog, .{ .pointer = action }) == .redraw;
+    }
+    const over = self.toasts.hit(id) != .none;
     _ = toast.update(&self.toasts, .{ .pointer = if (over) .over else .away });
+    return false;
 }
 
 pub const Click = enum {
@@ -110,15 +161,39 @@ pub const Click = enum {
     taken,
     /// Taken by the kit, and a redraw is due.
     changed,
+    /// On the dialog's confirm button: the dialog has closed and the
+    /// caller does what was asked.
+    confirm,
+    /// On the scrim around the dialog. Nothing happened yet: the caller
+    /// decides whether that cancels it.
+    scrim,
 };
 
 /// A press of the left button at `x`, `y` in logical pixels.
 pub fn click(self: *KitOverlay, x: f32, y: f32) Click {
-    switch (self.toasts.hit(self.tree.hitTest(x, y))) {
+    const id = self.tree.hitTest(x, y);
+    if (self.dialog.phase != .closed) {
+        return switch (confirm.hit(id) orelse return .taken) {
+            .confirm => self.chooseDialog(.confirm),
+            .cancel => self.chooseDialog(.cancel),
+            .scrim => .scrim,
+            // On the card, beside the buttons.
+            .dialog => if (confirm.update(&self.dialog, .blur) == .redraw) .changed else .taken,
+        };
+    }
+    switch (self.toasts.hit(id)) {
         .none => return .outside,
         .toast => return .taken,
         .close => |serial| return if (toast.update(&self.toasts, .{ .dismiss = serial })) .changed else .taken,
     }
+}
+
+fn chooseDialog(self: *KitOverlay, action: confirm.Action) Click {
+    return switch (confirm.update(&self.dialog, .{ .choose = action })) {
+        .quiet => .taken,
+        .redraw, .closed => .changed,
+        .confirm => .confirm,
+    };
 }
 
 /// Dismisses the oldest toast that is not already leaving. Returns whether
@@ -157,23 +232,36 @@ pub fn buildFrame(self: *KitOverlay, atlas: *Atlas, width: f32, height: f32, bac
     self.tree.reset();
     self.build(atlas, width, height, Theme.variantFor(background).theme(), dt_ms) catch |err| {
         // The same state would fail the same way every frame.
-        log.err("cannot show {d} toasts, dropping them: {t}", .{ self.toasts.len, err });
-        self.toasts = .empty;
+        if (self.dialog.phase != .closed) {
+            log.err("cannot show the dialog, dropping it: {t}", .{err});
+            self.dialog = .empty;
+        } else {
+            log.err("cannot show {d} toasts, dropping them: {t}", .{ self.toasts.len, err });
+            self.toasts = .empty;
+        }
         _ = self.skipFrame();
     };
     return drawn_before or self.painter.len > 0;
 }
 
 fn build(self: *KitOverlay, atlas: *Atlas, width: f32, height: f32, theme: *const Theme, dt_ms: u32) !void {
+    if (self.dialog.phase != .closed) {
+        // The scrim covers the window, so the toast stack is not built.
+        _ = try confirm.view(&self.dialog, &self.tree, theme);
+        try layout.layout(&self.tree, self.font.measurer(), width, height);
+        self.motion = .settled;
+        try self.painter.paint(&self.tree, &self.font, atlas);
+        return;
+    }
     const stack = try toast.view(&self.toasts, &self.tree, theme);
     try layout.layout(&self.tree, self.font.measurer(), width, height);
     self.motion = try toast.place(&self.toasts, &self.tree, stack, &self.table, dt_ms);
     try self.painter.paint(&self.tree, &self.font, atlas);
 }
 
-/// A frame in which the kit's UI is hidden (a modal covers the window):
-/// nothing is drawn and nothing can be hit. Returns whether the last
-/// frame's UI has to be taken away.
+/// A frame in which the kit's UI is hidden (the lock screen covers the
+/// window): nothing is drawn and nothing can be hit. Returns whether the
+/// last frame's UI has to be taken away.
 pub fn skipFrame(self: *KitOverlay) bool {
     const drawn_before = self.painter.len > 0;
     self.painter.begin();

@@ -89,6 +89,15 @@ pub const Codepoints = struct {
     }
 };
 
+/// How many of the first `max` bytes of `bytes` to keep so that no UTF-8
+/// sequence is cut in two, for copying text into a fixed buffer.
+pub fn cut(bytes: []const u8, max: usize) usize {
+    if (bytes.len <= max) return bytes.len;
+    var end = max;
+    while (end > 0 and bytes[end] & 0xC0 == 0x80) end -= 1;
+    return end;
+}
+
 /// One line of a wrapped text: a byte range of the text and its width.
 /// The range excludes the space or line feed the line was broken at.
 pub const Line = struct {

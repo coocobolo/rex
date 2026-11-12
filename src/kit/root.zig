@@ -8,11 +8,15 @@ pub const text = @import("text.zig");
 pub const tree = @import("tree.zig");
 pub const layout = @import("layout.zig");
 pub const memory = @import("memory.zig");
+pub const motion = @import("motion.zig");
 pub const toast = @import("toast.zig");
+pub const dialog = @import("dialog.zig");
 
 test {
     _ = @import("kit_test.zig");
     _ = @import("memory_test.zig");
     _ = @import("toast_test.zig");
+    _ = @import("dialog_test.zig");
     _ = Theme;
+    _ = motion;
 }

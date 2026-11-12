@@ -14,6 +14,7 @@ const assert = std.debug.assert;
 const Theme = @import("Theme.zig");
 const Color = Theme.Color;
 const memory = @import("memory.zig");
+const motion_zig = @import("motion.zig");
 const text = @import("text.zig");
 const tree_zig = @import("tree.zig");
 const Tree = tree_zig.Tree;
@@ -42,8 +43,6 @@ const rise = 16;
 const glide_ms = 40;
 /// The title's line, which the icon and the close button center on.
 const line_height = text.Style.sm_medium.metrics().line_height;
-/// How often an animating stack wants a frame.
-pub const frame_ms = 16;
 
 pub const Kind = enum(u8) {
     default,
@@ -99,22 +98,12 @@ pub const Entry = struct {
     fn presence(self: *const Entry) f32 {
         return switch (self.phase) {
             .waiting => 0,
-            .entering => |elapsed| easeOut(fraction(elapsed)),
+            .entering => |elapsed| motion_zig.progress(elapsed),
             .shown => 1,
-            .leaving => |elapsed| 1 - easeOut(fraction(elapsed)),
+            .leaving => |elapsed| 1 - motion_zig.progress(elapsed),
         };
     }
 };
-
-fn fraction(elapsed_ms: u16) f32 {
-    return @min(1, @as(f32, @floatFromInt(elapsed_ms)) / Theme.duration);
-}
-
-/// Ease-out cubic.
-fn easeOut(t: f32) f32 {
-    const rest = 1 - t;
-    return 1 - rest * rest * rest;
-}
 
 pub const Pointer = enum(u8) { away, over };
 
@@ -165,8 +154,8 @@ pub const State = struct {
             .serial = self.next_serial,
             .duration_ms = toast.duration_ms,
             .kind = toast.kind,
-            .title_len = @intCast(cut(toast.title, title_capacity)),
-            .description_len = @intCast(cut(toast.description, description_capacity)),
+            .title_len = @intCast(text.cut(toast.title, title_capacity)),
+            .description_len = @intCast(text.cut(toast.description, description_capacity)),
             .title_bytes = undefined,
             .description_bytes = undefined,
         };
@@ -258,7 +247,7 @@ pub const State = struct {
         for (self.visible()) |entry| {
             switch (entry.phase) {
                 .waiting => unreachable, // `visible` holds none
-                .entering, .leaving => return frame_ms,
+                .entering, .leaving => return motion_zig.frame_ms,
                 .shown => |remaining| if (self.pointer == .away) {
                     wake = @min(wake orelse remaining, remaining);
                 },
@@ -322,27 +311,12 @@ pub fn update(state: *State, event: Event) bool {
     };
 }
 
-/// How many of the first `max` bytes of `bytes` to keep so that no UTF-8
-/// sequence is cut in two.
-fn cut(bytes: []const u8, max: usize) usize {
-    if (bytes.len <= max) return bytes.len;
-    var end = max;
-    while (end > 0 and bytes[end] & 0xC0 == 0x80) end -= 1;
-    return end;
-}
-
 pub fn cardId(serial: u32) Id {
     return Id.of("toast").item(serial);
 }
 
 pub fn closeId(serial: u32) Id {
     return Id.of("toast.close").item(serial);
-}
-
-fn fade(color: Color, presence: f32) Color {
-    var result = color;
-    result.a = @intFromFloat(@round(@as(f32, @floatFromInt(color.a)) * presence));
-    return result;
 }
 
 /// Most nodes one view of a full stack writes.
@@ -371,21 +345,21 @@ pub fn view(state: *const State, tree: *Tree, theme: *const Theme) tree_zig.Erro
             .width = .{ .fixed = width },
             .padding = .all(padding),
             .gap = 10,
-            .fill = fade(theme.popover, presence),
-            .border = fade(theme.border, presence),
+            .fill = theme.popover.fade(presence),
+            .border = theme.border.fade(presence),
             .border_width = Theme.border_width,
             .radius = Theme.radius,
         });
         if (entry.kind.color(theme)) |color| {
             // As tall as the title's line, so the icon centers on it.
             const slot = try tree.open(.{ .height = .{ .fixed = line_height }, .main = .center });
-            _ = try tree.icon(.{ .codepoint = 0, .color = fade(color, presence), .size = Theme.icon });
+            _ = try tree.icon(.{ .codepoint = 0, .color = color.fade(presence), .size = Theme.icon });
             tree.close(slot);
         }
         const body = try tree.open(.{ .width = .fill });
-        _ = try tree.text(entry.title(), .{ .color = fade(theme.foreground, presence), .style = .sm_medium, .width = .fill });
+        _ = try tree.text(entry.title(), .{ .color = theme.foreground.fade(presence), .style = .sm_medium, .width = .fill });
         if (entry.description_len > 0) {
-            _ = try tree.text(entry.description(), .{ .color = fade(theme.muted_foreground, presence), .width = .fill });
+            _ = try tree.text(entry.description(), .{ .color = theme.muted_foreground.fade(presence), .width = .fill });
         }
         tree.close(body);
         const close = try tree.open(.{
@@ -395,7 +369,7 @@ pub fn view(state: *const State, tree: *Tree, theme: *const Theme) tree_zig.Erro
             .main = .center,
             .cross = .center,
         });
-        _ = try tree.text("\u{00D7}", .{ .color = fade(theme.muted_foreground, presence), .style = .sm_medium });
+        _ = try tree.text("\u{00D7}", .{ .color = theme.muted_foreground.fade(presence), .style = .sm_medium });
         tree.close(close);
         tree.close(card);
     }
