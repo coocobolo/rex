@@ -220,6 +220,15 @@ pub const Tree = struct {
         return index;
     }
 
+    /// Moves the laid-out node `index` and its descendants by `dx`, `dy`
+    /// logical pixels, for motion that layout knows nothing about.
+    pub fn translate(self: *Tree, index: Index, dx: f32, dy: f32) void {
+        for (self.nodes[index..self.nodes[index].end]) |*node| {
+            node.rect.x += dx;
+            node.rect.y += dy;
+        }
+    }
+
     /// The topmost node with an id under the point, or `none`. Later nodes
     /// are drawn over earlier ones.
     pub fn hitTest(self: *const Tree, x: f32, y: f32) Id {

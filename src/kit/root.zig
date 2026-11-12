@@ -7,8 +7,12 @@ pub const Theme = @import("Theme.zig");
 pub const text = @import("text.zig");
 pub const tree = @import("tree.zig");
 pub const layout = @import("layout.zig");
+pub const memory = @import("memory.zig");
+pub const toast = @import("toast.zig");
 
 test {
     _ = @import("kit_test.zig");
+    _ = @import("memory_test.zig");
+    _ = @import("toast_test.zig");
     _ = Theme;
 }

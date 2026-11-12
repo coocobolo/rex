@@ -137,6 +137,8 @@ pub const control = 36;
 pub const control_lg = 40;
 /// Icon edge length.
 pub const icon = 16;
+/// How long a toast or dialog takes to enter or leave, in milliseconds.
+pub const duration = 200;
 
 pub const Variant = enum {
     dark,
