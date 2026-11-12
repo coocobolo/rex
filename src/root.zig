@@ -10,6 +10,7 @@ pub const Selection = @import("Selection.zig");
 
 pub const color = @import("color/root.zig");
 pub const ui = @import("ui/root.zig");
+pub const kit = @import("kit/root.zig");
 pub const renderer = @import("renderer/root.zig");
 pub const terminal = @import("term/root.zig");
 pub const vt = @import("vt/root.zig");
@@ -26,6 +27,7 @@ pub const config = @import("config/root.zig");
 test {
     _ = @import("color/root.zig");
     _ = @import("ui/root.zig");
+    _ = @import("kit/root.zig");
     _ = @import("fuzz/root.zig");
     _ = @import("input/root.zig");
     _ = @import("driver/root.zig");
