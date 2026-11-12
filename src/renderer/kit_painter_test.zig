@@ -106,8 +106,8 @@ fn build(tree: *Tree, scene: Scene, theme: *const Theme, toasts: *const toast_st
         .dialog, .dialog_cancel_focused => {
             _ = try dialog_ui.view(dialog_state, tree, theme) orelse unreachable;
             marks.dialog = nodeWithId(tree, dialog_ui.card_id);
-            marks.confirm = nodeWithId(tree, dialog_ui.Action.confirm.id());
-            marks.cancel = nodeWithId(tree, dialog_ui.Action.cancel.id());
+            marks.cancel = nodeWithId(tree, dialog_ui.actionId(0));
+            marks.confirm = nodeWithId(tree, dialog_ui.actionId(1));
         },
         .toasts => _ = try toast_stack.view(toasts, tree, theme),
     }
@@ -225,8 +225,11 @@ fn render(scene: Scene, variant: Theme.Variant, background: Color, scale: f32, k
         _ = dialog_ui.update(&result.dialog, .{ .open = .{
             .title = "Close this window?",
             .body = "A program is still running: nvim. Closing the window ends it.",
-            .confirm_label = "Close window",
-            .cancel_label = "Cancel",
+            .actions = &.{
+                .{ .label = "Cancel", .role = .dismiss, .key_cap = "Esc" },
+                .{ .label = "Close window", .variant = .destructive },
+            },
+            .focus = 1,
         } });
         // Fully in, so the shot is the resting dialog rather than a fade.
         _ = dialog_ui.update(&result.dialog, .{ .tick = Theme.duration });

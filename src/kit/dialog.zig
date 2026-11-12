@@ -1,14 +1,16 @@
-//! A confirm dialog: a title, an optional body, and a cancel and a
-//! confirm button over a scrim. The quit prompt is its first caller.
+//! A dialog that asks one question: a title, an optional body and a row
+//! of one to three actions over a scrim. The quit prompt is its first
+//! caller.
 //!
 //! `State` is plain data, `update` is the only code that changes it and
 //! `view` writes its nodes (ADR 0009). Nothing allocates.
 //!
 //! The caller turns keys and clicks into events and acts on the outcome.
-//! Confirming closes the dialog at once; cancelling fades it out, and it
-//! takes no more input from then on.
+//! Choosing an action closes the dialog at once and reports which;
+//! dismissing fades it out, and it takes no more input from then on.
 
 const std = @import("std");
+const assert = std.debug.assert;
 
 const Theme = @import("Theme.zig");
 const motion = @import("motion.zig");
@@ -26,44 +28,71 @@ pub const width = 420;
 pub const padding = 24;
 /// Between the title, the body and the actions.
 pub const gap = 16;
-/// Between the two buttons, and between a button's label and its key cap.
+/// Between two buttons, and between a button's label and its key cap.
 pub const button_gap = 8;
 /// Horizontal padding inside a button.
 pub const button_pad = 16;
 
+pub const actions_max = 3;
 pub const title_capacity = 96;
 pub const body_capacity = 160;
-pub const label_capacity = 64;
+pub const label_capacity = 48;
+pub const key_cap_capacity = 8;
 
 pub const scrim_id = Id.of("dialog.scrim");
 pub const card_id = Id.of("dialog");
 
-pub const Action = enum(u8) {
-    cancel,
-    /// The action the dialog asks about. Drawn last, on the right.
-    confirm,
+/// The id of the button of action `index`.
+pub fn actionId(index: u8) Id {
+    return Id.of("dialog.action").item(index);
+}
 
-    pub fn id(self: Action) Id {
-        return switch (self) {
-            .cancel => Id.of("cancel"),
-            .confirm => Id.of("confirm"),
-        };
-    }
+/// No action: the value of `State.focus` and `State.hover` when no button
+/// has the focus or the pointer.
+pub const no_action = actions_max;
+
+/// How a button looks.
+pub const Variant = enum(u8) {
+    /// Bordered, no fill: an action of no special weight.
+    outline,
+    /// Filled with `primary`: the action the dialog suggests.
+    primary,
+    /// Filled with `destructive`: an action that cannot be undone.
+    destructive,
 };
 
-/// Which button has the focus ring and is taken by `activate`. With
-/// `none` there is no ring and `activate` does nothing.
-pub const Focus = enum(u8) {
-    none,
-    cancel,
-    confirm,
+/// What taking a button does.
+pub const Role = enum(u8) {
+    /// Reports `Outcome.chosen` with the action's index.
+    choose,
+    /// Dismisses the dialog, as Esc does.
+    dismiss,
+};
 
-    fn matches(self: Focus, action: Action) bool {
-        return switch (self) {
-            .none => false,
-            .cancel => action == .cancel,
-            .confirm => action == .confirm,
-        };
+/// One button of a request. The texts are copied.
+pub const Action = struct {
+    label: []const u8,
+    variant: Variant = .outline,
+    role: Role = .choose,
+    /// The key that takes this action, shown in a cap after the label
+    /// ("Esc"). Empty for none. Display only: the caller binds the key.
+    key_cap: []const u8 = "",
+};
+
+const Button = struct {
+    variant: Variant,
+    role: Role,
+    label_len: u8,
+    key_cap_len: u8,
+    label_bytes: [label_capacity]u8,
+    key_cap_bytes: [key_cap_capacity]u8,
+
+    fn label(self: *const Button) []const u8 {
+        return self.label_bytes[0..self.label_len];
+    }
+
+    fn keyCap(self: *const Button) []const u8 {
+        return self.key_cap_bytes[0..self.key_cap_len];
     }
 };
 
@@ -72,26 +101,27 @@ pub const Phase = union(enum) {
     /// Fading in; milliseconds since it started. It already takes input.
     entering: u16,
     open,
-    /// Fading out after a cancel; milliseconds since it started. It no
+    /// Fading out after a dismissal; milliseconds since it started. It no
     /// longer takes input.
     leaving: u16,
 };
 
 pub const State = struct {
     phase: Phase = .closed,
-    focus: Focus = .none,
-    /// The button under the pointer, if any.
-    hover: ?Action = null,
+    /// The action with the focus ring, taken by `activate`; `no_action`
+    /// for none, when `activate` does nothing.
+    focus: u8 = no_action,
+    /// The action under the pointer, or `no_action`.
+    hover: u8 = no_action,
+    /// Buttons in use: `buttons[0..count]`, drawn left to right.
+    count: u8 = 0,
     /// Set by the owner, from the user's setting.
     motion: motion.Mode = .full,
     title_len: u8 = 0,
     body_len: u8 = 0,
-    confirm_len: u8 = 0,
-    cancel_len: u8 = 0,
     title_bytes: [title_capacity]u8 = undefined,
     body_bytes: [body_capacity]u8 = undefined,
-    confirm_bytes: [label_capacity]u8 = undefined,
-    cancel_bytes: [label_capacity]u8 = undefined,
+    buttons: [actions_max]Button = undefined,
 
     pub const empty: State = .{};
 
@@ -103,11 +133,9 @@ pub const State = struct {
         return self.body_bytes[0..self.body_len];
     }
 
-    pub fn label(self: *const State, action: Action) []const u8 {
-        return switch (action) {
-            .confirm => self.confirm_bytes[0..self.confirm_len],
-            .cancel => self.cancel_bytes[0..self.cancel_len],
-        };
+    /// The label of action `index`.
+    pub fn label(self: *const State, index: u8) []const u8 {
+        return self.buttons[index].label();
     }
 
     /// 0 (invisible) to 1 (fully shown): the opacity of everything drawn.
@@ -137,49 +165,57 @@ pub const State = struct {
     }
 };
 
-/// What to ask. The four texts are copied and cut at their capacity on a
-/// code point boundary, so they need not outlive the call.
+/// What to ask. Every text is copied and cut at its capacity on a code
+/// point boundary, so nothing needs to outlive the call.
 pub const Request = struct {
     title: []const u8,
     /// Wrapped to the card's width; a line feed starts a new line. Empty
     /// for no body.
     body: []const u8 = "",
-    confirm_label: []const u8,
-    cancel_label: []const u8,
-    /// The button that starts with the focus.
-    focus: Focus = .confirm,
+    /// One to `actions_max` buttons, left to right. By convention the
+    /// action the dialog is about comes last.
+    actions: []const Action,
+    /// The action that starts with the focus, or `no_action`.
+    focus: u8 = no_action,
 };
 
 pub const Direction = enum(u8) { next, previous };
 
 /// The part of the dialog a point is over.
-pub const Target = enum(u8) { scrim, dialog, cancel, confirm };
+pub const Target = union(enum) {
+    scrim,
+    /// The card, beside its buttons.
+    card,
+    /// The button of this action.
+    action: u8,
+};
 
 pub const Event = union(enum) {
     open: Request,
     /// This many milliseconds passed.
     tick: u32,
-    /// The pointer is over this button now, or over neither.
-    pointer: ?Action,
+    /// The pointer is over this action's button now, or over none
+    /// (`no_action`).
+    pointer: u8,
     focus: Direction,
     /// Take the focused action.
     activate,
     /// Take the focus off the buttons, as a click beside them does.
     blur,
-    /// Close without confirming, whichever button has the focus.
-    cancel,
-    /// Take this action.
-    choose: Action,
+    /// Close without choosing: Esc, or a click outside.
+    dismiss,
+    /// Take this action, as a click on its button does.
+    take: u8,
 };
 
 /// What an event did, for the caller to act on.
-pub const Outcome = enum {
+pub const Outcome = union(enum) {
     /// Nothing: the event did not apply, or changed nothing on screen.
     quiet,
     /// The view changed; a redraw is due.
     redraw,
-    /// Confirm was taken. The dialog is closed and a redraw is due.
-    confirm,
+    /// This action was chosen. The dialog is closed and a redraw is due.
+    chosen: u8,
     /// The fade-out ended. The dialog is closed and a redraw is due.
     closed,
 };
@@ -190,45 +226,54 @@ pub fn update(state: *State, event: Event) Outcome {
     return switch (event) {
         .open => |request| open(state, request),
         .tick => |dt_ms| tick(state, dt_ms),
-        .pointer => |action| hoverAt(state, action),
+        .pointer => |index| hoverAt(state, index),
         .focus => |direction| move(state, direction),
-        .activate => activate(state),
+        .activate => if (state.focus == no_action) .quiet else take(state, state.focus),
         .blur => blur(state),
-        .cancel => beginLeave(state),
-        .choose => |action| take(state, action),
+        .dismiss => beginLeave(state),
+        .take => |index| take(state, index),
     };
 }
 
 fn open(self: *State, request: Request) Outcome {
+    assert(request.actions.len >= 1 and request.actions.len <= actions_max);
+    assert(request.focus < request.actions.len or request.focus == no_action);
+    const duration = motion.duration(self.motion);
     self.phase = switch (self.phase) {
         .entering, .open => return .quiet,
         .closed => .{ .entering = 0 },
         // Fades back in from as far as it had faded out.
-        .leaving => |elapsed| .{ .entering = motion.duration(self.motion) - @min(elapsed, motion.duration(self.motion)) },
+        .leaving => |elapsed| .{ .entering = duration - @min(elapsed, duration) },
     };
     self.focus = request.focus;
-    self.hover = null;
+    self.hover = no_action;
     self.title_len = put(request.title, &self.title_bytes);
     self.body_len = put(request.body, &self.body_bytes);
-    self.confirm_len = put(request.confirm_label, &self.confirm_bytes);
-    self.cancel_len = put(request.cancel_label, &self.cancel_bytes);
+    self.count = @intCast(request.actions.len);
+    for (request.actions, self.buttons[0..self.count]) |action, *button| {
+        button.variant = action.variant;
+        button.role = action.role;
+        button.label_len = put(action.label, &button.label_bytes);
+        button.key_cap_len = put(action.key_cap, &button.key_cap_bytes);
+    }
     return .redraw;
 }
 
 fn tick(self: *State, dt_ms: u32) Outcome {
     const dt: u16 = std.math.lossyCast(u16, dt_ms);
+    const duration = motion.duration(self.motion);
     switch (self.phase) {
         .closed, .open => return .quiet,
         .entering => |elapsed| {
             const now = elapsed +| dt;
-            self.phase = if (now >= motion.duration(self.motion)) .open else .{ .entering = now };
+            self.phase = if (now >= duration) .open else .{ .entering = now };
             return .redraw;
         },
         .leaving => |elapsed| {
             const now = elapsed +| dt;
-            if (now >= motion.duration(self.motion)) {
+            if (now >= duration) {
                 self.phase = .closed;
-                self.hover = null;
+                self.hover = no_action;
                 return .closed;
             }
             self.phase = .{ .leaving = now };
@@ -237,65 +282,54 @@ fn tick(self: *State, dt_ms: u32) Outcome {
     }
 }
 
-fn hoverAt(self: *State, action: ?Action) Outcome {
+fn hoverAt(self: *State, index: u8) Outcome {
     if (!self.acceptsInput()) return .quiet;
-    if (self.hover == action) return .quiet;
-    self.hover = action;
+    const over = if (index < self.count) index else no_action;
+    if (self.hover == over) return .quiet;
+    self.hover = over;
     return .redraw;
 }
 
 fn move(self: *State, direction: Direction) Outcome {
     if (!self.acceptsInput()) return .quiet;
-    self.focus = switch (self.focus) {
-        // Coming into the row: forwards lands on its first button,
-        // backwards on its last.
-        .none => switch (direction) {
-            .next => .cancel,
-            .previous => .confirm,
-        },
-        // With two buttons both directions lead to the other one.
-        .cancel => .confirm,
-        .confirm => .cancel,
+    const before = self.focus;
+    self.focus = switch (direction) {
+        // Coming into the row forwards lands on its first button.
+        .next => if (before == no_action) 0 else (before + 1) % self.count,
+        // Coming into it backwards lands on its last.
+        .previous => if (before == no_action or before == 0) self.count - 1 else before - 1,
     };
-    return .redraw;
+    return if (self.focus == before) .quiet else .redraw;
 }
 
 fn blur(self: *State) Outcome {
     if (!self.acceptsInput()) return .quiet;
-    if (self.focus == .none) return .quiet;
-    self.focus = .none;
+    if (self.focus == no_action) return .quiet;
+    self.focus = no_action;
     return .redraw;
 }
 
-fn activate(self: *State) Outcome {
-    if (!self.acceptsInput()) return .quiet;
-    return switch (self.focus) {
-        .none => .quiet,
-        .cancel => take(self, .cancel),
-        .confirm => take(self, .confirm),
-    };
-}
-
-fn take(self: *State, action: Action) Outcome {
-    if (!self.acceptsInput()) return .quiet;
-    switch (action) {
-        .confirm => {
+fn take(self: *State, index: u8) Outcome {
+    if (!self.acceptsInput() or index >= self.count) return .quiet;
+    switch (self.buttons[index].role) {
+        .dismiss => return beginLeave(self),
+        .choose => {
             self.phase = .closed;
-            self.hover = null;
-            return .confirm;
+            self.hover = no_action;
+            return .{ .chosen = index };
         },
-        .cancel => return beginLeave(self),
     }
 }
 
 fn beginLeave(self: *State) Outcome {
+    const duration = motion.duration(self.motion);
     switch (self.phase) {
         .closed, .leaving => return .quiet,
         // Fades out from as far as it had faded in.
-        .entering => |elapsed| self.phase = .{ .leaving = motion.duration(self.motion) - @min(elapsed, motion.duration(self.motion)) },
+        .entering => |elapsed| self.phase = .{ .leaving = duration - @min(elapsed, duration) },
         .open => self.phase = .{ .leaving = 0 },
     }
-    self.hover = null;
+    self.hover = no_action;
     return .redraw;
 }
 
@@ -305,28 +339,37 @@ fn put(bytes: []const u8, dest: []u8) u8 {
     return @intCast(len);
 }
 
-/// Confirm is a filled destructive button, slightly translucent while
-/// hovered. Cancel is an outline button that fills while hovered.
-fn buttonFill(theme: *const Theme, action: Action, hovered: bool) Color {
-    return switch (action) {
-        .confirm => theme.destructive.alpha(if (hovered) 90 else 100),
-        .cancel => if (hovered) theme.accent else .transparent,
-    };
-}
+const Look = struct { fill: Color, border: Color, label: Color };
 
-/// The focused button's border takes the ring color, under the ring
-/// drawn around it.
-fn buttonBorder(theme: *const Theme, action: Action, focused: bool) Color {
-    if (focused) return theme.ring;
-    return switch (action) {
-        .cancel => theme.input,
-        .confirm => .transparent,
+/// A filled button is slightly translucent while hovered; an outline
+/// button fills. The focused button's border takes the ring color, under
+/// the ring drawn around it.
+fn look(theme: *const Theme, variant: Variant, hovered: bool, focused: bool) Look {
+    const solid: u8 = if (hovered) 90 else 100;
+    var result: Look = switch (variant) {
+        .outline => .{
+            .fill = if (hovered) theme.accent else .transparent,
+            .border = theme.input,
+            .label = theme.foreground,
+        },
+        .primary => .{
+            .fill = theme.primary.alpha(solid),
+            .border = .transparent,
+            .label = theme.primary_foreground,
+        },
+        .destructive => .{
+            .fill = theme.destructive.alpha(solid),
+            .border = .transparent,
+            .label = theme.destructive_foreground,
+        },
     };
+    if (focused) result.border = theme.ring;
+    return result;
 }
 
 /// Most nodes one view writes: scrim, card, title, body, the action row,
-/// three per button (ring slot, face, label) and two for the key cap.
-pub const node_max = 13;
+/// and five per button (ring slot, face, label, key cap and its text).
+pub const node_max = 5 + actions_max * 5;
 
 /// Writes the dialog as one root, the scrim, and returns it, or null when
 /// the dialog is closed and nothing was written. The texts point into
@@ -371,75 +414,69 @@ pub fn view(state: *const State, tree: *Tree, theme: *const Theme) tree_zig.Erro
         .cross = .center,
         .gap = button_gap,
     });
-    try button(tree, theme, state, .cancel, presence);
-    try button(tree, theme, state, .confirm, presence);
+    for (state.buttons[0..state.count], 0..) |*button, index| {
+        try buttonView(tree, theme, state, button, @intCast(index), presence);
+    }
     tree.close(actions);
     tree.close(card);
     tree.close(scrim);
     return scrim;
 }
 
-fn button(tree: *Tree, theme: *const Theme, state: *const State, action: Action, presence: f32) tree_zig.Error!void {
-    const focused = state.focus.matches(action);
+fn buttonView(tree: *Tree, theme: *const Theme, state: *const State, button: *const Button, index: u8, presence: f32) tree_zig.Error!void {
+    const focused = state.focus == index;
+    const colors = look(theme, button.variant, state.hover == index, focused);
     // Every button sits in a slot with room for the ring, so the row does
     // not shift when the focus moves. The ring is the slot's border, not
-    // its fill, which would show through the outline button.
+    // its fill, which would show through an outline button.
     const slot = try tree.open(.{
         .padding = .all(Theme.ring_width),
         .border = if (focused) theme.ring.alpha(Theme.ring_opacity).fade(presence) else .transparent,
         .border_width = Theme.ring_width,
         .radius = Theme.radius_md + Theme.ring_width,
     });
-    const hovered = state.hover == action;
     const face = try tree.open(.{
-        .id = action.id(),
+        .id = actionId(index),
         .axis = .row,
         .height = .{ .fixed = Theme.control },
         .padding = .symmetric(button_pad, 0),
         .gap = button_gap,
         .main = .center,
         .cross = .center,
-        .fill = buttonFill(theme, action, hovered).fade(presence),
-        .border = buttonBorder(theme, action, focused).fade(presence),
+        .fill = colors.fill.fade(presence),
+        .border = colors.border.fade(presence),
         .border_width = Theme.border_width,
         .radius = Theme.radius_md,
     });
-    const label_color: Color = switch (action) {
-        .confirm => theme.destructive_foreground,
-        .cancel => theme.foreground,
-    };
-    _ = try tree.text(state.label(action), .{
-        .color = label_color.fade(presence),
+    _ = try tree.text(button.label(), .{
+        .color = colors.label.fade(presence),
         .style = .sm_medium,
     });
-    // Esc cancels every dialog, whatever the caller labels the button.
-    if (action == .cancel) try keyCap(tree, theme, presence);
+    if (button.key_cap_len > 0) {
+        const cap = try tree.open(.{
+            .padding = .symmetric(6, 2),
+            .fill = theme.muted.fade(presence),
+            .radius = Theme.radius_sm,
+            .main = .center,
+            .cross = .center,
+        });
+        _ = try tree.text(button.keyCap(), .{
+            .color = theme.muted_foreground.fade(presence),
+            .style = .xs,
+        });
+        tree.close(cap);
+    }
     tree.close(face);
     tree.close(slot);
-}
-
-/// The key cap after the cancel label.
-fn keyCap(tree: *Tree, theme: *const Theme, presence: f32) tree_zig.Error!void {
-    const cap = try tree.open(.{
-        .padding = .symmetric(6, 2),
-        .fill = theme.muted.fade(presence),
-        .radius = Theme.radius_sm,
-        .main = .center,
-        .cross = .center,
-    });
-    _ = try tree.text("Esc", .{
-        .color = theme.muted_foreground.fade(presence),
-        .style = .xs,
-    });
-    tree.close(cap);
 }
 
 /// The part of the dialog that node `id` belongs to, or null for a node
 /// of another surface. Pass what `Tree.hitTest` returned.
 pub fn hit(id: Id) ?Target {
     if (id == scrim_id) return .scrim;
-    if (id == card_id) return .dialog;
-    if (id == Action.cancel.id()) return .cancel;
-    if (id == Action.confirm.id()) return .confirm;
+    if (id == card_id) return .card;
+    for (0..actions_max) |index| {
+        if (id == actionId(@intCast(index))) return .{ .action = @intCast(index) };
+    }
     return null;
 }

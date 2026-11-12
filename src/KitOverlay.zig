@@ -1,5 +1,5 @@
 //! The UI kit's surfaces inside a terminal window (trial of ADR 0009):
-//! the toast stack and one confirm dialog. It owns the UI font, the
+//! the toast stack and one dialog. It owns the UI font, the
 //! painter, the node array and each surface's state, and is what `App`
 //! talks to. `App` only creates one when `REX_UI_KIT=1` is in the
 //! environment, so the default window pays nothing for it.
@@ -93,14 +93,15 @@ pub fn push(self: *KitOverlay, request: toast.Push) bool {
     return toast.update(&self.toasts, .{ .push = request });
 }
 
-/// Asks `request` in the confirm dialog. Returns whether a redraw is due.
+/// Asks `request` in the dialog. Returns whether a redraw is due.
 /// A dialog that is already up keeps its own question.
 pub fn openDialog(self: *KitOverlay, request: confirm.Request) bool {
     return confirm.update(&self.dialog, .{ .open = request }) == .redraw;
 }
 
 /// Sends the dialog an event the caller made from a key or a click, and
-/// returns what it did: on `.confirm` the caller does what was asked.
+/// returns what it did: on `.chosen` the caller does what that action
+/// stands for.
 pub fn dialogInput(self: *KitOverlay, event: confirm.Event) confirm.Outcome {
     return confirm.update(&self.dialog, event);
 }
@@ -148,30 +149,29 @@ pub fn wakeMs(self: *const KitOverlay) ?u32 {
 pub fn pointerMoved(self: *KitOverlay, x: f32, y: f32) bool {
     const id = self.tree.hitTest(x, y);
     if (self.dialog.phase != .closed) {
-        const action: ?confirm.Action = switch (confirm.hit(id) orelse return false) {
-            .confirm => .confirm,
-            .cancel => .cancel,
-            .scrim, .dialog => null,
+        const over: u8 = switch (confirm.hit(id) orelse return false) {
+            .action => |index| index,
+            .scrim, .card => confirm.no_action,
         };
-        return confirm.update(&self.dialog, .{ .pointer = action }) == .redraw;
+        return confirm.update(&self.dialog, .{ .pointer = over }) == .redraw;
     }
     const over = self.toasts.hit(id) != .none;
     _ = toast.update(&self.toasts, .{ .pointer = if (over) .over else .away });
     return false;
 }
 
-pub const Click = enum {
+pub const Click = union(enum) {
     /// Not on the kit's UI: the click belongs to the terminal.
     outside,
     /// Taken by the kit, nothing to redraw.
     taken,
     /// Taken by the kit, and a redraw is due.
     changed,
-    /// On the dialog's confirm button: the dialog has closed and the
-    /// caller does what was asked.
-    confirm,
+    /// On the dialog button of this action: the dialog has closed and
+    /// the caller does what the action stands for.
+    chosen: u8,
     /// On the scrim around the dialog. Nothing happened yet: the caller
-    /// decides whether that cancels it.
+    /// decides whether that dismisses it.
     scrim,
 };
 
@@ -180,11 +180,13 @@ pub fn click(self: *KitOverlay, x: f32, y: f32) Click {
     const id = self.tree.hitTest(x, y);
     if (self.dialog.phase != .closed) {
         return switch (confirm.hit(id) orelse return .taken) {
-            .confirm => self.chooseDialog(.confirm),
-            .cancel => self.chooseDialog(.cancel),
+            .action => |index| switch (confirm.update(&self.dialog, .{ .take = index })) {
+                .quiet => .taken,
+                .redraw, .closed => .changed,
+                .chosen => |chosen| .{ .chosen = chosen },
+            },
             .scrim => .scrim,
-            // On the card, beside the buttons.
-            .dialog => if (confirm.update(&self.dialog, .blur) == .redraw) .changed else .taken,
+            .card => if (confirm.update(&self.dialog, .blur) == .redraw) .changed else .taken,
         };
     }
     switch (self.toasts.hit(id)) {
@@ -192,14 +194,6 @@ pub fn click(self: *KitOverlay, x: f32, y: f32) Click {
         .toast => return .taken,
         .close => |serial| return if (toast.update(&self.toasts, .{ .dismiss = serial })) .changed else .taken,
     }
-}
-
-fn chooseDialog(self: *KitOverlay, action: confirm.Action) Click {
-    return switch (confirm.update(&self.dialog, .{ .choose = action })) {
-        .quiet => .taken,
-        .redraw, .closed => .changed,
-        .confirm => .confirm,
-    };
 }
 
 /// Dismisses the oldest toast that is not already leaving. Returns whether

@@ -1996,17 +1996,24 @@ pub fn requestQuit(self: *App) void {
         _ = kit.openDialog(.{
             .title = "Close this window?",
             .body = quitDialogBodyFor(running, program, &body_buf),
-            .confirm_label = "Close window",
-            .cancel_label = "Cancel",
+            .actions = &quit_actions,
             .focus = switch (self.config.window.modal.default_focus) {
-                .confirm => .confirm,
-                .cancel => .cancel,
+                .confirm => quit_close,
+                .cancel => quit_cancel,
             },
         });
     }
     self.frame_builder.last_generation = null;
     self.needs_redraw = true;
 }
+
+/// The quit prompt's buttons in the kit's dialog, and their indexes.
+const quit_actions = [_]kit_dialog.Action{
+    .{ .label = "Cancel", .role = .dismiss, .key_cap = "Esc" },
+    .{ .label = "Close window", .variant = .destructive },
+};
+const quit_cancel = 0;
+const quit_close = 1;
 
 /// The body of the quit dialog. `running` is whether a program other than
 /// the shell is in the foreground, and `program` its name, when that could
@@ -2028,7 +2035,8 @@ fn foregroundProgram(self: *const App, buf: []u8) ?[]const u8 {
     return name;
 }
 
-/// Applies a confirm-dialog outcome. `.confirm` closes the window.
+/// Applies an outcome of the kit's dialog, which only the quit prompt
+/// opens: choosing "Close window" closes the window.
 fn applyDialogOutcome(self: *App, outcome: kit_dialog.Outcome) void {
     switch (outcome) {
         .quiet => {},
@@ -2036,7 +2044,7 @@ fn applyDialogOutcome(self: *App, outcome: kit_dialog.Outcome) void {
             self.frame_builder.last_generation = null;
             self.needs_redraw = true;
         },
-        .confirm => self.confirmQuit(),
+        .chosen => |action| if (action == quit_close) self.confirmQuit(),
     }
     self.syncQuitPrompt();
 }
@@ -2110,8 +2118,8 @@ fn handleQuitModalKey(self: *App, k: rex.input.Key, mods: rex.input.Modifiers) v
             .left, .up => .{ .focus = .previous },
             .right, .down => .{ .focus = .next },
             .enter, .kp_enter, .space => .activate,
-            .y, .q => .{ .choose = .confirm },
-            .escape, .n, .backspace => .cancel,
+            .y, .q => .{ .take = quit_close },
+            .escape, .n, .backspace => .dismiss,
             else => null,
         };
         if (event) |ev| self.applyDialogOutcome(kit.dialogInput(ev));
@@ -2578,12 +2586,12 @@ const mouseButtonCb: c.GLFWmousebuttonfun = struct {
                         app.syncQuitPrompt();
                         return;
                     },
-                    .confirm => {
-                        app.confirmQuit();
+                    .chosen => |chosen| {
+                        app.applyDialogOutcome(.{ .chosen = chosen });
                         return;
                     },
                     .scrim => {
-                        const event: kit_dialog.Event = if (app.config.window.modal.on_outside_click == .close) .cancel else .blur;
+                        const event: kit_dialog.Event = if (app.config.window.modal.on_outside_click == .close) .dismiss else .blur;
                         app.applyDialogOutcome(kit.dialogInput(event));
                         return;
                     },

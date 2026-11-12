@@ -181,12 +181,17 @@ test "KitOverlay: after the atlas is cleared, glyphs are rasterized again" {
     try testing.expectEqual(before, kit.painter.len);
 }
 
+const prompt_actions = [_]dialog.Action{
+    .{ .label = "Cancel", .role = .dismiss, .key_cap = "Esc" },
+    .{ .label = "Close window", .variant = .destructive },
+};
+
 fn prompt() dialog.Request {
     return .{
         .title = "Close this window?",
         .body = "A program is still running.",
-        .confirm_label = "Close window",
-        .cancel_label = "Cancel",
+        .actions = &prompt_actions,
+        .focus = 1,
     };
 }
 
@@ -210,7 +215,7 @@ test "KitOverlay: a dialog enters, rests, and leaves" {
     try testing.expect(fixture.frame());
     try testing.expect(kit.painter.len > 20);
 
-    try testing.expectEqual(dialog.Outcome.redraw, kit.dialogInput(.cancel));
+    try testing.expectEqual(dialog.Outcome.redraw, kit.dialogInput(.dismiss));
     try testing.expectEqual(motion.frame_ms, kit.wakeMs());
     // Keys do nothing while it is leaving.
     try testing.expectEqual(dialog.Outcome.quiet, kit.dialogInput(.activate));
@@ -228,8 +233,8 @@ test "KitOverlay: confirming a dialog closes it, the scrim does not" {
     _ = kit.openDialog(prompt());
     _ = kit.tick(Theme.duration);
     try testing.expect(fixture.frame());
-    const confirm = centerOf(kit, dialog.Action.confirm.id()).?;
-    const cancel = centerOf(kit, dialog.Action.cancel.id()).?;
+    const confirm = centerOf(kit, dialog.actionId(1)).?;
+    const cancel = centerOf(kit, dialog.actionId(0)).?;
     try testing.expect(confirm[0] > cancel[0]);
 
     try testing.expect(kit.pointerMoved(confirm[0], confirm[1]));
@@ -238,12 +243,12 @@ test "KitOverlay: confirming a dialog closes it, the scrim does not" {
     try testing.expectEqual(dialog.Phase.open, kit.dialog.phase);
     // The card, off both buttons: the ring drops and the dialog stays.
     const card = centerOf(kit, dialog.card_id).?;
-    try testing.expectEqual(dialog.Focus.confirm, kit.dialog.focus);
+    try testing.expectEqual(1, kit.dialog.focus);
     try testing.expectEqual(KitOverlay.Click.changed, kit.click(card[0], card[1]));
-    try testing.expectEqual(dialog.Focus.none, kit.dialog.focus);
+    try testing.expectEqual(dialog.no_action, kit.dialog.focus);
     try testing.expectEqual(KitOverlay.Click.taken, kit.click(card[0], card[1]));
     try testing.expectEqual(dialog.Phase.open, kit.dialog.phase);
-    try testing.expectEqual(KitOverlay.Click.confirm, kit.click(confirm[0], confirm[1]));
+    try testing.expectEqual(KitOverlay.Click{ .chosen = 1 }, kit.click(confirm[0], confirm[1]));
     try testing.expectEqual(dialog.Phase.closed, kit.dialog.phase);
 }
 
@@ -260,7 +265,7 @@ test "KitOverlay: the dialog covers the toast stack" {
     try testing.expect(fixture.frame());
     // Where the toast's close button was: the scrim has it now.
     try testing.expectEqual(KitOverlay.Click.scrim, kit.click(750, 550));
-    try testing.expectEqual(dialog.Outcome.redraw, kit.dialogInput(.cancel));
+    try testing.expectEqual(dialog.Outcome.redraw, kit.dialogInput(.dismiss));
     try testing.expect(kit.tick(Theme.duration));
     try testing.expect(fixture.frame());
     try testing.expectEqual(KitOverlay.Click.taken, kit.click(500, 550));
@@ -270,7 +275,7 @@ test "KitOverlay: its size" {
     // Reported in the ticket. Nearly all of it is two tables: the font's
     // kerning pairs, and the painter's 2048 instances of 36 bytes with its
     // glyph position cache.
-    try testing.expectEqual(193944, @sizeOf(KitOverlay));
+    try testing.expectEqual(193992, @sizeOf(KitOverlay));
     try testing.expectEqual(92184, @sizeOf(@FieldType(KitOverlay, "painter")));
     try testing.expectEqual(95592, @sizeOf(@FieldType(KitOverlay, "font")));
     try testing.expectEqual(2600, @sizeOf(@FieldType(KitOverlay, "nodes")));
