@@ -43,6 +43,10 @@ pub const Files = struct {
     semibold: [*:0]const u8,
     /// The icon font: the glyphs of `kit/icons.zig`.
     icons: [*:0]const u8,
+    /// The terminal's text face, for code points the UI font lacks (a
+    /// title or a path can hold anything). Null for none. A file that
+    /// cannot be opened is logged and treated as none.
+    fallback: ?[*:0]const u8 = null,
 
     fn of(self: Files, weight: u16) [*:0]const u8 {
         return switch (weight) {
@@ -64,6 +68,8 @@ pub const Options = struct {
 library: c.FT_Library,
 /// Indexed by `text.Style`.
 faces: [style_count]c.FT_Face,
+/// The fallback file at each style's size, or null without one.
+fallback_faces: ?[style_count]c.FT_Face,
 /// Sized for each icon as it is rasterized.
 icon_face: c.FT_Face,
 scale: f32,
@@ -105,6 +111,7 @@ pub fn create(files: Files, options: Options) ft.FtError!KitFont {
     var self: KitFont = .{
         .library = try ft.initFreeType(),
         .faces = undefined,
+        .fallback_faces = null,
         .icon_face = undefined,
         .scale = options.scale,
         .kerning = options.kerning,
@@ -121,6 +128,17 @@ pub fn create(files: Files, options: Options) ft.FtError!KitFont {
         self.faces[@intFromEnum(style)] = try ft.initFace(self.library, files.of(metrics.weight), metrics.size);
     }
     self.icon_face = try ft.initFace(self.library, files.icons, 16);
+    if (files.fallback) |path| fallback: {
+        var faces: [style_count]c.FT_Face = undefined;
+        for (std.enums.values(text.Style)) |style| {
+            faces[@intFromEnum(style)] = ft.initFace(self.library, path, style.metrics().size) catch |err| {
+                // Faces opened so far are closed with the library.
+                log.warn("no fallback for UI text: cannot open {s}: {t}", .{ path, err });
+                break :fallback;
+            };
+        }
+        self.fallback_faces = faces;
+    }
     try self.setScale(options.scale);
     return self;
 }
@@ -140,6 +158,9 @@ pub fn setScale(self: *KitFont, scale: f32) ft.FtError!void {
         // (14 px at 125% is 17.5) are exact instead of rounded.
         const size: c.FT_F26Dot6 = @intFromFloat(@round(@as(f32, @floatFromInt(style.metrics().size)) * scale * 64));
         try ft.ftCheck(c.FT_Set_Char_Size(ft_face, 0, size, 72, 72), "FT_Set_Char_Size");
+        if (self.fallback_faces) |faces| {
+            try ft.ftCheck(c.FT_Set_Char_Size(faces[@intFromEnum(style)], 0, size, 72, 72), "FT_Set_Char_Size");
+        }
         for (&self.ascii_advance[@intFromEnum(style)], 0..) |*advance_px, codepoint| {
             advance_px.* = loadAdvance(ft_face, @intCast(codepoint));
         }
@@ -165,6 +186,19 @@ fn faceOf(self: *const KitFont, style: text.Style) c.FT_Face {
     return self.faces[@intFromEnum(style)];
 }
 
+/// The face `codepoint` is drawn from in `style`: the UI font's, or the
+/// fallback's when only that one has the glyph. Kerning is the UI font's
+/// alone, so a fallback glyph is never kerned.
+fn faceFor(self: *const KitFont, style: text.Style, codepoint: u21) c.FT_Face {
+    const primary = self.faceOf(style);
+    // The UI font has all of ASCII.
+    if (codepoint < 0x80) return primary;
+    const faces = self.fallback_faces orelse return primary;
+    if (c.FT_Get_Char_Index(primary, codepoint) != 0) return primary;
+    const fallback = faces[@intFromEnum(style)];
+    return if (c.FT_Get_Char_Index(fallback, codepoint) != 0) fallback else primary;
+}
+
 /// The unhinted advance of `codepoint` in physical pixels; 0 when the
 /// glyph cannot be loaded.
 fn loadAdvance(ft_face: c.FT_Face, codepoint: u21) f32 {
@@ -178,7 +212,7 @@ pub fn advance(self: *KitFont, style: text.Style, codepoint: u21) f32 {
     if (codepoint < 128) return self.ascii_advance[@intFromEnum(style)][codepoint];
     const slot = &self.other_advance[(codepoint *% 31 +% @intFromEnum(style)) % other_capacity];
     if (slot.codepoint != codepoint or slot.style != style) {
-        slot.* = .{ .advance = loadAdvance(self.faceOf(style), codepoint), .codepoint = codepoint, .style = style };
+        slot.* = .{ .advance = loadAdvance(self.faceFor(style, codepoint), codepoint), .codepoint = codepoint, .style = style };
     }
     return slot.advance;
 }
@@ -241,7 +275,7 @@ pub fn measurer(self: *KitFont) text.Measurer {
 /// Renders `codepoint` in `style`. The bitmap points into FreeType's
 /// glyph slot and is valid until the next call on this font.
 pub fn rasterize(self: *KitFont, style: text.Style, codepoint: u21) !Rasterizer.Glyph {
-    return render(self.faceOf(style), codepoint, c.FT_LOAD_RENDER | c.FT_LOAD_TARGET_LIGHT);
+    return render(self.faceFor(style, codepoint), codepoint, c.FT_LOAD_RENDER | c.FT_LOAD_TARGET_LIGHT);
 }
 
 /// Renders the icon `codepoint` for a box of `size` logical pixels. The

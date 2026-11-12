@@ -88,10 +88,34 @@ test "KitFont: remembered kerning and advances follow the scale" {
     try testing.expectApproxEqAbs(times * 2, font.advance(.sm, 0xD7), 0.05);
 }
 
+test "KitFont: a code point the UI font lacks comes from the fallback face" {
+    var plain = try KitFont.create(inter, .{});
+    defer plain.destroy();
+    var files = inter;
+    files.fallback = "assets/fonts/GoogleSansCode[wght].ttf";
+    var font = try KitFont.create(files, .{});
+    defer font.destroy();
+
+    // U+2500, a box-drawing line: in Google Sans Code, not in Inter.
+    const missing = try plain.rasterize(.sm, 0x2500);
+    const missing_width = missing.width;
+    const missing_height = missing.height;
+    const line = try font.rasterize(.sm, 0x2500);
+    // A horizontal line, not the tall box Inter draws for a missing glyph.
+    try testing.expect(missing_height > missing_width);
+    try testing.expect(line.width > line.height * 2);
+    try testing.expect(font.advance(.sm, 0x2500) != plain.advance(.sm, 0x2500));
+    try testing.expect(font.width("a\u{2500}b", .sm) > font.width("ab", .sm));
+
+    // What both have is still Inter's, and what neither has is unchanged.
+    try testing.expectEqual(plain.width("Caf\u{e9}", .sm), font.width("Caf\u{e9}", .sm));
+    try testing.expectEqual(plain.advance(.sm, 0x4E2D), font.advance(.sm, 0x4E2D));
+}
+
 test "KitFont: its size" {
     // Nearly all of it is the kerning table: five styles of 95 by 95
     // pairs, two bytes each.
-    try testing.expectEqual(95544, @sizeOf(KitFont));
+    try testing.expectEqual(95592, @sizeOf(KitFont));
 }
 
 test "KitFont: is the kit's measurer" {

@@ -628,7 +628,7 @@ pub fn init(
     }
 
     const kit: ?*KitOverlay = if (std.mem.eql(u8, envmap.get("REX_UI_KIT") orelse "", "1"))
-        createKit(gpa, io, argv0, content_scale)
+        createKit(gpa, io, argv0, content_scale, active_config.font.faces.regular)
     else
         null;
     errdefer if (kit) |k| k.destroy(gpa);
@@ -1838,19 +1838,19 @@ fn useBuiltinFonts(io: std.Io, arena: std.mem.Allocator, loaded: *rex.config.Loa
 /// next to this executable, or null with a warning when it cannot be set
 /// up; the window then keeps its built-in toasts. Needs a current GL
 /// context.
-fn createKit(gpa: std.mem.Allocator, io: std.Io, argv0: []const u8, scale: f32) ?*KitOverlay {
+fn createKit(gpa: std.mem.Allocator, io: std.Io, argv0: []const u8, scale: f32, terminal_face: [*:0]const u8) ?*KitOverlay {
     var exe_buf: [std.fs.max_path_bytes]u8 = undefined;
     const exe: []const u8 = if (std.process.executablePath(io, &exe_buf)) |len|
         exe_buf[0..len]
     else |_|
         argv0;
-    return createKitFrom(gpa, exe, scale) catch |err| {
+    return createKitFrom(gpa, exe, scale, terminal_face) catch |err| {
         log.warn("REX_UI_KIT: cannot set up the UI kit ({t}); using the built-in toasts", .{err});
         return null;
     };
 }
 
-fn createKitFrom(gpa: std.mem.Allocator, exe: []const u8, scale: f32) !*KitOverlay {
+fn createKitFrom(gpa: std.mem.Allocator, exe: []const u8, scale: f32, terminal_face: [*:0]const u8) !*KitOverlay {
     const names = rex.config.builtin_font;
     const dir = try names.fontDir(gpa, exe);
     defer gpa.free(dir);
@@ -1863,7 +1863,15 @@ fn createKitFrom(gpa: std.mem.Allocator, exe: []const u8, scale: f32) !*KitOverl
     defer gpa.free(semibold);
     const icons = try std.fs.path.joinZ(gpa, &.{ dir, names.ui_icons_name });
     defer gpa.free(icons);
-    const kit = try KitOverlay.create(gpa, .{ .regular = regular, .medium = medium, .semibold = semibold, .icons = icons }, scale);
+    const kit = try KitOverlay.create(gpa, .{
+        .regular = regular,
+        .medium = medium,
+        .semibold = semibold,
+        .icons = icons,
+        // The face the terminal started with; a later `[font] file`
+        // change does not reach the kit.
+        .fallback = if (terminal_face[0] != 0) terminal_face else null,
+    }, scale);
     log.info("REX_UI_KIT: toasts are drawn by the UI kit", .{});
     return kit;
 }
