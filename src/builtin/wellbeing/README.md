@@ -105,7 +105,11 @@ When `open` finds no other window alive and a phase still running, the phase was
 
 ### Screen time and the limit
 
-Only the focused window runs the tracker; the window manager focuses one window at a time, so adding the windows' times is exact. Gaining focus counts as activity. The limit compares `data.today`, the file's time plus this window's, so it covers every window that has merged. Each window shows the limit alert once (its own `limit_notified`).
+Only the focused window runs the tracker; the window manager focuses one window at a time, so adding the windows' times is exact. Gaining focus counts as activity. The limit compares `data.today`, the file's time plus this window's, so it covers every window that has merged. The limit's state is shared and belongs to the day (`limit_alerted_s`, `limit_quiet_until_s`; rollover clears both, a merge keeps the later value, and a change is merged within a poll):
+
+- The focused window shows the limit alert and records the limit start it alerted for, so the other windows do not repeat it. A limit raised and reached again alerts again.
+- The grayscale is computed from the shared data (`tracker.grayscale`) in every window, focused or not.
+- Dismissing (`wellbeing_dismiss`, or closing any alert) once the limit is reached lifts the limit for the rest of the day in every window, also after the limit's alert has closed by itself.
 
 ### Reminders
 
@@ -177,6 +181,6 @@ All tests are in `wellbeing_test.zig`. The shared-state tests run two `Wellbeing
 - A wind-down that starts in the same tick, or a focus phase that ends in the same tick, can replace a reminder after its due point has already moved. The reminder is counted and not shown again until the next interval. An alert already on screen does not have this hole: the reminder stays due.
 - A window that picks up a running timer and passes its end time in the same loop iteration does not show the break prompt; the phase end is still counted once.
 - A button press in one window that races a phase end recorded by another is dropped.
-- Each window shows the screen-limit alert once.
+- Two windows that both count time within the same poll second can each show the screen-limit alert.
 - Per-app time reads `/proc/<pgrp>/comm`, which exists only on Linux.
 - The overlay builds on the provisional `src/ui/`, which allocates per frame and will be redesigned.

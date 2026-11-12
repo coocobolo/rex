@@ -35,10 +35,8 @@ pub const TrackerOption = struct {
 pub const Tracker = struct {
     option: TrackerOption,
     idle_timer_s: u32 = 0,
-    is_idle: bool = false,
     sample_timer_s: u32 = 0,
-    grayscale_factor: f32 = 0.0,
-    limit_notified: bool = false,
+    is_idle: bool = false,
 
     pub fn init(option: TrackerOption) Tracker {
         return .{ .option = option };
@@ -49,12 +47,14 @@ pub const Tracker = struct {
         self.is_idle = false;
     }
 
+    /// Counts `dt_s` up to the idle threshold as screen time and returns the
+    /// seconds added to `today`.
     pub fn tick(
         self: *Tracker,
         dt_s: u32,
         pty_fd: posix.fd_t,
         today: *storage.DayRecord,
-    ) struct { limit_reached: bool } {
+    ) u32 {
         const idle_threshold_s = secondsCeil(self.option.idle_threshold_ms);
         const active_dt: u32 = if (self.idle_timer_s < idle_threshold_s)
             @intCast(@min(dt_s, idle_threshold_s - self.idle_timer_s))
@@ -65,8 +65,6 @@ pub const Tracker = struct {
         if (self.idle_timer_s >= idle_threshold_s) {
             self.is_idle = true;
         }
-
-        var limit_triggered = false;
 
         if (active_dt > 0) {
             today.active_screen_s +|= active_dt;
@@ -82,38 +80,32 @@ pub const Tracker = struct {
                     self.sample_timer_s = 0;
                 }
             }
-
-            // Daily screen time limit check. Every path sets grayscale_factor,
-            // so turning the limit or the grayscale off on reload clears it.
-            if (self.option.daily_limit_ms) |limit_ms| {
-                const limit_s = secondsCeil(limit_ms);
-                if (today.active_screen_s >= limit_s) {
-                    if (!self.limit_notified) {
-                        self.limit_notified = true;
-                        limit_triggered = true;
-                    }
-
-                    if (self.option.on_limit.contains(.grayscale)) {
-                        const excess = today.active_screen_s - limit_s;
-                        const trans = @max(secondsCeil(self.option.grayscale_transition_ms), 1);
-                        const progress = @min(@as(f32, @floatFromInt(excess)) / @as(f32, @floatFromInt(trans)), 1.0);
-                        self.grayscale_factor = progress;
-                    } else {
-                        self.grayscale_factor = 0.0;
-                    }
-                } else {
-                    self.grayscale_factor = 0.0;
-                    self.limit_notified = false;
-                }
-            } else {
-                self.grayscale_factor = 0.0;
-                self.limit_notified = false;
-            }
         }
 
-        return .{ .limit_reached = limit_triggered };
+        return active_dt;
     }
 };
+
+/// Today's screen time, in seconds, from which the daily limit applies: the
+/// configured limit, or later while a dismissal keeps it quiet
+/// (`PersistentData.limit_quiet_until_s`). null: no limit.
+pub fn limitStart(option: *const TrackerOption, data: *const storage.PersistentData) ?u32 {
+    const limit_ms = option.daily_limit_ms orelse return null;
+    const limit_s = std.math.cast(u32, secondsCeil(limit_ms)) orelse std.math.maxInt(u32);
+    return @max(limit_s, data.limit_quiet_until_s);
+}
+
+/// How gray the screen is, 0 to 1. It depends only on the settings and the
+/// shared data, so every window shows the same, focused or not, and turning
+/// the limit or the grayscale off on reload clears it.
+pub fn grayscale(option: *const TrackerOption, data: *const storage.PersistentData) f32 {
+    if (!option.on_limit.contains(.grayscale)) return 0.0;
+    const start = limitStart(option, data) orelse return 0.0;
+    if (data.today.active_screen_s < start) return 0.0;
+    const excess = data.today.active_screen_s - start;
+    const trans = @max(secondsCeil(option.grayscale_transition_ms), 1);
+    return @min(@as(f32, @floatFromInt(excess)) / @as(f32, @floatFromInt(trans)), 1.0);
+}
 
 pub fn sampleForegroundApp(pty_fd: posix.fd_t, out_comm: []u8) ?[]const u8 {
     if (pty_fd < 0) return null;

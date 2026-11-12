@@ -139,8 +139,18 @@ pub const PersistentData = extern struct {
     eyesight_due_s: u64 = 0,
     movement_due_s: u64 = 0,
 
+    // The daily limit, for `today`: rollover clears both. Taken from
+    // `reserved` in version 3, where older files hold zeros.
+    /// The limit start (`tracker.limitStart`) whose alert was shown, so the
+    /// alert shows once per person and again when the limit moves later.
+    /// 0: none yet.
+    limit_alerted_s: u32 = 0,
+    /// Today's screen time until which a dismissal keeps the limit quiet;
+    /// the largest value means the rest of the day. 0: not dismissed.
+    limit_quiet_until_s: u32 = 0,
+
     /// Space for later versions; sized so the struct needs no tail padding.
-    reserved: [64]u8 = @splat(0),
+    reserved: [56]u8 = @splat(0),
 
     /// Active screen time of the person across all windows and days:
     /// rollover moves today's time into the total, so the sum only grows

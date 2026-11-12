@@ -8,7 +8,8 @@
 //! saturating subtraction; a purge bumps `generation`, and a view whose base
 //! has an older generation is dropped. Reminder breaks are the exception:
 //! they follow the reminders' due points (`mergeReminder`), so a reminder
-//! that two processes fired counts once. These functions do no I/O.
+//! that two processes fired counts once. The daily limit's state takes the
+//! later value within a day. These functions do no I/O.
 
 const std = @import("std");
 const storage = @import("storage.zig");
@@ -42,6 +43,8 @@ pub fn rollover(data: *PersistentData, day: u32) bool {
     data.total_active_screen_s +|= data.today.active_screen_s;
     data.total_focus_s +|= data.today.focus_s;
     data.today = .{ .day = day };
+    data.limit_alerted_s = 0;
+    data.limit_quiet_until_s = 0;
     return true;
 }
 
@@ -77,6 +80,11 @@ pub fn rebase(view: *const PersistentData, base: *const PersistentData, fresh: *
     if (view.last_task_day > base.last_task_day) recordTaskDay(&out, view.last_task_day);
     mergeReminder(&out.eyesight_due_s, &out.today.eyesight_breaks, view.eyesight_due_s);
     mergeReminder(&out.movement_due_s, &out.today.movement_breaks, view.movement_due_s);
+    // The limit's state belongs to `today` and only moves later within it.
+    if (view.today.day == out.today.day) {
+        out.limit_alerted_s = @max(out.limit_alerted_s, view.limit_alerted_s);
+        out.limit_quiet_until_s = @max(out.limit_quiet_until_s, view.limit_quiet_until_s);
+    }
     return out;
 }
 

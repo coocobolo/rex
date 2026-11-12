@@ -247,13 +247,15 @@ pub const Wellbeing = struct {
     }
 
     /// A merge is due on a day change, a timer change, a reminder due point
-    /// moved (so other windows see it within a poll), screen time left
+    /// moved or the limit alerted or dismissed (so other windows see it
+    /// within a poll), screen time left
     /// unmerged in a window that lost focus (so only the focused window
     /// holds unmerged time and the shared limit stays exact), or after
     /// `merge_interval_s`.
     fn mergeDue(self: *const Wellbeing, utc_s: i64) bool {
         if (self.data.today.day != self.base.today.day or self.timerPending()) return true;
         if (self.data.eyesight_due_s != self.base.eyesight_due_s or self.data.movement_due_s != self.base.movement_due_s) return true;
+        if (self.data.limit_alerted_s != self.base.limit_alerted_s or self.data.limit_quiet_until_s != self.base.limit_quiet_until_s) return true;
         if (!self.window_focused and self.data.today.active_screen_s != self.base.today.active_screen_s) return true;
         const elapsed_s = std.math.sub(i64, utc_s, self.last_merge_utc_s) catch return true;
         return @abs(elapsed_s) >= merge_interval_s;
@@ -371,7 +373,8 @@ pub const Wellbeing = struct {
 
     /// The window gained or lost focus. Gaining it (a click, alt-tab) is
     /// user activity. While unfocused the screen-time tracker does not run:
-    /// no active time, no foreground-app samples, no limit check.
+    /// no active time, no foreground-app samples, no limit alert. The
+    /// grayscale follows the shared data in every window.
     pub fn windowFocusChanged(self: *Wellbeing, focused: bool) void {
         self.window_focused = focused;
         if (focused) self.tracker_engine.recordActivity();
@@ -413,10 +416,17 @@ pub const Wellbeing = struct {
         self.focus_state.option = focus_option.*;
     }
 
+    /// Closes the alert on screen. Once the daily limit is reached, it also
+    /// lifts the limit for the rest of the day in every window, whether or
+    /// not the limit's alert is still shown; the grayscale goes on the next
+    /// tick here and within a poll elsewhere.
     pub fn dismissAlert(self: *Wellbeing) void {
         self.current_alert = .{};
         self.input_locked = false;
         self.anim_elapsed_ms = 0;
+        if (tracker.limitStart(&self.tracker_engine.option, &self.data)) |start| {
+            if (self.data.today.active_screen_s >= start) self.data.limit_quiet_until_s = std.math.maxInt(u32);
+        }
     }
 
     /// `local_s` is local wall-clock seconds since the epoch (see
@@ -463,10 +473,16 @@ pub const Wellbeing = struct {
 
         // Screen-time tracker tick. `data.today` holds the file's time plus
         // this window's, so the daily limit sees every window's time once
-        // the others have merged.
+        // the others have merged. The window that counts the time shows the
+        // limit's alert and records it, so the others do not repeat it.
         if (dt_s > 0 and self.window_focused) {
-            const tr = self.tracker_engine.tick(dt_s, pty_fd, &self.data.today);
-            if (tr.limit_reached) {
+            const active_s = self.tracker_engine.tick(dt_s, pty_fd, &self.data.today);
+            const limit_start = tracker.limitStart(&self.tracker_engine.option, &self.data);
+            if (active_s > 0 and limit_start != null and
+                self.data.today.active_screen_s >= limit_start.? and
+                self.data.limit_alerted_s < limit_start.?)
+            {
+                self.data.limit_alerted_s = limit_start.?;
                 alert_to_return = .{
                     .kind = .screen_limit,
                     .prompt = "Daily screen-time limit reached.",
@@ -477,10 +493,11 @@ pub const Wellbeing = struct {
                 };
                 needs_redraw = true;
             }
-            if (self.tracker_engine.grayscale_factor != self.grayscale_factor) {
-                self.grayscale_factor = self.tracker_engine.grayscale_factor;
-                needs_redraw = true;
-            }
+        }
+        const grayscale = tracker.grayscale(&self.tracker_engine.option, &self.data);
+        if (grayscale != self.grayscale_factor) {
+            self.grayscale_factor = grayscale;
+            needs_redraw = true;
         }
 
         // Reminders: only the focused window fires them, on the shared

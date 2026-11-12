@@ -776,29 +776,26 @@ test "tracker: idle detection pauses screen time" {
     try testing.expectEqual(@as(u32, 70), today.active_screen_s);
 }
 
-test "tracker: daily limit triggers grayscale factor" {
-    var tr = tracker.Tracker.init(.{
-        .idle_threshold_ms = 300 * std.time.ms_per_s,
-        .daily_limit_ms = 1 * std.time.ms_per_min, // 60 seconds
+test "tracker: the grayscale fades in past the daily limit" {
+    const option: tracker.TrackerOption = .{
+        .daily_limit_ms = 1 * std.time.ms_per_min,
         .grayscale_transition_ms = 10 * std.time.ms_per_s,
-        .track_foreground_apps = false,
-    });
+    };
+    var data: storage.PersistentData = .empty;
 
-    var today = storage.DayRecord{};
+    data.today.active_screen_s = 50;
+    try testing.expectEqual(@as(f32, 0.0), tracker.grayscale(&option, &data));
+    data.today.active_screen_s = 65;
+    try testing.expectEqual(@as(f32, 0.5), tracker.grayscale(&option, &data));
+    data.today.active_screen_s = 75;
+    try testing.expectEqual(@as(f32, 1.0), tracker.grayscale(&option, &data));
 
-    // 50s active: below limit
-    const res1 = tr.tick(50, -1, &today);
-    try testing.expect(!res1.limit_reached);
-    try testing.expectEqual(@as(f32, 0.0), tr.grayscale_factor);
-
-    // 15s active (total 65s): exceeds 60s limit
-    const res2 = tr.tick(15, -1, &today);
-    try testing.expect(res2.limit_reached);
-    try testing.expect(tr.grayscale_factor > 0.0);
-
-    // 10s more: fully transitions to 1.0 grayscale
-    _ = tr.tick(10, -1, &today);
-    try testing.expectEqual(@as(f32, 1.0), tr.grayscale_factor);
+    // A dismissal moves the start of the limit later.
+    data.limit_quiet_until_s = 70;
+    try testing.expectEqual(70, tracker.limitStart(&option, &data).?);
+    try testing.expectEqual(@as(f32, 0.5), tracker.grayscale(&option, &data));
+    data.limit_quiet_until_s = std.math.maxInt(u32);
+    try testing.expectEqual(@as(f32, 0.0), tracker.grayscale(&option, &data));
 }
 
 test "tracker: secondsCeil rounds a millisecond threshold up to whole seconds" {
@@ -816,12 +813,10 @@ test "tracker and reminders: limits far beyond a day don't overflow" {
         .daily_limit_ms = std.math.maxInt(u64),
         .track_foreground_apps = false,
     });
-    var today = storage.DayRecord{};
-    const res = tr.tick(30, -1, &today);
-    try testing.expect(!res.limit_reached);
-
     var data: storage.PersistentData = .empty;
-    data.today.active_screen_s = 30;
+    try testing.expectEqual(30, tr.tick(30, -1, &data.today));
+    try testing.expectEqual(std.math.maxInt(u32), tracker.limitStart(&tr.option, &data).?);
+    try testing.expectEqual(@as(f32, 0.0), tracker.grayscale(&tr.option, &data));
     var rem = reminders.RemindersEngine.init(
         .{ .interval_ms = std.math.maxInt(u64), .duration_ms = std.math.maxInt(u64) },
         .{ .interval_ms = std.math.maxInt(u64) },
@@ -833,28 +828,137 @@ test "tracker and reminders: limits far beyond a day don't overflow" {
 }
 
 test "tracker: turning the limit or the grayscale off clears grayscale" {
-    var tr = tracker.Tracker.init(.{
-        .idle_threshold_ms = std.time.ms_per_hour,
+    var option: tracker.TrackerOption = .{
         .daily_limit_ms = std.time.ms_per_min,
         .grayscale_transition_ms = std.time.ms_per_s,
-        .track_foreground_apps = false,
-    });
-    var today = storage.DayRecord{};
-    _ = tr.tick(70, -1, &today);
-    try testing.expectEqual(@as(f32, 1.0), tr.grayscale_factor);
+    };
+    var data: storage.PersistentData = .empty;
+    data.today.active_screen_s = 70;
+    try testing.expectEqual(@as(f32, 1.0), tracker.grayscale(&option, &data));
 
-    tr.option.on_limit.remove(.grayscale);
-    _ = tr.tick(1, -1, &today);
-    try testing.expectEqual(@as(f32, 0.0), tr.grayscale_factor);
+    option.on_limit.remove(.grayscale);
+    try testing.expectEqual(@as(f32, 0.0), tracker.grayscale(&option, &data));
 
-    tr.option.on_limit.insert(.grayscale);
-    _ = tr.tick(1, -1, &today);
-    try testing.expectEqual(@as(f32, 1.0), tr.grayscale_factor);
+    option.on_limit.insert(.grayscale);
+    try testing.expectEqual(@as(f32, 1.0), tracker.grayscale(&option, &data));
 
-    tr.option.daily_limit_ms = null;
-    _ = tr.tick(1, -1, &today);
-    try testing.expectEqual(@as(f32, 0.0), tr.grayscale_factor);
-    try testing.expect(!tr.limit_notified);
+    option.daily_limit_ms = null;
+    try testing.expectEqual(null, tracker.limitStart(&option, &data));
+    try testing.expectEqual(@as(f32, 0.0), tracker.grayscale(&option, &data));
+}
+
+/// A window with a 2-minute daily limit and a 1-second fade.
+fn limitOption() wellbeing.Option {
+    var option = quietOption();
+    option.screen_time.daily_limit_ms = 2 * std.time.ms_per_min;
+    option.screen_time.grayscale_transition_ms = std.time.ms_per_s;
+    return option;
+}
+
+test "limit: a dismissal lifts the grayscale until the next day" {
+    var wb = wellbeing.Wellbeing.init(limitOption());
+    const day_s = localAt(1000, 12, 0, 0);
+
+    const reached = wb.tick(121_000, -1, day_s, 0);
+    try testing.expectEqual(reminders.AlertKind.screen_limit, reached.alert.?.kind);
+    try testing.expectEqual(@as(f32, 1.0), reached.grayscale);
+
+    wb.dismissAlert();
+    const lifted = wb.tick(1000, -1, day_s, 0);
+    try testing.expect(lifted.needs_redraw);
+    try testing.expectEqual(@as(f32, 0.0), lifted.grayscale);
+    const later = wb.tick(60_000, -1, day_s, 0);
+    try testing.expect(later.alert == null);
+    try testing.expectEqual(@as(f32, 0.0), later.grayscale);
+
+    // The next day starts with the limit armed again.
+    const next_day_s = localAt(1001, 12, 0, 0);
+    try testing.expectEqual(@as(f32, 0.0), wb.tick(60_000, -1, next_day_s, 0).grayscale);
+    const again = wb.tick(61_000, -1, next_day_s, 0);
+    try testing.expectEqual(reminders.AlertKind.screen_limit, again.alert.?.kind);
+    try testing.expectEqual(@as(f32, 1.0), again.grayscale);
+}
+
+test "limit: a dismissal works after the alert has closed by itself" {
+    var wb = wellbeing.Wellbeing.init(limitOption());
+    const day_s = localAt(1000, 12, 0, 0);
+    _ = wb.tick(121_000, -1, day_s, 0);
+    const closed = wb.tick(20_000, -1, day_s, 0);
+    try testing.expectEqual(reminders.AlertKind.none, wb.current_alert.kind);
+    try testing.expectEqual(@as(f32, 1.0), closed.grayscale);
+
+    wb.dismissAlert();
+    try testing.expectEqual(@as(f32, 0.0), wb.tick(1000, -1, day_s, 0).grayscale);
+}
+
+test "limit: a dismissal below the limit changes nothing" {
+    var wb = wellbeing.Wellbeing.init(limitOption());
+    const day_s = localAt(1000, 12, 0, 0);
+    _ = wb.tick(60_000, -1, day_s, 0);
+    wb.dismissAlert();
+    try testing.expectEqual(0, wb.data.limit_quiet_until_s);
+    const reached = wb.tick(61_000, -1, day_s, 0);
+    try testing.expectEqual(reminders.AlertKind.screen_limit, reached.alert.?.kind);
+}
+
+test "limit: one window alerts, every window turns gray and one dismissal lifts all" {
+    var t: StateTmp = .init();
+    defer t.deinit();
+    var a = try openShared(&t);
+    defer a.close(testing.io);
+    var b = try openShared(&t);
+    defer b.close(testing.io);
+    for ([_]*wellbeing.Wellbeing{ &a, &b }) |wb| {
+        var option = wb.option;
+        option.screen_time = limitOption().screen_time;
+        wb.applyOption(option);
+    }
+    const day_s = localAt(1000, 12, 0, 0);
+
+    // A reaches the limit; a poll writes the alert it showed.
+    b.windowFocusChanged(false);
+    const reached = a.tick(121_000, -1, day_s, 0);
+    try testing.expectEqual(reminders.AlertKind.screen_limit, reached.alert.?.kind);
+    try a.sync(testing.io, "unused", 1000, .poll);
+
+    // B, unfocused, turns gray from the shared data. Focused and active, it
+    // does not show the alert again.
+    try b.sync(testing.io, "unused", 1001, .poll);
+    try testing.expectEqual(@as(f32, 1.0), b.tick(1000, -1, day_s, 0).grayscale);
+    a.windowFocusChanged(false);
+    b.windowFocusChanged(true);
+    const second = b.tick(1000, -1, day_s, 0);
+    try testing.expect(second.alert == null);
+    try testing.expectEqual(@as(f32, 1.0), second.grayscale);
+
+    // Dismissed in B, lifted in A within a poll.
+    b.dismissAlert();
+    try b.sync(testing.io, "unused", 1002, .poll);
+    try a.sync(testing.io, "unused", 1003, .poll);
+    try testing.expectEqual(@as(f32, 0.0), a.tick(1000, -1, day_s, 0).grayscale);
+    try testing.expectEqual(@as(f32, 0.0), b.tick(1000, -1, day_s, 0).grayscale);
+}
+
+test "merge: the limit's state does not cross a day change" {
+    var base: storage.PersistentData = .empty;
+    base.today.day = 10;
+    var view = base;
+    view.limit_alerted_s = 120;
+    view.limit_quiet_until_s = std.math.maxInt(u32);
+
+    // Another window already started the next day.
+    var fresh = base;
+    _ = merge.rollover(&fresh, 11);
+    const out = merge.rebase(&view, &base, &fresh);
+    try testing.expectEqual(0, out.limit_alerted_s);
+    try testing.expectEqual(0, out.limit_quiet_until_s);
+
+    // On the same day the later value wins.
+    fresh = base;
+    fresh.limit_alerted_s = 60;
+    const same = merge.rebase(&view, &base, &fresh);
+    try testing.expectEqual(120, same.limit_alerted_s);
+    try testing.expectEqual(std.math.maxInt(u32), same.limit_quiet_until_s);
 }
 
 /// Options for reload tests: no idle pause, no reminders, no wind-down,
