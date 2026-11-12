@@ -120,7 +120,7 @@ pub const Text = struct {
 };
 
 pub const Icon = struct {
-    /// The glyph in the icon font.
+    /// The glyph in the icon font: one of `icons.zig`.
     codepoint: u21,
     color: Color,
     /// Edge length in logical pixels.

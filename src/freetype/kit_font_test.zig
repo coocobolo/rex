@@ -8,6 +8,7 @@ const inter: KitFont.Files = .{
     .regular = "assets/fonts/Inter-Regular.ttf",
     .medium = "assets/fonts/Inter-Medium.ttf",
     .semibold = "assets/fonts/Inter-SemiBold.ttf",
+    .icons = "assets/fonts/lucide.ttf",
 };
 
 test "KitFont: widths are in logical pixels and grow with the text" {
@@ -90,7 +91,7 @@ test "KitFont: remembered kerning and advances follow the scale" {
 test "KitFont: its size" {
     // Nearly all of it is the kerning table: five styles of 95 by 95
     // pairs, two bytes each.
-    try testing.expectEqual(95536, @sizeOf(KitFont));
+    try testing.expectEqual(95544, @sizeOf(KitFont));
 }
 
 test "KitFont: is the kit's measurer" {

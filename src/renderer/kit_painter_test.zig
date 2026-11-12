@@ -13,6 +13,7 @@ const KitFont = @import("../freetype/KitFont.zig");
 const Theme = @import("../kit/Theme.zig");
 const Color = Theme.Color;
 const text = @import("../kit/text.zig");
+const icons = @import("../kit/icons.zig");
 const tree_zig = @import("../kit/tree.zig");
 const Tree = tree_zig.Tree;
 const layout = @import("../kit/layout.zig");
@@ -24,6 +25,7 @@ const inter: KitFont.Files = .{
     .regular = "assets/fonts/Inter-Regular.ttf",
     .medium = "assets/fonts/Inter-Medium.ttf",
     .semibold = "assets/fonts/Inter-SemiBold.ttf",
+    .icons = "assets/fonts/lucide.ttf",
 };
 
 /// Logical size of the test window.
@@ -64,7 +66,7 @@ fn toast(tree: *Tree, theme: *const Theme, icon: Color, title: []const u8, descr
         .radius = Theme.radius,
     });
     const dot = try tree.open(.{ .padding = .{ .top = 2 } });
-    _ = try tree.icon(.{ .codepoint = 0, .color = icon, .size = Theme.icon });
+    _ = try tree.icon(.{ .codepoint = icons.info, .color = icon, .size = Theme.icon });
     tree.close(dot);
     const body = try tree.open(.{ .width = .fill });
     const title_node = try tree.text(title, .{ .color = theme.foreground, .style = .sm_medium });
@@ -344,6 +346,45 @@ test "KitPainter: the toast stack, with its newest toast halfway in" {
         // The stack keeps its margin: 24 px from the right edge.
         try testing.expectEqual(view_width - 24, settled.x + settled.w);
         try testing.expectEqual(rgb(terminal_dark), frame.at(view_width - 12, settled.y + settled.h / 2));
+    }
+}
+
+test "KitPainter: a toast's icon is a line drawing in its kind's color" {
+    for ([_]f32{ 1, 1.25, 1.5 }) |scale| {
+        var rendered = try render(.toasts, .dark, terminal_dark, scale, .pairs);
+        defer rendered.frame.deinit();
+        const frame = &rendered.frame;
+        const theme = &Theme.dark;
+
+        // The first toast is an error: its card, a slot, then the icon.
+        var icon_rect: ?tree_zig.Rect = null;
+        for (rendered.tree_nodes[0..rendered.tree_len]) |node| {
+            switch (node.content) {
+                .icon => |icon| if (icon.codepoint == icons.circle_x) {
+                    icon_rect = node.rect;
+                },
+                else => {},
+            }
+        }
+        const rect = icon_rect.?;
+        try testing.expectEqual(@as(f32, Theme.icon), rect.w);
+        const area: u32 = @intFromFloat(@round(rect.w * scale) * @round(rect.h * scale));
+        const inked = frame.countNot(rect, rgb(theme.popover));
+        // A circle with a cross: more than a few pixels, far less than the
+        // filled disc that stood in for icons before.
+        try testing.expect(inked * 100 > area * 15);
+        try testing.expect(inked * 100 < area * 65);
+        // Its ink is the destructive color, not the text's.
+        var reddest: u8 = 0;
+        var y = rect.y;
+        while (y < rect.y + rect.h) : (y += 1 / scale) {
+            var x = rect.x;
+            while (x < rect.x + rect.w) : (x += 1 / scale) {
+                const pixel = frame.at(x, y);
+                if (pixel[0] > reddest and pixel[1] < pixel[0] / 2 + 40) reddest = pixel[0];
+            }
+        }
+        try testing.expect(reddest > 200);
     }
 }
 

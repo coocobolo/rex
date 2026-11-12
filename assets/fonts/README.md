@@ -43,3 +43,23 @@ with variation data, so it gets no kerning (measured 2026-11-12: A V is
 The license file starts "Copyright (c) 2016 ..." with the project URL,
 while the fonts' name tables say "Copyright 2016 The Inter Project
 Authors"; `check-fonts` compares the two without the "(c)" and the URL.
+
+## Lucide (the UI kit's icons)
+
+Lucide 1.62.0, `lucide.ttf` of
+[lucide-font-1.62.0.zip](https://github.com/lucide-icons/lucide/releases/download/1.62.0/lucide-font-1.62.0.zip),
+copied unchanged, and `LICENSE` of the repository at that tag (as
+`LICENSE-Lucide.txt`), under the ISC License; the icons taken over from
+Feather are MIT, as that file says. The UI kit draws its icons from it
+(`src/kit/icons.zig` holds the code points it uses, from the release's
+`codepoints.json`). SHA-256:
+
+```
+695a71b7a9f185d2c6d606640db2687c2c93044abba09ded7fcec28b168a70f4  lucide.ttf
+b495047bd93a9b06913511076f504daba17d5bbeb3e0650f3bb53a4220329c57  LICENSE-Lucide.txt
+```
+
+`zig build check-fonts` does not cover it: the font's name table carries
+no copyright line to compare. To update, replace both files, update this
+table and the version, and check every code point in `src/kit/icons.zig`
+against the new `codepoints.json`.

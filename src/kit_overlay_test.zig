@@ -17,6 +17,7 @@ const inter: @import("freetype/KitFont.zig").Files = .{
     .regular = "assets/fonts/Inter-Regular.ttf",
     .medium = "assets/fonts/Inter-Medium.ttf",
     .semibold = "assets/fonts/Inter-SemiBold.ttf",
+    .icons = "assets/fonts/lucide.ttf",
 };
 
 const dark: [3]u8 = .{ 0x10, 0x10, 0x14 };
@@ -269,8 +270,8 @@ test "KitOverlay: its size" {
     // Reported in the ticket. Nearly all of it is two tables: the font's
     // kerning pairs, and the painter's 2048 instances of 36 bytes with its
     // glyph position cache.
-    try testing.expectEqual(193120, @sizeOf(KitOverlay));
-    try testing.expectEqual(91412, @sizeOf(@FieldType(KitOverlay, "painter")));
-    try testing.expectEqual(95536, @sizeOf(@FieldType(KitOverlay, "font")));
+    try testing.expectEqual(193896, @sizeOf(KitOverlay));
+    try testing.expectEqual(92184, @sizeOf(@FieldType(KitOverlay, "painter")));
+    try testing.expectEqual(95544, @sizeOf(@FieldType(KitOverlay, "font")));
     try testing.expectEqual(2600, @sizeOf(@FieldType(KitOverlay, "nodes")));
 }

@@ -5,6 +5,7 @@
 
 pub const Theme = @import("Theme.zig");
 pub const text = @import("text.zig");
+pub const icons = @import("icons.zig");
 pub const tree = @import("tree.zig");
 pub const layout = @import("layout.zig");
 pub const memory = @import("memory.zig");

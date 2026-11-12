@@ -210,6 +210,8 @@ pub fn build(b: *std.Build) !void {
         "assets/fonts/Inter-Medium.ttf",
         "assets/fonts/Inter-SemiBold.ttf",
         "assets/fonts/OFL-Inter.txt",
+        "assets/fonts/lucide.ttf",
+        "assets/fonts/LICENSE-Lucide.txt",
         "testdata/font/NotoColorEmoji.ttf",
         "testdata/font/OFL-NotoColorEmoji.txt",
     };

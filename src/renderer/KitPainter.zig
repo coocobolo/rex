@@ -57,6 +57,15 @@ const ExtraGlyph = struct {
     metric: Atlas.Metric,
 };
 
+/// Distinct icons, by code point and size, the painter remembers.
+const icon_capacity = 32;
+
+const IconGlyph = struct {
+    codepoint: u21,
+    size: u8,
+    metric: Atlas.Metric,
+};
+
 pub const Error = error{ OutOfInstances, GlyphCacheFull };
 
 shader: Shader,
@@ -70,6 +79,8 @@ len: u32 = 0,
 ascii: [style_count][128]?Atlas.Metric = @splat(@splat(null)),
 extra: [extra_capacity]ExtraGlyph = undefined,
 extra_len: u32 = 0,
+icons: [icon_capacity]IconGlyph = undefined,
+icons_len: u32 = 0,
 
 /// Needs a current GL context.
 pub fn init() Shader.Error!KitPainter {
@@ -118,6 +129,7 @@ pub fn deinit(self: *KitPainter) void {
 pub fn clearGlyphs(self: *KitPainter) void {
     self.ascii = @splat(@splat(null));
     self.extra_len = 0;
+    self.icons_len = 0;
 }
 
 /// Starts a frame with no instances.
@@ -145,13 +157,28 @@ pub fn paint(self: *KitPainter, tree: *const Tree, font: *KitFont, atlas: *Atlas
                 });
             },
             .icon => |icon| {
-                // Until the kit has an icon font, an icon is a dot of its color.
+                const metric = self.iconGlyph(icon.codepoint, icon.size, font, atlas) catch |err| switch (err) {
+                    error.GlyphCacheFull => return error.GlyphCacheFull,
+                    // An icon that cannot be rasterized or packed is left
+                    // out; the text beside it still reads.
+                    else => {
+                        log.warn("icon U+{X:0>4} at {d} px: {t}", .{ icon.codepoint, icon.size, err });
+                        continue;
+                    },
+                };
+                if (metric.width == 0 or metric.height == 0) continue;
+                // The bitmap centered in the node, on whole pixels.
                 const rect = layout.snap(node.rect, scale);
                 try self.push(.{
-                    .rect = pixels(rect),
+                    .rect = .{
+                        @floatFromInt(rect.x + @divFloor(rect.w - @as(i32, metric.width), 2)),
+                        @floatFromInt(rect.y + @divFloor(rect.h - @as(i32, metric.height), 2)),
+                        @floatFromInt(metric.width),
+                        @floatFromInt(metric.height),
+                    },
                     .fill = icon.color,
-                    .params = .{ @as(f32, @floatFromInt(rect.w)) / 2, 0 },
-                    .kind = .box,
+                    .params = .{ @floatFromInt(metric.atlas_x), @floatFromInt(metric.atlas_y) },
+                    .kind = .glyph,
                 });
             },
             .text => |t| {
@@ -227,6 +254,19 @@ fn glyph(self: *KitPainter, style: text.Style, codepoint: u21, font: *KitFont, a
     const metric = try atlas.upload(try font.rasterize(style, codepoint));
     self.extra[self.extra_len] = .{ .style = style, .codepoint = codepoint, .metric = metric };
     self.extra_len += 1;
+    return metric;
+}
+
+/// Where the icon `codepoint` at `size` logical pixels sits in the atlas,
+/// rasterizing and packing it on first use.
+fn iconGlyph(self: *KitPainter, codepoint: u21, size: u8, font: *KitFont, atlas: *Atlas) !Atlas.Metric {
+    for (self.icons[0..self.icons_len]) |entry| {
+        if (entry.codepoint == codepoint and entry.size == size) return entry.metric;
+    }
+    if (self.icons_len == icon_capacity) return error.GlyphCacheFull;
+    const metric = try atlas.upload(try font.rasterizeIcon(codepoint, size));
+    self.icons[self.icons_len] = .{ .codepoint = codepoint, .size = size, .metric = metric };
+    self.icons_len += 1;
     return metric;
 }
 

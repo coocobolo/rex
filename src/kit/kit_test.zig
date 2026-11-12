@@ -156,7 +156,7 @@ test "layout: a toast sizes its text column and wraps the description" {
 
     // Sonner's toast: 356 wide, 16 padding, an icon, then title over description.
     const toast = try tree.open(.{ .axis = .row, .width = .{ .fixed = 356 }, .padding = .all(16), .gap = 10, .fill = theme.popover });
-    const icon = try tree.icon(.{ .codepoint = 'i', .color = theme.info, .size = 16 });
+    const icon = try tree.icon(.{ .codepoint = @import("icons.zig").info, .color = theme.info, .size = 16 });
     const body = try tree.open(.{ .axis = .column, .width = .fill });
     const title = try tree.text("Copied 3 lines", .{ .color = theme.foreground, .style = .sm_medium });
     // 49 bytes is 343 px, wider than the 298 px column: wraps to two lines.

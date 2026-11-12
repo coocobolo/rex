@@ -13,6 +13,7 @@ const assert = std.debug.assert;
 
 const Theme = @import("Theme.zig");
 const Color = Theme.Color;
+const icons = @import("icons.zig");
 const memory = @import("memory.zig");
 const motion_zig = @import("motion.zig");
 const text = @import("text.zig");
@@ -51,14 +52,16 @@ pub const Kind = enum(u8) {
     warning,
     err,
 
-    /// The icon's color; a default toast has no icon.
-    fn color(self: Kind, theme: *const Theme) ?Color {
+    const Mark = struct { codepoint: u21, color: Color };
+
+    /// The icon before the title; a default toast has none.
+    fn mark(self: Kind, theme: *const Theme) ?Mark {
         return switch (self) {
             .default => null,
-            .success => theme.success,
-            .info => theme.info,
-            .warning => theme.warning,
-            .err => theme.destructive,
+            .success => .{ .codepoint = icons.circle_check, .color = theme.success },
+            .info => .{ .codepoint = icons.info, .color = theme.info },
+            .warning => .{ .codepoint = icons.triangle_alert, .color = theme.warning },
+            .err => .{ .codepoint = icons.circle_x, .color = theme.destructive },
         };
     }
 };
@@ -356,10 +359,10 @@ pub fn view(state: *const State, tree: *Tree, theme: *const Theme) tree_zig.Erro
             .border_width = Theme.border_width,
             .radius = Theme.radius,
         });
-        if (entry.kind.color(theme)) |color| {
+        if (entry.kind.mark(theme)) |mark| {
             // As tall as the title's line, so the icon centers on it.
             const slot = try tree.open(.{ .height = .{ .fixed = line_height }, .main = .center });
-            _ = try tree.icon(.{ .codepoint = 0, .color = color.fade(presence), .size = Theme.icon });
+            _ = try tree.icon(.{ .codepoint = mark.codepoint, .color = mark.color.fade(presence), .size = Theme.icon });
             tree.close(slot);
         }
         const body = try tree.open(.{ .width = .fill });
@@ -375,7 +378,7 @@ pub fn view(state: *const State, tree: *Tree, theme: *const Theme) tree_zig.Erro
             .main = .center,
             .cross = .center,
         });
-        _ = try tree.text("\u{00D7}", .{ .color = theme.muted_foreground.fade(presence), .style = .sm_medium });
+        _ = try tree.icon(.{ .codepoint = icons.x, .color = theme.muted_foreground.fade(presence), .size = Theme.icon });
         tree.close(close);
         tree.close(card);
     }

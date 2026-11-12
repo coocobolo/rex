@@ -41,6 +41,8 @@ pub const Files = struct {
     medium: [*:0]const u8,
     /// Weight 600.
     semibold: [*:0]const u8,
+    /// The icon font: the glyphs of `kit/icons.zig`.
+    icons: [*:0]const u8,
 
     fn of(self: Files, weight: u16) [*:0]const u8 {
         return switch (weight) {
@@ -62,6 +64,8 @@ pub const Options = struct {
 library: c.FT_Library,
 /// Indexed by `text.Style`.
 faces: [style_count]c.FT_Face,
+/// Sized for each icon as it is rasterized.
+icon_face: c.FT_Face,
 scale: f32,
 kerning: Kerning,
 /// Advance of each ASCII code point in physical pixels, per style, so
@@ -101,6 +105,7 @@ pub fn create(files: Files, options: Options) ft.FtError!KitFont {
     var self: KitFont = .{
         .library = try ft.initFreeType(),
         .faces = undefined,
+        .icon_face = undefined,
         .scale = options.scale,
         .kerning = options.kerning,
         .ascii_advance = undefined,
@@ -115,6 +120,7 @@ pub fn create(files: Files, options: Options) ft.FtError!KitFont {
         const metrics = style.metrics();
         self.faces[@intFromEnum(style)] = try ft.initFace(self.library, files.of(metrics.weight), metrics.size);
     }
+    self.icon_face = try ft.initFace(self.library, files.icons, 16);
     try self.setScale(options.scale);
     return self;
 }
@@ -235,8 +241,20 @@ pub fn measurer(self: *KitFont) text.Measurer {
 /// Renders `codepoint` in `style`. The bitmap points into FreeType's
 /// glyph slot and is valid until the next call on this font.
 pub fn rasterize(self: *KitFont, style: text.Style, codepoint: u21) !Rasterizer.Glyph {
-    const ft_face = self.faceOf(style);
-    try ft.loadChar(ft_face, codepoint, c.FT_LOAD_RENDER | c.FT_LOAD_TARGET_LIGHT);
+    return render(self.faceOf(style), codepoint, c.FT_LOAD_RENDER | c.FT_LOAD_TARGET_LIGHT);
+}
+
+/// Renders the icon `codepoint` for a box of `size` logical pixels. The
+/// bitmap is valid until the next call on this font. Unhinted: fitting an
+/// icon's strokes to the pixel grid bends its shape.
+pub fn rasterizeIcon(self: *KitFont, codepoint: u21, size: u8) !Rasterizer.Glyph {
+    const pixels: c.FT_F26Dot6 = @intFromFloat(@round(@as(f32, @floatFromInt(size)) * self.scale * 64));
+    try ft.ftCheck(c.FT_Set_Char_Size(self.icon_face, 0, pixels, 72, 72), "FT_Set_Char_Size");
+    return render(self.icon_face, codepoint, c.FT_LOAD_RENDER | c.FT_LOAD_NO_HINTING);
+}
+
+fn render(ft_face: c.FT_Face, codepoint: u21, flags: c.FT_Int32) !Rasterizer.Glyph {
+    try ft.loadChar(ft_face, codepoint, flags);
     const glyph = ft_face.*.glyph;
     const bitmap = glyph.*.bitmap;
     const advance_px = std.math.cast(u16, glyph.*.advance.x >> 6) orelse 0;

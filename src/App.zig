@@ -1861,7 +1861,9 @@ fn createKitFrom(gpa: std.mem.Allocator, exe: []const u8, scale: f32) !*KitOverl
     defer gpa.free(medium);
     const semibold = try std.fs.path.joinZ(gpa, &.{ dir, names.ui_semibold_name });
     defer gpa.free(semibold);
-    const kit = try KitOverlay.create(gpa, .{ .regular = regular, .medium = medium, .semibold = semibold }, scale);
+    const icons = try std.fs.path.joinZ(gpa, &.{ dir, names.ui_icons_name });
+    defer gpa.free(icons);
+    const kit = try KitOverlay.create(gpa, .{ .regular = regular, .medium = medium, .semibold = semibold, .icons = icons }, scale);
     log.info("REX_UI_KIT: toasts are drawn by the UI kit", .{});
     return kit;
 }
