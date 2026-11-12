@@ -82,6 +82,12 @@ pub fn destroy(self: *KitOverlay, gpa: Allocator) void {
     gpa.destroy(self);
 }
 
+/// Applies the user's motion setting to every surface, from now on.
+pub fn setMotion(self: *KitOverlay, mode: motion_zig.Mode) void {
+    self.toasts.motion = mode;
+    self.dialog.motion = mode;
+}
+
 /// Shows a toast. Returns whether a redraw is due.
 pub fn push(self: *KitOverlay, request: toast.Push) bool {
     return toast.update(&self.toasts, .{ .push = request });

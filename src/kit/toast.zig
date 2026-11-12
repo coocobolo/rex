@@ -95,12 +95,12 @@ pub const Entry = struct {
     }
 
     /// 0 (invisible, `rise` below its place) to 1 (at rest).
-    fn presence(self: *const Entry) f32 {
+    fn presence(self: *const Entry, mode: motion_zig.Mode) f32 {
         return switch (self.phase) {
             .waiting => 0,
-            .entering => |elapsed| motion_zig.progress(elapsed),
+            .entering => |elapsed| motion_zig.progress(mode, elapsed),
             .shown => 1,
-            .leaving => |elapsed| 1 - motion_zig.progress(elapsed),
+            .leaving => |elapsed| 1 - motion_zig.progress(mode, elapsed),
         };
     }
 };
@@ -116,6 +116,8 @@ pub const State = struct {
     len: u8 = 0,
     /// Timers stand still while the pointer is over the stack.
     pointer: Pointer = .away,
+    /// Set by the owner, from the user's setting.
+    motion: motion_zig.Mode = .full,
 
     pub const empty: State = .{};
 
@@ -167,6 +169,7 @@ pub const State = struct {
     }
 
     fn tick(self: *State, dt_ms: u32) bool {
+        const duration = motion_zig.duration(self.motion);
         const dt_short = std.math.lossyCast(u16, dt_ms);
         var changed = false;
         var index: usize = 0;
@@ -176,7 +179,7 @@ pub const State = struct {
                 .waiting => {},
                 .entering => |elapsed| {
                     const now = elapsed +| dt_short;
-                    entry.phase = if (now >= Theme.duration) .{ .shown = entry.duration_ms } else .{ .entering = now };
+                    entry.phase = if (now >= duration) .{ .shown = entry.duration_ms } else .{ .entering = now };
                     changed = true;
                 },
                 // Counting down changes nothing on screen until it ends.
@@ -192,7 +195,7 @@ pub const State = struct {
                 .leaving => |elapsed| {
                     changed = true;
                     const now = elapsed +| dt_short;
-                    if (now >= Theme.duration) {
+                    if (now >= duration) {
                         self.remove(index);
                         continue;
                     }
@@ -215,7 +218,10 @@ pub const State = struct {
             },
             // Leaves from as far as it got, so it does not jump to full
             // presence first.
-            .entering => |elapsed| entry.phase = .{ .leaving = Theme.duration - @min(elapsed, Theme.duration) },
+            .entering => |elapsed| {
+                const duration = motion_zig.duration(self.motion);
+                entry.phase = .{ .leaving = duration - @min(elapsed, duration) };
+            },
             .shown => entry.phase = .{ .leaving = 0 },
             .leaving => return false,
         }
@@ -338,7 +344,7 @@ pub fn view(state: *const State, tree: *Tree, theme: *const Theme) tree_zig.Erro
         .cross = .end,
     });
     for (entries) |*entry| {
-        const presence = entry.presence();
+        const presence = entry.presence(state.motion);
         const card = try tree.open(.{
             .id = cardId(entry.serial),
             .axis = .row,
@@ -392,10 +398,13 @@ pub fn place(state: *const State, tree: *Tree, stack: ?Index, table: *memory.Tab
         assert(node.box.id == cardId(entry.serial));
         const target = node.rect.y;
         // A toast seen for the first time starts in its place.
-        const drawn = glide(table.get(node.box.id) orelse target, target, dt_ms);
+        const drawn = switch (state.motion) {
+            .full => glide(table.get(node.box.id) orelse target, target, dt_ms),
+            .none => target,
+        };
         try table.set(node.box.id, drawn);
         if (drawn != target) motion = .moving;
-        tree.translate(card, 0, drawn - target + (1 - entry.presence()) * rise);
+        tree.translate(card, 0, drawn - target + (1 - entry.presence(state.motion)) * rise);
         card = node.end;
     }
     return motion;

@@ -40,6 +40,7 @@ pub const Section = enum {
     @"wellbeing.movement",
     @"wellbeing.routines",
     @"wellbeing.privacy",
+    ui,
     scroll,
     selection,
     clipboard,
@@ -291,6 +292,7 @@ pub const table = [_]Key{
     // The tracker's field: privacy is where users look for what Rex records.
     .{ .section = .@"wellbeing.privacy", .name = "track_foreground_apps", .field = "wellbeing.screen_time.track_foreground_apps" },
 
+    .{ .section = .ui, .name = "motion", .field = "ui.motion" },
     .{ .section = .scroll, .name = "step_lines", .field = "scroll.lines", .bounds = at_least_one },
     .{ .section = .scroll, .name = "wheel_lines", .field = "scroll.wheel_lines", .bounds = at_least_one },
 

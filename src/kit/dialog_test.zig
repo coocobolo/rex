@@ -82,6 +82,22 @@ test "dialog: opened again while leaving, it comes back from where it was" {
     try testing.expectEqual(dialog.Phase{ .leaving = 50 }, state.phase);
 }
 
+test "dialog: with motion off it opens and closes at the next tick" {
+    var state: State = .{ .motion = .none };
+    try testing.expectEqual(.redraw, update(&state, .{ .open = sample() }));
+    try testing.expectEqual(.redraw, update(&state, .{ .tick = 1 }));
+    try testing.expectEqual(dialog.Phase.open, state.phase);
+
+    var nodes: [dialog.node_max]tree_zig.Node = undefined;
+    var lines: [8]text.Line = undefined;
+    var tree = Tree.init(&nodes, &lines);
+    try testing.expectEqual(.redraw, update(&state, .cancel));
+    // Leaving with motion off, it is already invisible.
+    const scrim = (try dialog.view(&state, &tree, &Theme.dark)).?;
+    try testing.expectEqual(0, tree.nodes[scrim].box.fill.a);
+    try testing.expectEqual(.closed, update(&state, .{ .tick = 1 }));
+}
+
 test "dialog: confirm closes at once, focus swaps, hover redraws once" {
     var state: State = .empty;
     _ = update(&state, .{ .open = sample() });

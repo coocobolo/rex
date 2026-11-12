@@ -31,6 +31,7 @@ const Tokens = @import("../color/Tokens.zig").Tokens;
 const Classifier = @import("../unicode/Classifier.zig");
 const PlainVar = @import("../env/root.zig").PlainVar;
 const TerminalOption = @import("../term/term.zig").Option;
+const Motion = @import("../kit/motion.zig").Mode;
 
 blink: Blink,
 font: Font,
@@ -38,6 +39,7 @@ keymap: []const Binding,
 wellbeing: WellbeingOption = .{},
 termio: SpawnOption,
 shell: Shell = .{},
+ui: Ui = .{},
 theme: Theme,
 /// Optional handcrafted design tokens override for custom surface and border styling.
 tokens: ?Tokens = null,
@@ -89,6 +91,12 @@ pub const Blink = struct {
 };
 
 /// The window and the UI drawn in it.
+/// The UI kit's own settings (`[ui]`).
+pub const Ui = struct {
+    /// Whether toasts and dialogs fade and slide.
+    motion: Motion = .full,
+};
+
 pub const Window = struct {
     /// The title while `title` is `auto` and no program has set one.
     pub const default_title: [:0]const u8 = "rex";

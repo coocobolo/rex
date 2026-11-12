@@ -82,6 +82,8 @@ pub const State = struct {
     focus: Focus = .none,
     /// The button under the pointer, if any.
     hover: ?Action = null,
+    /// Set by the owner, from the user's setting.
+    motion: motion.Mode = .full,
     title_len: u8 = 0,
     body_len: u8 = 0,
     confirm_len: u8 = 0,
@@ -112,9 +114,9 @@ pub const State = struct {
     fn presence(self: *const State) f32 {
         return switch (self.phase) {
             .closed => 0,
-            .entering => |elapsed| motion.progress(elapsed),
+            .entering => |elapsed| motion.progress(self.motion, elapsed),
             .open => 1,
-            .leaving => |elapsed| 1 - motion.progress(elapsed),
+            .leaving => |elapsed| 1 - motion.progress(self.motion, elapsed),
         };
     }
 
@@ -202,7 +204,7 @@ fn open(self: *State, request: Request) Outcome {
         .entering, .open => return .quiet,
         .closed => .{ .entering = 0 },
         // Fades back in from as far as it had faded out.
-        .leaving => |elapsed| .{ .entering = Theme.duration - @min(elapsed, Theme.duration) },
+        .leaving => |elapsed| .{ .entering = motion.duration(self.motion) - @min(elapsed, motion.duration(self.motion)) },
     };
     self.focus = request.focus;
     self.hover = null;
@@ -219,12 +221,12 @@ fn tick(self: *State, dt_ms: u32) Outcome {
         .closed, .open => return .quiet,
         .entering => |elapsed| {
             const now = elapsed +| dt;
-            self.phase = if (now >= Theme.duration) .open else .{ .entering = now };
+            self.phase = if (now >= motion.duration(self.motion)) .open else .{ .entering = now };
             return .redraw;
         },
         .leaving => |elapsed| {
             const now = elapsed +| dt;
-            if (now >= Theme.duration) {
+            if (now >= motion.duration(self.motion)) {
                 self.phase = .closed;
                 self.hover = null;
                 return .closed;
@@ -290,7 +292,7 @@ fn beginLeave(self: *State) Outcome {
     switch (self.phase) {
         .closed, .leaving => return .quiet,
         // Fades out from as far as it had faded in.
-        .entering => |elapsed| self.phase = .{ .leaving = Theme.duration - @min(elapsed, Theme.duration) },
+        .entering => |elapsed| self.phase = .{ .leaving = motion.duration(self.motion) - @min(elapsed, motion.duration(self.motion)) },
         .open => self.phase = .{ .leaving = 0 },
     }
     self.hover = null;

@@ -386,6 +386,7 @@ const enum_names = [_]struct { []const u8, []const []const u8 }{
     .{ "banner.border_style", &.{ "semantic", "subtle" } },
     .{ "modal.default_focus", &.{ "confirm", "cancel" } },
     .{ "window.on_close", &.{ "ask", "ask_if_running", "close" } },
+    .{ "ui.motion", &.{ "full", "none" } },
     .{ "clipboard.osc52_write", &.{ "allow", "deny" } },
     .{ "clipboard.osc52_read", &.{ "allow", "deny" } },
     .{ "modal.on_outside_click", &.{ "close", "ignore" } },

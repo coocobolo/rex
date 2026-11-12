@@ -273,6 +273,34 @@ test "toast view: the others glide to their new place when one leaves" {
     try testing.expectEqual(1, fixture.table.len);
 }
 
+test "toast: with motion off it appears, leaves and moves at once" {
+    var fixture: Fixture = .{};
+    var tree = fixture.tree();
+    var state: State = .{ .motion = .none };
+    _ = push(&state, "older");
+    const older = state.entries[0].serial;
+
+    // Fully there in its first frame, in its place.
+    _ = try fixture.frame(&tree, &state, 0);
+    try testing.expectEqual(255, tree.nodes[1].box.fill.a);
+    try testing.expectEqual(624, cardRect(&tree, older).?.y);
+    // The next tick ends the entrance, however short it is.
+    try testing.expect(update(&state, .{ .tick = 1 }));
+    try expectPhases(&state, &.{.shown});
+
+    _ = push(&state, "newer");
+    _ = update(&state, .{ .tick = 1 });
+    _ = try fixture.frame(&tree, &state, 1);
+    try testing.expectEqual(558, cardRect(&tree, older).?.y);
+
+    // Dismissed: gone at the next tick, and the other one does not glide.
+    try testing.expect(update(&state, .{ .dismiss = state.entries[1].serial }));
+    try testing.expect(update(&state, .{ .tick = 1 }));
+    try testing.expectEqual(1, state.len);
+    try testing.expectEqual(.settled, try fixture.frame(&tree, &state, 1));
+    try testing.expectEqual(624, cardRect(&tree, older).?.y);
+}
+
 test "toast view: more nodes than the array holds is an error" {
     var nodes: [toast.node_max - 1]tree_zig.Node = undefined;
     var lines: [32]text.Line = undefined;
