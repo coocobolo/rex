@@ -257,7 +257,8 @@ const PeriodicTimer = struct {
 /// is not known: startup, an idle gap, or a swap that did not wait.
 const FrameLatch = struct {
     /// Nanoseconds between refreshes. Starts at the monitor's rate (`init`)
-    /// and follows the gap between swaps that actually waited.
+    /// and follows the gap between two swaps that waited for consecutive
+    /// vblanks (`observe`).
     period_ns: u64 = 1_000_000_000 / fallback_hz,
     /// How long the swap should still block after the draw is submitted.
     margin_ns: u64 = 1_500_000,
@@ -344,8 +345,15 @@ const FrameLatch = struct {
             return;
         }
 
-        if (self.last_vblank_ns != 0 and swap_return_ns > self.last_vblank_ns) {
-            self.samplePeriod(swap_return_ns - self.last_vblank_ns);
+        // The gap since the last vblank is a sample of the period only when
+        // no vblank passed in between. A swap never waits longer than one
+        // refresh, so a swap that waited at least as long as the time that
+        // went by before it started within one refresh of that vblank, and
+        // ended at the very next one. Frames drawn at typing pace fail this:
+        // their gaps are several refreshes and must not be learned.
+        if (self.last_vblank_ns != 0 and swap_enter_ns >= self.last_vblank_ns) {
+            const idle = swap_enter_ns - self.last_vblank_ns;
+            if (idle <= block) self.samplePeriod(idle + block);
         }
         self.last_vblank_ns = swap_return_ns;
 
@@ -359,14 +367,14 @@ const FrameLatch = struct {
         self.arm(swap_return_ns);
     }
 
-    /// Folds the gap between two waited swaps into `period_ns`. Half to one
-    /// and a half periods is one refresh and refines the average. Anything
-    /// else between 2 and 50 ms is a missed vblank, a stall, or a wrong
-    /// period: it becomes the period only when the next such gap agrees
-    /// within 10%.
+    /// Folds `gap`, the time between two consecutive vblanks, into
+    /// `period_ns`. Half to one and a half periods refines the average.
+    /// Anything else between 2 and 50 ms means the period is wrong (or the
+    /// swap stalled): it becomes the period only when the next such gap
+    /// agrees within 10%. The period never leaves 2 to 50 ms.
     fn samplePeriod(self: *FrameLatch, gap: u64) void {
         if (gap >= self.period_ns / 2 and gap <= self.period_ns + self.period_ns / 2) {
-            self.period_ns = (self.period_ns *| 7 +| gap) / 8;
+            self.period_ns = std.math.clamp((self.period_ns *| 7 +| gap) / 8, min_period_ns, max_period_ns);
             self.candidate_ns = 0;
             return;
         }
@@ -3052,6 +3060,68 @@ test "FrameLatch: a wrong starting period corrects itself after two agreeing swa
         t += real;
     }
     try std.testing.expect(latch.period_ns > 16_000_000 and latch.period_ns < 17_300_000);
+}
+
+/// Feeds `latch` `count` frames `gap_ns` apart, each drawn the moment it
+/// was due, on a display refreshing every `refresh_ns`: the swap waits for
+/// the next vblank after it starts.
+fn runFrames(latch: *FrameLatch, start_ns: u64, gap_ns: u64, refresh_ns: u64, count: usize) void {
+    var enter = start_ns;
+    for (0..count) |_| {
+        const vblank = (enter / refresh_ns + 1) * refresh_ns;
+        latch.observe(enter, vblank, 300_000);
+        enter += gap_ns;
+    }
+}
+
+test "FrameLatch: frames at typing pace are not refresh samples" {
+    // Key repeat every 33 ms on a 60 Hz and on a 165 Hz display, and a
+    // key every 65 ms: the gaps are whole numbers of refreshes, alike
+    // enough to pass for a period.
+    const cases = [_]struct { hz: u32, gap_ns: u64 }{
+        .{ .hz = 60, .gap_ns = 33_000_000 },
+        .{ .hz = 165, .gap_ns = 33_000_000 },
+        .{ .hz = 165, .gap_ns = 65_000_000 },
+        .{ .hz = 60, .gap_ns = 65_000_000 },
+    };
+    for (cases) |case| {
+        var latch: FrameLatch = .init(case.hz);
+        const start = latch.period_ns;
+        // Starts 1 ms after a vblank, so every swap waits a trusted time.
+        runFrames(&latch, start * 10 + 1_000_000, case.gap_ns, start, 200);
+        try std.testing.expectEqual(start, latch.period_ns);
+        try std.testing.expectEqual(@as(u64, 0), latch.candidate_ns);
+    }
+}
+
+test "FrameLatch: frames drawn every refresh keep the period" {
+    var latch: FrameLatch = .init(165);
+    const refresh: u64 = 1_000_000_000 / 165;
+    runFrames(&latch, refresh * 10 + 1_000_000, refresh, refresh, 200);
+    try std.testing.expect(latch.period_ns > refresh - refresh / 10 and latch.period_ns < refresh + refresh / 10);
+}
+
+test "FrameLatch: back-to-back frames correct a start that was too slow" {
+    // Seeded for 60 Hz while the window refreshes at 165 Hz.
+    var latch: FrameLatch = .init(60);
+    const refresh: u64 = 1_000_000_000 / 165;
+    runFrames(&latch, refresh * 10 + 1_000_000, refresh, refresh, 4);
+    try std.testing.expect(latch.period_ns > refresh - refresh / 10 and latch.period_ns < refresh + refresh / 10);
+}
+
+test "FrameLatch: no run of swaps takes the period past 50 ms" {
+    var latch: FrameLatch = .init(60);
+    // The worst a swap can report: each one starts right at the last
+    // vblank and waits a little longer than the one before.
+    var t: u64 = 1_000_000_000;
+    var wait: u64 = 17_000_000;
+    for (0..400) |_| {
+        latch.observe(t, t + wait, 300_000);
+        t += wait;
+        wait = @min(wait + wait / 3, FrameLatch.max_period_ns);
+        try std.testing.expect(latch.period_ns <= FrameLatch.max_period_ns);
+        try std.testing.expect(latch.period_ns >= FrameLatch.min_period_ns);
+    }
 }
 
 test "FrameLatch: one missed vblank does not change the period" {
