@@ -23,6 +23,7 @@ const posix = std.posix;
 const system = posix.system;
 
 const rex = @import("root.zig");
+const KitOverlay = @import("KitOverlay.zig");
 
 const unicode = rex.unicode;
 
@@ -157,6 +158,9 @@ wellbeing_state: wellbeing.Wellbeing,
 local_clock: wellbeing.localtime.Clock = .{},
 wellbeing_overlay: wellbeing.overlay.Overlay = .{},
 toast_queue: Toast.Queue = .{},
+/// The UI kit's toast stack, shown in place of `toast_queue` when
+/// `REX_UI_KIT=1` is in the environment (trial of ADR 0009, ticket 87).
+kit: ?*KitOverlay = null,
 config_banner: ?Banner = null,
 
 window: Window,
@@ -614,6 +618,12 @@ pub fn init(
         }, null);
     }
 
+    const kit: ?*KitOverlay = if (std.mem.eql(u8, envmap.get("REX_UI_KIT") orelse "", "1"))
+        createKit(gpa, io, argv0, content_scale)
+    else
+        null;
+    errdefer if (kit) |k| k.destroy(gpa);
+
     const app = App{
         .io = io,
         .driver = driver,
@@ -643,6 +653,7 @@ pub fn init(
         // Its options and tokens come with every `build`.
         .wellbeing_overlay = .{},
         .toast_queue = .{},
+        .kit = kit,
         .config_banner = startup_banner,
         .frame_buffer_size = .empty,
         .clipboard_buf = clipboard_buf,
@@ -658,6 +669,7 @@ pub fn deinit(self: *App, gpa: std.mem.Allocator) void {
     gpa.free(self.config_path);
     gpa.free(self.home_dir);
 
+    if (self.kit) |kit| kit.destroy(gpa);
     self.renderer.deinit();
     self.frame_builder.deinit(gpa);
     self.atlas.destroy();
@@ -814,6 +826,11 @@ pub fn run(self: *App) !void {
         }
 
         if (self.toast_queue.tick(dt_clamped)) self.needs_redraw = true;
+        if (self.kit) |kit| {
+            // The real time: a toast whose wakeup is seconds away must not
+            // have that sleep clamped, or it would stay several times as long.
+            if (kit.tick(dt_ms)) self.needs_redraw = true;
+        }
         if (self.renderer.tick(dt_clamped)) self.needs_redraw = true;
 
         if (is_posix and sighup_pending.swap(false, .acq_rel)) {
@@ -969,6 +986,20 @@ fn renderFrame(self: *App) !bool {
         }
     }
 
+    if (self.kit) |kit| {
+        const kit_changed = if (self.quit_confirm_open or self.wellbeing_overlay.lock_screen_active)
+            kit.skipFrame()
+        else changed: {
+            const size = self.window.frameBufferSize(f32);
+            var background: [3]u8 = undefined;
+            for (&background, self.background_color[0..3]) |*out, channel| {
+                out.* = @intFromFloat(@round(std.math.clamp(channel, 0, 1) * 255));
+            }
+            break :changed kit.buildFrame(atlas, size.width / self.content_scale, size.height / self.content_scale, background);
+        };
+        if (kit_changed) frame.dirty.overlay = true;
+    }
+
     const banner_active = self.config_banner != null and self.config.window.banner.enabled;
     const app_toasts_active = !self.quit_confirm_open and self.config.window.toast.enabled and self.toast_queue.isActive();
     const overlay_active = self.quit_confirm_open or self.wellbeing_overlay.isActive() or app_toasts_active or banner_active;
@@ -1007,6 +1038,7 @@ fn renderFrame(self: *App) !bool {
         if (selection_state) |state| state.bg else null,
         .{ .blink_on = self.blink_on, .blink_rapid_on = self.blink_rapid_on },
     );
+    if (self.kit) |kit| kit.draw(atlas, dimension.width, dimension.height);
 
     const swapped_seq = if (latency_trace.enabled) self.latency.?.frameDrawn(latency_trace.now(self.io)) else {};
     const swap_enter = awakeNs(self.io);
@@ -1060,6 +1092,9 @@ fn waitForNextEvent(self: *App, had_data: bool) void {
             ),
         ),
     );
+    if (self.kit) |kit| {
+        if (kit.wakeMs()) |wake| ms = @min(ms, wake);
+    }
     if (animating) ms = @min(ms, 33);
     if (overlay_active) ms = @min(ms, 250);
     if (self.needs_redraw) ms = @min(ms, 8);
@@ -1277,6 +1312,22 @@ fn reportWellbeingError(
 /// Pushes a concise toast notification with the configured toast surface, toast and icon options.
 pub fn notifySimple(self: *App, title: []const u8, description: []const u8, variant: Toast.Variant) void {
     if (!self.config.window.toast.enabled) return;
+    if (self.kit) |kit| {
+        const pushed = kit.push(.{
+            .title = title,
+            .description = description,
+            .kind = switch (variant) {
+                .neutral => .default,
+                .info => .info,
+                .success => .success,
+                .warning => .warning,
+                .critical => .err,
+            },
+            .duration_ms = self.config.window.toast.duration_ms,
+        });
+        if (pushed) self.needs_redraw = true;
+        return;
+    }
     const icon_id: Icon.IconId = switch (variant) {
         .neutral, .info => .info,
         .success => .success,
@@ -1353,6 +1404,7 @@ fn rebuildFont(self: *App, size: u32, scale: f32) bool {
 
     // Invalidate atlas, all cached glyphs are wrong size now
     self.atlas.invalidate();
+    if (self.kit) |kit| kit.glyphsLost(scale);
 
     // Invalidate frame builder cached generation
     self.frame_builder.last_generation = null;
@@ -1562,11 +1614,14 @@ fn handleAction(self: *App, action: rex.input.Action) void {
             self.wellbeing_overlay.dashboard_open = false;
             self.quit_confirm_open = false;
             self.toast_queue.dismissAll();
+            if (self.kit) |kit| _ = kit.dismissAll();
             self.frame_builder.last_generation = null;
             self.needs_redraw = true;
         },
         .toast_dismiss => {
-            if (self.toast_queue.isActive()) {
+            if (self.kit != null and self.kit.?.dismissOldest()) {
+                self.needs_redraw = true;
+            } else if (self.toast_queue.isActive()) {
                 _ = self.toast_queue.dismiss(self.toast_queue.entries[0].id);
                 self.needs_redraw = true;
             } else if (self.wellbeing_state.current_alert.kind != .none) {
@@ -1575,7 +1630,9 @@ fn handleAction(self: *App, action: rex.input.Action) void {
             }
         },
         .toast_activate => {
-            if (self.toast_queue.isActive()) {
+            if (self.kit != null and self.kit.?.dismissOldest()) {
+                self.needs_redraw = true;
+            } else if (self.toast_queue.isActive()) {
                 const id = self.toast_queue.entries[0].id;
                 _ = self.toast_queue.dismiss(id);
                 self.needs_redraw = true;
@@ -1755,6 +1812,38 @@ fn useBuiltinFonts(io: std.Io, arena: std.mem.Allocator, loaded: *rex.config.Loa
     else |_|
         argv0;
     try rex.config.builtin_font.apply(io, arena, loaded, exe);
+}
+
+/// The UI kit for a window at display `scale`, with the UI font installed
+/// next to this executable, or null with a warning when it cannot be set
+/// up; the window then keeps its built-in toasts. Needs a current GL
+/// context.
+fn createKit(gpa: std.mem.Allocator, io: std.Io, argv0: []const u8, scale: f32) ?*KitOverlay {
+    var exe_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const exe: []const u8 = if (std.process.executablePath(io, &exe_buf)) |len|
+        exe_buf[0..len]
+    else |_|
+        argv0;
+    return createKitFrom(gpa, exe, scale) catch |err| {
+        log.warn("REX_UI_KIT: cannot set up the UI kit ({t}); using the built-in toasts", .{err});
+        return null;
+    };
+}
+
+fn createKitFrom(gpa: std.mem.Allocator, exe: []const u8, scale: f32) !*KitOverlay {
+    const names = rex.config.builtin_font;
+    const dir = try names.fontDir(gpa, exe);
+    defer gpa.free(dir);
+    // FreeType opens the files in `create`; the paths are not kept.
+    const regular = try std.fs.path.joinZ(gpa, &.{ dir, names.ui_regular_name });
+    defer gpa.free(regular);
+    const medium = try std.fs.path.joinZ(gpa, &.{ dir, names.ui_medium_name });
+    defer gpa.free(medium);
+    const semibold = try std.fs.path.joinZ(gpa, &.{ dir, names.ui_semibold_name });
+    defer gpa.free(semibold);
+    const kit = try KitOverlay.create(gpa, .{ .regular = regular, .medium = medium, .semibold = semibold }, scale);
+    log.info("REX_UI_KIT: toasts are drawn by the UI kit", .{});
+    return kit;
 }
 
 /// The shipped regular face this process would load, or its file name when
@@ -2368,6 +2457,14 @@ const mouseButtonCb: c.GLFWmousebuttonfun = struct {
 
         if (button == c.GLFW_MOUSE_BUTTON_LEFT) {
             if (press) {
+                if (app.kit) |kit| switch (kit.click(app.mouse_x / app.content_scale, app.mouse_y / app.content_scale)) {
+                    .outside => {},
+                    .taken => return,
+                    .changed => {
+                        app.needs_redraw = true;
+                        return;
+                    },
+                };
                 if (app.handleOverlayClick(col, row)) return;
                 if (scrollback_used > 0 and app.handleScrollbarClick()) return;
             } else {
@@ -2704,6 +2801,7 @@ const cursorPosCb: c.GLFWcursorposfun = struct {
 
         app.mouse_x = @floatCast(xpos);
         app.mouse_y = @floatCast(ypos);
+        if (app.kit) |kit| kit.pointerMoved(app.mouse_x / app.content_scale, app.mouse_y / app.content_scale);
 
         // update scrollbar hover detection
         app.updateScrollbarHover();

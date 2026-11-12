@@ -17,6 +17,10 @@ const log = std.log.scoped(.config);
 pub const regular_name = "GoogleSansCode[wght].ttf";
 pub const italic_name = "GoogleSansCode-Italic[wght].ttf";
 pub const emoji_name = "NotoColorEmoji.ttf";
+/// The UI font's static faces, by weight (400, 500, 600).
+pub const ui_regular_name = "Inter-Regular.ttf";
+pub const ui_medium_name = "Inter-Medium.ttf";
+pub const ui_semibold_name = "Inter-SemiBold.ttf";
 
 /// Directory of the installed faces for an executable at `exe_path`.
 /// `<prefix>/bin/rex` → `<prefix>/share/rex/fonts`.

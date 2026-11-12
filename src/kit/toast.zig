@@ -43,7 +43,7 @@ const glide_ms = 40;
 /// The title's line, which the icon and the close button center on.
 const line_height = text.Style.sm_medium.metrics().line_height;
 /// How often an animating stack wants a frame.
-const frame_ms = 16;
+pub const frame_ms = 16;
 
 pub const Kind = enum(u8) {
     default,
