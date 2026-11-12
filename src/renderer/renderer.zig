@@ -214,10 +214,20 @@ pub fn Renderer(comptime option: TerminalOption) type {
                 },
             );
 
-            // Pass 2 and 3: decorations and glyphs, in the configured order
+            // Pass 2 and 3: decorations and glyphs, in the configured order.
+            // A spliced range is a sub-buffer upload; a null range uploads the stream.
             if (frame.dirty.cells) {
-                self.cell.upload(frame.gray_instances, frame.color_instances);
-                self.decoration.upload(frame.decoration_instances);
+                self.cell.uploadRanges(
+                    frame.gray_instances,
+                    frame.color_instances,
+                    frame.gray_spliced_range,
+                    frame.color_spliced_range,
+                );
+                if (frame.decoration_spliced_range) |spliced| {
+                    self.decoration.uploadRange(frame.decoration_instances, spliced.offset, spliced.count);
+                } else {
+                    self.decoration.upload(frame.decoration_instances);
+                }
             }
             const glyphs: Cell.DrawArgs = .{
                 .atlas = atlas,

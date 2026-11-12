@@ -1510,6 +1510,7 @@ pub fn Terminal(comptime option: Option) type {
             target.active_rows = scr.active_rows;
             target.active_cols = scr.active_cols;
             target.generation = scr.generation;
+            target.seq +%= 1;
             target.palette = self.palette;
             // IDs stay valid while referenced, so the frame needs the table
             // only when it changed or the screen did (ADR 0005).

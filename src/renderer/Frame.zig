@@ -106,6 +106,67 @@ pub fn cursorColor(palette: *const Palette, osc_color: ?[3]u8) [3]u8 {
     return osc_color orelse palette.get(.foreground).toArray();
 }
 
+/// Replaces rows `min` through `max` (inclusive) of `buffer`.
+/// `offsets[row]` is the first instance of that row and
+/// `offsets[rows_limit]` is the instance count. `counts` has one entry
+/// per replaced row and sums to `fresh.len`.
+///
+/// Returns true when the span's instance count is unchanged. The GPU
+/// sub-range then starts at `offsets[min]` and the tail stays put. A
+/// same-length span is copied in place; the tail is moved only when the
+/// count changes.
+pub fn spliceSpan(
+    comptime T: type,
+    gpa: Allocator,
+    buffer: *ArrayListUnmanaged(T),
+    offsets: []u32,
+    min: usize,
+    max: usize,
+    rows_limit: usize,
+    fresh: []const T,
+    counts: []const u32,
+) Allocator.Error!bool {
+    std.debug.assert(max >= min and max < rows_limit);
+    std.debug.assert(offsets.len >= rows_limit + 1);
+    std.debug.assert(counts.len == max - min + 1);
+    var sum: usize = 0;
+    for (counts) |count| sum += count;
+    std.debug.assert(sum == fresh.len);
+
+    const start: usize = offsets[min];
+    const old_end: usize = offsets[max + 1];
+    std.debug.assert(old_end >= start and start + (old_end - start) <= buffer.items.len);
+    const old_len = old_end - start;
+
+    if (fresh.len == old_len) {
+        if (fresh.len > 0) @memcpy(buffer.items[start..][0..fresh.len], fresh);
+    } else {
+        try buffer.replaceRange(gpa, start, old_len, fresh);
+    }
+
+    var cursor: u32 = offsets[min];
+    for (counts, 0..) |count, i| {
+        cursor += count;
+        offsets[min + 1 + i] = cursor;
+    }
+
+    if (fresh.len != old_len) {
+        const delta: isize = @as(isize, @intCast(fresh.len)) - @as(isize, @intCast(old_len));
+        var row = max + 2;
+        while (row <= rows_limit) : (row += 1) {
+            offsets[row] = @intCast(@as(isize, @intCast(offsets[row])) + delta);
+        }
+    }
+    std.debug.assert(buffer.items.len == offsets[rows_limit]);
+    return fresh.len == old_len;
+}
+
+fn matchedSpan(start: u32, end: u32, old: ?[2]u32) ?SplicedRange {
+    const saved = old orelse return null;
+    if (start != saved[0] or end != saved[1] or end < start) return null;
+    return .{ .offset = start, .count = end - start };
+}
+
 /// Bit layout (LSB first):
 ///   0: strikethrough
 ///   1: blink
@@ -241,8 +302,13 @@ selection_instances: []const Selection.Instance,
 scrollbar_state: Scrollbar.State,
 cursor_state: Cursor.State,
 
-/// Spliced sub-buffer range for background quad updates, or null if full upload needed.
+/// Sub-range whose instance count matched the previous frame, or null
+/// when that stream has to be uploaded whole. The offset is into the
+/// instance slice.
 bg_spliced_range: ?SplicedRange = null,
+gray_spliced_range: ?SplicedRange = null,
+color_spliced_range: ?SplicedRange = null,
+decoration_spliced_range: ?SplicedRange = null,
 
 /// Visual overlay instances (for toasts, break lock screen, and dashboard modal)
 overlay_background_instances: []const Background.Instance = &.{},
@@ -273,15 +339,36 @@ pub fn Builder(comptime option: Option) type {
         background_buffer: std.ArrayListUnmanaged(Background.Instance),
         decoration_buffer: std.ArrayListUnmanaged(Decoration.Instance),
         selection_buffer: std.ArrayListUnmanaged(Selection.Instance),
+        /// Dirty-span scratch. One instance per cell at most, so each
+        /// list's capacity is `max_cells` and a splice does not allocate.
+        /// Not the slices FrameData returns.
+        scratch_bg: std.ArrayListUnmanaged(Background.Instance),
+        scratch_gray: std.ArrayListUnmanaged(Cell.Instance),
+        scratch_color: std.ArrayListUnmanaged(Cell.Instance),
+        scratch_decoration: std.ArrayListUnmanaged(Decoration.Instance),
         bg_row_offsets: [max_rows + 1]u32 = undefined,
-        last_bg_len: usize = 0,
+        gray_row_offsets: [max_rows + 1]u32 = undefined,
+        color_row_offsets: [max_rows + 1]u32 = undefined,
+        decoration_row_offsets: [max_rows + 1]u32 = undefined,
         last_cursor: CursorCache,
 
         // last_polygon: ?SelectionPolygon,
         last_blink_on: bool = false,
         last_generation: ?u32,
+        /// `seq` of the newest frame whose dirty rows the stored instances
+        /// account for. A frame's dirty rows are a usable span only when
+        /// its `seq` is one past this.
+        last_seq: u32 = 0,
+        /// Grid the row offsets describe. A partial rebuild requires both.
+        last_rows: u16 = 0,
+        last_cols: u16 = 0,
+        /// Set once a full walk has filled the row offsets.
+        span_ready: bool = false,
         last_scrollbar: Scrollbar.State,
         last_selection: ?Selection.State,
+        /// Palette the instance colors were resolved with. Indexed colors
+        /// change every cell, including rows that are not dirty.
+        last_palette: Palette,
 
         /// Colors, dim and blink rules for the decoration runs.
         decoration: Decoration.Option,
@@ -304,6 +391,15 @@ pub fn Builder(comptime option: Option) type {
             var selection_buffer: ArrayListUnmanaged(Selection.Instance) = try .initCapacity(gpa, max_rows);
             errdefer selection_buffer.deinit(gpa);
 
+            var scratch_bg: std.ArrayListUnmanaged(Background.Instance) = try .initCapacity(gpa, max_cells);
+            errdefer scratch_bg.deinit(gpa);
+            var scratch_gray: std.ArrayListUnmanaged(Cell.Instance) = try .initCapacity(gpa, max_cells);
+            errdefer scratch_gray.deinit(gpa);
+            var scratch_color: std.ArrayListUnmanaged(Cell.Instance) = try .initCapacity(gpa, max_cells);
+            errdefer scratch_color.deinit(gpa);
+            var scratch_decoration: std.ArrayListUnmanaged(Decoration.Instance) = try .initCapacity(gpa, max_cells);
+            errdefer scratch_decoration.deinit(gpa);
+
             return .{
                 .background_buffer = background_buffer,
                 .decoration = builder_option.decoration,
@@ -312,12 +408,16 @@ pub fn Builder(comptime option: Option) type {
                 .gray_buffer = gray_buffer,
                 .color_buffer = color_buffer,
                 .selection_buffer = selection_buffer,
+                .scratch_bg = scratch_bg,
+                .scratch_gray = scratch_gray,
+                .scratch_color = scratch_color,
+                .scratch_decoration = scratch_decoration,
 
                 .last_cursor = .empty,
                 .last_scrollbar = .empty,
                 .last_selection = null,
                 .last_generation = null,
-                .last_bg_len = 0,
+                .last_palette = .empty,
             };
         }
 
@@ -327,6 +427,10 @@ pub fn Builder(comptime option: Option) type {
             self.background_buffer.deinit(gpa);
             self.decoration_buffer.deinit(gpa);
             self.selection_buffer.deinit(gpa);
+            self.scratch_bg.deinit(gpa);
+            self.scratch_gray.deinit(gpa);
+            self.scratch_color.deinit(gpa);
+            self.scratch_decoration.deinit(gpa);
         }
 
         fn buildSelectionInstances(self: *Self, active_cols: u16, sel: Selection.State) void {
@@ -432,6 +536,14 @@ pub fn Builder(comptime option: Option) type {
             const blink_changed = blink_on != self.last_blink_on;
             self.last_blink_on = blink_on;
 
+            // Dirty rows are relative to the previous snapshot. After a
+            // skipped frame, or for a frame already consumed, they miss rows.
+            const next_in_sequence = frame.seq == self.last_seq +% 1;
+            const dirty_range: ?FrameType.DirtyRange = if (next_in_sequence) frame.dirtyRange() else null;
+            // A frame that changed no rows is consumed by paths 1 and 2
+            // too; one with dirty rows leaves a gap and the next build walks.
+            if (next_in_sequence and dirty_range == null) self.last_seq = frame.seq;
+
             // path 1: nothing changed
             if (!cells_dirty and !selection_changed) {
                 const cursor_changed = self.last_cursor.refresh(
@@ -524,142 +636,33 @@ pub fn Builder(comptime option: Option) type {
                 };
             }
 
-            // path 3: full rebuild
-            self.background_buffer.clearRetainingCapacity();
-            self.decoration_buffer.clearRetainingCapacity();
-            self.gray_buffer.clearRetainingCapacity();
-            self.color_buffer.clearRetainingCapacity();
-            self.selection_buffer.clearRetainingCapacity();
-
-            // const cols_limit: u16 = @min(screen.active_cols, max_cols);
-            const reverse_video = frame.reverse_video;
-            const has_selection = selection_state != null;
-
-            if (selection_state) |sel| self.buildSelectionInstances(frame.active_cols, sel);
-
-            const is_cursor_block = cursor.style.shape() == .block;
-            var cursor_glyph: ?Atlas.Metric = null;
-            var cursor_glyph_fg: [3]u8 = .{ 0, 0, 0 };
-
-            // std.debug.print("+", .{});
+            // path 3: cells changed. Rebuild the dirty span when every row
+            // outside it is still the instances already stored. Otherwise
+            // walk the grid. The GPU sub-range is valid only when that
+            // span's instance count, and its prefix, did not move.
             const cols_limit: u16 = @min(frame.active_cols, max_cols);
             const rows_limit: u16 = @min(frame.active_rows, max_rows);
+            const reverse_video = frame.reverse_video;
+            const palette_changed = !std.meta.eql(frame.palette, self.last_palette);
+            const geometry_same = self.span_ready and self.last_rows == rows_limit and self.last_cols == cols_limit;
+            // A selection foreground recolors glyphs on rows outside the span.
+            const allow_gpu_splice = geometry_same and self.last_generation != null and !palette_changed and !fg_override_changed;
 
-            var row: u16 = 0;
-            while (row < rows_limit) : (row += 1) {
-                self.bg_row_offsets[row] = @intCast(self.background_buffer.items.len);
-
-                const is_cursor_row = row == cursor_row;
-                const cells = frame.displayRow(row);
-
-                var col: u16 = 0;
-                while (col < cols_limit) : (col += 1) {
-                    const c = cells[col];
-
-                    // 0 = empty cell, skip, no glyph to draw
-                    // 1 = narrow char, draw at col
-                    // 2 = wide char (left-half), draw at col, advance col +=2 (or just += 1 and let width == 3 skip the next)
-                    // 3 = wide char (right-half), skip, already drawn by the width == 2 cell
-                    if (c.kind == .wide_right) continue; // right-half of wide char: background covered by left-half span=2
-                    const span: u16 = c.kind.columnSpan();
-
-                    // const do_reverse = (cell.flags.reverse or reverse_video) != in_selection;
-
-                    // Drop the do_reverse logic in build, with the overlay approach, text colors
-                    // are unchanged and the semi-transparent highlight provides the visual selection.
-                    // This is simpler and looks better than color inversion.
-                    const style = frame.styleOf(c);
-                    var foreground, const background = cellColors(palette, style, c, reverse_video);
-
-                    // Invisible text (SGR 8): hide glyph by matching fg to bg
-                    if (c.flags.invisible) foreground = background;
-
-                    const in_selection = has_selection and selection_state.?.contains(row, col);
-                    if (in_selection) {
-                        if (selection_state.?.fg) |sel_fg| foreground = sel_fg;
-                    }
-
-                    const foreground_alpha: u8 = if (c.flags.dim) self.dim_alpha else 255;
-
-                    // Background instance (always, even for empty cells)
-                    self.background_buffer.appendAssumeCapacity(.{
-                        .col = col,
-                        .row = row,
-                        .span = span,
-                        .r = background[0],
-                        .g = background[1],
-                        .b = background[2],
-                        .a = 255,
-                    });
-
-                    const sgr_underline: ?[3]u8 = if (style.underline == term.Style.default_key)
-                        null
-                    else
-                        palette.resolveKeyRgb(style.underline, .foreground);
-                    if (decorationInstance(&self.decoration, c, sgr_underline, foreground, foreground_alpha, col, row, span)) |run| {
-                        Decoration.appendRun(&self.decoration_buffer, run);
-                    }
-
-                    if (c.kind == .empty) continue;
-                    const metric = cellGlyph(gpa, rasterizer, atlas, frame, &c) orelse continue;
-
-                    // Skip zero-size glyphs (space, combining marks with no bitmap)
-                    if (metric.width == 0 or metric.height == 0) continue;
-
-                    const is_cursor_cell = is_cursor_block and is_cursor_row and col == cursor_col;
-                    if (is_cursor_cell) {
-                        cursor_glyph = metric;
-                        cursor_glyph_fg = background;
-                    }
-
-                    const inst: Cell.Instance = .{
-                        .col = col,
-                        .row = @intCast(row),
-                        .atlas_x = metric.atlas_x,
-                        .atlas_y = metric.atlas_y,
-                        .bearing_x = metric.bearing_x,
-                        .bearing_y = metric.bearing_y,
-                        .fg_r = foreground[0],
-                        .fg_g = foreground[1],
-                        .fg_b = foreground[2],
-                        .fg_a = foreground_alpha,
-                        .glyph_width = metric.width,
-                        .glyph_height = metric.height,
-                        // Decorations are drawn by the Decoration pass.
-                        .flags = .{
-                            .blink = c.flags.blink,
-                            .blink_rapid = c.flags.blink_rapid,
-                        },
-                    };
-
-                    switch (metric.kind) {
-                        .color => self.color_buffer.appendAssumeCapacity(inst),
-                        .gray => self.gray_buffer.appendAssumeCapacity(inst),
-                    }
-                }
+            var splices: Splices = .{};
+            if (self.spanToSplice(selection_changed, palette_changed, cols_limit, rows_limit, dirty_range)) |span| {
+                splices = try self.rebuildSpan(gpa, frame, atlas, rasterizer, span, cols_limit, rows_limit, reverse_video, selection_state);
+            } else {
+                splices = self.rebuildAll(gpa, frame, atlas, rasterizer, cols_limit, rows_limit, reverse_video, selection_state, if (allow_gpu_splice) dirty_range else null);
             }
-            self.bg_row_offsets[rows_limit] = @intCast(self.background_buffer.items.len);
+            self.last_seq = frame.seq;
 
-            var bg_spliced_range: ?FrameData.SplicedRange = null;
-            if (self.last_generation != null and self.background_buffer.items.len == self.last_bg_len) {
-                if (frame.dirtyRange()) |range| {
-                    if (range.min < rows_limit and range.max < rows_limit) {
-                        const start_offset = self.bg_row_offsets[range.min];
-                        const end_offset = self.bg_row_offsets[range.max + 1];
-                        if (end_offset >= start_offset) {
-                            bg_spliced_range = .{
-                                .offset = start_offset,
-                                .count = end_offset - start_offset,
-                            };
-                        }
-                    }
-                }
-            }
-            self.last_bg_len = self.background_buffer.items.len;
-
+            if (palette_changed) self.last_palette = frame.palette;
+            self.last_rows = rows_limit;
+            self.last_cols = cols_limit;
+            self.span_ready = true;
             self.last_generation = frame.generation;
             self.last_selection = selection_state;
-            self.last_cursor.set(cursor_row, cursor_col, cursor_glyph, cursor_glyph_fg);
+            self.captureCursor(gpa, rasterizer, atlas, frame, cols_limit, rows_limit, reverse_video);
 
             const new_scrollbar = buildScrollbar(frame);
             const scrollbar_changed = !std.meta.eql(new_scrollbar, self.last_scrollbar);
@@ -669,8 +672,11 @@ pub fn Builder(comptime option: Option) type {
                 .gray_instances = self.gray_buffer.items,
                 .color_instances = self.color_buffer.items,
                 .background_instances = self.background_buffer.items,
-                .bg_spliced_range = bg_spliced_range,
                 .decoration_instances = self.decoration_buffer.items,
+                .bg_spliced_range = splices.bg,
+                .gray_spliced_range = splices.gray,
+                .color_spliced_range = splices.color,
+                .decoration_spliced_range = splices.decoration,
                 .scrollbar_state = new_scrollbar,
                 .selection_instances = self.selection_buffer.items,
                 .cursor_state = buildCursor(
@@ -691,6 +697,268 @@ pub fn Builder(comptime option: Option) type {
                     .scrollbar = scrollbar_changed,
                 },
             };
+        }
+
+        const Splices = struct {
+            bg: ?FrameData.SplicedRange = null,
+            gray: ?FrameData.SplicedRange = null,
+            color: ?FrameData.SplicedRange = null,
+            decoration: ?FrameData.SplicedRange = null,
+        };
+
+        /// Partial rebuild is valid when rows outside `range` still match
+        /// the stored instances. A null generation means the atlas was
+        /// dropped (`App` clears `last_generation` on a font change). A
+        /// palette change recolors indexed cells on clean rows too.
+        fn spanToSplice(
+            self: *const Self,
+            selection_changed: bool,
+            palette_changed: bool,
+            cols_limit: u16,
+            rows_limit: u16,
+            range: ?FrameType.DirtyRange,
+        ) ?FrameType.DirtyRange {
+            if (!self.span_ready or self.last_generation == null) return null;
+            if (selection_changed or palette_changed) return null;
+            if (self.last_rows != rows_limit or self.last_cols != cols_limit) return null;
+            const span = range orelse return null;
+            if (rows_limit == 0 or span.max >= rows_limit) return null;
+            // The whole grid is the same work as a full walk.
+            if (span.min == 0 and span.max + 1 == rows_limit) return null;
+            return span;
+        }
+
+        /// Walks every row. `range` is the span whose GPU sub-upload may
+        /// replace a whole upload, or null when every stream uploads whole;
+        /// rows outside it must be unchanged since the last upload.
+        fn rebuildAll(
+            self: *Self,
+            gpa: Allocator,
+            frame: *const FrameType,
+            atlas: *Atlas,
+            rasterizer: *Rasterizer,
+            cols_limit: u16,
+            rows_limit: u16,
+            reverse_video: bool,
+            selection_state: ?Selection.State,
+            range: ?FrameType.DirtyRange,
+        ) Splices {
+            var old_bg: ?[2]u32 = null;
+            var old_gray: ?[2]u32 = null;
+            var old_color: ?[2]u32 = null;
+            var old_decoration: ?[2]u32 = null;
+            if (range) |span| {
+                if (span.max < rows_limit) {
+                    old_bg = .{ self.bg_row_offsets[span.min], self.bg_row_offsets[span.max + 1] };
+                    old_gray = .{ self.gray_row_offsets[span.min], self.gray_row_offsets[span.max + 1] };
+                    old_color = .{ self.color_row_offsets[span.min], self.color_row_offsets[span.max + 1] };
+                    old_decoration = .{ self.decoration_row_offsets[span.min], self.decoration_row_offsets[span.max + 1] };
+                }
+            }
+
+            self.background_buffer.clearRetainingCapacity();
+            self.decoration_buffer.clearRetainingCapacity();
+            self.gray_buffer.clearRetainingCapacity();
+            self.color_buffer.clearRetainingCapacity();
+            self.selection_buffer.clearRetainingCapacity();
+            if (selection_state) |sel| self.buildSelectionInstances(frame.active_cols, sel);
+
+            var row: u16 = 0;
+            while (row < rows_limit) : (row += 1) {
+                self.bg_row_offsets[row] = @intCast(self.background_buffer.items.len);
+                self.gray_row_offsets[row] = @intCast(self.gray_buffer.items.len);
+                self.color_row_offsets[row] = @intCast(self.color_buffer.items.len);
+                self.decoration_row_offsets[row] = @intCast(self.decoration_buffer.items.len);
+                self.appendRow(gpa, frame, atlas, rasterizer, row, cols_limit, reverse_video, selection_state, &self.background_buffer, &self.gray_buffer, &self.color_buffer, &self.decoration_buffer);
+            }
+            self.bg_row_offsets[rows_limit] = @intCast(self.background_buffer.items.len);
+            self.gray_row_offsets[rows_limit] = @intCast(self.gray_buffer.items.len);
+            self.color_row_offsets[rows_limit] = @intCast(self.color_buffer.items.len);
+            self.decoration_row_offsets[rows_limit] = @intCast(self.decoration_buffer.items.len);
+
+            var splices: Splices = .{};
+            if (range) |span| {
+                if (span.max < rows_limit) {
+                    splices.bg = matchedSpan(self.bg_row_offsets[span.min], self.bg_row_offsets[span.max + 1], old_bg);
+                    splices.gray = matchedSpan(self.gray_row_offsets[span.min], self.gray_row_offsets[span.max + 1], old_gray);
+                    splices.color = matchedSpan(self.color_row_offsets[span.min], self.color_row_offsets[span.max + 1], old_color);
+                    splices.decoration = matchedSpan(self.decoration_row_offsets[span.min], self.decoration_row_offsets[span.max + 1], old_decoration);
+                }
+            }
+            return splices;
+        }
+
+        fn rebuildSpan(
+            self: *Self,
+            gpa: Allocator,
+            frame: *const FrameType,
+            atlas: *Atlas,
+            rasterizer: *Rasterizer,
+            span: FrameType.DirtyRange,
+            cols_limit: u16,
+            rows_limit: u16,
+            reverse_video: bool,
+            selection_state: ?Selection.State,
+        ) Allocator.Error!Splices {
+            self.scratch_bg.clearRetainingCapacity();
+            self.scratch_gray.clearRetainingCapacity();
+            self.scratch_color.clearRetainingCapacity();
+            self.scratch_decoration.clearRetainingCapacity();
+
+            var counts_bg: [max_rows]u32 = undefined;
+            var counts_gray: [max_rows]u32 = undefined;
+            var counts_color: [max_rows]u32 = undefined;
+            var counts_decoration: [max_rows]u32 = undefined;
+            const n: usize = @as(usize, span.max - span.min) + 1;
+            var row: u16 = span.min;
+            for (0..n) |i| {
+                const bg_before = self.scratch_bg.items.len;
+                const gray_before = self.scratch_gray.items.len;
+                const color_before = self.scratch_color.items.len;
+                const decoration_before = self.scratch_decoration.items.len;
+                self.appendRow(gpa, frame, atlas, rasterizer, row, cols_limit, reverse_video, selection_state, &self.scratch_bg, &self.scratch_gray, &self.scratch_color, &self.scratch_decoration);
+                counts_bg[i] = @intCast(self.scratch_bg.items.len - bg_before);
+                counts_gray[i] = @intCast(self.scratch_gray.items.len - gray_before);
+                counts_color[i] = @intCast(self.scratch_color.items.len - color_before);
+                counts_decoration[i] = @intCast(self.scratch_decoration.items.len - decoration_before);
+                row += 1;
+            }
+
+            const min: usize = span.min;
+            const max: usize = span.max;
+            const rows: usize = rows_limit;
+            const bg_stable = try spliceSpan(Background.Instance, gpa, &self.background_buffer, &self.bg_row_offsets, min, max, rows, self.scratch_bg.items, counts_bg[0..n]);
+            const gray_stable = try spliceSpan(Cell.Instance, gpa, &self.gray_buffer, &self.gray_row_offsets, min, max, rows, self.scratch_gray.items, counts_gray[0..n]);
+            const color_stable = try spliceSpan(Cell.Instance, gpa, &self.color_buffer, &self.color_row_offsets, min, max, rows, self.scratch_color.items, counts_color[0..n]);
+            const decoration_stable = try spliceSpan(Decoration.Instance, gpa, &self.decoration_buffer, &self.decoration_row_offsets, min, max, rows, self.scratch_decoration.items, counts_decoration[0..n]);
+            return .{
+                .bg = if (bg_stable) .{ .offset = self.bg_row_offsets[min], .count = self.scratch_bg.items.len } else null,
+                .gray = if (gray_stable) .{ .offset = self.gray_row_offsets[min], .count = self.scratch_gray.items.len } else null,
+                .color = if (color_stable) .{ .offset = self.color_row_offsets[min], .count = self.scratch_color.items.len } else null,
+                .decoration = if (decoration_stable) .{ .offset = self.decoration_row_offsets[min], .count = self.scratch_decoration.items.len } else null,
+            };
+        }
+
+        fn appendRow(
+            self: *Self,
+            gpa: Allocator,
+            frame: *const FrameType,
+            atlas: *Atlas,
+            rasterizer: *Rasterizer,
+            row: u16,
+            cols_limit: u16,
+            reverse_video: bool,
+            selection_state: ?Selection.State,
+            background: *ArrayListUnmanaged(Background.Instance),
+            gray: *ArrayListUnmanaged(Cell.Instance),
+            color: *ArrayListUnmanaged(Cell.Instance),
+            decoration: *ArrayListUnmanaged(Decoration.Instance),
+        ) void {
+            const palette = &frame.palette;
+            const has_selection = selection_state != null;
+            const cells = frame.displayRow(row);
+            var col: u16 = 0;
+            while (col < cols_limit) : (col += 1) {
+                const c = cells[col];
+                // Right half of a wide character: the left half's span covers it.
+                if (c.kind == .wide_right) continue;
+                const span: u16 = c.kind.columnSpan();
+
+                // Selection is an overlay. Text keeps its colors; a
+                // selection foreground, when set, replaces the glyph color.
+                const style = frame.styleOf(c);
+                var foreground, const background_rgb = cellColors(palette, style, c, reverse_video);
+                if (c.flags.invisible) foreground = background_rgb;
+
+                const in_selection = has_selection and selection_state.?.contains(row, col);
+                if (in_selection) {
+                    if (selection_state.?.fg) |sel_fg| foreground = sel_fg;
+                }
+
+                const foreground_alpha: u8 = if (c.flags.dim) self.dim_alpha else 255;
+                background.appendAssumeCapacity(.{
+                    .col = col,
+                    .row = row,
+                    .span = span,
+                    .r = background_rgb[0],
+                    .g = background_rgb[1],
+                    .b = background_rgb[2],
+                    .a = 255,
+                });
+
+                const sgr_underline: ?[3]u8 = if (style.underline == term.Style.default_key)
+                    null
+                else
+                    palette.resolveKeyRgb(style.underline, .foreground);
+                if (decorationInstance(&self.decoration, c, sgr_underline, foreground, foreground_alpha, col, row, span)) |run| {
+                    Decoration.appendRun(decoration, run);
+                }
+
+                if (c.kind == .empty) continue;
+                const metric = cellGlyph(gpa, rasterizer, atlas, frame, &c) orelse continue;
+                if (metric.width == 0 or metric.height == 0) continue;
+
+                const inst: Cell.Instance = .{
+                    .col = col,
+                    .row = row,
+                    .atlas_x = metric.atlas_x,
+                    .atlas_y = metric.atlas_y,
+                    .bearing_x = metric.bearing_x,
+                    .bearing_y = metric.bearing_y,
+                    .fg_r = foreground[0],
+                    .fg_g = foreground[1],
+                    .fg_b = foreground[2],
+                    .fg_a = foreground_alpha,
+                    .glyph_width = metric.width,
+                    .glyph_height = metric.height,
+                    .flags = .{
+                        .blink = c.flags.blink,
+                        .blink_rapid = c.flags.blink_rapid,
+                    },
+                };
+                switch (metric.kind) {
+                    .color => color.appendAssumeCapacity(inst),
+                    .gray => gray.appendAssumeCapacity(inst),
+                }
+            }
+        }
+
+        /// Block-cursor glyph for the cursor cell. `glyph_fg` is the cell
+        /// background after reverse video. Selection recolors it later, in
+        /// `buildCursor`. Empty, wide-right and zero-size glyphs draw none.
+        fn captureCursor(
+            self: *Self,
+            gpa: Allocator,
+            rasterizer: *Rasterizer,
+            atlas: *Atlas,
+            frame: *const FrameType,
+            cols_limit: u16,
+            rows_limit: u16,
+            reverse_video: bool,
+        ) void {
+            const row = frame.cursor.row;
+            const col = frame.cursor.col;
+            const none: [3]u8 = .{ 0, 0, 0 };
+            if (frame.cursor.style.shape() != .block or row >= rows_limit or col >= cols_limit) {
+                self.last_cursor.set(row, col, null, none);
+                return;
+            }
+            const cell = &frame.displayRow(row)[col];
+            if (cell.kind == .empty or cell.kind == .wide_right) {
+                self.last_cursor.set(row, col, null, none);
+                return;
+            }
+            const metric = cellGlyph(gpa, rasterizer, atlas, frame, cell) orelse {
+                self.last_cursor.set(row, col, null, none);
+                return;
+            };
+            if (metric.width == 0 or metric.height == 0) {
+                self.last_cursor.set(row, col, null, none);
+                return;
+            }
+            const style = frame.styleOf(cell.*);
+            const colors = cellColors(&frame.palette, style, cell.*, reverse_video);
+            self.last_cursor.set(row, col, metric, colors[1]);
         }
 
         fn buildScrollbar(frame: *const FrameType) Scrollbar.State {

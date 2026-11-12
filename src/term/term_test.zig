@@ -897,6 +897,31 @@ test "snapshot: resolving a wrap left pending by an earlier feed redraws the wra
     try testing.expect(frame.displayRow(0)[cols - 1].wrapped);
 }
 
+test "snapshot: seq counts publishes, and dirty rows cover only the last one" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+    var frame = try Term.FrameType.init(alloc);
+    defer frame.deinit(alloc);
+
+    try testing.expect(t.snapshot(&frame));
+    const first = frame.seq;
+
+    t.feed("\x1b[4;1Hx\x1b[11;1H");
+    try testing.expect(t.snapshot(&frame));
+    try testing.expectEqual(first +% 1, frame.seq);
+
+    // A consumer that skipped the previous frame would miss row 3 here,
+    // which is why it must check `seq` before trusting the range.
+    t.feed("y");
+    try testing.expect(t.snapshot(&frame));
+    try testing.expectEqual(first +% 2, frame.seq);
+    try testing.expectEqual(Term.FrameType.DirtyRange{ .min = 10, .max = 10 }, frame.dirtyRange().?);
+
+    // Nothing changed: no publish, no bump.
+    try testing.expect(!t.snapshot(&frame));
+    try testing.expectEqual(first +% 2, frame.seq);
+}
+
 test "print: utf-8 continuation bytes in the C1 range are text, not controls" {
     var t = try Term.create(alloc);
     defer t.destroy(alloc);

@@ -375,6 +375,10 @@ pub fn upload(self: *Decoration, instances: []const Instance) void {
     if (instances.len > 0) self.buffer.upload(instances);
 }
 
+pub fn uploadRange(self: *Decoration, instances: []const Instance, offset: usize, count: usize) void {
+    if (count > 0) self.buffer.uploadRange(instances, offset, count);
+}
+
 pub fn draw(
     self: *Decoration,
     instance_length: usize,

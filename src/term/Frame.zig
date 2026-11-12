@@ -65,6 +65,12 @@ pub fn Frame(comptime option: Option) type {
         /// Monotonic generation counter corresponding to terminal/screen generation.
         generation: u32 = 0,
 
+        /// Bumped (wrapping) by every snapshot that publishes. `dirty_rows`
+        /// is relative to the previous snapshot only, so a consumer may
+        /// trust it only when `seq` is one past the frame it last consumed;
+        /// after a gap, rows dirtied by the skipped frames are not listed.
+        seq: u32 = 0,
+
         /// Active color palette for this viewport snapshot.
         palette: Palette = Palette.empty,
 
@@ -166,6 +172,7 @@ pub fn Frame(comptime option: Option) type {
             self.active_cols = src.active_cols;
             self.dirty_rows = src.dirty_rows;
             self.generation = src.generation;
+            self.seq = src.seq;
             self.palette = src.palette;
             self.cursor = src.cursor;
             self.cursor_color = src.cursor_color;

@@ -6,6 +6,7 @@ const Shader = @import("Shader.zig");
 
 const Buffer = @import("buffer.zig").CellBuffer;
 const Flags = @import("Frame.zig").Flags;
+const SplicedRange = @import("Frame.zig").SplicedRange;
 const Dimension = @import("dimension.zig").Dimension;
 
 pub const Option = struct {};
@@ -75,6 +76,27 @@ pub fn deinit(self: *Cell) void {
 pub fn upload(self: *Cell, gray: []const Instance, color: []const Instance) void {
     if (gray.len > 0) self.gray_buffer.upload(gray);
     if (color.len > 0) self.color_buffer.upload(color);
+}
+
+/// Uploads each glyph stream. A range updates that sub-range in place;
+/// null uploads the whole stream, and an empty whole stream is skipped.
+pub fn uploadRanges(
+    self: *Cell,
+    gray: []const Instance,
+    color: []const Instance,
+    gray_range: ?SplicedRange,
+    color_range: ?SplicedRange,
+) void {
+    if (gray_range) |range| {
+        self.gray_buffer.uploadRange(gray, range.offset, range.count);
+    } else if (gray.len > 0) {
+        self.gray_buffer.upload(gray);
+    }
+    if (color_range) |range| {
+        self.color_buffer.uploadRange(color, range.offset, range.count);
+    } else if (color.len > 0) {
+        self.color_buffer.upload(color);
+    }
 }
 
 /// What a glyph draw needs: the atlas, the font baseline, the blink

@@ -185,6 +185,58 @@ test "decorationInstance: SGR 58 colors the underline before the configured colo
     try testing.expectEqual([4]u8{ 9, 9, 9, 255 }, run.strikethrough);
 }
 
+test "spliceSpan: same count keeps the tail and reports a stable range" {
+    var buf: std.ArrayListUnmanaged(u8) = try .initCapacity(testing.allocator, 8);
+    defer buf.deinit(testing.allocator);
+    buf.appendSliceAssumeCapacity(&.{ 0, 1, 2, 3, 4, 5 });
+    var offsets = [_]u32{ 0, 2, 5, 6 };
+    const fresh = [_]u8{ 9, 9, 9 };
+    const counts = [_]u32{3};
+    const stable = try Frame.spliceSpan(u8, testing.allocator, &buf, &offsets, 1, 1, 3, &fresh, &counts);
+    try testing.expect(stable);
+    try testing.expectEqualSlices(u8, &.{ 0, 1, 9, 9, 9, 5 }, buf.items);
+    try testing.expectEqual([4]u32{ 0, 2, 5, 6 }, offsets);
+}
+
+test "spliceSpan: a shorter middle shifts the tail" {
+    var buf: std.ArrayListUnmanaged(u8) = try .initCapacity(testing.allocator, 8);
+    defer buf.deinit(testing.allocator);
+    buf.appendSliceAssumeCapacity(&.{ 0, 1, 2, 3, 4, 5 });
+    var offsets = [_]u32{ 0, 2, 5, 6 };
+    const fresh = [_]u8{ 9, 9 };
+    const counts = [_]u32{2};
+    const stable = try Frame.spliceSpan(u8, testing.allocator, &buf, &offsets, 1, 1, 3, &fresh, &counts);
+    try testing.expect(!stable);
+    try testing.expectEqualSlices(u8, &.{ 0, 1, 9, 9, 5 }, buf.items);
+    try testing.expectEqual([4]u32{ 0, 2, 4, 5 }, offsets);
+}
+
+test "spliceSpan: a longer middle shifts the tail" {
+    var buf: std.ArrayListUnmanaged(u8) = try .initCapacity(testing.allocator, 8);
+    defer buf.deinit(testing.allocator);
+    buf.appendSliceAssumeCapacity(&.{ 0, 1, 2, 3, 4, 5 });
+    var offsets = [_]u32{ 0, 2, 5, 6 };
+    const fresh = [_]u8{ 7, 7, 7, 7 };
+    const counts = [_]u32{4};
+    const stable = try Frame.spliceSpan(u8, testing.allocator, &buf, &offsets, 1, 1, 3, &fresh, &counts);
+    try testing.expect(!stable);
+    try testing.expectEqualSlices(u8, &.{ 0, 1, 7, 7, 7, 7, 5 }, buf.items);
+    try testing.expectEqual([4]u32{ 0, 2, 6, 7 }, offsets);
+}
+
+test "spliceSpan: a count trade inside the span keeps the tail" {
+    var buf: std.ArrayListUnmanaged(u8) = try .initCapacity(testing.allocator, 8);
+    defer buf.deinit(testing.allocator);
+    buf.appendSliceAssumeCapacity(&.{ 0, 1, 2, 3, 4, 5, 6, 7 });
+    var offsets = [_]u32{ 0, 2, 5, 8 };
+    const fresh = [_]u8{ 9, 9, 9, 8, 8 };
+    const counts = [_]u32{ 3, 2 };
+    const stable = try Frame.spliceSpan(u8, testing.allocator, &buf, &offsets, 0, 1, 3, &fresh, &counts);
+    try testing.expect(stable);
+    try testing.expectEqualSlices(u8, &.{ 9, 9, 9, 8, 8, 5, 6, 7 }, buf.items);
+    try testing.expectEqual([4]u32{ 0, 3, 5, 8 }, offsets);
+}
+
 test "build: SGR 58 reaches the underline through the cell's style" {
     var t = try Term.create(testing.allocator);
     defer t.destroy(testing.allocator);

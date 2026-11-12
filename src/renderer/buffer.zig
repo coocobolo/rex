@@ -276,10 +276,12 @@ pub const DecorationBuffer = struct {
     quad_vbo: gl.GLuint,
     inst_vbo: gl.GLuint,
     capacity: usize,
+    uploaded_len: usize = 0,
 
     pub fn init(capacity: usize) DecorationBuffer {
         var self: DecorationBuffer = undefined;
         self.capacity = capacity;
+        self.uploaded_len = 0;
 
         gl.genVertexArrays(1, &self.vao);
         gl.genBuffers(1, &self.quad_vbo);
@@ -342,6 +344,22 @@ pub const DecorationBuffer = struct {
         gl.bindBuffer(gl.ARRAY_BUFFER, self.inst_vbo);
         gl.bufferData(gl.ARRAY_BUFFER, @as(gl.GLsizeiptr, @intCast(self.capacity * decoration_instance_size)), null, gl.DYNAMIC_DRAW);
         gl.bufferSubData(gl.ARRAY_BUFFER, 0, @as(gl.GLsizeiptr, @intCast(instances.len * decoration_instance_size)), instances.ptr);
+        gl.bindBuffer(gl.ARRAY_BUFFER, 0);
+        self.uploaded_len = instances.len;
+    }
+
+    /// Spliced sub-buffer upload: updates only `[offset, offset + count)`
+    /// when the instance count still matches the previous upload.
+    pub fn uploadRange(self: *DecorationBuffer, instances: []const DecorationInstance, offset: usize, count: usize) void {
+        if (count == 0) return;
+        if (self.uploaded_len != instances.len or offset + count > instances.len) {
+            self.upload(instances);
+            return;
+        }
+        gl.bindBuffer(gl.ARRAY_BUFFER, self.inst_vbo);
+        const byte_offset = @as(gl.GLintptr, @intCast(offset * decoration_instance_size));
+        const byte_size = @as(gl.GLsizeiptr, @intCast(count * decoration_instance_size));
+        gl.bufferSubData(gl.ARRAY_BUFFER, byte_offset, byte_size, instances[offset..].ptr);
         gl.bindBuffer(gl.ARRAY_BUFFER, 0);
     }
 
