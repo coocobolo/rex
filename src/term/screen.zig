@@ -1921,10 +1921,16 @@ pub fn Screen(comptime option: Option) type {
             // Nothing above touched the columns between the old and new
             // width: past the old width they hold cells from an earlier,
             // wider size, and a wide character at the new edge may have
-            // lost its right half.
+            // lost its right half. A wide character written while the
+            // screen was too narrow parks that half in the first inactive
+            // column; widening must put it back, not zero it.
             for (0..new_rows) |r| {
                 const cells = self.cells[self.physRow(r) * max_cols ..][0..max_cols];
-                if (new_cols > old_cols) @memset(cells[old_cols..new_cols], Cell{});
+                if (new_cols > old_cols) {
+                    const parked = old_cols > 0 and cells[old_cols - 1].kind.isWideLeft();
+                    @memset(cells[old_cols..new_cols], Cell{});
+                    if (parked) cells[old_cols] = rightHalf(cells[old_cols - 1]);
+                }
                 self.repairWideBoundary(cells[0..new_cols], new_cols);
             }
 

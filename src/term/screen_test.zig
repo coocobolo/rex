@@ -384,6 +384,22 @@ test "setCell: both out-of-bounds silently ignored" {
     s.setCell(s.active_rows, s.active_cols, .{ .codepoint = 'X', .kind = .narrow });
 }
 
+test "setActive: widening restores a wide right half parked past one column" {
+    const alloc = testing.allocator;
+    var s = try altScreen(alloc);
+    defer s.destroy(alloc);
+
+    s.setActive(2, 1);
+    s.cursor.row = 0;
+    s.cursor.col = 0;
+    s.writeChar(.{ .codepoint = 0x4E2D, .kind = .wide_left });
+
+    try testing.expect(s.cellAt(1, 0).kind.isWideLeft());
+    s.setActive(2, 16);
+    try testing.expect(s.cellAt(1, 0).kind.isWideLeft());
+    try testing.expect(s.cellAt(1, 1).kind == .wide_right);
+}
+
 test "setCell: insert mode off, normal overwrite" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
