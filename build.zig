@@ -342,6 +342,13 @@ pub fn build(b: *std.Build) !void {
 
     const test_options = b.addOptions();
     test_options.addOption(bool, "slow", slow_tests);
+    // Where the UI kit's painter tests save what they rendered, as PPM
+    // files, for a person to look at; empty saves nothing.
+    test_options.addOption([]const u8, "kit_shots", b.option(
+        []const u8,
+        "kit-shots",
+        "Directory the UI kit painter tests write screenshots to",
+    ) orelse "");
     const test_options_mod = test_options.createModule();
 
     // UCD conformance data for tests, as `@import("ucd_test_data")`.

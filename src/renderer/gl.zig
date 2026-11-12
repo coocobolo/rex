@@ -133,6 +133,7 @@ pub const texSubImage2D = c.glTexSubImage2D;
 pub const texParameteri = c.glTexParameteri;
 pub const texParameteriv = c.glTexParameteriv;
 pub const pixelStorei = c.glPixelStorei;
+pub const readPixels = c.glReadPixels;
 pub const activeTexture = c.glActiveTexture;
 pub const deleteTextures = c.glDeleteTextures;
 pub const getTexImage = c.glGetTexImage;
