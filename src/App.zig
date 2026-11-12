@@ -1003,12 +1003,15 @@ fn renderFrame(self: *App) !bool {
         const kit_changed = if (self.wellbeing_overlay.lock_screen_active)
             kit.skipFrame()
         else changed: {
-            const size = self.window.frameBufferSize(f32);
+            // The size `handleResize` last saw: asking the window is a
+            // round trip to the X server on every frame.
+            const width: f32 = @floatFromInt(self.frame_buffer_size.width);
+            const height: f32 = @floatFromInt(self.frame_buffer_size.height);
             var background: [3]u8 = undefined;
             for (&background, self.background_color[0..3]) |*out, channel| {
                 out.* = @intFromFloat(@round(std.math.clamp(channel, 0, 1) * 255));
             }
-            break :changed kit.buildFrame(atlas, size.width / self.content_scale, size.height / self.content_scale, background);
+            break :changed kit.buildFrame(atlas, width / self.content_scale, height / self.content_scale, background);
         };
         if (kit_changed) frame.dirty.overlay = true;
         // A dialog the kit could not build was dropped.
