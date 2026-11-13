@@ -450,6 +450,7 @@ pub fn build(b: *std.Build) !void {
         .{ "wcwidth-expected", "src/unicode/wcwidth_expected.zig", .{ ucd ++ "DerivedGeneralCategory.txt", ucd ++ "EastAsianWidth.txt", ucd ++ "emoji-data.txt" } },
         .{ "grapheme-table", "src/term/grapheme_table.zig", .{ ucd ++ "GraphemeBreakProperty.txt", ucd ++ "emoji-data.txt" } },
         .{ "x11-colors", "src/color/x11.zig", .{"tools/x11/rgb.txt"} },
+        .{ "charset-pages", "src/term/charset_pages.zig", .{"tools/xterm/charsets.h"} },
     };
     const gen_all = b.step("gen", "Regenerate every generated table");
     inline for (generators) |g| {

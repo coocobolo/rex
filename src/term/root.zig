@@ -35,6 +35,7 @@ test {
     _ = @import("title_test.zig");
     _ = @import("Cursor.zig");
     _ = @import("charset.zig");
+    _ = @import("charset_test.zig");
     _ = @import("Style.zig");
     _ = @import("style_test.zig");
     _ = @import("cell.zig");

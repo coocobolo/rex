@@ -5614,7 +5614,7 @@ test "putChar: DEC special graphics on G0 translates codepoint" {
     // Designate DEC Special Graphics to G0; GL already points to G0 (gl=0).
     s.designateCharset(0, .dec_special);
 
-    // 'j' (0x6A) → dec_map[0x6A - 0x60] = '┘'
+    // 'j' (0x6A) → '┘' in DEC Special Graphics
     s.putChar('j');
     try testing.expectEqual(@as(u21, '┘'), s.cellAt(0, 0).codepoint);
 }

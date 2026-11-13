@@ -1,7 +1,7 @@
-//! Character-set registers and translation.
-//!
-//! The maps that are not a handful of replacements live in
-//! `charset_pages.zig`, copied from xterm `charsets.h`.
+//! Character sets: the G0 to G3 registers, which sequence designates
+//! which set (as xterm), and translation through GL and GR. The code
+//! points every set prints are in `charset_pages.zig`, generated from
+//! xterm's charsets.h.
 
 const std = @import("std");
 const pages = @import("charset_pages.zig");
@@ -58,62 +58,116 @@ pub const Set = enum(u6) {
     /// parsed final with no set at this level, or an NRC set without
     /// DECNRCM, designates ASCII. Follows xterm `xtermDecodeSCS`.
     pub fn designation94(intermediates: []const u8, final: u8, level: u3, nrc: bool) ?Set {
-        // `gate` is the level at which xterm's parser passes the final
-        // on (`VTPrsTbl.c` `scstable` and `scs_*_table`, the
-        // `CASE_GSETS*` arms); `group` is the `sgroup` it passes.
-        const prefix: u8, const gate: u3, const group: u3 = switch (intermediates.len) {
-            1 => switch (final) {
-                '0', '1', '2', 'A', 'B' => .{ 0, 1, 1 },
-                '4', '5', '6', '7', '<', '=', 'C', 'E', 'H', 'I', 'J', 'K', 'Q', 'R', 'Y', 'Z', 'f' => .{ 0, 2, 2 },
-                '9', '>', '`' => .{ 0, 3, 3 },
-                else => return null,
-            },
+        const prefix: usize = switch (intermediates.len) {
+            1 => 0,
             2 => switch (intermediates[1]) {
-                '"' => switch (final) {
-                    '4', '>', '?' => .{ '"', 5, 5 },
-                    else => return null,
-                },
-                '&' => switch (final) {
-                    '4', '5' => .{ '&', 5, 5 },
-                    else => return null,
-                },
-                '%' => switch (final) {
-                    '0', '2', '=' => .{ '%', 3, 5 },
-                    '3', '5', '6' => .{ '%', 3, 3 },
-                    else => return null,
-                },
+                '"' => 1,
+                '%' => 2,
+                '&' => 3,
                 else => return null,
             },
             else => return null,
         };
-        if (level < gate) return null;
-        return lookup(prefix, final, group, level, nrc);
+        return answer(&answers94[prefix], final, level, nrc);
     }
 
     /// The set that `ESC - F`, `ESC . F` or `ESC / F` designates; as
     /// `designation94`.
     pub fn designation96(final: u8, level: u3, nrc: bool) ?Set {
-        const gate: u3 = switch (final) {
-            'A' => 3,
-            'B', 'F', 'H', 'L', 'M' => 5,
-            else => return null,
-        };
-        if (level < gate) return null;
-        return lookup(0, final, gate, level, nrc);
-    }
-
-    /// The first row of `designations` that matches, as xterm scans its
-    /// `scs_table`, else ASCII.
-    fn lookup(prefix: u8, final: u8, group: u3, level: u3, nrc: bool) Set {
-        for (designations) |row| {
-            if (row.prefix == prefix and row.final == final and
-                group <= row.min_level and
-                row.min_level <= level and level <= row.max_level and
-                (!row.nrc or nrc)) return row.set;
-        }
-        return .ascii;
+        return answer(&answers96, final, level, nrc);
     }
 };
+
+/// Every designation's outcome, worked out at compile time from xterm's
+/// rules (`decide94`, `decide96`), so a designation at run time is one
+/// load: htop designates on almost every line. Indexed by the final
+/// minus 0x20, the VT level minus 1 and DECNRCM. `ignored` is null.
+const Answers = [96][5][2]u8;
+const ignored: u8 = 0xFF;
+
+/// For no intermediate after the slot byte, then `"`, `%` and `&`.
+const answers94 = [_]Answers{ tabulate(.set94, 0), tabulate(.set94, '"'), tabulate(.set94, '%'), tabulate(.set94, '&') };
+const answers96 = tabulate(.set96, 0);
+
+fn answer(table: *const Answers, final: u8, level: u3, nrc: bool) ?Set {
+    if (final < 0x20 or final > 0x7F) return null;
+    std.debug.assert(level >= 1 and level <= 5);
+    const a = table[final - 0x20][level - 1][@intFromBool(nrc)];
+    return if (a == ignored) null else @enumFromInt(a);
+}
+
+fn tabulate(comptime size: enum { set94, set96 }, comptime prefix: u8) Answers {
+    @setEvalBranchQuota(400_000);
+    var out: Answers = undefined;
+    for (0..96) |f| {
+        for (1..6) |level| {
+            for (0..2) |nrc| {
+                const final: u8 = @intCast(0x20 + f);
+                const set = switch (size) {
+                    .set94 => decide94(prefix, final, level, nrc == 1),
+                    .set96 => decide96(final, level, nrc == 1),
+                };
+                out[f][level - 1][nrc] = if (set) |s| @intFromEnum(s) else ignored;
+            }
+        }
+    }
+    return out;
+}
+
+/// xterm's answer for a 94-set designation with `prefix` (0, `"`, `%` or
+/// `&`) after the slot byte. `gate` is the level at which xterm's parser
+/// passes the final on (`VTPrsTbl.c` `scstable` and `scs_*_table`, the
+/// `CASE_GSETS*` arms); `group` is the `sgroup` it passes to
+/// `xtermDecodeSCS`.
+fn decide94(prefix: u8, final: u8, level: usize, nrc: bool) ?Set {
+    const gate: usize, const group: usize = switch (prefix) {
+        0 => switch (final) {
+            '0', '1', '2', 'A', 'B' => .{ 1, 1 },
+            '4', '5', '6', '7', '<', '=', 'C', 'E', 'H', 'I', 'J', 'K', 'Q', 'R', 'Y', 'Z', 'f' => .{ 2, 2 },
+            '9', '>', '`' => .{ 3, 3 },
+            else => return null,
+        },
+        '"' => switch (final) {
+            '4', '>', '?' => .{ 5, 5 },
+            else => return null,
+        },
+        '&' => switch (final) {
+            '4', '5' => .{ 5, 5 },
+            else => return null,
+        },
+        '%' => switch (final) {
+            '0', '2', '=' => .{ 3, 5 },
+            '3', '5', '6' => .{ 3, 3 },
+            else => return null,
+        },
+        else => return null,
+    };
+    if (level < gate) return null;
+    return firstRow(prefix, final, group, level, nrc);
+}
+
+/// xterm's answer for a 96-set designation (`ESC - F` and so on).
+fn decide96(final: u8, level: usize, nrc: bool) ?Set {
+    const gate: usize = switch (final) {
+        'A' => 3,
+        'B', 'F', 'H', 'L', 'M' => 5,
+        else => return null,
+    };
+    if (level < gate) return null;
+    return firstRow(0, final, gate, level, nrc);
+}
+
+/// The first row of `designations` that matches, as xterm scans its
+/// `scs_table`, else ASCII.
+fn firstRow(prefix: u8, final: u8, group: usize, level: usize, nrc: bool) Set {
+    for (designations) |row| {
+        if (row.prefix == prefix and row.final == final and
+            group <= row.min_level and
+            row.min_level <= level and level <= row.max_level and
+            (!row.nrc or nrc)) return row.set;
+    }
+    return .ascii;
+}
 
 /// One row of xterm's designation table (`charproc.c` `scs_table`): the
 /// set that `prefix` and `final` name from VT level `min_level` to
@@ -185,172 +239,6 @@ comptime {
     std.debug.assert(6 == @bitSizeOf(Set));
 }
 
-/// A single NRC replacement entry: one ASCII byte, one Unicode codepoint.
-const NrcEntry = struct { from: u8, to: u21 };
-
-const nrc_dutch: []const NrcEntry = &.{
-    .{ .from = '#', .to = 0x00A3 }, // £  pound sign
-    .{ .from = '@', .to = 0x00BE }, // ¾  three-quarters
-    .{ .from = '[', .to = 0x0133 }, // ij Dutch ij ligature
-    .{ .from = '\\', .to = 0x00BD }, // ½  one-half
-    .{ .from = ']', .to = 0x007C }, // |  xterm map_NRCS_Dutch 0x5D
-    .{ .from = '{', .to = 0x00A8 }, // ¨  diaeresis
-    .{ .from = '|', .to = 0x0192 }, // ƒ  florin / guilder sign
-    .{ .from = '}', .to = 0x00BC }, // ¼  one-quarter
-    .{ .from = '~', .to = 0x00B4 }, // ´  acute accent
-};
-
-const nrc_finnish: []const NrcEntry = &.{
-    .{ .from = '[', .to = 0x00C4 }, // Ä
-    .{ .from = '\\', .to = 0x00D6 }, // Ö
-    .{ .from = ']', .to = 0x00C5 }, // Å
-    .{ .from = '^', .to = 0x00DC }, // Ü
-    .{ .from = '`', .to = 0x00E9 }, // é
-    .{ .from = '{', .to = 0x00E4 }, // ä
-    .{ .from = '|', .to = 0x00F6 }, // ö
-    .{ .from = '}', .to = 0x00E5 }, // å
-    .{ .from = '~', .to = 0x00FC }, // ü
-};
-
-const nrc_french: []const NrcEntry = &.{
-    .{ .from = '#', .to = 0x00A3 }, // £
-    .{ .from = '@', .to = 0x00E0 }, // à
-    .{ .from = '[', .to = 0x00B0 }, // °  degree
-    .{ .from = '\\', .to = 0x00E7 }, // ç
-    .{ .from = ']', .to = 0x00A7 }, // §  section
-    .{ .from = '{', .to = 0x00E9 }, // é
-    .{ .from = '|', .to = 0x00F9 }, // ù
-    .{ .from = '}', .to = 0x00E8 }, // è
-    .{ .from = '~', .to = 0x00A8 }, // ¨  diaeresis
-};
-
-const nrc_french_ca: []const NrcEntry = &.{
-    .{ .from = '@', .to = 0x00E0 }, // à
-    .{ .from = '[', .to = 0x00E2 }, // â
-    .{ .from = '\\', .to = 0x00E7 }, // ç
-    .{ .from = ']', .to = 0x00EA }, // ê
-    .{ .from = '^', .to = 0x00EE }, // î
-    .{ .from = '`', .to = 0x00F4 }, // ô
-    .{ .from = '{', .to = 0x00E9 }, // é
-    .{ .from = '|', .to = 0x00F9 }, // ù
-    .{ .from = '}', .to = 0x00E8 }, // è
-    .{ .from = '~', .to = 0x00FB }, // û
-};
-
-const nrc_german: []const NrcEntry = &.{
-    .{ .from = '@', .to = 0x00A7 }, // §  section
-    .{ .from = '[', .to = 0x00C4 }, // Ä
-    .{ .from = '\\', .to = 0x00D6 }, // Ö
-    .{ .from = ']', .to = 0x00DC }, // Ü
-    .{ .from = '{', .to = 0x00E4 }, // ä
-    .{ .from = '|', .to = 0x00F6 }, // ö
-    .{ .from = '}', .to = 0x00FC }, // ü
-    .{ .from = '~', .to = 0x00DF }, // ß
-};
-
-const nrc_italian: []const NrcEntry = &.{
-    .{ .from = '#', .to = 0x00A3 }, // £
-    .{ .from = '@', .to = 0x00A7 }, // §
-    .{ .from = '[', .to = 0x00B0 }, // °
-    .{ .from = '\\', .to = 0x00E7 }, // ç
-    .{ .from = ']', .to = 0x00E9 }, // é
-    .{ .from = '`', .to = 0x00F9 }, // ù
-    .{ .from = '{', .to = 0x00E0 }, // à
-    .{ .from = '|', .to = 0x00F2 }, // ò
-    .{ .from = '}', .to = 0x00E8 }, // è
-    .{ .from = '~', .to = 0x00EC }, // ì
-};
-
-const nrc_norwegian: []const NrcEntry = &.{
-    .{ .from = '@', .to = 0x00C4 }, // Ä
-    .{ .from = '[', .to = 0x00C6 }, // Æ
-    .{ .from = '\\', .to = 0x00D8 }, // Ø
-    .{ .from = ']', .to = 0x00C5 }, // Å
-    .{ .from = '^', .to = 0x00DC }, // Ü
-    .{ .from = '`', .to = 0x00E4 }, // ä
-    .{ .from = '{', .to = 0x00E6 }, // æ
-    .{ .from = '|', .to = 0x00F8 }, // ø
-    .{ .from = '}', .to = 0x00E5 }, // å
-    .{ .from = '~', .to = 0x00FC }, // ü
-};
-
-const nrc_spanish: []const NrcEntry = &.{
-    .{ .from = '#', .to = 0x00A3 }, // £
-    .{ .from = '@', .to = 0x00A7 }, // §
-    .{ .from = '[', .to = 0x00A1 }, // ¡  inverted exclamation
-    .{ .from = '\\', .to = 0x00D1 }, // Ñ
-    .{ .from = ']', .to = 0x00BF }, // ¿  inverted question
-    .{ .from = '{', .to = 0x00B0 }, // °
-    .{ .from = '|', .to = 0x00F1 }, // ñ
-    .{ .from = '}', .to = 0x00E7 }, // ç
-};
-
-const nrc_swedish: []const NrcEntry = &.{
-    .{ .from = '@', .to = 0x00C9 }, // É
-    .{ .from = '[', .to = 0x00C4 }, // Ä
-    .{ .from = '\\', .to = 0x00D6 }, // Ö
-    .{ .from = ']', .to = 0x00C5 }, // Å
-    .{ .from = '^', .to = 0x00DC }, // Ü
-    .{ .from = '`', .to = 0x00E9 }, // é
-    .{ .from = '{', .to = 0x00E4 }, // ä
-    .{ .from = '|', .to = 0x00F6 }, // ö
-    .{ .from = '}', .to = 0x00E5 }, // å
-    .{ .from = '~', .to = 0x00FC }, // ü
-};
-
-const nrc_swiss: []const NrcEntry = &.{
-    .{ .from = '#', .to = 0x00F9 }, // ù
-    .{ .from = '@', .to = 0x00E0 }, // à
-    .{ .from = '[', .to = 0x00E9 }, // é
-    .{ .from = '\\', .to = 0x00E7 }, // ç
-    .{ .from = ']', .to = 0x00EA }, // ê
-    .{ .from = '^', .to = 0x00EE }, // î
-    .{ .from = '_', .to = 0x00E8 }, // è
-    .{ .from = '`', .to = 0x00F4 }, // ô
-    .{ .from = '{', .to = 0x00E4 }, // ä
-    .{ .from = '|', .to = 0x00F6 }, // ö
-    .{ .from = '}', .to = 0x00FC }, // ü
-    .{ .from = '~', .to = 0x00FB }, // û
-};
-
-pub const dec_map = [_]u21{
-    '◆', // 0x60 `  black diamond
-    '▒', // 0x61 a  medium shade
-    '␉', // 0x62 b  HT symbol
-    '␌', // 0x63 c  FF symbol
-    '␍', // 0x64 d  CR symbol
-    '␊', // 0x65 e  LF symbol
-    '°', // 0x66 f  degree sign
-    '±', // 0x67 g  plus-minus
-    '␤', // 0x68 h  NL symbol
-    '␋', // 0x69 i  VT symbol
-    '┘', // 0x6A j  lower-right corner
-    '┐', // 0x6B k  upper-right corner
-    '┌', // 0x6C l  upper-left corner
-    '└', // 0x6D m  lower-left corner
-    '┼', // 0x6E n  crossing lines
-    '⎺', // 0x6F o  scan line 1
-    '⎻', // 0x70 p  scan line 3
-    '─', // 0x71 q  horizontal line (scan line 5)
-    '⎼', // 0x72 r  scan line 7
-    '⎽', // 0x73 s  scan line 9
-    '├', // 0x74 t  left tee
-    '┤', // 0x75 u  right tee
-    '┴', // 0x76 v  bottom tee
-    '┬', // 0x77 w  top tee
-    '│', // 0x78 x  vertical line
-    '≤', // 0x79 y  less-than-or-equal
-    '≥', // 0x7A z  greater-than-or-equal
-    'π', // 0x7B {  pi
-    '≠', // 0x7C |  not-equal
-    '£', // 0x7D }  pound sign
-    '·', // 0x7E ~  middle dot
-};
-
-comptime {
-    std.debug.assert(dec_map.len == 0x7E - 0x60 + 1);
-}
-
 /// G0..G3, GL, GR, and a pending single shift, packed into 4 bytes.
 ///
 /// GL selects the slot for a 7-bit graphic. GR selects the slot for an
@@ -381,18 +269,6 @@ pub const Mapping = packed struct(u32) {
 
     pub const no_shift: u3 = 4;
 
-    /// Linear scan through a comptime NRC table.
-    /// Tables are tiny (≤12 entries) so a loop is faster than a hash map.
-    fn translateNrc(cp: u21, comptime table: []const NrcEntry) u21 {
-        inline for (table) |e| if (cp == e.from) return e.to;
-        return cp;
-    }
-
-    // VT220 NRC tables
-    // Source: DEC STD 070 / VT220 Programmer Reference Manual (EK-VT220-RM-002).
-    // Only the 12 replaceable positions are listed; all other bytes pass through.
-    // Replaceable positions: # @ [ \ ] ^ ` { | } ~
-
     /// Returns the charset in slot `index` (0 to 3 = G0 to G3).
     pub fn slot(self: Mapping, index: u2) Set {
         return switch (index) {
@@ -421,43 +297,6 @@ pub const Mapping = packed struct(u32) {
         self.ss = no_shift;
     }
 
-    /// DEC Supplemental Graphic, 94-set, GL column.
-    ///
-    /// xterm `map_DEC_Supp_Graphic` (`charsets.h`). Positions it leaves
-    /// undefined become U+2426. Everything else is the Latin-1 half
-    /// (`cp + 0x80`). Space is not in a 94-set.
-    pub fn translateDecSuppl(cp: u21) u21 {
-        if (cp < 0x21 or cp > 0x7E) return cp;
-        return switch (cp) {
-            '$', '&', ',', '-', '.', '/', '4', '8', '>', 'P', '^', 'p', '~' => 0x2426,
-            '(' => 0x00A4,
-            'W' => 0x0152,
-            ']' => 0x0178,
-            '_' => 0x005F,
-            'w' => 0x0153,
-            '}' => 0x00FF,
-            else => cp + 0x80,
-        };
-    }
-
-    /// ISO Latin-1 as a 96-set (ECMA-35, final `A`).
-    /// `0x20`..`0x7F` map to U+00A0..U+00FF.
-    pub fn translateLatin1(cp: u21) u21 {
-        if (cp < 0x20 or cp > 0x7F) return cp;
-        return cp + 0x80;
-    }
-
-    /// DEC Special Graphics (VT100 line-drawing charset).
-    ///
-    /// 0x60 to 0x7E follow the VT100 User Guide table 3-9. 0x5F (blank on
-    /// a VT100) has no Unicode match; xterm `map_DEC_Spec_Graphic` shows
-    /// it as U+2426. Everything else passes through.
-    pub fn translateDecSpecial(cp: u21) u21 {
-        if (cp == 0x5F) return 0x2426;
-        if (cp < 0x60 or cp > 0x7E) return cp;
-        return dec_map[cp - 0x60];
-    }
-
     pub fn isIdentity(self: Mapping) bool {
         // No single-shift pending AND the active GL slot is ASCII
         return self.ss == no_shift and self.slot(self.gl) == .ascii;
@@ -479,44 +318,11 @@ pub const Mapping = packed struct(u32) {
         const limit: u21 = if (cs.is96()) 0x7F else 0x7E;
         const graphic = cp >= 0x20 and cp <= limit;
         if (shifted and graphic) self.ss = no_shift;
-        if (!graphic or cs == .ascii) return cp;
+        if (!graphic) return cp;
 
-        return switch (cs) {
-            .ascii => unreachable,
-            .dec_special => translateDecSpecial(cp),
-            // xterm draws `<` and `% 5` with the same map.
-            .dec_suppl, .dec_suppl_graphic => translateDecSuppl(cp),
-            .iso_latin1 => translateLatin1(cp),
-            .uk => if (cp == '#' and uk_pound) 0x00A3 else cp,
-            .dutch => translateNrc(cp, nrc_dutch),
-            .finnish => translateNrc(cp, nrc_finnish),
-            .french => translateNrc(cp, nrc_french),
-            .french_ca => translateNrc(cp, nrc_french_ca),
-            .german => translateNrc(cp, nrc_german),
-            .italian => translateNrc(cp, nrc_italian),
-            .norwegian => translateNrc(cp, nrc_norwegian),
-            .spanish => translateNrc(cp, nrc_spanish),
-            .swedish => translateNrc(cp, nrc_swedish),
-            .swiss => translateNrc(cp, nrc_swiss),
-            .dec_technical => pages.lookup(&pages.dec_technical, cp),
-            .jis_roman => pages.lookup(&pages.jis_roman, cp),
-            .jis_katakana => pages.lookup(&pages.jis_katakana, cp),
-            .portuguese => pages.lookup(&pages.portuguese, cp),
-            .greek_nrc => pages.lookup(&pages.greek_nrc, cp),
-            .turkish_nrc => pages.lookup(&pages.turkish_nrc, cp),
-            .hebrew_nrc => pages.lookup(&pages.hebrew_nrc, cp),
-            .dec_hebrew => pages.lookup(&pages.dec_hebrew, cp),
-            .dec_greek => pages.lookup(&pages.dec_greek, cp),
-            .dec_turkish => pages.lookup(&pages.dec_turkish, cp),
-            .dec_cyrillic => pages.lookup(&pages.dec_cyrillic, cp),
-            .serbo_croatian => pages.lookup(&pages.serbo_croatian, cp),
-            .dec_russian => pages.lookup(&pages.dec_russian, cp),
-            .iso_latin2 => pages.lookup(&pages.iso_latin2, cp),
-            .iso_greek => pages.lookup(&pages.iso_greek, cp),
-            .iso_hebrew => pages.lookup(&pages.iso_hebrew, cp),
-            .iso_cyrillic => pages.lookup(&pages.iso_cyrillic, cp),
-            .iso_latin5 => pages.lookup(&pages.iso_latin5, cp),
-        };
+        if (cs == .uk) return if (cp == '#' and uk_pound) 0x00A3 else cp;
+        const page = page_of[@intFromEnum(cs)] orelse return cp;
+        return page[cp - 0x20];
     }
 
     /// An 8-bit byte, `0xA0`..`0xFF`, through the GR slot.
@@ -541,147 +347,41 @@ comptime {
     std.debug.assert(4 == @sizeOf(Mapping));
 }
 
-test "Mapping: Latin-1 96-set and DEC supplemental" {
-    var latin: Mapping = .{};
-    latin.gl = 0;
-    latin.setSlot(0, .iso_latin1);
-    try std.testing.expectEqual(@as(u21, 0xA0), latin.translate(' ', true));
-    try std.testing.expectEqual(@as(u21, 0xC1), latin.translate('A', true));
-
-    var dec: Mapping = .{};
-    dec.setSlot(0, .dec_suppl);
-    try std.testing.expectEqual(@as(u21, ' '), dec.translate(' ', true));
-    try std.testing.expectEqual(@as(u21, 0xC1), dec.translate('A', true));
-    try std.testing.expectEqual(@as(u21, 0x0152), dec.translate('W', true));
-    try std.testing.expectEqual(@as(u21, 0x2426), dec.translate('$', true));
-
-    var gr: Mapping = .{};
-    gr.setSlot(gr.gr, .dec_suppl);
-    try std.testing.expectEqual(@as(u21, 0x0152), gr.translateGr(0xD7, true));
-    try std.testing.expectEqual(@as(u21, 0xD7), (Mapping{}).translateGr(0xD7, true));
-}
-
-test "Set: designations follow xterm's levels and DECNRCM" {
-    const d94 = Set.designation94;
-    const d96 = Set.designation96;
-    // VT100 finals at every level; UK needs no DECNRCM.
-    try std.testing.expectEqual(Set.dec_special, d94("(", '0', 1, false));
-    try std.testing.expectEqual(Set.uk, d94("(", 'A', 1, false));
-    try std.testing.expectEqual(Set.uk, d94("(", 'A', 5, false));
-    try std.testing.expectEqual(Set.ascii, d94("(", 'B', 3, false));
-    // Alt Chars has no Rex set: ASCII.
-    try std.testing.expectEqual(Set.ascii, d94("(", '1', 1, false));
-    // An NRC set needs DECNRCM; refused, it is ASCII.
-    try std.testing.expectEqual(Set.german, d94("(", 'K', 2, true));
-    try std.testing.expectEqual(Set.ascii, d94("(", 'K', 2, false));
-    // Below its parser level, or never parsed, the slot stays.
-    try std.testing.expectEqual(null, d94("(", 'K', 1, true));
-    try std.testing.expectEqual(null, d94("(", '>', 2, false));
-    try std.testing.expectEqual(null, d94("(", 'X', 5, true));
-    try std.testing.expectEqual(null, d94("(%", '9', 5, true));
-    // DEC Supplemental at every level from 2 (no UPSS).
-    try std.testing.expectEqual(Set.dec_suppl, d94("(", '<', 2, false));
-    try std.testing.expectEqual(Set.dec_suppl, d94("(", '<', 4, false));
-    // JIS only at level 3; parsed above it, so ASCII.
-    try std.testing.expectEqual(Set.jis_katakana, d94("(", 'I', 3, false));
-    try std.testing.expectEqual(Set.ascii, d94("(", 'I', 4, false));
-    // `%` parses from level 3; Serbo-Croatian is a level 5 set.
-    try std.testing.expectEqual(Set.dec_suppl_graphic, d94("(%", '5', 3, false));
-    try std.testing.expectEqual(Set.ascii, d94("(%", '3', 4, true));
-    try std.testing.expectEqual(Set.serbo_croatian, d94("(%", '3', 5, true));
-    // `"` and `&` parse only from level 5.
-    try std.testing.expectEqual(null, d94("(\"", '?', 4, false));
-    try std.testing.expectEqual(Set.dec_greek, d94("(\"", '?', 5, false));
-    // Rows sharing a final: Swedish needs DECNRCM, then ISO Hebrew.
-    try std.testing.expectEqual(Set.swedish, d94("(", 'H', 5, true));
-    try std.testing.expectEqual(Set.iso_hebrew, d94("(", 'H', 5, false));
-    // 96-sets: Latin-1 from level 3, the rest from level 5.
-    try std.testing.expectEqual(null, d96('A', 2, false));
-    try std.testing.expectEqual(Set.iso_latin1, d96('A', 3, false));
-    try std.testing.expectEqual(Set.uk, d96('A', 3, true));
-    try std.testing.expectEqual(null, d96('B', 4, false));
-    try std.testing.expectEqual(Set.iso_latin2, d96('B', 5, false));
-    try std.testing.expectEqual(null, d96('C', 5, false));
-}
-
-test "Mapping: translate DEC special graphics and NRC" {
-    var cs: Mapping = .{};
-    try std.testing.expect(cs.isIdentity());
-
-    // Switch GL to G1 and set G1 = dec_special
-    cs.gl = 1;
-    cs.setSlot(1, .dec_special);
-    try std.testing.expectEqual('─', cs.translate('q', true));
-    try std.testing.expectEqual('┌', cs.translate('l', true));
-    try std.testing.expectEqual('┘', cs.translate('j', true));
-
-    // Switch G1 to UK
-    cs.setSlot(1, .uk);
-    try std.testing.expectEqual(0x00A3, cs.translate('#', true));
-    try std.testing.expectEqual('A', cs.translate('A', true));
-}
-
-test "Mapping: single-shift override and clear" {
-    var cs: Mapping = .{};
-    cs.setSlot(2, .dec_special);
-    cs.ss = 2; // single-shift to G2
-    try std.testing.expect(cs.hasSingleShift());
-    try std.testing.expectEqual('─', cs.translate('q', true));
-    // SS is one-shot: should clear back to no_shift after one character
-    try std.testing.expect(!cs.hasSingleShift());
-    try std.testing.expectEqual('q', cs.translate('q', true));
-}
-
-test "Mapping: a non-GL codepoint does not consume a single shift" {
-    var cs: Mapping = .{};
-    cs.setSlot(2, .dec_special);
-    cs.ss = 2;
-    try std.testing.expectEqual(@as(u21, 0x4E2D), cs.translate(0x4E2D, true));
-    try std.testing.expect(cs.hasSingleShift());
-    try std.testing.expectEqual('─', cs.translate('q', true));
-    try std.testing.expect(!cs.hasSingleShift());
-}
-
-test "Mapping: a 96-set DEL consumes a single shift" {
-    var latin2: Mapping = .{};
-    latin2.setSlot(2, .iso_latin2);
-    latin2.ss = 2;
-    try std.testing.expectEqual(@as(u21, 0x02D9), latin2.translate(0x7F, true));
-    try std.testing.expect(!latin2.hasSingleShift());
-
-    var technical: Mapping = .{};
-    technical.setSlot(2, .dec_technical);
-    technical.ss = 2;
-    try std.testing.expectEqual(@as(u21, 0x7F), technical.translate(0x7F, true));
-    try std.testing.expect(technical.hasSingleShift());
-}
-
-test "Mapping: Latin-2 GR covers 0xA0 and 0xFF" {
-    var cs: Mapping = .{};
-    cs.setSlot(cs.gr, .iso_latin2);
-    try std.testing.expectEqual(@as(u21, 0x00A0), cs.translateGr(0xA0, true));
-    try std.testing.expectEqual(@as(u21, 0x0104), cs.translateGr(0xA1, true));
-    try std.testing.expectEqual(@as(u21, 0x02D9), cs.translateGr(0xFF, true));
-}
-
-test "Mapping: Norwegian/Danish, Swiss and DEC Special positions from xterm charsets.h" {
-    var cs: Mapping = .{};
-    cs.setSlot(0, .norwegian);
-    try std.testing.expectEqual(@as(u21, 0x00C4), cs.translate('@', true)); // Ä
-    try std.testing.expectEqual(@as(u21, 0x00DC), cs.translate('^', true)); // Ü
-    try std.testing.expectEqual(@as(u21, 0x00E4), cs.translate('`', true)); // ä
-    try std.testing.expectEqual(@as(u21, 0x00FC), cs.translate('~', true)); // ü
-    cs.setSlot(0, .swiss);
-    try std.testing.expectEqual(@as(u21, 0x00E8), cs.translate('_', true)); // è
-    cs.setSlot(0, .dec_special);
-    try std.testing.expectEqual(@as(u21, 0x2426), cs.translate('_', true));
-}
-
-test "Mapping: NRC German umlauts" {
-    var cs: Mapping = .{};
-    cs.setSlot(0, .german);
-    try std.testing.expectEqual(0x00C4, cs.translate('[', true)); // Ä
-    try std.testing.expectEqual(0x00D6, cs.translate('\\', true)); // Ö
-    try std.testing.expectEqual(0x00DC, cs.translate(']', true)); // Ü
-    try std.testing.expectEqual(0x00DF, cs.translate('~', true)); // ß
-}
+/// The page each set prints through; null for ASCII and for UK, whose
+/// one replacement depends on `uk_pound`.
+const page_of = std.enums.directEnumArray(Set, ?*const pages.Page, 0, .{
+    .ascii = null,
+    .dec_special = &pages.dec_special,
+    .dec_suppl = &pages.dec_suppl,
+    .uk = null,
+    .dutch = &pages.dutch,
+    .finnish = &pages.finnish,
+    .french = &pages.french,
+    .french_ca = &pages.french_ca,
+    .german = &pages.german,
+    .italian = &pages.italian,
+    .norwegian = &pages.norwegian,
+    .spanish = &pages.spanish,
+    .swedish = &pages.swedish,
+    .swiss = &pages.swiss,
+    .iso_latin1 = &pages.iso_latin1,
+    .dec_technical = &pages.dec_technical,
+    .jis_roman = &pages.jis_roman,
+    .jis_katakana = &pages.jis_katakana,
+    .portuguese = &pages.portuguese,
+    .greek_nrc = &pages.greek_nrc,
+    .turkish_nrc = &pages.turkish_nrc,
+    .hebrew_nrc = &pages.hebrew_nrc,
+    .dec_hebrew = &pages.dec_hebrew,
+    .dec_greek = &pages.dec_greek,
+    .dec_turkish = &pages.dec_turkish,
+    .dec_suppl_graphic = &pages.dec_suppl, // xterm draws `<` and `% 5` alike
+    .dec_cyrillic = &pages.dec_cyrillic,
+    .serbo_croatian = &pages.serbo_croatian,
+    .dec_russian = &pages.dec_russian,
+    .iso_latin2 = &pages.iso_latin2,
+    .iso_greek = &pages.iso_greek,
+    .iso_hebrew = &pages.iso_hebrew,
+    .iso_cyrillic = &pages.iso_cyrillic,
+    .iso_latin5 = &pages.iso_latin5,
+});

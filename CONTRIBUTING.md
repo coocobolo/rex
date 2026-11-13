@@ -202,6 +202,7 @@ one starts with a header naming the step that wrote it:
 | `zig build gen-wcwidth-expected` | `src/unicode/wcwidth_expected.zig` | `DerivedGeneralCategory.txt`, `EastAsianWidth.txt`, `emoji-data.txt` |
 | `zig build gen-grapheme-table`   | `src/term/grapheme_table.zig`      | `GraphemeBreakProperty.txt`, `emoji-data.txt`           |
 | `zig build gen-x11-colors`       | `src/color/x11.zig`                | `tools/x11/rgb.txt`                                     |
+| `zig build gen-charset-pages`    | `src/term/charset_pages.zig`       | `tools/xterm/charsets.h`                                |
 
 `zig build gen` runs all of them.
 
@@ -211,7 +212,9 @@ one starts with a header naming the step that wrote it:
 - Every generator is run as `<gen> <out.zig> <input>...` and logs
   each file it reads and writes.
 - UCD data lives in `tools/ucd/<version>/`; `tools/ucd/VERSION`
-  selects the version build.zig uses.
+  selects the version build.zig uses. Other inputs are copied
+  upstream files pinned to a revision (`tools/x11/`, `tools/xterm/`),
+  with their notices in `THIRD_PARTY_NOTICES/`.
 - The steps are driven by the `generators` table in build.zig; a new
   table is one row there plus one file in `tools/gen/`.
 
