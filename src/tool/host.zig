@@ -22,6 +22,9 @@ const c = @import("glfw");
 
 const dirs = @import("../dirs/root.zig");
 const font_files = @import("../config/font_files.zig");
+const config_defaults = @import("../config/default.zig");
+const config_paths = @import("../config/paths.zig");
+const Loaded = @import("../config/Loaded.zig");
 const kit = @import("../kit/root.zig");
 const input_key = @import("../input/key.zig");
 const gl = @import("../renderer/gl.zig");
@@ -100,6 +103,8 @@ fn Host(comptime Tool: type) type {
         redraw: bool = true,
         /// For the time to the first frame, logged once.
         started_ms: ?i64,
+        /// From `[ui] color_scheme`, read once at start.
+        theme: *const Theme,
 
         fn create(gpa: Allocator, io: std.Io, argv0: []const u8, environ: *const std.process.Environ) !*Self {
             const started_ms = awakeMs(io);
@@ -127,13 +132,15 @@ fn Host(comptime Tool: type) type {
                 lock.close(io);
             }
 
+            const settings = try loadSettings(gpa, io, home, &directories);
+
             const wayland = envmap.get("WAYLAND_DISPLAY") != null or
                 std.mem.eql(u8, envmap.get("XDG_SESSION_TYPE") orelse "", "wayland");
             var window: Window = try .init(.{
                 .width = window_width,
                 .height = window_height,
                 .title = Tool.title,
-                .platform = Window.choosePlatform(.auto, wayland),
+                .platform = Window.choosePlatform(settings.platform, wayland),
             });
             errdefer window.deinit();
             window.setMinimumSize(window_min_width, window_min_height);
@@ -164,6 +171,7 @@ fn Host(comptime Tool: type) type {
                 .tree = undefined,
                 .content_scale = content_scale,
                 .started_ms = started_ms,
+                .theme = settings.theme,
             };
             self.tree = .init(&self.nodes, &self.lines);
 
@@ -209,7 +217,7 @@ fn Host(comptime Tool: type) type {
         fn drawFrame(self: *Self) void {
             const fb = self.window.frameBufferSize(f32);
             const scale = self.content_scale;
-            const theme = &Theme.dark;
+            const theme = self.theme;
 
             self.painter.begin();
             self.build(theme, fb.width / scale, fb.height / scale) catch |err| {
@@ -324,6 +332,28 @@ fn Host(comptime Tool: type) type {
             const key = glfw_key.key(code) orelse return;
             fromWindow(window).send(.{ .key = .{ .key = key, .mods = glfw_key.modifiers(mods) } });
         }
+    };
+}
+
+/// What a tool window takes from the config: the theme from `[ui]
+/// color_scheme`, against the terminal theme's background for `auto`, and
+/// `[window] platform`. The system file, then the user file, as the
+/// terminal reads them; the terminal reports any problems in them.
+const Settings = struct {
+    theme: *const Theme,
+    platform: Window.Platform,
+};
+
+fn loadSettings(gpa: Allocator, io: std.Io, home: []const u8, directories: *const dirs.Application) Allocator.Error!Settings {
+    const user_path = try config_paths.user(gpa, directories);
+    defer gpa.free(user_path);
+    var loaded = try Loaded.load(gpa, io, &config_defaults.default, home, &.{ .file(config_paths.system), .file(user_path) });
+    defer loaded.deinit(gpa);
+    const config = &loaded.config;
+    const background = config.theme.background;
+    return .{
+        .theme = config.ui.color_scheme.variant(.{ background.r, background.g, background.b }).theme(),
+        .platform = config.window.platform,
     };
 }
 
