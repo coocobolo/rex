@@ -1,18 +1,9 @@
 //! A dialog that interrupts with one question and stays until it is
-//! answered, after shadcn/ui's AlertDialog. It is composed of the parts in
-//! `dialog.zig`:
+//! answered, built from the parts in `dialog.zig`: an optional icon, a
+//! title, an optional body and one to three `Action`s. An action whose role
+//! is `dismiss` cancels; one whose role is `choose` answers.
 //!
-//!     AlertDialogContent       the scrim and the card
-//!       AlertDialogHeader
-//!         AlertDialogMedia     `Request.media`, an icon, optional
-//!         AlertDialogTitle     `Request.title`
-//!         AlertDialogDescription  `Request.body`, optional
-//!       AlertDialogFooter      one to three `Action`s
-//!         AlertDialogCancel    an action whose role is `dismiss`
-//!         AlertDialogAction    an action whose role is `choose`
-//!
-//! What opens it is the `open` event; there is no trigger part. The quit
-//! prompt is its first caller.
+//! What opens it is the `open` event. The quit prompt is its first caller.
 //!
 //! `State` is plain data, `update` is the only code that changes it and
 //! `view` writes its nodes (ADR 0009). Nothing allocates.

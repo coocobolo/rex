@@ -1,4 +1,4 @@
-//! The toast stack, after Sonner: up to `visible_max` toasts in the
+//! The toast stack: up to `visible_max` toasts in the
 //! window's bottom right corner, the newest lowest, each leaving when its
 //! time is up. Timers stop while the pointer is over the stack.
 //!
@@ -22,7 +22,7 @@ const Tree = tree_zig.Tree;
 const Id = tree_zig.Id;
 const Index = tree_zig.Index;
 
-/// Sonner's measures, in logical pixels.
+/// In logical pixels.
 pub const width = 356;
 pub const padding = 16;
 /// Between toasts.

@@ -60,7 +60,7 @@ Rules that hold everywhere:
 | `memory.zig` | Per-id memory that outlives a rebuild of the view |
 | `motion.zig` | The one duration and curve every surface uses |
 | `focus.zig` | Keyboard focus order over a row or list |
-| `button.zig`, `kbd.zig`, `dialog.zig` | Components |
+| `button.zig`, `kbd.zig`, `dialog.zig`, `sidebar.zig` | Components |
 | `toast.zig`, `alert_dialog.zig` | Surfaces |
 
 ## Layout
@@ -82,8 +82,6 @@ of rows and no clipping yet.
 
 ## Components
 
-Names and compositions follow shadcn/ui where it has the component.
-
 ### Button (`button.zig`)
 
 | | Values |
@@ -99,54 +97,46 @@ at half opacity and gets neither hover nor focus from its surface.
 
 ### Kbd (`kbd.zig`)
 
-```
-Kbd                  kbd.view
-KbdGroup             kbd.group
-├── Kbd
-└── Kbd
-```
-
-A key cap is at least as wide as it is tall. It only displays a key; the
-caller binds it.
+`kbd.view` draws one key cap; `kbd.group` draws several in a row. A key cap
+is at least as wide as it is tall. It only displays a key; the caller binds
+it.
 
 ### Dialog (`dialog.zig`)
 
-```
-Dialog                      dialog.open .. dialog.close
-└── DialogContent           (the scrim and the card)
-    ├── DialogHeader        dialog.header
-    │   ├── DialogTitle     dialog.title
-    │   └── DialogDescription   dialog.description
-    └── DialogFooter        dialog.footer
-```
-
-There is no trigger part: what opens a dialog is an event to its surface.
-`dialog.Phase` (closed, entering, open, leaving) fades it in and out; a
+`dialog.open` .. `dialog.close` write the scrim and the card. Inside the
+card go `dialog.header` (with `dialog.title` and `dialog.description`) and
+`dialog.footer` (a row of buttons). What opens a dialog is an event to its
+surface. `dialog.Phase` (closed, entering, open, leaving) fades it in and out; a
 surface keeps one in its state. The card's width is an upper bound: in a
 narrower window it shrinks and keeps a 16 px margin.
+
+### Sidebar (`sidebar.zig`)
+
+The frame of a tool window: sections grouped under headings in a 256 px
+column, the pane with the current section beside it, and a button at the top
+of the pane that shows and hides the column. A view calls `sidebar.begin`,
+writes the section, then `sidebar.end`; the surface keeps a `sidebar.State`.
+
+Below 600 px of width the column is hidden. Shown from there, it lies over
+the pane, which is dimmed; a click on the dimmed part or choosing a section
+puts it away. Crossing 600 px hands the choice back to the width. Up and
+Down move between sections and stop at the ends; Home and End jump to the
+first and last.
 
 ## Surfaces
 
 ### Toast stack (`toast.zig`)
 
-After Sonner. Up to three toasts at the bottom right, the newest lowest; more
-wait their turn. Kinds: `default`, `success`, `info`, `warning`, `err`. A
+Up to three toasts at the bottom right, the newest lowest; more wait their
+turn. Kinds: `default`, `success`, `info`, `warning`, `err`. A
 toast leaves when its time is up; the time stands still while the pointer is
 over the stack.
 
 ### Alert dialog (`alert_dialog.zig`)
 
-```
-AlertDialog
-└── AlertDialogContent
-    ├── AlertDialogHeader
-    │   ├── AlertDialogMedia        Request.media, optional
-    │   ├── AlertDialogTitle        Request.title
-    │   └── AlertDialogDescription  Request.body, optional
-    └── AlertDialogFooter           one to three actions
-        ├── AlertDialogCancel       an Action with role dismiss
-        └── AlertDialogAction       an Action with role choose
-```
+Built from the dialog parts: an optional icon (`Request.media`), a title, an
+optional body and one to three actions. An action with role `dismiss`
+cancels; one with role `choose` answers.
 
 It interrupts with one question and stays until it is answered. Choosing an
 action closes it at once and reports which; dismissing fades it out. The
@@ -162,7 +152,8 @@ component, and add the new variant to it (`renderer/kit_painter_test.zig`).
 
 ## Adding a component
 
-1. Check shadcn/ui for the component and take its name and composition.
+1. Take the name and composition an established component library uses for
+   it, so the parts have names people already know.
 2. Write it as a view function in its own file, with an `Options` struct and a
    `node_max`. Modes that exclude each other are one enum, not several bools.
 3. If it has behaviour several surfaces need, add a helper that a surface's
@@ -177,6 +168,6 @@ Specified here when built, in the ticket that first uses them:
 - Alert (the config-error banner): Icon, AlertTitle, AlertDescription,
   AlertAction. It stays in place until its cause is gone, which is what sets
   it apart from a toast.
-- For the tool windows: sidebar row and section heading, checkbox, switch,
+- For the tool windows: checkbox, switch,
   dropdown with its popup list, list row, text input, scroll container.
 - A focus order taken from the view, for surfaces with many controls.

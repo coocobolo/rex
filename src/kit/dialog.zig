@@ -1,14 +1,8 @@
-//! The parts every dialog is composed of, after shadcn/ui's Dialog:
-//!
-//!     open .. close            Dialog and DialogContent: scrim and card
-//!       header                 DialogHeader
-//!         title                DialogTitle
-//!         description          DialogDescription
-//!       footer                 DialogFooter: a row of buttons
-//!
-//! and the `Phase` that fades the whole in and out, which a surface keeps
-//! in its state. There is no trigger part: what opens a dialog is an event
-//! to its surface's `update`.
+//! The parts every dialog is composed of: `open` .. `close` write the scrim
+//! and the card, which holds a `header` (a `title` and a `description`) and
+//! a `footer` (a row of buttons). `Phase` fades the whole in and out; a
+//! surface keeps one in its state. What opens a dialog is an event to its
+//! surface's `update`.
 
 const std = @import("std");
 
