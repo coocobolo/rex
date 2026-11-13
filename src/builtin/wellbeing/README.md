@@ -31,7 +31,7 @@ Default keys: `ctrl+shift+p` start, pause or resume the focus timer; `ctrl+shift
 | `winddown.zig` | The wind-down window and its color tint. |
 | `localtime.zig` | UTC to local seconds via `localtime_r`, with a `tzset` once per minute so zone changes apply while Rex runs. |
 | `dashboard.zig` | The text card (`rex wellbeing`, copy to clipboard). |
-| `overlay.zig`, `icons.zig` | The dashboard overlay and lock screen. Built on `src/ui/`, which is provisional and will be redesigned. |
+| `overlay.zig`, `icons.zig` | The dashboard overlay and lock screen. Not imported by `root.zig`: they reach `src/renderer/` and `src/ui/`, and the state module must not. |
 | `wellbeing_test.zig` | All tests of the module. |
 
 ## Each frame
