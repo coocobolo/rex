@@ -780,6 +780,195 @@ test "escape: ESC ( 0 designates G0 = DEC Special Graphics" {
     try testing.expectEqual(.dec_special, t.active().cursor.charset.g0);
 }
 
+test "escape: ESC ( % 5 designates DEC supplemental graphics, not Finnish" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    t.feed("\x1b(0");
+    t.feed("\x1b(%5");
+    try testing.expectEqual(.dec_suppl_graphic, t.active().cursor.charset.g0);
+    // A final xterm does not parse after `%` leaves the slot.
+    t.feed("\x1b(%9");
+    try testing.expectEqual(.dec_suppl_graphic, t.active().cursor.charset.g0);
+
+    // Portuguese is NRC: refused without mode 42, so ASCII (xterm), and
+    // the final '6' must not become Norwegian.
+    t.feed("\x1b(%6");
+    try testing.expectEqual(.ascii, t.active().cursor.charset.g0);
+
+    t.feed("\x1b[?42h");
+    t.feed("\x1b(%6[");
+    try testing.expectEqual(.portuguese, t.active().cursor.charset.g0);
+    try testing.expectEqual(@as(u32, 0x00C3), t.active().cellAt(0, 0).codepoint);
+}
+
+test "escape: single-final code pages do not need DECNRCM" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    t.feed("\x1b(>!");
+    try testing.expectEqual(.dec_technical, t.active().cursor.charset.g0);
+    try testing.expectEqual(@as(u32, 0x23B7), t.active().cellAt(0, 0).codepoint);
+
+    t.feed("\x1b(I!");
+    try testing.expectEqual(.jis_katakana, t.active().cursor.charset.g0);
+    try testing.expectEqual(@as(u32, 0xFF61), t.active().cellAt(0, 1).codepoint);
+
+    t.feed("\x1b(J\\");
+    try testing.expectEqual(.jis_roman, t.active().cursor.charset.g0);
+    try testing.expectEqual(@as(u32, 0x00A5), t.active().cellAt(0, 2).codepoint);
+}
+
+test "escape: Greek NRC waits for DECNRCM, DEC Greek does not" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    // `"` sets exist from level 5; below it the slot stays.
+    t.feed("\x1b(0");
+    t.feed("\x1b(\"?");
+    try testing.expectEqual(.dec_special, t.active().cursor.charset.g0);
+
+    t.feed("\x1b[65;1\"p"); // DECSCL level 5, 7-bit controls
+    t.feed("\x1b(\">"); // refused without DECNRCM: ASCII
+    try testing.expectEqual(.ascii, t.active().cursor.charset.g0);
+
+    t.feed("\x1b(\"?!");
+    try testing.expectEqual(.dec_greek, t.active().cursor.charset.g0);
+    try testing.expectEqual(@as(u32, 0x00A1), t.active().cellAt(0, 0).codepoint);
+
+    t.feed("\x1b[?42h");
+    t.feed("\x1b(\">a");
+    try testing.expectEqual(.greek_nrc, t.active().cursor.charset.g0);
+    try testing.expectEqual(@as(u32, 0x0391), t.active().cellAt(0, 1).codepoint);
+}
+
+test "escape: ESC ( & 4 designates DEC Cyrillic without DECNRCM" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    t.feed("\x1b[65;1\"p"); // DECSCL level 5, 7-bit controls
+    t.feed("\x1b(&4!");
+    try testing.expectEqual(.dec_cyrillic, t.active().cursor.charset.g0);
+    try testing.expectEqual(@as(u32, 0x2426), t.active().cellAt(0, 0).codepoint);
+
+    t.feed("\x1b(&5"); // Russian is NRC: refused, so ASCII
+    try testing.expectEqual(.ascii, t.active().cursor.charset.g0);
+    t.feed("\x1b[?42h\x1b(&5a");
+    try testing.expectEqual(.dec_russian, t.active().cursor.charset.g0);
+    try testing.expectEqual(@as(u32, 0x0410), t.active().cellAt(0, 1).codepoint);
+}
+
+test "latin1: GR DEC supplemental maps 0xD7 to OE" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    t.input.encoding = .latin1;
+    t.control_format = .s8c1t;
+    t.feed("\xD7");
+    try testing.expectEqual(@as(u32, 0xD7), t.active().cellAt(0, 0).codepoint);
+
+    t.feed("\x1b*<"); // G2 = DEC supplemental; GR defaults to G2
+    t.feed("\xD7");
+    try testing.expectEqual(@as(u32, 0x0152), t.active().cellAt(0, 1).codepoint);
+}
+
+test "escape: ESC ( < maps W to OE on GL" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    t.feed("\x1b(<W");
+    try testing.expectEqual(@as(u32, 0x0152), t.active().cellAt(0, 0).codepoint);
+}
+
+test "escape: ESC ( 5 designates G0 = Finnish" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    t.feed("\x1b[?42h"); // DECNRCM: Finnish is an NRC set
+    t.feed("\x1b(5");
+    try testing.expectEqual(.finnish, t.active().cursor.charset.g0);
+}
+
+test "escape: an NRC designation without DECNRCM is ASCII; UK needs none" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    t.feed("\x1b(0");
+    t.feed("\x1b(K"); // German, mode 42 still reset
+    try testing.expectEqual(.ascii, t.active().cursor.charset.g0);
+    t.feed("\x1b(A"); // UK is not an NRC set in xterm
+    try testing.expectEqual(.uk, t.active().cursor.charset.g0);
+
+    t.feed("\x1b[?42h");
+    t.feed("\x1b(K");
+    try testing.expectEqual(.german, t.active().cursor.charset.g0);
+}
+
+test "escape: UK shows # as £ only with DECNRCM or at level 1, as xterm" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    t.feed("\x1b(A#"); // level 3, no DECNRCM: UK is ASCII
+    try testing.expectEqual(@as(u32, '#'), t.active().cellAt(0, 0).codepoint);
+    t.feed("\x1b[?42h\r#"); // checked when printing, as xterm does
+    try testing.expectEqual(@as(u32, 0x00A3), t.active().cellAt(0, 0).codepoint);
+    t.feed("\x1b[?42l\r#");
+    try testing.expectEqual(@as(u32, '#'), t.active().cellAt(0, 0).codepoint);
+
+    t.feed("\x1b[61\"p"); // DECSCL level 1 (soft reset: G0 back to ASCII)
+    t.feed("\x1b(A\x1b[H#");
+    try testing.expectEqual(@as(u32, 0x00A3), t.active().cellAt(0, 0).codepoint);
+
+    // The alternate screen follows too.
+    t.feed("\x1b[?1049h\x1b(A\x1b[H#");
+    try testing.expectEqual(@as(u32, 0x00A3), t.active().cellAt(0, 0).codepoint);
+}
+
+test "csi: DECSTR keeps DECNRCM and RIS clears it, as xterm" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    t.feed("\x1b[?42h");
+    t.feed("\x1b[!p"); // DECSTR
+    try testing.expect(t.mode.nrc);
+    t.feed("\x1b(A#"); // UK still shows £
+    try testing.expectEqual(@as(u32, 0x00A3), t.active().cellAt(0, 0).codepoint);
+
+    t.feed("\x1bc"); // RIS
+    try testing.expect(!t.mode.nrc);
+    t.feed("\x1b(A#");
+    try testing.expectEqual(@as(u32, '#'), t.active().cellAt(0, 0).codepoint);
+}
+
+test "escape: an unknown 94-set final leaves the slot" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    t.feed("\x1b(0");
+    t.feed("\x1b(?");
+    try testing.expectEqual(.dec_special, t.active().cursor.charset.g0);
+}
+
+test "c0: 8-bit SS2 and SS3 single-shift one GL graphic" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+
+    t.input.encoding = .latin1;
+    t.control_format = .s8c1t;
+    t.feed("\x1b*0"); // G2 = DEC Special Graphics
+    t.feed("\x1b+0"); // G3 = DEC Special Graphics
+    t.feed("\x8E"); // C1 SS2
+    t.feed("\xA0"); // not a GL graphic
+    t.feed("q");
+    try testing.expectEqual(@as(u32, 0xA0), t.active().cellAt(0, 0).codepoint);
+    try testing.expectEqual(@as(u32, '─'), t.active().cellAt(0, 1).codepoint);
+
+    t.feed("\x8Fj"); // C1 SS3, then the one graphic
+    try testing.expectEqual(@as(u32, '┘'), t.active().cellAt(0, 2).codepoint);
+    t.feed("j");
+    try testing.expectEqual(@as(u32, 'j'), t.active().cellAt(0, 3).codepoint);
+}
+
 test "escape: ESC ( B designates G0 = ASCII" {
     var t = try Term.create(alloc);
     defer t.destroy(alloc);
@@ -802,6 +991,7 @@ test "escape: ESC * A designates G2 = UK NRC" {
     var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
+    t.feed("\x1b[?42h");
     t.feed("\x1b*A");
     try testing.expectEqual(.uk, t.active().cursor.charset.g2);
 }
@@ -828,24 +1018,28 @@ test "escape: ESC - A designates G1 = iso_latin1" {
     try testing.expectEqual(.ascii, t.active().cursor.charset.g3);
 }
 
-test "escape: ESC - B designates G1 = ascii (96-char)" {
+test "escape: ESC - B designates G1 = iso_latin2" {
     var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
-    // let's set G1 to something non-default so we can verify the change
-    t.feed("\x1b\x2d\x41"); // ESC - A  : G1 = iso_latin1
-    t.feed("\x1b\x2d\x42"); // ESC - B  : G1 = ascii
-    try testing.expectEqual(.ascii, t.active().cursor.charset.g1);
+    t.feed("\x1b-A");
+    t.feed("\x1b-B"); // a level 5 set: ignored at the default level 3
+    try testing.expectEqual(.iso_latin1, t.active().cursor.charset.g1);
+    t.feed("\x1b[65;1\"p"); // DECSCL level 5, 7-bit controls
+    t.feed("\x1b-B");
+    try testing.expectEqual(.iso_latin2, t.active().cursor.charset.g1);
+
+    t.feed("\x0e!"); // SO, GL = G1, then '!'
+    try testing.expectEqual(@as(u32, 0x0104), t.active().cellAt(0, 0).codepoint);
 }
 
 test "escape: ESC - 0 designates G1 = dec_special (96-char)" {
     var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
-    // '0' is not a valid 96-char set final byte; falls back to .ascii
-    // FIXME not implemented
-    t.feed("\x1b-0");
-    try testing.expectEqual(.ascii, t.active().cursor.charset.g1);
+    t.feed("\x1b-A");
+    t.feed("\x1b-0"); // not a 96-set final; the slot stays
+    try testing.expectEqual(.iso_latin1, t.active().cursor.charset.g1);
 }
 
 test "escape: ESC . A designates G2 = iso_latin1" {
@@ -860,13 +1054,19 @@ test "escape: ESC . A designates G2 = iso_latin1" {
     try testing.expectEqual(.ascii, t.active().cursor.charset.g3);
 }
 
-test "escape: ESC . B designates G2 = ascii (96-char)" {
+test "escape: ESC . B designates G2 = iso_latin2" {
     var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
-    t.feed("\x1b\x2e\x41"); // ESC . A  : G2 = iso_latin1
-    t.feed("\x1b\x2e\x42"); // ESC . B  : G2 = ascii
-    try testing.expectEqual(.ascii, t.active().cursor.charset.g2);
+    t.input.encoding = .latin1;
+    t.feed("\x1b[65;1\"p"); // DECSCL level 5, 7-bit controls
+    t.feed("\x1b.A");
+    t.feed("\x1b.B");
+    try testing.expectEqual(.iso_latin2, t.active().cursor.charset.g2);
+
+    // GR defaults to G2. 0xFF is in a 96-set.
+    t.feed("\xff");
+    try testing.expectEqual(@as(u32, 0x02D9), t.active().cellAt(0, 0).codepoint);
 }
 
 test "escape: ESC / A designates G3 = iso_latin1" {
@@ -885,9 +1085,9 @@ test "escape: ESC / 0 designates G3 = dec_special (96-char)" {
     var t = try Term.create(alloc);
     defer t.destroy(alloc);
 
-    t.feed("\x1b-0"); // FIXME not implemented
-    // t.feed("\x1b\x2f\x30"); // ESC / 0
-    try testing.expectEqual(.ascii, t.active().cursor.charset.g3);
+    t.feed("\x1b/A");
+    t.feed("\x1b/0"); // '0' is not a 96-set final
+    try testing.expectEqual(.iso_latin1, t.active().cursor.charset.g3);
 }
 
 test "escape: 96-char designation does not change GL or GR" {
@@ -923,7 +1123,7 @@ test "escape: a 96-char G2 designation carries across a screen switch (xterm)" {
     t.feed("\x1b\x2e\x41"); // ESC . A, G2 = iso_latin1
     t.feed("\x1b[?47h");
     try testing.expectEqual(.iso_latin1, t.active().cursor.charset.g2);
-    t.feed("\x1b\x2eB\x1b[?47l"); // G2 = ascii on the alternate screen
+    t.feed("\x1b*B\x1b[?47l"); // G2 = ASCII (94-set) on the alternate screen
     try testing.expectEqual(.ascii, t.active().cursor.charset.g2);
 }
 
@@ -3704,7 +3904,7 @@ test "m2: DECSTR resets each item xterm resets" {
     try testing.expect(!t.mode.keypad_app); // DECNKM: numeric
     try testing.expectEqual(0, s.scroll_top); // DECSTBM: full page
     try testing.expectEqual(test_option.max_rows - 1, s.scroll_bottom);
-    try testing.expect(s.charset_is_identity); // G0-G3, GL, GR: default
+    try testing.expect(s.cursor.charset.isIdentity()); // G0-G3, GL, GR: default
     try testing.expectEqualDeep(Attr{}, s.cursor.attr); // SGR: normal
     try testing.expectEqualDeep(SavedCursor{}, s.saved_cursor); // DECSC: home, defaults
 }
@@ -3996,6 +4196,17 @@ test "csi: DECXCPR adds page 1 at conformance level 4" {
     t.response.clear();
     t.feed("\x1b[6n"); // CPR has no page
     try testing.expectEqualStrings("\x1b[2;3R", t.response.slice());
+}
+
+test "csi: DECSCL 65 selects level 5, which DECRQSS and DECXCPR report" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+    t.feed("\x1b[65;1\"p"); // DECSCL VT500, 7-bit controls
+    try testing.expectEqual(.level5, t.conformance_level);
+    try expectStatusString(&t, "\"p", "\x1bP1$r65;1\"p\x1b\\");
+    t.response.clear();
+    t.feed("\x1b[2;3H\x1b[?6n");
+    try testing.expectEqualStrings("\x1b[?2;3;1R", t.response.slice());
 }
 
 test "csi: DECRQM reports DEC private modes (DECRPM)" {

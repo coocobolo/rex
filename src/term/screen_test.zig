@@ -15,8 +15,8 @@ const Color = @import("cell.zig").Color;
 const Palette = @import("Palette.zig").Palette;
 const Cursor = @import("cell.zig").Cursor;
 const SavedCursor = @import("cell.zig").SavedCursor;
-const Charset = @import("cell.zig").Charset;
-const CharsetState = @import("cell.zig").CharsetState;
+const Set = @import("charset.zig").Set;
+const Mapping = @import("charset.zig").Mapping;
 
 const testing = std.testing;
 
@@ -4155,7 +4155,7 @@ test "saveCursor/restoreCursor: charset state restored" {
     s.cursor.charset = .{};
     s.restoreCursor();
 
-    try testing.expectEqual(Charset.dec_special, s.cursor.charset.g0);
+    try testing.expectEqual(Set.dec_special, s.cursor.charset.g0);
     try testing.expectEqual(@as(u2, 1), s.cursor.charset.gl);
 }
 
@@ -5326,9 +5326,23 @@ test "singleShift2: consumed after one putChar" {
     s.putChar('j'); // 'j' = '┘' via G2 (dec_special)
 
     // single_shift must be cleared after the character was consumed
-    try testing.expectEqual(CharsetState.no_shift, s.cursor.charset.ss);
+    try testing.expectEqual(Mapping.no_shift, s.cursor.charset.ss);
     // GL is still G0 (unchanged)
     try testing.expectEqual(@as(u2, 0), s.cursor.charset.gl);
+}
+
+test "putChar: a non-GL codepoint leaves a single shift pending" {
+    const alloc = testing.allocator;
+    var s = try altScreen(alloc);
+    defer s.destroy(alloc);
+
+    s.designateCharset(2, .dec_special);
+    s.singleShift2();
+    s.putChar(0x00E9); // outside 0x20..0x7E; the shift stays pending
+    try testing.expect(s.cursor.charset.hasSingleShift());
+    s.putChar('j');
+    try testing.expectEqual(Mapping.no_shift, s.cursor.charset.ss);
+    try testing.expectEqual(@as(u32, '┘'), s.cellAt(0, 1).codepoint);
 }
 
 test "singleShift3: consumed after one putChar" {
@@ -5342,7 +5356,7 @@ test "singleShift3: consumed after one putChar" {
     s.putChar('j'); // 'j' = '┘' via G2 (dec_special)
 
     // single_shift must be cleared after the character was consumed
-    try testing.expectEqual(CharsetState.no_shift, s.cursor.charset.ss);
+    try testing.expectEqual(Mapping.no_shift, s.cursor.charset.ss);
     // GL is still G0 (unchanged)
     try testing.expectEqual(@as(u2, 0), s.cursor.charset.gl);
 }
@@ -5353,7 +5367,7 @@ test "designateCharset: G0 = dec_special" {
     defer s.destroy(alloc);
 
     s.designateCharset(0, .dec_special);
-    try testing.expectEqual(Charset.dec_special, s.cursor.charset.slot(0));
+    try testing.expectEqual(Set.dec_special, s.cursor.charset.slot(0));
 }
 
 test "designateCharset: G1 = ascii" {
@@ -5363,7 +5377,7 @@ test "designateCharset: G1 = ascii" {
 
     s.designateCharset(1, .dec_special);
     s.designateCharset(1, .ascii); // overwrite
-    try testing.expectEqual(Charset.ascii, s.cursor.charset.slot(1));
+    try testing.expectEqual(Set.ascii, s.cursor.charset.slot(1));
 }
 
 test "designateCharset: does not change gl or gr" {
@@ -5435,7 +5449,7 @@ test "putChar: charset state saved and restored with cursor" {
 
     s.restoreCursor(); // should restore GL = G1, G1 = dec_special
     try testing.expectEqual(@as(u2, 1), s.cursor.charset.gl);
-    try testing.expectEqual(Charset.dec_special, s.cursor.charset.slot(1));
+    try testing.expectEqual(Set.dec_special, s.cursor.charset.slot(1));
 }
 
 test "putChar: ASCII write advance cursor" {
@@ -5663,7 +5677,7 @@ test "putChar: SS2 applies G2 for one char then reverts to GL" {
     try testing.expectEqual(@as(u21, '┘'), s.cellAt(0, 0).codepoint);
 
     // single_shift must be cleared after consumption
-    try testing.expectEqual(CharsetState.no_shift, s.cursor.charset.ss);
+    try testing.expectEqual(Mapping.no_shift, s.cursor.charset.ss);
 
     // next char uses GL (GL = ASCII) again
     s.putChar('j');
@@ -5686,7 +5700,7 @@ test "putChar: SS3 applies G3 for one char then reverts to GL" {
     try testing.expectEqual(@as(u21, '┘'), s.cellAt(0, 0).codepoint);
 
     // single_shift must be cleared after consumption
-    try testing.expectEqual(CharsetState.no_shift, s.cursor.charset.ss);
+    try testing.expectEqual(Mapping.no_shift, s.cursor.charset.ss);
 
     // next char uses GL (GL = ASCII) again
     s.putChar('j');
@@ -5703,14 +5717,14 @@ test "putChar: single_shift=no_shift means no override (sentinel check)" {
     s.shiftIn();
 
     // Explicitly confirm no single-shift is pending.
-    s.cursor.charset.ss = CharsetState.no_shift;
+    s.cursor.charset.ss = Mapping.no_shift;
 
     s.putChar('j');
     // GL (G0=ASCII) used, no translation.
     try testing.expectEqual(@as(u21, 'j'), s.cellAt(0, 0).codepoint);
 }
 
-test "putChar: UK charset translates '#' to '£'" {
+test "putChar: UK charset translates '#' to '£' only with uk_pound" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
     defer s.destroy(alloc);
@@ -5719,7 +5733,10 @@ test "putChar: UK charset translates '#' to '£'" {
     s.shiftIn();
 
     s.putChar('#');
-    try testing.expectEqual(@as(u21, '£'), s.cellAt(0, 0).codepoint);
+    try testing.expectEqual(@as(u21, '#'), s.cellAt(0, 0).codepoint);
+    s.uk_pound = true;
+    s.putChar('#');
+    try testing.expectEqual(@as(u21, '£'), s.cellAt(0, 1).codepoint);
 }
 
 test "putChar: cell inherits cursor.attr" {
@@ -6184,7 +6201,7 @@ test "softReset: charset reset to default" {
 
     s.softReset();
 
-    try testing.expectEqualDeep(CharsetState{}, s.cursor.charset);
+    try testing.expectEqualDeep(Mapping{}, s.cursor.charset);
 }
 
 test "softReset: insert mode cleared" {

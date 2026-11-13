@@ -5,7 +5,7 @@ const std = @import("std");
 const Attr = @import("cell.zig").Attr;
 const AttrFlags = @import("cell.zig").AttrFlags;
 const Colors = @import("Style.zig");
-const CharsetState = @import("charset.zig").CharsetState;
+const Mapping = @import("charset.zig").Mapping;
 
 pub const Cursor = @This();
 
@@ -73,7 +73,7 @@ origin: bool = false,
 /// Active visual style and blink mode.
 style: Style = .default,
 /// Active character set mapping state (G0-G3 slots and single-shift).
-charset: CharsetState = .{},
+charset: Mapping = .{},
 
 pub fn position(self: *const Cursor) struct { u16, u16 } {
     return .{ self.row, self.col };
@@ -92,7 +92,7 @@ pub const Saved = struct {
     /// stale by DECRC, which interns the colors again.
     flags: AttrFlags = .{},
     colors: Colors = .default,
-    charset: CharsetState = .{},
+    charset: Mapping = .{},
     /// Whether DECSC, DECSET 1048 or 1049 has saved a cursor here since the
     /// last reset; DECRQM 1048 reports it, as xterm does (`cursor.c`
     /// CursorSave2, `misc.c` srm_SAVE_CURSOR).

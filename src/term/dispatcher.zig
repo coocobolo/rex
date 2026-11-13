@@ -7,7 +7,7 @@ const std = @import("std");
 
 const Parameter = @import("../vt/parser.zig").Parameter;
 const Terminal = @import("term.zig").Terminal;
-const Charset = @import("cell.zig").Charset;
+const Set = @import("charset.zig").Set;
 const Option = @import("term.zig").Option;
 const CellPosition = @import("term.zig").CellPosition;
 const Palette = @import("Palette.zig").Palette;
@@ -84,28 +84,34 @@ pub const Escape = struct {
             0x2540 => term.input.encoding = .latin1, // ESC % @ (ISO Latin-1)
             0x2547 => term.input.encoding = .utf8, // ESC % G (UTF-8 mode)
 
-            // ESC ( ) * + Charset designation
-            0x2800...0x28FF => term.active().designateCharset(0, Charset.charsetFromByte(final)),
-            0x2900...0x29FF => term.active().designateCharset(1, Charset.charsetFromByte(final)),
-            0x2A00...0x2AFF => term.active().designateCharset(2, Charset.charsetFromByte(final)),
-            0x2B00...0x2BFF => term.active().designateCharset(3, Charset.charsetFromByte(final)),
+            // ESC ( ) * + designate a 94-set, including the second
+            // intermediate of `"`, `%`, and `&`. ESC - . / designate a
+            // 96-set. Which finals count, at which level, and when the
+            // slot becomes ASCII instead: `Set.designation94`.
+            0x2800...0x28FF => designate94(option, term, 0, intermediates, final),
+            0x2900...0x29FF => designate94(option, term, 1, intermediates, final),
+            0x2A00...0x2AFF => designate94(option, term, 2, intermediates, final),
+            0x2B00...0x2BFF => designate94(option, term, 3, intermediates, final),
+            0x2D00...0x2DFF => if (intermediates.len == 1) designate96(option, term, 1, final),
+            0x2E00...0x2EFF => if (intermediates.len == 1) designate96(option, term, 2, final),
+            0x2F00...0x2FFF => if (intermediates.len == 1) designate96(option, term, 3, final),
 
-            // - . / : Designate G1/G2/G3 96-character sets (VT300)
-            0x2D00...0x2DFF => term.active().designateCharset(1, Charset.charsetFromByte96(final)),
-            0x2E00...0x2EFF => term.active().designateCharset(2, Charset.charsetFromByte96(final)),
-            0x2F00...0x2FFF => term.active().designateCharset(3, Charset.charsetFromByte96(final)),
-
-            else => {
-                // escape control sequences that need > 1 intermediates
-                // ESC ( " > (DEC Greek)
-                // ESC ( % 2 (Turkish) have two intermediate bytes — ( and "
-                // multi-byte-intermediate charset (VT500 Greek/Turkish/Hebrew)
-
-                // otherwise, unrecognized; silently ignore per ECMA-48 S6.6
-            },
+            else => {}, // unrecognized; ignore (ECMA-48)
         }
     }
 };
+
+fn designate94(comptime option: Option, term: *Terminal(option), slot: u2, intermediates: []const u8, final: u8) void {
+    const level = term.conformance_level.number();
+    const cs = Set.designation94(intermediates, final, level, term.mode.nrc) orelse return;
+    term.active().designateCharset(slot, cs);
+}
+
+fn designate96(comptime option: Option, term: *Terminal(option), slot: u2, final: u8) void {
+    const level = term.conformance_level.number();
+    const cs = Set.designation96(final, level, term.mode.nrc) orelse return;
+    term.active().designateCharset(slot, cs);
+}
 
 /// Handle C0 control characters (bytes 0x00–0x1F) and DEL (0x7F).
 ///
@@ -135,6 +141,8 @@ pub const C0 = struct {
             },
             0x0E => term.active().shiftOut(), // SO | GL = G1
             0x0F => term.active().shiftIn(), // SI | GL = G0
+            0x8E => term.active().singleShift2(), // SS2 (C1)
+            0x8F => term.active().singleShift3(), // SS3 (C1)
             0x18, 0x1A => term.input.abortSequence(term.active()),
             0x7F => {}, // DEL
             else => {}, // other C0

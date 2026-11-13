@@ -1,16 +1,12 @@
 //! Cell-level terminal types: attributes, underline styles, the packed
 //! `Cell` stored in every screen row, and re-exports of decomposed modules
-//! (Color, Charset, Cursor, Style).
+//! (Color, Cursor, Style). Set and Mapping stay in `charset.zig`.
 
 const std = @import("std");
 
 // Re-exports from decomposed pure modules
 pub const Color = @import("../color/color.zig").Color;
 pub const Rgb = @import("../color/Rgb.zig");
-
-pub const charset = @import("charset.zig");
-pub const Charset = charset.Charset;
-pub const CharsetState = charset.CharsetState;
 
 pub const Cursor = @import("Cursor.zig").Cursor;
 pub const SavedCursor = Cursor.Saved;

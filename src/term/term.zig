@@ -16,7 +16,6 @@ const CellKind = @import("cell.zig").Kind;
 const Rgb = Color.Rgb;
 const Frame = @import("Frame.zig").Frame;
 
-const Charset = @import("cell.zig").Charset;
 const Screen = @import("screen.zig").Screen;
 const dispatcher = @import("dispatcher.zig");
 const sgr = @import("sgr.zig");
@@ -72,7 +71,7 @@ pub const Reply = union(enum) {
     /// CPR (DSR 6). Under DECOM the row counts from the top margin.
     cursor_position: CellPosition,
     /// DECXCPR (CSI ? 6 n): as CPR, with the DEC private marker and, at
-    /// level 4, the page number 1 (xterm, VT420).
+    /// level 4 and up, the page number 1 (xterm, VT420).
     dec_cursor_position: CellPosition,
     /// XTVERSION (CSI > q): DCS > | name version ST.
     xtversion,
@@ -150,6 +149,8 @@ pub const Mode = struct {
     column_132: bool = false,
     /// CSI ? 40 h: allow DECCOLM to switch columns.
     allow_column_132: bool = true,
+    /// DECNRCM (CSI ? 42 h): accept NRC designations. Off, they are ignored.
+    nrc: bool = false,
 
     const Self = @This();
 
@@ -420,8 +421,15 @@ pub const ConformanceLevel = enum(u8) {
     level2 = 62,
     /// VT300.
     level3 = 63,
-    /// VT400. Accepted, with no level 4 features yet.
+    /// VT400: DECXCPR reports the page.
     level4 = 64,
+    /// VT500: also designates the VT5xx character sets.
+    level5 = 65,
+
+    /// The VT level, 1 to 5.
+    pub fn number(self: ConformanceLevel) u3 {
+        return @intCast(@intFromEnum(self) - 60);
+    }
 };
 
 /// How replies send C1 controls: S7C1T (ESC SP F) or S8C1T (ESC SP G).
@@ -906,7 +914,14 @@ pub fn Terminal(comptime option: Option) type {
         // Parser callbacks, from here to `unhook`.
 
         pub inline fn printByte(self: *Self, byte: u8) void {
-            self.active().putChar(byte);
+            // 0xA0..0xFF is an 8-bit GR graphic. UTF-8 never reaches here
+            // with a decoded codepoint; those go through putChar.
+            if (byte >= 0xA0) {
+                const screen = self.active();
+                screen.putMapped(screen.cursor.charset.translateGr(byte, screen.uk_pound));
+            } else {
+                self.active().putChar(byte);
+            }
         }
 
         pub inline fn print(self: *Self, bytes: []const u8) void {
@@ -1127,6 +1142,7 @@ pub fn Terminal(comptime option: Option) type {
             self.parser = .{};
             self.mode = .{};
             self.conformance_level = .level3;
+            self.syncUkPound();
             self.control_format = .s7c1t;
 
             self.input.reset();
@@ -1168,7 +1184,6 @@ pub fn Terminal(comptime option: Option) type {
             to.scroll_top = from.scroll_top;
             to.scroll_bottom = from.scroll_bottom;
             to.tab_stops = from.tab_stops;
-            to.charset_is_identity = from.charset_is_identity;
             // The pen's IDs point into the other screen's style table.
             to.internPen();
 
@@ -1215,6 +1230,7 @@ pub fn Terminal(comptime option: Option) type {
                 8 => .of(self.mode.auto_repeat), // DECARM
                 25 => .of(screen_mode.cursor_visibility), // DECTCEM
                 40 => .of(self.mode.allow_column_132),
+                42 => .of(self.mode.nrc), // DECNRCM
                 45 => .of(screen_mode.reverse_wrap),
                 47, 1047, 1049 => .of(self.active_buffer == .alternate),
                 1004 => .of(self.mode.focus_events),
@@ -1290,6 +1306,10 @@ pub fn Terminal(comptime option: Option) type {
                 },
 
                 40 => self.mode.allow_column_132 = set,
+                42 => { // DECNRCM
+                    self.mode.nrc = set;
+                    self.syncUkPound();
+                },
                 // Alternate screen (old xterm, no save/restore).
                 47 => {
                     self.switchScreen(set);
@@ -1346,7 +1366,7 @@ pub fn Terminal(comptime option: Option) type {
             }
         }
 
-        /// DECSCL (CSI Pl ; Pc " p): sets the level (61 to 64) and, above
+        /// DECSCL (CSI Pl ; Pc " p): sets the level (61 to 65) and, above
         /// level 1, the C1 format (1 is 7-bit, anything else 8-bit). It soft
         /// resets. Other levels are ignored.
         pub fn decscl(self: *Self, level: u16, param: u16) void {
@@ -1355,8 +1375,10 @@ pub fn Terminal(comptime option: Option) type {
                 62 => .level2,
                 63 => .level3,
                 64 => .level4,
+                65 => .level5,
                 else => return, // unknown level, DECSCL ignores OOR params
             };
+            self.syncUkPound();
 
             // Normalized here so feed() can route on control_format alone.
             self.control_format = if (self.conformance_level == .level1 or param == 1)
@@ -1365,6 +1387,15 @@ pub fn Terminal(comptime option: Option) type {
                 .s8c1t;
 
             self.softReset(); // DECSCL implies soft reset (DECSTR effects)
+        }
+
+        /// Tells both screens whether the UK set shows `#` as £: only with
+        /// DECNRCM or at level 1, as xterm (`charsets.c` `xtermCharSetOut`).
+        /// Call after either changes.
+        fn syncUkPound(self: *Self) void {
+            const on = self.mode.nrc or self.conformance_level == .level1;
+            self.primary.uk_pound = on;
+            self.alternate.uk_pound = on;
         }
 
         /// DECOM: sets origin mode and homes the cursor.
@@ -1545,7 +1576,7 @@ pub fn Terminal(comptime option: Option) type {
                 .status_ok => self.replyFmt(.csi, "0n", .{}),
                 .cursor_position => |at| self.replyFmt(.csi, "{d};{d}R", .{ @as(u32, at.row) + 1, @as(u32, at.col) + 1 }),
                 .dec_cursor_position => |at| switch (self.conformance_level) {
-                    .level4 => self.replyFmt(.csi, "?{d};{d};1R", .{ @as(u32, at.row) + 1, @as(u32, at.col) + 1 }),
+                    .level4, .level5 => self.replyFmt(.csi, "?{d};{d};1R", .{ @as(u32, at.row) + 1, @as(u32, at.col) + 1 }),
                     else => self.replyFmt(.csi, "?{d};{d}R", .{ @as(u32, at.row) + 1, @as(u32, at.col) + 1 }),
                 },
                 .xtversion => self.replyFmt(.dcs, ">|{s} {s}", .{ option.name, option.version }),

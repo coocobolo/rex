@@ -14,8 +14,8 @@ const Cursor = @import("cell.zig").Cursor;
 const SavedCursor = @import("cell.zig").SavedCursor;
 const Color = @import("cell.zig").Color;
 const Attr = @import("cell.zig").Attr;
-const Charset = @import("cell.zig").Charset;
-const CharsetState = @import("cell.zig").CharsetState;
+const Set = @import("charset.zig").Set;
+const Mapping = @import("charset.zig").Mapping;
 
 const Style = @import("Style.zig");
 const Option = @import("term.zig").Option;
@@ -316,9 +316,11 @@ pub fn Screen(comptime option: Option) type {
 
         // batching: bool = false,
 
-        /// updated whenever charset state changes
-        charset_is_identity: bool = true,
         row_map_is_identity: bool = false,
+        /// Whether the UK set shows `#` as £ (`Mapping.translate`): DECNRCM
+        /// set or level 1. Both live in the Terminal, which keeps this in
+        /// step; it is here because printing happens below it.
+        uk_pound: bool = false,
 
         /// Net number of lines the ring head has advanced (full-screen
         /// scroll up) since screen creation. Region scrolls and reverse
@@ -514,22 +516,20 @@ pub fn Screen(comptime option: Option) type {
 
         /// Single Shift 2 (SS2 / ESC N): use G2 for the next character only.
         ///
-        /// Overrides GL for exactly one printable character, then reverts.
-        /// `CharsetState.translate` consumes `single_shift` on the first call after
-        /// this is set. Does not alter the persistent `gl` mapping.
+        /// Overrides GL for exactly one GL graphic (0x20..0x7E), then reverts.
+        /// `Mapping.translate` consumes the shift on that character.
+        /// Does not alter the persistent `gl` mapping.
         pub fn singleShift2(self: *Self) void {
             self.cursor.charset.ss = 2;
-            self.charset_is_identity = false;
         }
 
         /// Single Shift 3 (SS3 / ESC O): use G3 for the next character only.
         ///
-        /// Overrides GL for exactly one printable character, then reverts.
-        /// `CharsetState.translate` consumes `single_shift` on the first call after
-        /// this is set. Does not alter the persistent `gl` mapping.
+        /// Overrides GL for exactly one GL graphic (0x20..0x7E), then reverts.
+        /// `Mapping.translate` consumes the shift on that character.
+        /// Does not alter the persistent `gl` mapping.
         pub fn singleShift3(self: *Self) void {
             self.cursor.charset.ss = 3;
-            self.charset_is_identity = false;
         }
 
         /// Locking shift: set GL or GR to the given slot (0–3 = G0–G3).
@@ -538,10 +538,9 @@ pub fn Screen(comptime option: Option) type {
                 .gl => self.cursor.charset.gl = slot,
                 .gr => self.cursor.charset.gr = slot,
             }
-            self.charset_is_identity = self.cursor.charset.isIdentity();
         }
 
-        /// Designate Charset (ESC ( X / ESC ) X / ESC * X / ESC + X).
+        /// Designate a set (ESC ( X / ESC ) X / ESC * X / ESC + X).
         ///
         /// Assigns charset `cs` to slot `slot`:
         ///   0 = G0  (ESC ( X)
@@ -552,10 +551,9 @@ pub fn Screen(comptime option: Option) type {
         /// Does not change the active GL/GR mapping — call `shiftIn`/`shiftOut`
         /// or `singleShift2`/`singleShift3` to activate the newly designated charset.
         /// The new designation is saved/restored by `saveCursor`/`restoreCursor`
-        /// because `CharsetState` is part of `Cursor`.
-        pub fn designateCharset(self: *Self, slot: u2, cs: Charset) void {
+        /// because `Mapping` is part of `Cursor`.
+        pub fn designateCharset(self: *Self, slot: u2, cs: Set) void {
             self.cursor.charset.setSlot(slot, cs);
-            self.charset_is_identity = self.cursor.charset.isIdentity();
         }
 
         pub fn setLineAttr(self: *Self, attr: LineAttr) void {
@@ -820,7 +818,11 @@ pub fn Screen(comptime option: Option) type {
         /// designating methods (designateCharset, shiftIn, shiftOut, singleShift2, singleShift3)
         /// for the corresponding escape sequences.
         pub inline fn putChar(self: *Self, cp: u21) void {
-            const translated = self.translate(cp);
+            self.putMapped(self.translate(cp));
+        }
+
+        /// Write a codepoint that has already been through GL or GR.
+        pub inline fn putMapped(self: *Self, translated: u21) void {
             const kind: CellKind = switch (width(translated)) {
                 .wide => .wide_left,
                 // Unassigned and other non-printing code points still take
@@ -866,27 +868,19 @@ pub fn Screen(comptime option: Option) type {
         }
 
         /// Maps `cp` through the active charset (GL, or a pending single
-        /// shift) and ends the single shift, which applies to one character.
+        /// shift). The shift ends only when `cp` is a GL graphic.
         inline fn translate(self: *Self, cp: u21) u21 {
-            const translated: u21 = if (self.charset_is_identity) blk: {
+            if (self.cursor.charset.isIdentity()) {
                 @branchHint(.likely);
-                break :blk cp;
-            } else self.cursor.charset.translate(cp);
-
-            if (self.cursor.charset.ss != CharsetState.no_shift) {
-                self.cursor.charset.ss = CharsetState.no_shift;
-                self.charset_is_identity = self.cursor.charset.isIdentity(); // may become true again
+                return cp;
             }
-            return translated;
+            return self.cursor.charset.translate(cp, self.uk_pound);
         }
 
         pub inline fn putChars(self: *Self, bytes: []const u8) void {
             // Bulk path only valid when every byte maps 1:1 to a narrow ASCII cell:
             // charset identity, no pending single-shift, no insert-mode shifting.
-            if (self.charset_is_identity and
-                self.cursor.charset.ss == CharsetState.no_shift and
-                !self.mode.insert)
-            {
+            if (self.cursor.charset.isIdentity() and !self.mode.insert) {
                 @branchHint(.likely);
                 self.putCharsFast(bytes);
                 return;
@@ -2567,7 +2561,6 @@ pub fn Screen(comptime option: Option) type {
             self.cursor.attr.colors = self.saved_cursor.colors;
             self.internPen();
             self.cursor.charset = self.saved_cursor.charset;
-            self.charset_is_identity = self.cursor.charset.isIdentity();
             // wrap_pending always cleared on restore, see doc comment.
             self.cursor.wrap_pending = false;
 
@@ -2940,7 +2933,6 @@ pub fn Screen(comptime option: Option) type {
             self.mode.reverse_wrap = false;
 
             self.saved_cursor = .{};
-            self.charset_is_identity = true;
 
             self.cached_row = max_u16;
             self.setDirtyAll();
@@ -3029,7 +3021,6 @@ pub fn Screen(comptime option: Option) type {
                 self.viewport_offset = 0;
             }
 
-            self.charset_is_identity = true;
             self.cached_row = max_u16;
             self.setDirtyAll();
             self.bump();
