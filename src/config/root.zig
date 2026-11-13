@@ -28,5 +28,6 @@ test {
     _ = @import("diagnostics_test.zig");
     _ = @import("loaded_test.zig");
     _ = @import("builtin_font.zig");
+    _ = @import("font_files.zig");
     std.testing.refAllDecls(@This());
 }

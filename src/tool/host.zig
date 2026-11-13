@@ -21,7 +21,7 @@ const Allocator = std.mem.Allocator;
 const c = @import("glfw");
 
 const dirs = @import("../dirs/root.zig");
-const builtin_font = @import("../config/builtin_font.zig");
+const font_files = @import("../config/font_files.zig");
 const kit = @import("../kit/root.zig");
 const input_key = @import("../input/key.zig");
 const gl = @import("../renderer/gl.zig");
@@ -334,16 +334,16 @@ fn openFont(gpa: Allocator, io: std.Io, argv0: []const u8, scale: f32) !KitFont 
     else |_|
         argv0;
 
-    const dir = try builtin_font.fontDir(gpa, exe);
+    const dir = try font_files.fontDir(gpa, exe);
     defer gpa.free(dir);
 
-    const regular = try std.fs.path.joinZ(gpa, &.{ dir, builtin_font.ui_regular_name });
+    const regular = try std.fs.path.joinZ(gpa, &.{ dir, font_files.ui_regular_name });
     defer gpa.free(regular);
-    const medium = try std.fs.path.joinZ(gpa, &.{ dir, builtin_font.ui_medium_name });
+    const medium = try std.fs.path.joinZ(gpa, &.{ dir, font_files.ui_medium_name });
     defer gpa.free(medium);
-    const semibold = try std.fs.path.joinZ(gpa, &.{ dir, builtin_font.ui_semibold_name });
+    const semibold = try std.fs.path.joinZ(gpa, &.{ dir, font_files.ui_semibold_name });
     defer gpa.free(semibold);
-    const icons = try std.fs.path.joinZ(gpa, &.{ dir, builtin_font.ui_icons_name });
+    const icons = try std.fs.path.joinZ(gpa, &.{ dir, font_files.ui_icons_name });
     defer gpa.free(icons);
 
     return .create(.{

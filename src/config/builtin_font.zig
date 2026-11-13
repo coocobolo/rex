@@ -1,9 +1,7 @@
-//! Faces Rex ships and where they sit next to the executable.
-//!
-//! `zig build` installs `share/rex/fonts` to `<prefix>/share/rex/fonts`,
-//! and the executable is `<prefix>/bin/rex`. An unset `[font] file` uses
-//! the text faces there. An unset `emoji_file` uses the color emoji face.
-//! A config that sets `none` leaves that slot empty.
+//! Fills the config's unset faces with the ones Rex ships
+//! (`font_files.zig`). An unset `[font] file` uses the text faces there. An
+//! unset `emoji_file` uses the color emoji face. A config that sets `none`
+//! leaves that slot empty.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -11,25 +9,13 @@ const Allocator = std.mem.Allocator;
 const defaults = @import("default.zig");
 const Loaded = @import("Loaded.zig");
 const keys = @import("keys.zig");
+const files = @import("font_files.zig");
+const fontDir = files.fontDir;
+const regular_name = files.regular_name;
+const italic_name = files.italic_name;
+const emoji_name = files.emoji_name;
 
 const log = std.log.scoped(.config);
-
-pub const regular_name = "GoogleSansCode[wght].ttf";
-pub const italic_name = "GoogleSansCode-Italic[wght].ttf";
-pub const emoji_name = "NotoColorEmoji.ttf";
-/// The UI font's static faces, by weight (400, 500, 600).
-pub const ui_regular_name = "Inter-Regular.ttf";
-pub const ui_medium_name = "Inter-Medium.ttf";
-pub const ui_semibold_name = "Inter-SemiBold.ttf";
-/// The UI kit's icon font.
-pub const ui_icons_name = "lucide.ttf";
-
-/// Directory of the installed faces for an executable at `exe_path`.
-/// `<prefix>/bin/rex` → `<prefix>/share/rex/fonts`.
-pub fn fontDir(allocator: Allocator, exe_path: []const u8) error{ OutOfMemory, BadExePath }![]u8 {
-    const bin = std.fs.path.dirname(exe_path) orelse return error.BadExePath;
-    return std.fs.path.resolve(allocator, &.{ bin, "..", "share", "rex", "fonts" });
-}
 
 /// Path of the shipped regular face for an executable at `exe_path`.
 pub fn regularPath(allocator: Allocator, exe_path: []const u8) error{ OutOfMemory, BadExePath }![]u8 {
@@ -98,12 +84,6 @@ test "regularPath: the shipped regular face beside the executable" {
     const path = try regularPath(std.testing.allocator, "/opt/rex/bin/rex");
     defer std.testing.allocator.free(path);
     try std.testing.expectEqualStrings("/opt/rex/share/rex/fonts/" ++ regular_name, path);
-}
-
-test "fontDir: installed faces sit beside the executable" {
-    const dir = try fontDir(std.testing.allocator, "/opt/rex/bin/rex");
-    defer std.testing.allocator.free(dir);
-    try std.testing.expectEqualStrings("/opt/rex/share/rex/fonts", dir);
 }
 
 test "apply: an unset config takes the shipped faces" {
