@@ -405,6 +405,25 @@ pub fn build(b: *std.Build) !void {
     // benchmark cases depend on can't break `perf-bench.sh` unnoticed.
     test_step.dependOn(&bench.step);
 
+    // The tool windows' processes must not depend on the terminal (ADR
+    // 0009 point 8): follow every import from src/tool/ and fail on one
+    // that reaches term/ or the driver.
+    const import_check_module = b.createModule(.{
+        .root_source_file = b.path("tools/imports/check.zig"),
+        .target = b.graph.host,
+        .optimize = .Debug,
+    });
+    const import_check = b.addRunArtifact(b.addExecutable(.{
+        .name = "check-imports",
+        .root_module = import_check_module,
+    }));
+    import_check.addFileArg(b.path("src/tool/root.zig"));
+    import_check.addDirectoryArg(b.path("src/term"));
+    import_check.addDirectoryArg(b.path("src/driver"));
+    b.step("check-imports", "Check that the tool windows import nothing of the terminal").dependOn(&import_check.step);
+    test_step.dependOn(&import_check.step);
+    test_step.dependOn(tests.run(tests.add("test-import-check", import_check_module, test_filters)));
+
     // Fuzzing (see CONTRIBUTING.md, "Fuzzing"):
     //   - One target per file in src/fuzz/, each built on
     //     src/fuzz/harness.zig. Adding one is a row in `fuzz_targets`.
