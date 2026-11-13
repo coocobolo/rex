@@ -1852,7 +1852,7 @@ fn createKit(gpa: std.mem.Allocator, io: std.Io, argv0: []const u8, scale: f32, 
 }
 
 fn createKitFrom(gpa: std.mem.Allocator, exe: []const u8, scale: f32, terminal_face: [*:0]const u8) !*KitOverlay {
-    const names = rex.config.builtin_font;
+    const names = rex.config.font_files;
     const dir = try names.fontDir(gpa, exe);
     defer gpa.free(dir);
     // FreeType opens the files in `create`; the paths are not kept.
@@ -1885,7 +1885,7 @@ fn missingBuiltinFace(io: std.Io, allocator: std.mem.Allocator, argv0: []const u
         exe_buf[0..len]
     else |_|
         argv0;
-    return rex.config.builtin_font.regularPath(allocator, exe) catch rex.config.builtin_font.regular_name;
+    return rex.config.builtin_font.regularPath(allocator, exe) catch rex.config.font_files.regular_name;
 }
 
 /// Logs every config problem in full: the banner shows only the first one,

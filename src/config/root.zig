@@ -14,6 +14,7 @@ pub const Loaded = @import("Loaded.zig");
 pub const diagnostics = @import("diagnostics.zig");
 pub const paths = @import("paths.zig");
 pub const builtin_font = @import("builtin_font.zig");
+pub const font_files = @import("font_files.zig");
 
 pub const watcher = @import("watcher.zig");
 pub const Watcher = watcher.Watcher;
