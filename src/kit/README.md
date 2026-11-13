@@ -60,7 +60,7 @@ Rules that hold everywhere:
 | `memory.zig` | Per-id memory that outlives a rebuild of the view |
 | `motion.zig` | The one duration and curve every surface uses |
 | `focus.zig` | Keyboard focus order over a row or list |
-| `button.zig`, `kbd.zig`, `dialog.zig`, `sidebar.zig`, `popup.zig`, `tabs.zig`, `chart.zig` | Components |
+| `button.zig`, `kbd.zig`, `dialog.zig`, `sidebar.zig`, `popup.zig`, `tabs.zig`, `chart.zig`, `tooltip.zig` | Components |
 | `toast.zig`, `alert_dialog.zig` | Surfaces |
 
 ## Text
@@ -172,6 +172,13 @@ one column per day at a fixed height: `part` at the bottom of `total`, and,
 when a limit is given, a 1 px `border` strip at that value in every column.
 A ring, a donut, a line, an area or a radar is a later mark on the same
 numbers.
+
+### Tooltip (`tooltip.zig`)
+
+A card anchored to a node, written after the page. It has no full-window
+layer, and the card has no id, so the page under it still takes hover and
+clicks. `tooltip.line` writes an 8 px swatch, a name and a value in `xs`.
+The surface decides when the card is open.
 
 ### Popup (`popup.zig`)
 
