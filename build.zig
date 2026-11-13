@@ -405,23 +405,32 @@ pub fn build(b: *std.Build) !void {
     // benchmark cases depend on can't break `perf-bench.sh` unnoticed.
     test_step.dependOn(&bench.step);
 
-    // The tool windows' processes must not depend on the terminal (ADR
-    // 0009 point 8): follow every import from src/tool/ and fail on one
-    // that reaches term/ or the driver.
+    // Folders a root must never reach through its imports, followed file by
+    // file. The tool windows' processes must not depend on the terminal
+    // (ADR 0009 point 8), and the config must load without the terminal,
+    // the renderer or the UI, so the tool windows can read it. One row per
+    // root.
+    const import_rules = .{
+        .{ "src/tool/root.zig", .{ "src/term", "src/driver" } },
+        .{ "src/config/root.zig", .{ "src/term", "src/driver", "src/renderer", "src/termio", "src/ui", "src/freetype", "src/builtin" } },
+    };
     const import_check_module = b.createModule(.{
         .root_source_file = b.path("tools/imports/check.zig"),
         .target = b.graph.host,
         .optimize = .Debug,
     });
-    const import_check = b.addRunArtifact(b.addExecutable(.{
+    const import_check_exe = b.addExecutable(.{
         .name = "check-imports",
         .root_module = import_check_module,
-    }));
-    import_check.addFileArg(b.path("src/tool/root.zig"));
-    import_check.addDirectoryArg(b.path("src/term"));
-    import_check.addDirectoryArg(b.path("src/driver"));
-    b.step("check-imports", "Check that the tool windows import nothing of the terminal").dependOn(&import_check.step);
-    test_step.dependOn(&import_check.step);
+    });
+    const import_check_step = b.step("check-imports", "Check that the tool windows and the config import nothing of the terminal");
+    inline for (import_rules) |rule| {
+        const run = b.addRunArtifact(import_check_exe);
+        run.addFileArg(b.path(rule[0]));
+        inline for (rule[1]) |dir| run.addDirectoryArg(b.path(dir));
+        import_check_step.dependOn(&run.step);
+    }
+    test_step.dependOn(import_check_step);
     test_step.dependOn(tests.run(tests.add("test-import-check", import_check_module, test_filters)));
 
     // Fuzzing (see CONTRIBUTING.md, "Fuzzing"):
