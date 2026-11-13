@@ -63,6 +63,23 @@ Rules that hold everywhere:
 | `button.zig`, `kbd.zig`, `dialog.zig`, `sidebar.zig`, `popup.zig` | Components |
 | `toast.zig`, `alert_dialog.zig` | Surfaces |
 
+## Text
+
+Sizes are logical pixels and do not follow the system font size. A text
+is `.proportional` unless it asks for `.tabular`: each ASCII digit then
+sits in one cell as wide as the widest digit, and is not kerned.
+
+| Style | Size / line | Weight | Tracking | Used for |
+| --- | --- | --- | --- | --- |
+| `xs` | 12 / 16 | medium | 0 | key caps, captions |
+| `sm` | 14 / 20 | regular | 0 | body text |
+| `sm_medium` | 14 / 20 | medium | 0 | buttons, toast titles |
+| `base` | 16 / 24 | regular | 0 | settings body |
+| `lg_semibold` | 18 / 28 | semibold | 0 | dialog titles |
+| `xl_semibold` | 24 / 32 | semibold | 0 | card values |
+| `xxl_semibold` | 56 / 64 | semibold | −1 | compact timer |
+| `xxxl_semibold` | 80 / 88 | semibold | −2 | timer |
+
 ## Layout
 
 A box places its children in a row or a column, with padding around them and
