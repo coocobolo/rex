@@ -8,6 +8,7 @@ zig-pkg
 !/CONTRIBUTING.md
 !scripts/README.md
 !src/driver/README.md
+!src/kit/README.md
 !src/builtin/wellbeing/README.md
 !testdata/font/README.md
 !assets/fonts/README.md

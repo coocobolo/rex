@@ -1,0 +1,182 @@
+# UI kit
+
+The kit draws Rex's own interface: toasts and dialogs in the terminal window
+today, whole tool windows later. The decision behind it is ADR 0009
+(`docs/decisions/`). This page is the working spec: the model, the components
+and how to add one.
+
+The kit imports nothing outside this folder. It does not know about the
+terminal, the driver or OpenGL, so it runs in any process and its tests need
+no display. Painting is `renderer/KitPainter.zig`; text is measured through
+the `text.Measurer` a caller passes in.
+
+## The model
+
+A **surface** is one whole piece of interface: the toast stack, an alert
+dialog. It has three parts.
+
+- **State**: one plain struct with everything about the surface, including
+  which control is hovered, pressed or focused. Modes are enums or tagged
+  unions.
+- **`update(state, event)`**: the only function that changes the state, one
+  exhaustive switch. It returns whether anything on screen changed. A redraw
+  happens only then, or while something is animating.
+- **`view(state, tree, theme)`**: writes the surface as a flat array of nodes
+  (boxes, texts, icons) into a `tree.Tree`. It is rebuilt from the state every
+  time; it never reads the previous view.
+
+A **component** is smaller than a surface and owns nothing. It is:
+
+- a **view function** the surface's view calls with the values to show
+  (`button.view(tree, theme, .{ .label = ..., .state = .hovered })`);
+- where behaviour is worth sharing, a **helper** the surface's update calls
+  (`focus.move`, `dialog.Phase.tick`);
+- for what a surface should not have to carry, a slot in a `memory.Table`
+  keyed by the node's id (where a toast was last drawn).
+
+There are no widget objects that keep their own state and call back. The
+state of a control lives in the surface that shows it, once.
+
+Rules that hold everywhere:
+
+- Nothing allocates in update, view, layout or paint. Buffers are fixed and
+  their sizes are checked at compile time (`node_max`, `line_max`); running
+  out is an error, never a silently missing node.
+- Sizes are logical pixels. They are multiplied by the display scale once and
+  snapped to physical pixels in `layout.snap`.
+- A component names tokens of `Theme`, never a color or a radius of its own.
+- A button is taken when the pointer is let go on it, not when it goes down.
+  The toast's close mark and the scrim still act on the press.
+
+## Files
+
+| File | What it holds |
+| --- | --- |
+| `Theme.zig` | Tokens: colors in a dark and a light variant, radii, the spacing step, control heights, durations |
+| `text.zig` | Text styles, the measurer interface, line wrapping |
+| `icons.zig` | Code points in the bundled icon font |
+| `tree.zig` | The node array a view writes, ids, hit-testing |
+| `layout.zig` | Rectangles for every node; logical to physical pixels |
+| `memory.zig` | Per-id memory that outlives a rebuild of the view |
+| `motion.zig` | The one duration and curve every surface uses |
+| `focus.zig` | Keyboard focus order over a row or list |
+| `button.zig`, `kbd.zig`, `dialog.zig` | Components |
+| `toast.zig`, `alert_dialog.zig` | Surfaces |
+
+## Layout
+
+A box places its children in a row or a column, with padding around them and
+a gap between them, aligned along and across its axis. A width or height is
+one of:
+
+| Size | Meaning |
+| --- | --- |
+| `fit` | As large as the content |
+| `fill` | A share of what the parent has left |
+| `fixed` | This many pixels |
+| `at_most` | This many pixels, or less in a smaller parent |
+| `at_least` | As large as the content, but not below this many pixels |
+
+Text wraps to the width it ends up with. There is no scrolling, no wrapping
+of rows and no clipping yet.
+
+## Components
+
+Names and compositions follow shadcn/ui where it has the component.
+
+### Button (`button.zig`)
+
+| | Values |
+| --- | --- |
+| Variant | `outline`, `primary`, `ghost`, `destructive` |
+| Size | `default` (36 px), `sm` (32 px) |
+| State | `normal`, `hovered`, `pressed`, `disabled` |
+| Also | `focused` draws the ring; `key_cap` shows a key after the label |
+
+The focus ring sits in a slot around the face, so a row does not shift when
+the focus moves. The button's id is on that slot. A disabled button is drawn
+at half opacity and gets neither hover nor focus from its surface.
+
+### Kbd (`kbd.zig`)
+
+```
+Kbd                  kbd.view
+KbdGroup             kbd.group
+├── Kbd
+└── Kbd
+```
+
+A key cap is at least as wide as it is tall. It only displays a key; the
+caller binds it.
+
+### Dialog (`dialog.zig`)
+
+```
+Dialog                      dialog.open .. dialog.close
+└── DialogContent           (the scrim and the card)
+    ├── DialogHeader        dialog.header
+    │   ├── DialogTitle     dialog.title
+    │   └── DialogDescription   dialog.description
+    └── DialogFooter        dialog.footer
+```
+
+There is no trigger part: what opens a dialog is an event to its surface.
+`dialog.Phase` (closed, entering, open, leaving) fades it in and out; a
+surface keeps one in its state. The card's width is an upper bound: in a
+narrower window it shrinks and keeps a 16 px margin.
+
+## Surfaces
+
+### Toast stack (`toast.zig`)
+
+After Sonner. Up to three toasts at the bottom right, the newest lowest; more
+wait their turn. Kinds: `default`, `success`, `info`, `warning`, `err`. A
+toast leaves when its time is up; the time stands still while the pointer is
+over the stack.
+
+### Alert dialog (`alert_dialog.zig`)
+
+```
+AlertDialog
+└── AlertDialogContent
+    ├── AlertDialogHeader
+    │   ├── AlertDialogMedia        Request.media, optional
+    │   ├── AlertDialogTitle        Request.title
+    │   └── AlertDialogDescription  Request.body, optional
+    └── AlertDialogFooter           one to three actions
+        ├── AlertDialogCancel       an Action with role dismiss
+        └── AlertDialogAction       an Action with role choose
+```
+
+It interrupts with one question and stays until it is answered. Choosing an
+action closes it at once and reports which; dismissing fades it out. The
+caller decides what a click on the scrim does.
+
+## Seeing it
+
+`xvfb-run -a zig build -j2 test -Dtest-filter=KitPainter -Dkit-shots=<dir>`
+writes frames of every surface as PPM files, among them
+`specimen-dark-100` and `specimen-light-100`: every component in every
+variant, size and state. Look at the specimen after any change to a
+component, and add the new variant to it (`renderer/kit_painter_test.zig`).
+
+## Adding a component
+
+1. Check shadcn/ui for the component and take its name and composition.
+2. Write it as a view function in its own file, with an `Options` struct and a
+   `node_max`. Modes that exclude each other are one enum, not several bools.
+3. If it has behaviour several surfaces need, add a helper that a surface's
+   update calls. Keep the state in the surface.
+4. Test it without a display: build a tree, lay it out, assert the nodes.
+5. Add it to the specimen sheet and to the tables above.
+
+## Planned
+
+Specified here when built, in the ticket that first uses them:
+
+- Alert (the config-error banner): Icon, AlertTitle, AlertDescription,
+  AlertAction. It stays in place until its cause is gone, which is what sets
+  it apart from a toast.
+- For the tool windows: sidebar row and section heading, checkbox, switch,
+  dropdown with its popup list, list row, text input, scroll container.
+- A focus order taken from the view, for surfaces with many controls.
