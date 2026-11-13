@@ -1,13 +1,32 @@
 const std = @import("std");
-
-const overlay_config = @import("../config/overlay.zig");
 const wc = @import("../unicode/wcwidth.zig");
+const overlay_config = @import("../config/overlay.zig");
 
-pub const IconStyle = Option.IconStyle;
+pub const IconStyle = overlay_config.IconStyle;
 
-pub const Glyphs = Option.Glyphs;
+pub const Glyphs = struct {
+    lock: ?[]const u8 = null,
+    unlock: ?[]const u8 = null,
+    coffee: ?[]const u8 = null,
+    warning: ?[]const u8 = null,
+    error_icon: ?[]const u8 = null,
+    success: ?[]const u8 = null,
+    info: ?[]const u8 = null,
+    pause: ?[]const u8 = null,
+    play: ?[]const u8 = null,
+    check: ?[]const u8 = null,
+    clock: ?[]const u8 = null,
+    settings: ?[]const u8 = null,
+    eye: ?[]const u8 = null,
+    walk: ?[]const u8 = null,
+    water: ?[]const u8 = null,
+    posture: ?[]const u8 = null,
+};
 
-pub const Option = overlay_config.Icon;
+pub const Option = struct {
+    style: IconStyle = .auto,
+    custom: Glyphs = .{},
+};
 
 /// Centralized semantic icon registry.
 /// Components reference semantic names rather than hardcoded glyphs or arbitrary emojis.

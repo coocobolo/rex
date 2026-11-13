@@ -363,17 +363,7 @@ pub const section_fields = [_]struct { Section, []const u8 }{
 /// row, in `section_fields` nor here, so adding a field is a decision. This
 /// list is also what could become configurable later.
 pub const internal = [_][]const u8{
-    // Startup and process settings, set by main.zig.
-    "blink",
-    "threading",
-    // Colors and UI tokens: a `[colors]` section later (#33).
-    "tokens",
-    // Rendering details.
-    "window.scrollbar",
-    "window.cursor",
-    "window.decoration",
-    "window.atlas",
-    "window.selection",
+    // Selection details.
     "selection.mouse_double_click_interval_ms",
     "selection.classifier.join",
     "selection.classifier.non_ascii",
@@ -384,10 +374,8 @@ pub const internal = [_][]const u8{
     "window.toast.action_prompt",
     "window.toast.action_margin",
     "window.banner.dismiss_str",
-    "window.icon",
     "window.modal.icon_style",
     "window.quit_dialog",
-    "window.button",
     // Wellbeing settings not exposed yet (some come back from keys.retired).
     "wellbeing.privacy.state_dir",
     "wellbeing.privacy.state_filename",

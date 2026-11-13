@@ -4,8 +4,6 @@
 
 const std = @import("std");
 
-const window_config = @import("../config/window.zig");
-
 const Allocator = std.mem.Allocator;
 
 const log = std.log.scoped(.atlas);
@@ -90,7 +88,22 @@ pub const PackingState = struct {
     }
 };
 
-pub const Option = window_config.Atlas;
+/// Atlas texture size in pixels, shared by the gray and color
+/// textures. It has no effect on rendering quality or window size; it
+/// only bounds how many distinct glyphs fit before packing fails with
+/// `error.AtlasFull`, and how much GPU memory the atlas takes (5 bytes
+/// per pixel for both textures, 20 MiB at 2048x2048).
+///
+/// 1024x1024 is usually enough for gray glyphs (ASCII plus common
+/// Unicode). Color emoji are larger (typically 64x64 or 128x128 per
+/// glyph), so the color atlas fills faster. On HiDPI the cell height
+/// is 32-40px instead of 16-20px, so both default to 2048x2048.
+pub const Option = struct {
+    /// Default 2048. Clamped to 1 and GL_MAX_TEXTURE_SIZE.
+    width: u16 = 2048,
+    /// Default 2048. Clamped to 1 and GL_MAX_TEXTURE_SIZE.
+    height: u16 = 2048,
+};
 
 pub const face_count = @typeInfo(FaceKind).@"enum".fields.len;
 pub const span_count = @typeInfo(Span).@"enum".fields.len;

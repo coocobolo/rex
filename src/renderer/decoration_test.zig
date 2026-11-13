@@ -90,16 +90,16 @@ test "Metrics.resolve: the curly wave never leaves the cell" {
     try testing.expectEqual(10, m.curly_y);
 }
 
-test "skipInkBits: one bit per UnderlineStyle value, none when off" {
-    try testing.expectEqual(0b111110, Decoration.skipInkBits(.{}));
-    try testing.expectEqual(0, Decoration.skipInkBits(.{ .enabled = false }));
+test "SkipInk.styleBits: one bit per UnderlineStyle value, none when off" {
+    try testing.expectEqual(0b111110, (Decoration.SkipInk{}).styleBits());
+    try testing.expectEqual(0, (Decoration.SkipInk{ .enabled = false }).styleBits());
     const only_curly: Decoration.SkipInk = .{ .styles = .{
         .single = false,
         .double = false,
         .dotted = false,
         .dashed = false,
     } };
-    try testing.expectEqual(0b1000, Decoration.skipInkBits(only_curly));
+    try testing.expectEqual(0b1000, only_curly.styleBits());
 }
 
 test "Metrics.resolve: ink gap and minimum segment follow the underline" {

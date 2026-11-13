@@ -13,21 +13,17 @@ const font_config = @import("font.zig");
 const Binding = @import("../input/binding.zig").Binding;
 const WellbeingOption = @import("wellbeing.zig").Wellbeing;
 const Theme = @import("../color/Theme.zig");
-const Tokens = @import("../color/Tokens.zig").Tokens;
 const Classifier = @import("../unicode/Classifier.zig");
 const PlainVar = @import("../env/root.zig").PlainVar;
 const Motion = @import("../kit/motion.zig").Mode;
 const ColorScheme = @import("../kit/Theme.zig").ColorScheme;
 
-blink: Blink,
 font: Font,
 keymap: []const Binding,
 wellbeing: WellbeingOption = .{},
 shell: Shell = .{},
 ui: Ui = .{},
 theme: Theme,
-/// Optional handcrafted design tokens override for custom surface and border styling.
-tokens: ?Tokens = null,
 window: Window,
 scroll: struct {
     /// Lines moved by the scroll_up and scroll_down actions.
@@ -39,9 +35,6 @@ selection: Selection,
 clipboard: Clipboard = .{},
 /// Stores list of plain environment variable using "KEY=VALUE" format
 environments: []const PlainVar,
-/// Threading configuration: .single for in-loop synchronous execution,
-/// or .multi for dedicated background worker thread with wait-free triple buffer.
-threading: Threading = .{},
 
 /// What programs may do with the clipboard through OSC 52 (ADR 0006).
 pub const Clipboard = struct {
@@ -52,16 +45,6 @@ pub const Clipboard = struct {
     osc52_read: Policy = .deny,
 
     pub const Policy = enum { allow, deny };
-};
-
-/// Blink timing of SGR 5 and SGR 6 text.
-pub const Blink = struct {
-    /// Half period of SGR 5 blink, in ms. 0 turns blinking off.
-    half_period_ms: u64 = 500,
-    /// Half period of SGR 6 rapid blink, in ms. 0 turns it off.
-    rapid_half_period_ms: u64 = 250,
-
-    pub const default: Blink = .{};
 };
 
 /// The window and the UI drawn in it.
@@ -80,19 +63,8 @@ pub const Window = struct {
     platform: window_types.Platform = .auto,
     background: window_types.Background,
     bell: Bell = .{},
-    scrollbar: window_types.Scrollbar,
-    cursor: window_types.Cursor,
-    /// Positions, thicknesses and looks of underline, strikethrough
-    /// and overline. The defaults follow the font.
-    decoration: window_types.Decoration = .{},
     /// Opacity of SGR 2 (dim) text, 0.0 to 1.0.
     dim_alpha: f32 = 0.5,
-    /// Glyph atlas texture size, default 2048x2048. Bigger fits more
-    /// distinct glyphs (emoji, CJK, large fonts) before it is full.
-    atlas: window_types.Atlas = .{},
-    /// How a selection looks (`window.selection`), not how it behaves
-    /// (`selection`).
-    selection: window_types.SelectionStyle,
     /// Initial window size, in logical pixels (pixels at 100% scale).
     /// On X11 the window grows by the display scale when it's created;
     /// on Wayland the compositor scales it.
@@ -109,14 +81,10 @@ pub const Window = struct {
     toast: overlay.Toast = .{},
     /// Configuration diagnostic notification banner options.
     banner: overlay.Banner = .{},
-    /// Semantic icon rendering options.
-    icon: overlay.Icon = .{},
     /// Modal dialog options including dimensions, dimming, and default focus.
     modal: overlay.Modal = .{},
     /// Copy and labels for the quit confirmation modal dialog.
     quit_dialog: QuitDialog = .{},
-    /// Interactive button primitive options.
-    button: overlay.Button = .{},
     /// What closing the window does.
     on_close: OnClose = .ask_if_running,
 
@@ -146,9 +114,6 @@ pub const Window = struct {
     /// Neutral values: every option's own preset.
     pub const default: Window = .{
         .background = .default,
-        .scrollbar = .default,
-        .cursor = .default,
-        .selection = .default,
     };
 };
 
@@ -235,14 +200,4 @@ pub const QuitDialog = struct {
     line2: []const u8 = "Close this window and terminate the session?",
     confirm_label: []const u8 = "Quit terminal",
     cancel_label: []const u8 = "Cancel and stay",
-};
-
-pub const Threading = struct {
-    mode: Mode = .multi,
-    sync_output_timeout_ms: u32 = 150,
-
-    pub const Mode = enum {
-        single,
-        multi,
-    };
 };

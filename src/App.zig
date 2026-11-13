@@ -1,7 +1,6 @@
 const App = @This();
 
 const std = @import("std");
-const root = @import("root");
 const builtin = @import("builtin");
 
 const log = std.log.scoped(.app);
@@ -83,10 +82,17 @@ const Config = rex.config.Config;
 const Loaded = rex.config.Loaded;
 const diagnostics = rex.config.diagnostics;
 
-/// Grid limits and identity: 200 rows plus 3896 lines of scrollback fill
-/// a 4096 row ring, so it wastes nothing (see `TerminalOption.optimized`).
-/// They size the screen at compile time; no key sets them.
-pub const default_terminal_option: TerminalOption = .{
+/// Half periods of SGR 5 blink and SGR 6 rapid blink, in ms.
+const blink_half_period_ms = 500;
+const rapid_blink_half_period_ms = 250;
+/// How long a synchronized update (DEC mode 2026) may hold frames back.
+const sync_output_timeout_ms = 150;
+
+/// Grid limits and identity the screen, frame and renderer types are
+/// built with, at compile time; no key sets them. 200 rows plus 3896 lines
+/// of scrollback fill a 4096 row ring, so it wastes nothing (see
+/// `TerminalOption.optimized`).
+pub const terminal_option: TerminalOption = .{
     .max_rows = 200,
     .max_cols = 220,
     .tab_width = 8,
@@ -94,13 +100,6 @@ pub const default_terminal_option: TerminalOption = .{
     .name = "rex",
     .version = "0.1.0",
 };
-
-/// Terminal limits the screen, frame and renderer types are built
-/// with: the root `rex_terminal_option` when declared, else the defaults.
-pub const terminal_option: TerminalOption = if (@hasDecl(root, "rex_terminal_option"))
-    root.rex_terminal_option
-else
-    default_terminal_option;
 
 pub const FrameBuilderType = FrameBuilder(terminal_option);
 pub const FrameType = rex.terminal.Frame(terminal_option);
@@ -542,12 +541,12 @@ pub fn init(
     var rasterizer: Rasterizer = try .create(gpa, font_pixels);
     errdefer rasterizer.destroy(gpa);
 
-    var atlas: Atlas = try .create(gpa, active_config.window.atlas);
+    var atlas: Atlas = try .create(gpa, .{});
     errdefer atlas.destroy();
 
     var frame_builder: FrameBuilderType = try .init(gpa, .{
         .dim_alpha = active_config.window.dim_alpha,
-        .decoration = active_config.window.decoration,
+        .decoration = .{},
     });
     errdefer frame_builder.deinit(gpa);
 
@@ -556,10 +555,10 @@ pub fn init(
     var renderer = try RendererType.init(.{
         .background = active_config.window.background,
         .font_metrics = rasterizer.metrics,
-        .cursor = active_config.window.cursor,
-        .decoration = active_config.window.decoration,
-        .scrollbar = active_config.window.scrollbar,
-        .selection = active_config.window.selection,
+        .cursor = .default,
+        .decoration = .{},
+        .scrollbar = .default,
+        .selection = .default,
     });
     errdefer renderer.deinit();
 
@@ -578,7 +577,6 @@ pub fn init(
     } else {};
     errdefer if (latency_trace.enabled) gpa.free(latency_path);
     if (latency_trace.enabled) {
-        if (active_config.threading.mode == .single) log.warn("latency trace: the single-threaded driver isn't traced", .{});
         log.info("latency trace: writing to {s} on exit", .{latency_path});
     }
 
@@ -589,13 +587,11 @@ pub fn init(
     };
     const driver_options: rex.driver.Options = .{
         .theme = active_config.theme,
-        .sync_output_timeout_ms = active_config.threading.sync_output_timeout_ms,
+        .sync_output_timeout_ms = sync_output_timeout_ms,
         .term_name = term_name,
     };
-    var driver: Driver = switch (active_config.threading.mode) {
-        .single => .{ .single = try SingleDriverType.init(gpa, io, pty, driver_options) },
-        .multi => .{ .threaded = try ThreadedDriverType.create(gpa, io, pty, driver_options, latency) },
-    };
+    // The single-threaded driver is for tests.
+    var driver: Driver = .{ .threaded = try ThreadedDriverType.create(gpa, io, pty, driver_options, latency) };
     errdefer driver.deinit();
 
     const clipboard_buf = try gpa.create([terminal_option.max_clipboard_bytes + 1]u8);
@@ -637,8 +633,8 @@ pub fn init(
         .window = win,
         .frame_latch = .init(Window.primaryRefreshHz()),
         .background_color = .{ background_color.r, background_color.g, background_color.b, background_alpha },
-        .blink = .{ .period_ms = active_config.blink.half_period_ms },
-        .blink_rapid = .{ .period_ms = active_config.blink.rapid_half_period_ms },
+        .blink = .{ .period_ms = blink_half_period_ms },
+        .blink_rapid = .{ .period_ms = rapid_blink_half_period_ms },
         .dirs = dirs,
         .argv0 = argv0,
         .allocator = gpa,
@@ -899,7 +895,7 @@ fn renderFrame(self: *App) !bool {
 
     self.hotspots.clear();
 
-    const tokens = rex.color.Tokens.fromThemeWithOverride(self.config.theme, self.config.tokens);
+    const tokens = rex.color.Tokens.fromTheme(self.config.theme);
 
     if (self.quit_confirm_open) {
         self.wellbeing_overlay.bg_buffer.clearRetainingCapacity();
@@ -946,7 +942,7 @@ fn renderFrame(self: *App) !bool {
             tokens,
             overlaySurfaces(&self.config.window),
             self.config.window.toast,
-            self.config.window.icon,
+            .{},
             self.config.window.modal,
             total_cols,
             total_rows,
@@ -1349,8 +1345,8 @@ pub fn notifySimple(self: *App, title: []const u8, description: []const u8, vari
         .warning => .warning,
         .critical => .error_icon,
     };
-    const icon_str = Icon.getGlyphWithOption(icon_id, self.config.window.icon);
-    const icon_style = Icon.resolveStyle(self.config.window.icon.style);
+    const icon_str = Icon.getGlyphWithOption(icon_id, .{});
+    const icon_style = Icon.resolveStyle(.auto);
     const dismiss_str = self.config.window.toast.dismiss_str orelse (if (icon_style == .ascii) "x" else "✕");
     const toast_surface = self.config.window.surfaceFor(.toast);
     _ = self.notifyToast(.{
@@ -1368,7 +1364,7 @@ pub fn notifySimple(self: *App, title: []const u8, description: []const u8, vari
         .max_cols = self.config.window.toast.max_cols,
         .margin_cols = self.config.window.toast.margin_cols,
         .margin_rows = self.config.window.toast.margin_rows,
-        .icon_style = self.config.window.icon.style,
+        .icon_style = .auto,
     });
 }
 
@@ -2782,7 +2778,7 @@ fn handleScrollbarClick(self: *App) bool {
     const frame_height: f32 = @floatFromInt(self.frame_buffer_size.height);
     const mouse_x = self.mouse_x;
     const mouse_y = self.mouse_y;
-    const option = self.config.window.scrollbar;
+    const option = self.renderer.scrollbar.option;
     const effective_width = if (self.renderer.scrollbar.hover) option.hover_width else option.width;
 
     const bar_x: f32 = frame_width - effective_width - option.gap;
@@ -2831,7 +2827,7 @@ fn scrollbarThumb(self: *const App) Scrollbar.Thumb {
     const frame = self.driver.getFrame();
     const frame_height: f32 = @floatFromInt(self.frame_buffer_size.height);
     const fracs: Scrollbar.Fractions = .of(frame.active_rows, frame.scrollback_used, frame.viewport_offset);
-    return .of(frame_height, fracs.top, fracs.height, self.config.window.scrollbar.min_thumb_height);
+    return .of(frame_height, fracs.top, fracs.height, self.renderer.scrollbar.option.min_thumb_height);
 }
 
 /// The primary screen's viewport offset for a thumb at `top_frac`.
@@ -3719,7 +3715,6 @@ test "App: a config reload starts from the defaults, in its own arena" {
     const gpa = testing.allocator;
 
     const base: Config = .{
-        .blink = .default,
         .font = .{
             .faces = .{ .regular = "/base/regular.ttf" },
             .size = 20,

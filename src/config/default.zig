@@ -15,7 +15,6 @@ const default_keymap = @import("../input/binding.zig").default_keymap;
 pub const text = @embedFile("default.conf");
 
 pub const default: Config = .{
-    .blink = .default,
     .font = .default,
     .keymap = default_keymap,
     .theme = .graphite,

@@ -7,7 +7,6 @@ const Theme = @import("../color/Theme.zig");
 /// values, the font is `/base/regular.ttf`, size 20,
 /// bounds 6 to 96, and the keymap is empty.
 pub const test_config: Config = .{
-    .blink = .default,
     .font = .{
         .faces = .{ .regular = "/base/regular.ttf" },
         .size = 20,

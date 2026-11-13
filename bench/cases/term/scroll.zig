@@ -25,7 +25,7 @@ const rows = 24;
 const cols = 80;
 
 const AltScreen = Screen(.{ .max_rows = rows, .max_cols = cols, .max_scrollback = 0 });
-const PrimaryScreen = Screen(rex.App.default_terminal_option);
+const PrimaryScreen = Screen(rex.App.terminal_option);
 
 const Direction = enum { up, down };
 
