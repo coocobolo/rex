@@ -708,7 +708,8 @@ pub fn Screen(comptime option: Option) type {
         }
 
         /// Frees every style no live cell (`liveRows`) and no pen ID refers
-        /// to. O(live cells); a full ring took about 0.5 ms.
+        /// to. O(live cells): 1.4 ms with the default ring full at 220
+        /// columns, 26 us for a 50x120 screen without history (ReleaseFast).
         fn sweepStyles(self: *Self) void {
             var in_use: Style.Table.InUse = .initEmpty();
             var rows = self.liveRows();
