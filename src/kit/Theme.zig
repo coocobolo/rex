@@ -4,8 +4,8 @@
 //! and `info` are for toast types. Sizes are logical pixels.
 //!
 //! The theme is independent of the terminal's colors. Only its variant
-//! follows the terminal: `variantFor` picks dark or light from how bright
-//! the terminal background is.
+//! can follow the terminal: with `[ui] color_scheme = auto`, `variantFor`
+//! picks dark or light from how bright the terminal background is.
 
 const std = @import("std");
 
@@ -162,6 +162,23 @@ pub const Variant = enum {
     }
 };
 
+/// The user's choice of variant (`[ui] color_scheme`).
+pub const ColorScheme = enum(u8) {
+    /// Dark or light, whichever reads well over the terminal background.
+    auto,
+    dark,
+    light,
+
+    /// The variant to draw with over `background`, an sRGB color.
+    pub fn variant(self: ColorScheme, background: [3]u8) Variant {
+        return switch (self) {
+            .auto => variantFor(background),
+            .dark => .dark,
+            .light => .light,
+        };
+    }
+};
+
 /// The variant that reads well over `background`, an sRGB color: dark
 /// below a relative luminance of 0.179, where black and white text
 /// contrast equally with it (WCAG 2.x relative luminance), else light.
@@ -178,6 +195,15 @@ fn relativeLuminance(color: [3]u8) f32 {
         out.* = if (c <= 0.04045) c / 12.92 else std.math.pow(f32, (c + 0.055) / 1.055, 2.4);
     }
     return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2];
+}
+
+test "ColorScheme: auto follows the background, the others force a variant" {
+    const white = [3]u8{ 255, 255, 255 };
+    const black = [3]u8{ 0, 0, 0 };
+    try std.testing.expectEqual(Variant.light, ColorScheme.auto.variant(white));
+    try std.testing.expectEqual(Variant.dark, ColorScheme.auto.variant(black));
+    try std.testing.expectEqual(Variant.dark, ColorScheme.dark.variant(white));
+    try std.testing.expectEqual(Variant.light, ColorScheme.light.variant(black));
 }
 
 test relativeLuminance {

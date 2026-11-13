@@ -32,6 +32,7 @@ const Classifier = @import("../unicode/Classifier.zig");
 const PlainVar = @import("../env/root.zig").PlainVar;
 const TerminalOption = @import("../term/term.zig").Option;
 const Motion = @import("../kit/motion.zig").Mode;
+const ColorScheme = @import("../kit/Theme.zig").ColorScheme;
 
 blink: Blink,
 font: Font,
@@ -95,6 +96,8 @@ pub const Blink = struct {
 pub const Ui = struct {
     /// Whether toasts and dialogs fade and slide.
     motion: Motion = .full,
+    /// Dark or light UI, or whichever reads well over the terminal.
+    color_scheme: ColorScheme = .auto,
 };
 
 pub const Window = struct {

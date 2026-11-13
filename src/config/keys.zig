@@ -293,6 +293,7 @@ pub const table = [_]Key{
     .{ .section = .@"wellbeing.privacy", .name = "track_foreground_apps", .field = "wellbeing.screen_time.track_foreground_apps" },
 
     .{ .section = .ui, .name = "motion", .field = "ui.motion" },
+    .{ .section = .ui, .name = "color_scheme", .field = "ui.color_scheme" },
     .{ .section = .scroll, .name = "step_lines", .field = "scroll.lines", .bounds = at_least_one },
     .{ .section = .scroll, .name = "wheel_lines", .field = "scroll.wheel_lines", .bounds = at_least_one },
 

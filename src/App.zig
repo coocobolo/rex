@@ -632,7 +632,7 @@ pub fn init(
     else
         null;
     errdefer if (kit) |k| k.destroy(gpa);
-    if (kit) |k| k.setMotion(active_config.ui.motion);
+    if (kit) |k| k.configure(active_config.ui);
 
     const app = App{
         .io = io,
@@ -1523,7 +1523,7 @@ pub fn reloadConfig(self: *App) void {
     // Live update renderer background color, alpha, and terminal theme
     const bg = self.config.theme.background;
     self.background_color = .{ bg.r, bg.g, bg.b, self.config.window.background.alpha };
-    if (self.kit) |kit| kit.setMotion(self.config.ui.motion);
+    if (self.kit) |kit| kit.configure(self.config.ui);
     self.renderer.background.option.alpha = self.config.window.background.alpha;
     self.driver.setTheme(self.config.theme);
     self.updateWindowTitle();

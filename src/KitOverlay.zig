@@ -27,6 +27,7 @@ const text = @import("kit/text.zig");
 const alert_dialog = @import("kit/alert_dialog.zig");
 const toast = @import("kit/toast.zig");
 const tree_zig = @import("kit/tree.zig");
+const Ui = @import("config/Config.zig").Ui;
 
 const log = std.log.scoped(.kit_overlay);
 
@@ -52,6 +53,7 @@ table: memory.Table = .empty,
 elapsed_ms: u32 = 0,
 /// Whether the last built frame left a toast short of its place.
 motion: toast.Motion = .settled,
+color_scheme: Theme.ColorScheme = .auto,
 
 comptime {
     // A frame shows the dialog or the toast stack, never both, so `nodes`
@@ -82,10 +84,11 @@ pub fn destroy(self: *KitOverlay, gpa: Allocator) void {
     gpa.destroy(self);
 }
 
-/// Applies the user's motion setting to every surface, from now on.
-pub fn setMotion(self: *KitOverlay, mode: motion_zig.Mode) void {
-    self.toasts.motion = mode;
-    self.dialog.motion = mode;
+/// Applies the user's `[ui]` settings, from the next frame on.
+pub fn configure(self: *KitOverlay, ui: Ui) void {
+    self.toasts.motion = ui.motion;
+    self.dialog.motion = ui.motion;
+    self.color_scheme = ui.color_scheme;
 }
 
 /// Shows a toast. Returns whether a redraw is due.
@@ -246,7 +249,7 @@ pub fn buildFrame(self: *KitOverlay, atlas: *Atlas, width: f32, height: f32, bac
     const drawn_before = self.painter.len > 0;
     self.painter.begin();
     self.tree.reset();
-    self.build(atlas, width, height, Theme.variantFor(background).theme(), dt_ms) catch |err| {
+    self.build(atlas, width, height, self.color_scheme.variant(background).theme(), dt_ms) catch |err| {
         // The same state would fail the same way every frame.
         if (self.dialog.phase != .closed) {
             log.err("cannot show the dialog, dropping it: {t}", .{err});
