@@ -2,6 +2,8 @@ const std = @import("std");
 const testing = std.testing;
 
 const wellbeing = @import("root.zig");
+const overlay = @import("overlay.zig");
+const icons = @import("icons.zig");
 const storage = wellbeing.storage;
 const tracker = wellbeing.tracker;
 const reminders = wellbeing.reminders;
@@ -1591,7 +1593,7 @@ test "focus: on_alert pause holds the task during a locking reminder and moves i
 }
 
 test "overlay: state flags and active detection" {
-    var ov = wellbeing.overlay.Overlay.init();
+    var ov = overlay.Overlay.init();
     defer ov.deinit(testing.allocator);
 
     try testing.expect(!ov.isActive());
@@ -1610,7 +1612,7 @@ test "overlay: state flags and active detection" {
 }
 
 test "overlay: box and progress bar arithmetic" {
-    var ov = wellbeing.overlay.Overlay.init();
+    var ov = overlay.Overlay.init();
     defer ov.deinit(testing.allocator);
 
     // drawBox creates 1 Background.Instance per row
@@ -1628,7 +1630,7 @@ test "overlay: box and progress bar arithmetic" {
 }
 
 test "icons: glyph lookup and styles" {
-    const ic = wellbeing.icons;
+    const ic = icons;
 
     // Unicode glyphs
     try testing.expectEqualStrings("✓", ic.getGlyph(.check, .unicode));
@@ -1656,7 +1658,7 @@ test "icons: glyph lookup and styles" {
 }
 
 test "overlay: stringWidth and description word wrap" {
-    const ov = wellbeing.overlay;
+    const ov = overlay;
 
     // Width of standard ASCII
     try testing.expectEqual(@as(u16, 5), ov.stringWidth("hello"));
@@ -1680,7 +1682,7 @@ test "overlay: stringWidth and description word wrap" {
 }
 
 test "overlay: cleanPromptText removes trailing emojis and symbols" {
-    const ov = wellbeing.overlay;
+    const ov = overlay;
 
     try testing.expectEqualStrings(
         "Look at an object 20 feet away for 20 seconds",
@@ -1724,7 +1726,7 @@ test "overlay: cleanPromptText removes trailing emojis and symbols" {
 }
 
 test "overlay: panel rectangle geometry and bounds" {
-    const PanelRect = wellbeing.overlay.PanelRect;
+    const PanelRect = overlay.PanelRect;
     const rect = PanelRect{ .col = 10, .row = 5, .width = 40, .height = 12 };
 
     try testing.expectEqual(@as(u16, 50), rect.maxCol());
@@ -1738,12 +1740,12 @@ test "overlay: panel rectangle geometry and bounds" {
 }
 
 test "overlay: drawDimmingBackdropOutside leaves panel interior untouched" {
-    var ov = wellbeing.overlay.Overlay.init();
+    var ov = overlay.Overlay.init();
     defer ov.deinit(testing.allocator);
 
     const total_cols: u16 = 80;
     const total_rows: u16 = 24;
-    const rect = wellbeing.overlay.PanelRect{ .col = 20, .row = 6, .width = 40, .height = 12 };
+    const rect = overlay.PanelRect{ .col = 20, .row = 6, .width = 40, .height = 12 };
     const dim_color: [4]u8 = .{ 13, 13, 13, 180 };
 
     ov.drawDimmingBackdropOutside(testing.allocator, total_cols, total_rows, rect, dim_color);
@@ -1761,7 +1763,7 @@ test "overlay: drawDimmingBackdropOutside leaves panel interior untouched" {
 
 test "overlay: dashboard layout geometry and symmetric padding" {
     // Verify symmetric padding: 3 columns margin on both left and right
-    const rect = wellbeing.overlay.PanelRect{ .col = 7, .row = 2, .width = 66, .height = 15 };
+    const rect = overlay.PanelRect{ .col = 7, .row = 2, .width = 66, .height = 15 };
     const content_col = rect.col + 3; // 10
     const max_content_col = rect.col + rect.width - 4; // 69
 
@@ -1774,19 +1776,19 @@ test "overlay: dashboard layout geometry and symmetric padding" {
 }
 
 test "overlay: dashboard tab navigation and history day selection" {
-    var ov = wellbeing.overlay.Overlay.init();
+    var ov = overlay.Overlay.init();
     defer ov.deinit(testing.allocator);
 
-    try testing.expectEqual(wellbeing.overlay.DashboardTab.overview, ov.active_tab);
+    try testing.expectEqual(overlay.DashboardTab.overview, ov.active_tab);
     ov.nextTab();
-    try testing.expectEqual(wellbeing.overlay.DashboardTab.pomodoro, ov.active_tab);
+    try testing.expectEqual(overlay.DashboardTab.pomodoro, ov.active_tab);
     ov.nextTab();
-    try testing.expectEqual(wellbeing.overlay.DashboardTab.activity, ov.active_tab);
+    try testing.expectEqual(overlay.DashboardTab.activity, ov.active_tab);
     ov.nextTab();
-    try testing.expectEqual(wellbeing.overlay.DashboardTab.overview, ov.active_tab);
+    try testing.expectEqual(overlay.DashboardTab.overview, ov.active_tab);
 
     ov.selectTab(2);
-    try testing.expectEqual(wellbeing.overlay.DashboardTab.activity, ov.active_tab);
+    try testing.expectEqual(overlay.DashboardTab.activity, ov.active_tab);
 
     // 3 history days + 1 today = 4 total days (indices 0..3)
     ov.moveSelectedDay(-1, 3);

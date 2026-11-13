@@ -413,6 +413,7 @@ pub fn build(b: *std.Build) !void {
     const import_rules = .{
         .{ "src/tool/root.zig", .{ "src/term", "src/driver" } },
         .{ "src/config/root.zig", .{ "src/term", "src/driver", "src/renderer", "src/termio", "src/ui", "src/freetype", "src/builtin" } },
+        .{ "src/builtin/wellbeing/root.zig", .{ "src/renderer", "src/ui", "src/freetype", "src/term", "src/driver", "src/termio" } },
     };
     const import_check_module = b.createModule(.{
         .root_source_file = b.path("tools/imports/check.zig"),

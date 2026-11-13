@@ -74,6 +74,7 @@ const Screen = rex.terminal.screen.Screen;
 const Response = rex.terminal.Response;
 
 const wellbeing = rex.builtin.wellbeing;
+const WellbeingOverlay = @import("builtin/wellbeing/overlay.zig");
 
 /// Largest selection copied to the clipboard, in bytes.
 const max_copy_size: usize = std.math.maxInt(u16) - 1;
@@ -155,7 +156,7 @@ word_classifier: unicode.Classifier,
 // Wellbeing & Focus state
 wellbeing_state: wellbeing.Wellbeing,
 local_clock: wellbeing.localtime.Clock = .{},
-wellbeing_overlay: wellbeing.overlay.Overlay = .{},
+wellbeing_overlay: WellbeingOverlay.Overlay = .{},
 toast_queue: Toast.Queue = .{},
 /// The UI kit's toast stack, shown in place of `toast_queue` when
 /// `REX_UI_KIT=1` is in the environment (trial of ADR 0009, ticket 87).
@@ -1926,7 +1927,7 @@ fn diagnosticBanner(file: *const diagnostics.File, d: diagnostics.Diagnostic) Ba
 }
 
 /// The resolved looks of the surfaces the wellbeing overlay draws.
-fn overlaySurfaces(window: *const Config.Window) wellbeing.overlay.Surfaces {
+fn overlaySurfaces(window: *const Config.Window) WellbeingOverlay.Surfaces {
     return .{
         .card = window.surfaceFor(.card),
         .toast = window.surfaceFor(.toast),
@@ -2647,7 +2648,7 @@ fn handleOverlayClick(self: *App, col: u16, row: u16) bool {
                 self.needs_redraw = true;
             },
             .button => |id| {
-                if (std.enums.fromInt(wellbeing.overlay.ButtonId, id)) |btn_id| {
+                if (std.enums.fromInt(WellbeingOverlay.ButtonId, id)) |btn_id| {
                     switch (btn_id) {
                         .close => {
                             if (self.wellbeing_overlay.dashboard_open) {

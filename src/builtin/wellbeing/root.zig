@@ -10,8 +10,6 @@ pub const winddown = @import("winddown.zig");
 pub const localtime = @import("localtime.zig");
 pub const dashboard = @import("dashboard.zig");
 pub const focus = @import("focus.zig");
-pub const icons = @import("icons.zig");
-pub const overlay = @import("overlay.zig");
 
 const log = std.log.scoped(.wellbeing);
 
