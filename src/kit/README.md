@@ -60,7 +60,7 @@ Rules that hold everywhere:
 | `memory.zig` | Per-id memory that outlives a rebuild of the view |
 | `motion.zig` | The one duration and curve every surface uses |
 | `focus.zig` | Keyboard focus order over a row or list |
-| `button.zig`, `kbd.zig`, `dialog.zig`, `sidebar.zig`, `popup.zig`, `tabs.zig` | Components |
+| `button.zig`, `kbd.zig`, `dialog.zig`, `sidebar.zig`, `popup.zig`, `tabs.zig`, `chart.zig` | Components |
 | `toast.zig`, `alert_dialog.zig` | Surfaces |
 
 ## Text
@@ -93,6 +93,7 @@ one of:
 | `fixed` | This many pixels |
 | `at_most` | This many pixels, or less in a smaller parent |
 | `at_least` | As large as the content, but not below this many pixels |
+| `fraction` | This fraction of the parent's inner size, from 0 to 1 |
 
 Text wraps to the width it ends up with. There is no scrolling and no
 wrapping of rows yet.
@@ -160,6 +161,17 @@ theme. Other labels are `muted_foreground`; the label under the pointer is
 `foreground`. Focus draws the ring as that face's border, so the row does
 not grow. The surface keeps the current, hovered and focused indexes and
 draws the page itself.
+
+### Chart (`chart.zig`)
+
+Three views, each taking its numbers and a mark. The mark here is `bar`.
+`progress` fills a `muted` track by a fraction of its width. `share` draws
+one named part under the next, each bar the same width and sized to the
+largest value. `days` draws
+one column per day at a fixed height: `part` at the bottom of `total`, and,
+when a limit is given, a 1 px `border` strip at that value in every column.
+A ring, a donut, a line, an area or a radar is a later mark on the same
+numbers.
 
 ### Popup (`popup.zig`)
 
