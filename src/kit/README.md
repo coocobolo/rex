@@ -164,14 +164,11 @@ draws the page itself.
 
 ### Chart (`chart.zig`)
 
-Three views, each taking its numbers and a mark. The mark here is `bar`.
-`progress` fills a `muted` track by a fraction of its width. `share` draws
-one named part under the next, each bar the same width and sized to the
-largest value. `days` draws
-one column per day at a fixed height: `part` at the bottom of `total`, and,
-when a limit is given, a 1 px `border` strip at that value in every column.
-A ring, a donut, a line, an area or a radar is a later mark on the same
-numbers.
+Three views, each taking its numbers and a mark. `progress` is a `bar` or
+a `ring`, `share` is a `bar` or a `donut`, and `days` is a `bar`. The ring
+and the donut are arcs: a square whose slices are drawn over it. `days`
+draws one column per day at a fixed height, with `part` at the bottom of
+`total` and, when a limit is given, a 1 px `border` strip at that value.
 
 ### Tooltip (`tooltip.zig`)
 
