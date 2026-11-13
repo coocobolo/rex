@@ -21,6 +21,14 @@ pub const Style = enum(u8) {
     base,
     /// 18 / 28, semibold: dialog titles.
     lg_semibold,
+    /// 24 / 32, semibold: card values.
+    xl_semibold,
+    /// 56 / 64, semibold, tracking −1: the compact timer.
+    xxl_semibold,
+    /// 80 / 88, semibold, tracking −2: the timer.
+    xxxl_semibold,
+
+    pub const count = @typeInfo(Style).@"enum".fields.len;
 
     pub const Metrics = struct {
         /// Font size.
@@ -29,6 +37,8 @@ pub const Style = enum(u8) {
         line_height: u8,
         /// Weight on the font's `wght` axis.
         weight: u16,
+        /// Extra logical pixels between glyphs. Negative tightens.
+        tracking: i8 = 0,
     };
 
     pub fn metrics(self: Style) Metrics {
@@ -38,8 +48,21 @@ pub const Style = enum(u8) {
             .sm_medium => .{ .size = 14, .line_height = 20, .weight = 500 },
             .base => .{ .size = 16, .line_height = 24, .weight = 400 },
             .lg_semibold => .{ .size = 18, .line_height = 28, .weight = 600 },
+            .xl_semibold => .{ .size = 24, .line_height = 32, .weight = 600 },
+            .xxl_semibold => .{ .size = 56, .line_height = 64, .weight = 600, .tracking = -1 },
+            .xxxl_semibold => .{ .size = 80, .line_height = 88, .weight = 600, .tracking = -2 },
         };
     }
+};
+
+/// How digits are spaced.
+pub const Figures = enum(u1) {
+    /// The font's advances and pair kerning.
+    proportional,
+    /// Each ASCII digit is centered in one cell, the ceil of the widest
+    /// digit advance. Anything else keeps its own advance, and a digit
+    /// is not kerned.
+    tabular,
 };
 
 /// Measures text for layout. `context` is the implementation's own state,
@@ -49,11 +72,11 @@ pub const Style = enum(u8) {
 /// code.
 pub const Measurer = struct {
     context: *anyopaque,
-    widthFn: *const fn (context: *anyopaque, bytes: []const u8, style: Style) f32,
+    widthFn: *const fn (context: *anyopaque, bytes: []const u8, style: Style, figures: Figures) f32,
 
     /// Width in logical pixels of `bytes` set on one line in `style`.
-    pub fn width(self: Measurer, bytes: []const u8, style: Style) f32 {
-        return self.widthFn(self.context, bytes, style);
+    pub fn width(self: Measurer, bytes: []const u8, style: Style, figures: Figures) f32 {
+        return self.widthFn(self.context, bytes, style, figures);
     }
 };
 
@@ -132,7 +155,7 @@ pub const Lines = struct {
 /// wider than `max_width` gets a line of its own and overflows it, since
 /// breaking inside a word needs more than byte widths. An empty text is one
 /// empty line, so it still takes a line's height.
-pub fn wrap(measurer: Measurer, bytes: []const u8, style: Style, max_width: f32, lines: *Lines) error{OutOfLines}!u32 {
+pub fn wrap(measurer: Measurer, bytes: []const u8, style: Style, figures: Figures, max_width: f32, lines: *Lines) error{OutOfLines}!u32 {
     const first = lines.len;
     var line_start: usize = 0;
     // End of the last word that fits on the current line.
@@ -141,12 +164,12 @@ pub fn wrap(measurer: Measurer, bytes: []const u8, style: Style, max_width: f32,
     while (i <= bytes.len) {
         // A word ends at a space, a line feed or the end of the text.
         const word_end = std.mem.indexOfAnyPos(u8, bytes, i, " \n") orelse bytes.len;
-        const fits = measurer.width(bytes[line_start..word_end], style) <= max_width;
+        const fits = measurer.width(bytes[line_start..word_end], style, figures) <= max_width;
         if (!fits and line_end > line_start) {
             try lines.append(.{
                 .start = @intCast(line_start),
                 .end = @intCast(line_end),
-                .width = measurer.width(bytes[line_start..line_end], style),
+                .width = measurer.width(bytes[line_start..line_end], style, figures),
             });
             line_start = i;
         }
@@ -155,7 +178,7 @@ pub fn wrap(measurer: Measurer, bytes: []const u8, style: Style, max_width: f32,
             try lines.append(.{
                 .start = @intCast(line_start),
                 .end = @intCast(line_end),
-                .width = measurer.width(bytes[line_start..line_end], style),
+                .width = measurer.width(bytes[line_start..line_end], style, figures),
             });
             line_start = word_end + 1;
             line_end = line_start;

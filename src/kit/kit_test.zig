@@ -14,7 +14,7 @@ const layout = layout_zig.layout;
 /// worked out by hand.
 const byte_width = 7;
 
-fn fixedWidth(_: *anyopaque, bytes: []const u8, _: text.Style) f32 {
+fn fixedWidth(_: *anyopaque, bytes: []const u8, _: text.Style, _: text.Figures) f32 {
     return @floatFromInt(bytes.len * byte_width);
 }
 
@@ -114,16 +114,16 @@ test "wrap: breaks at spaces and line feeds" {
     var lines: text.Lines = .init(&buffer);
 
     // 11 bytes at 7 px is 77 px: fits in 80, not in 70.
-    try testing.expectEqual(1, try text.wrap(measurer, "hello world", .sm, 80, &lines));
+    try testing.expectEqual(1, try text.wrap(measurer, "hello world", .sm, .proportional, 80, &lines));
     try testing.expectEqual(text.Line{ .start = 0, .end = 11, .width = 77 }, buffer[0]);
 
     lines.len = 0;
-    try testing.expectEqual(2, try text.wrap(measurer, "hello world", .sm, 70, &lines));
+    try testing.expectEqual(2, try text.wrap(measurer, "hello world", .sm, .proportional, 70, &lines));
     try testing.expectEqual(text.Line{ .start = 0, .end = 5, .width = 35 }, buffer[0]);
     try testing.expectEqual(text.Line{ .start = 6, .end = 11, .width = 35 }, buffer[1]);
 
     lines.len = 0;
-    try testing.expectEqual(3, try text.wrap(measurer, "ab\n\ncd", .sm, 1000, &lines));
+    try testing.expectEqual(3, try text.wrap(measurer, "ab\n\ncd", .sm, .proportional, 1000, &lines));
     try testing.expectEqual(text.Line{ .start = 0, .end = 2, .width = 14 }, buffer[0]);
     try testing.expectEqual(text.Line{ .start = 3, .end = 3, .width = 0 }, buffer[1]);
     try testing.expectEqual(text.Line{ .start = 4, .end = 6, .width = 14 }, buffer[2]);
@@ -133,11 +133,11 @@ test "wrap: an empty text is one line, and a long word overflows alone" {
     var buffer: [8]text.Line = undefined;
     var lines: text.Lines = .init(&buffer);
 
-    try testing.expectEqual(1, try text.wrap(measurer, "", .sm, 100, &lines));
+    try testing.expectEqual(1, try text.wrap(measurer, "", .sm, .proportional, 100, &lines));
     try testing.expectEqual(text.Line{ .start = 0, .end = 0, .width = 0 }, buffer[0]);
 
     lines.len = 0;
-    try testing.expectEqual(3, try text.wrap(measurer, "a incomprehensible b", .sm, 40, &lines));
+    try testing.expectEqual(3, try text.wrap(measurer, "a incomprehensible b", .sm, .proportional, 40, &lines));
     try testing.expectEqual(text.Line{ .start = 0, .end = 1, .width = 7 }, buffer[0]);
     try testing.expectEqual(text.Line{ .start = 2, .end = 18, .width = 112 }, buffer[1]);
     try testing.expectEqual(text.Line{ .start = 19, .end = 20, .width = 7 }, buffer[2]);
@@ -146,7 +146,7 @@ test "wrap: an empty text is one line, and a long word overflows alone" {
 test "wrap: running out of lines is an error" {
     var buffer: [1]text.Line = undefined;
     var lines: text.Lines = .init(&buffer);
-    try testing.expectError(error.OutOfLines, text.wrap(measurer, "aa bb", .sm, 20, &lines));
+    try testing.expectError(error.OutOfLines, text.wrap(measurer, "aa bb", .sm, .proportional, 20, &lines));
 }
 
 test "layout: a toast sizes its text column and wraps the description" {
@@ -297,6 +297,24 @@ test "layout: an at-most size is fixed until its parent is smaller" {
     try layout(&tree, measurer, 300, 600);
     try expectRect(&tree, card, 16, 256, 268, 88);
     try expectRect(&tree, body, 40, 280, 220, 40);
+}
+
+test "layout: tabular figures are measured with the tabular width" {
+    const Figured = struct {
+        var unused: u8 = 0;
+        fn width(_: *anyopaque, bytes: []const u8, _: text.Style, figures: text.Figures) f32 {
+            const each: usize = if (figures == .tabular) 10 else 4;
+            return @floatFromInt(bytes.len * each);
+        }
+    };
+    const figured: text.Measurer = .{ .context = &Figured.unused, .widthFn = Figured.width };
+
+    var fixture: Fixture = .{};
+    var tree = fixture.tree();
+    const value = try tree.text("12", .{ .color = Theme.dark.foreground, .style = .xl_semibold, .figures = .tabular });
+    try layout(&tree, figured, 800, 600);
+    // Two digits at 10 px, and the 24 / 32 card style.
+    try expectRect(&tree, value, 0, 0, 20, 32);
 }
 
 test "layout: an at-least size follows its content down to a minimum" {

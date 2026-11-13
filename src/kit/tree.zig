@@ -142,6 +142,8 @@ pub const Text = struct {
     bytes: []const u8,
     color: Color,
     style: text_zig.Style = .sm,
+    /// Digit spacing. Proportional leaves the font's advances alone.
+    figures: text_zig.Figures = .proportional,
     /// Its lines in the tree's `Lines`, set by layout.
     first_line: u32 = 0,
     line_count: u32 = 0,
@@ -265,6 +267,7 @@ pub const Tree = struct {
     pub const TextOptions = struct {
         color: Color,
         style: text_zig.Style = .sm,
+        figures: text_zig.Figures = .proportional,
         /// `fit` keeps the text on one line where there is room; `fill`
         /// takes the width the parent has left and wraps to it.
         width: Size = .fit,
@@ -274,7 +277,7 @@ pub const Tree = struct {
     /// A text. `bytes` is borrowed until the view is rebuilt.
     pub fn text(self: *Tree, bytes: []const u8, options: TextOptions) Error!Index {
         return self.push(
-            .{ .text = .{ .bytes = bytes, .color = options.color, .style = options.style } },
+            .{ .text = .{ .bytes = bytes, .color = options.color, .style = options.style, .figures = options.figures } },
             .{ .width = options.width, .id = options.id },
         );
     }

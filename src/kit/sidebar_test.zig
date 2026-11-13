@@ -23,7 +23,7 @@ const count = 3;
 fn measurer() text.Measurer {
     const Fixed = struct {
         var unused: u8 = 0;
-        fn width(_: *anyopaque, bytes: []const u8, _: text.Style) f32 {
+        fn width(_: *anyopaque, bytes: []const u8, _: text.Style, _: text.Figures) f32 {
             return @floatFromInt(bytes.len * 7);
         }
     };

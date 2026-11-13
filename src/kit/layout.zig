@@ -171,7 +171,7 @@ fn fit(nodes: []Node, range: Range, comptime dimension: Dimension, measurer: tex
         const node = &nodes[i];
         const content: f32 = switch (node.content) {
             .text => |t| switch (dimension) {
-                .horizontal => measurer.width(t.bytes, t.style),
+                .horizontal => measurer.width(t.bytes, t.style, t.figures),
                 .vertical => node.rect.h,
             },
             .icon => |icon| @floatFromInt(icon.size),
@@ -260,7 +260,7 @@ fn wrapTexts(tree: *Tree, range: Range, measurer: text.Measurer) Error!void {
         switch (node.content) {
             .text => |*t| {
                 t.first_line = tree.lines.len;
-                t.line_count = try text.wrap(measurer, t.bytes, t.style, node.rect.w, &tree.lines);
+                t.line_count = try text.wrap(measurer, t.bytes, t.style, t.figures, node.rect.w, &tree.lines);
                 node.rect.h = @floatFromInt(t.line_count * t.style.metrics().line_height);
             },
             .box, .icon => {},

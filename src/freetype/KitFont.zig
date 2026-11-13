@@ -24,7 +24,7 @@ const log = std.log.scoped(.kit_font);
 
 const KitFont = @This();
 
-const style_count = @typeInfo(text.Style).@"enum".fields.len;
+const style_count = text.Style.count;
 
 pub const Kerning = enum {
     /// Advances only.
@@ -77,6 +77,9 @@ kerning: Kerning,
 /// Advance of each ASCII code point in physical pixels, per style, so
 /// measuring ordinary UI text loads no glyph.
 ascii_advance: [style_count][128]f32,
+/// Whole physical pixels, per style: the ceil of the widest ASCII digit
+/// advance. Tabular digits step by this so the cell stays on the pixel grid.
+digit_cell: [style_count]f32,
 /// Glyph index of each printable ASCII code point, per style.
 ascii_glyph: [style_count][printable]c.FT_UInt,
 /// Kerning of pairs of printable ASCII in 26.6 physical pixels, per style,
@@ -116,6 +119,7 @@ pub fn create(files: Files, options: Options) ft.FtError!KitFont {
         .scale = options.scale,
         .kerning = options.kerning,
         .ascii_advance = undefined,
+        .digit_cell = undefined,
         .ascii_glyph = undefined,
         .ascii_kern = undefined,
         .other_advance = undefined,
@@ -167,6 +171,12 @@ pub fn setScale(self: *KitFont, scale: f32) ft.FtError!void {
         for (&self.ascii_glyph[@intFromEnum(style)], 0x20..) |*glyph, codepoint| {
             glyph.* = c.FT_Get_Char_Index(ft_face, codepoint);
         }
+        var cell: f32 = 0;
+        var digit: u8 = '0';
+        while (digit <= '9') : (digit += 1) {
+            cell = @max(cell, self.ascii_advance[@intFromEnum(style)][digit]);
+        }
+        self.digit_cell[@intFromEnum(style)] = @ceil(cell);
     }
     // Kerning and the other advances are in pixels at the old scale.
     for (&self.ascii_kern) |*table| @memset(table, unknown_kern);
@@ -205,6 +215,42 @@ fn loadAdvance(ft_face: c.FT_Face, codepoint: u21) f32 {
     ft.loadChar(ft_face, codepoint, c.FT_LOAD_DEFAULT | c.FT_LOAD_TARGET_LIGHT) catch return 0;
     // 16.16 pixels, before hinting or rounding.
     return @as(f32, @floatFromInt(ft_face.*.glyph.*.linearHoriAdvance)) / 65536.0;
+}
+
+/// How the pen moves for one code point, in physical pixels.
+pub const Step = struct {
+    /// Added before the glyph is drawn.
+    before: f32,
+    /// Added after it, from the glyph's origin. `before + after` is the
+    /// width this code point takes.
+    after: f32,
+};
+
+/// Pen motion for `codepoint` after `previous` (null at the start of a line).
+/// Tabular ASCII digits share `digit_cell` and are not kerned. Tracking is
+/// extra space before every code point but the first.
+pub fn step(self: *KitFont, style: text.Style, figures: text.Figures, previous: ?u21, codepoint: u21) Step {
+    const glyph_advance = self.advance(style, codepoint);
+    const track: f32 = if (previous != null) trackingPx(self, style) else 0;
+    if (figures == .tabular and isAsciiDigit(codepoint)) {
+        const cell = self.digit_cell[@intFromEnum(style)];
+        const center = @round(@max(0, cell - glyph_advance) / 2);
+        return .{ .before = track + center, .after = cell - center };
+    }
+    var kern_before = track;
+    if (previous) |left| {
+        if (!(figures == .tabular and isAsciiDigit(left))) kern_before += self.kern(style, left, codepoint);
+    }
+    return .{ .before = kern_before, .after = glyph_advance };
+}
+
+/// ASCII '0' through '9'. Other numeric characters keep their own advance.
+fn isAsciiDigit(codepoint: u21) bool {
+    return codepoint >= '0' and codepoint <= '9';
+}
+
+fn trackingPx(self: *const KitFont, style: text.Style) f32 {
+    return @as(f32, @floatFromInt(style.metrics().tracking)) * self.scale;
 }
 
 /// How far the pen moves after `codepoint`, in physical pixels.
@@ -249,21 +295,34 @@ pub fn baseline(self: *const KitFont, style: text.Style) f32 {
 }
 
 /// Width of `bytes` on one line, in logical pixels.
-pub fn width(self: *KitFont, bytes: []const u8, style: text.Style) f32 {
+pub fn width(self: *KitFont, bytes: []const u8, style: text.Style, figures: text.Figures) f32 {
+    // The common case has no digit cell and no tracking. Keeping that
+    // branch outside the loop avoids testing it once per code point.
+    if (figures == .proportional and style.metrics().tracking == 0) {
+        var total: f32 = 0;
+        var previous: ?u21 = null;
+        var codepoints: text.Codepoints = .init(bytes);
+        while (codepoints.next()) |codepoint| {
+            if (previous) |left| total += self.kern(style, left, codepoint);
+            total += self.advance(style, codepoint);
+            previous = codepoint;
+        }
+        return total / self.scale;
+    }
     var total: f32 = 0;
     var previous: ?u21 = null;
     var codepoints: text.Codepoints = .init(bytes);
     while (codepoints.next()) |codepoint| {
-        if (previous) |left| total += self.kern(style, left, codepoint);
-        total += self.advance(style, codepoint);
+        const moved = self.step(style, figures, previous, codepoint);
+        total += moved.before + moved.after;
         previous = codepoint;
     }
     return total / self.scale;
 }
 
-fn widthErased(context: *anyopaque, bytes: []const u8, style: text.Style) f32 {
+fn widthErased(context: *anyopaque, bytes: []const u8, style: text.Style, figures: text.Figures) f32 {
     const self: *KitFont = @ptrCast(@alignCast(context));
-    return self.width(bytes, style);
+    return self.width(bytes, style, figures);
 }
 
 /// The kit's view of this font. Valid while the font is alive and not

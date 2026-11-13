@@ -57,7 +57,7 @@ pub const clip_depth_max = 8;
 /// few hundred glyphs.
 pub const capacity = 2048;
 
-const style_count = @typeInfo(text.Style).@"enum".fields.len;
+const style_count = text.Style.count;
 /// Distinct glyphs outside ASCII the painter remembers.
 const extra_capacity = 256;
 
@@ -212,7 +212,7 @@ pub fn paint(self: *KitPainter, tree: *const Tree, font: *KitFont, atlas: *Atlas
                 const line_height: f32 = @floatFromInt(t.style.metrics().line_height);
                 for (tree.lines.slice(t.first_line, t.line_count), 0..) |line, index| {
                     const top = (node.rect.y + line_height * @as(f32, @floatFromInt(index))) * scale;
-                    try self.paintLine(t.bytes[line.start..line.end], t.style, t.color, node.rect.x * scale, @round(top + font.baseline(t.style)), clip, font, atlas);
+                    try self.paintLine(t.bytes[line.start..line.end], t.style, t.figures, t.color, node.rect.x * scale, @round(top + font.baseline(t.style)), clip, font, atlas);
                 }
             },
         }
@@ -236,40 +236,58 @@ fn pixels(rect: layout.PixelRect) [4]f32 {
     return .{ @floatFromInt(rect.x), @floatFromInt(rect.y), @floatFromInt(rect.w), @floatFromInt(rect.h) };
 }
 
-fn paintLine(self: *KitPainter, bytes: []const u8, style: text.Style, color: Color, left: f32, baseline: f32, clip: Clip, font: *KitFont, atlas: *Atlas) Error!void {
+fn paintLine(self: *KitPainter, bytes: []const u8, style: text.Style, figures: text.Figures, color: Color, left: f32, baseline: f32, clip: Clip, font: *KitFont, atlas: *Atlas) Error!void {
+    // Same split as `KitFont.width`: proportional text with no tracking
+    // never enters the digit-cell path.
+    if (figures == .proportional and style.metrics().tracking == 0) {
+        var pen = left;
+        var previous: ?u21 = null;
+        var codepoints: text.Codepoints = .init(bytes);
+        while (codepoints.next()) |codepoint| {
+            if (previous) |before| pen += font.kern(style, before, codepoint);
+            previous = codepoint;
+            defer pen += font.advance(style, codepoint);
+            try self.paintGlyph(style, codepoint, color, pen, baseline, clip, font, atlas);
+        }
+        return;
+    }
     var pen = left;
     var previous: ?u21 = null;
     var codepoints: text.Codepoints = .init(bytes);
     while (codepoints.next()) |codepoint| {
-        if (previous) |before| pen += font.kern(style, before, codepoint);
+        const moved = font.step(style, figures, previous, codepoint);
         previous = codepoint;
-        defer pen += font.advance(style, codepoint);
-
-        const metric = self.glyph(style, codepoint, font, atlas) catch |err| switch (err) {
-            error.GlyphCacheFull => return error.GlyphCacheFull,
-            // A glyph that cannot be rasterized or packed leaves a gap of
-            // its advance; the text around it still reads.
-            else => {
-                log.warn("glyph U+{X:0>4} in {t}: {t}", .{ codepoint, style, err });
-                continue;
-            },
-        };
-        if (metric.width == 0 or metric.height == 0) continue;
-        try self.push(.{
-            // Each glyph sits on a whole pixel: its bitmap was rasterized
-            // for one, and a fractional position would blur it.
-            .rect = .{
-                @round(pen) + @as(f32, @floatFromInt(metric.bearing_x)),
-                baseline - @as(f32, @floatFromInt(metric.bearing_y)),
-                @floatFromInt(metric.width),
-                @floatFromInt(metric.height),
-            },
-            .fill = color,
-            .params = .{ @floatFromInt(metric.atlas_x), @floatFromInt(metric.atlas_y) },
-            .kind = .glyph,
-            .clip = clip,
-        });
+        pen += moved.before;
+        defer pen += moved.after;
+        try self.paintGlyph(style, codepoint, color, pen, baseline, clip, font, atlas);
     }
+}
+
+fn paintGlyph(self: *KitPainter, style: text.Style, codepoint: u21, color: Color, pen: f32, baseline: f32, clip: Clip, font: *KitFont, atlas: *Atlas) Error!void {
+    const metric = self.glyph(style, codepoint, font, atlas) catch |err| switch (err) {
+        error.GlyphCacheFull => return error.GlyphCacheFull,
+        // A glyph that cannot be rasterized or packed leaves a gap of
+        // its advance; the text around it still reads.
+        else => {
+            log.warn("glyph U+{X:0>4} in {t}: {t}", .{ codepoint, style, err });
+            return;
+        },
+    };
+    if (metric.width == 0 or metric.height == 0) return;
+    try self.push(.{
+        // Each glyph sits on a whole pixel: its bitmap was rasterized
+        // for one, and a fractional position would blur it.
+        .rect = .{
+            @round(pen) + @as(f32, @floatFromInt(metric.bearing_x)),
+            baseline - @as(f32, @floatFromInt(metric.bearing_y)),
+            @floatFromInt(metric.width),
+            @floatFromInt(metric.height),
+        },
+        .fill = color,
+        .params = .{ @floatFromInt(metric.atlas_x), @floatFromInt(metric.atlas_y) },
+        .kind = .glyph,
+        .clip = clip,
+    });
 }
 
 /// Appends `instance`, unless its clip cuts it away entirely.

@@ -349,8 +349,8 @@ test "KitOverlay: its size" {
     // Reported in the ticket. Nearly all of it is two tables: the font's
     // kerning pairs, and the painter's 2048 instances of 44 bytes with its
     // glyph position cache.
-    try testing.expectEqual(218936, @sizeOf(KitOverlay));
-    try testing.expectEqual(108568, @sizeOf(@FieldType(KitOverlay, "painter")));
-    try testing.expectEqual(95592, @sizeOf(@FieldType(KitOverlay, "font")));
+    try testing.expectEqual(282752, @sizeOf(KitOverlay));
+    try testing.expectEqual(115480, @sizeOf(@FieldType(KitOverlay, "painter")));
+    try testing.expectEqual(152496, @sizeOf(@FieldType(KitOverlay, "font")));
     try testing.expectEqual(2600, @sizeOf(@FieldType(KitOverlay, "nodes")));
 }

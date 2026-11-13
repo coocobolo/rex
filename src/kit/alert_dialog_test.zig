@@ -17,7 +17,7 @@ const Outcome = alert_dialog.Outcome;
 
 const byte_width = 7;
 
-fn fixedWidth(_: *anyopaque, bytes: []const u8, _: text.Style) f32 {
+fn fixedWidth(_: *anyopaque, bytes: []const u8, _: text.Style, _: text.Figures) f32 {
     return @floatFromInt(bytes.len * byte_width);
 }
 
