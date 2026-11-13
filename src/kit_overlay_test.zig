@@ -10,6 +10,7 @@ const testGlContext = @import("renderer/Window.zig").testGlContext;
 const KitOverlay = @import("KitOverlay.zig");
 const dialog = @import("kit/dialog.zig");
 const modal = @import("kit/modal.zig");
+const toast = @import("kit/toast.zig");
 const Theme = @import("kit/Theme.zig");
 const motion = @import("kit/motion.zig");
 const Id = @import("kit/tree.zig").Id;
@@ -105,6 +106,67 @@ test "KitOverlay: the pointer holds a toast, a click on its close button dismiss
     try testing.expectEqual(KitOverlay.Press.changed, kit.press(750, 550));
     try testing.expectEqual(KitOverlay.Press.taken, kit.press(750, 550));
     try testing.expect(!kit.dismissOldest());
+}
+
+test "KitOverlay: a pointer that leaves the window lets go of what it was over" {
+    var fixture: Fixture = try .init(1);
+    defer fixture.deinit();
+    const kit = fixture.kit;
+
+    _ = kit.push(.{ .title = "Copied", .duration_ms = 3000 });
+    _ = kit.tick(Theme.duration);
+    _ = fixture.frame();
+    _ = kit.pointerMoved(500, 550);
+    try testing.expectEqual(null, kit.wakeMs());
+    // Nothing to redraw, but the toast's time runs again.
+    try testing.expect(!kit.pointerLeft());
+    try testing.expectEqual(3000, kit.wakeMs());
+
+    _ = kit.openDialog(prompt());
+    _ = kit.tick(Theme.duration);
+    _ = fixture.frame();
+    const confirm = centerOf(kit, dialog.actionId(1)).?;
+    try testing.expect(kit.pointerMoved(confirm[0], confirm[1]));
+    try testing.expectEqual(1, kit.dialog.hover);
+    try testing.expect(kit.pointerLeft());
+    try testing.expectEqual(dialog.no_action, kit.dialog.hover);
+    try testing.expect(!kit.pointerLeft());
+}
+
+test "KitOverlay: a dialog takes the pointer off a toast" {
+    var fixture: Fixture = try .init(1);
+    defer fixture.deinit();
+    const kit = fixture.kit;
+
+    _ = kit.push(.{ .title = "Copied", .duration_ms = 3000 });
+    _ = kit.tick(Theme.duration);
+    _ = fixture.frame();
+    _ = kit.pointerMoved(500, 550);
+    try testing.expectEqual(toast.Pointer.over, kit.toasts.pointer);
+
+    // Opened from the keyboard, the pointer still where the toast is.
+    try testing.expect(kit.openDialog(prompt()));
+    try testing.expectEqual(toast.Pointer.away, kit.toasts.pointer);
+    _ = kit.tick(Theme.duration);
+    _ = fixture.frame();
+    // A move over the scrim does not bring the hover back.
+    _ = kit.pointerMoved(500, 550);
+    try testing.expectEqual(toast.Pointer.away, kit.toasts.pointer);
+}
+
+test "KitOverlay: texts of nothing but line feeds still show" {
+    var fixture: Fixture = try .init(1);
+    defer fixture.deinit();
+    const kit = fixture.kit;
+
+    const feeds = "\n" ** 200;
+    for (0..3) |_| _ = kit.push(.{ .title = feeds, .description = feeds, .duration_ms = 3000 });
+    try testing.expect(fixture.frame());
+    try testing.expectEqual(3, kit.toasts.visible().len);
+
+    _ = kit.openDialog(.{ .title = feeds, .body = feeds, .actions = &prompt_actions });
+    try testing.expect(fixture.frame());
+    try testing.expect(kit.dialog.phase != .closed);
 }
 
 test "KitOverlay: the others keep asking for frames while they glide" {
@@ -287,7 +349,7 @@ test "KitOverlay: its size" {
     // Reported in the ticket. Nearly all of it is two tables: the font's
     // kerning pairs, and the painter's 2048 instances of 36 bytes with its
     // glyph position cache.
-    try testing.expectEqual(194000, @sizeOf(KitOverlay));
+    try testing.expectEqual(202520, @sizeOf(KitOverlay));
     try testing.expectEqual(92184, @sizeOf(@FieldType(KitOverlay, "painter")));
     try testing.expectEqual(95592, @sizeOf(@FieldType(KitOverlay, "font")));
     try testing.expectEqual(2600, @sizeOf(@FieldType(KitOverlay, "nodes")));

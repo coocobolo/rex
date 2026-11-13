@@ -30,10 +30,10 @@ const tree_zig = @import("kit/tree.zig");
 
 const log = std.log.scoped(.kit_overlay);
 
-/// Lines of wrapped text one frame can hold. A stack whose texts need more
-/// (a description that is mostly line feeds) is dropped with an error in
-/// the log.
-const line_capacity = 64;
+/// Lines of wrapped text one frame can hold: enough for the worst texts
+/// either surface accepts, so a text of nothing but line feeds still
+/// shows. A frame holds the dialog or the stack, never both.
+const line_capacity = @max(toast.line_max, confirm.line_max);
 
 font: KitFont,
 painter: KitPainter,
@@ -96,7 +96,11 @@ pub fn push(self: *KitOverlay, request: toast.Push) bool {
 /// Asks `request` in the dialog. Returns whether a redraw is due.
 /// A dialog that is already up keeps its own question.
 pub fn openDialog(self: *KitOverlay, request: confirm.Request) bool {
-    return confirm.update(&self.dialog, .{ .open = request }) == .redraw;
+    if (confirm.update(&self.dialog, .{ .open = request }) != .redraw) return false;
+    // The scrim is between the pointer and the stack now: a toast it was
+    // resting on runs its time again.
+    _ = toast.update(&self.toasts, .{ .pointer = .away });
+    return true;
 }
 
 /// Sends the dialog an event the caller made from a key or a click, and
@@ -155,6 +159,14 @@ pub fn pointerMoved(self: *KitOverlay, x: f32, y: f32) bool {
     const over = self.toasts.hit(id) != .none;
     _ = toast.update(&self.toasts, .{ .pointer = if (over) .over else .away });
     return false;
+}
+
+/// The pointer left the window. Returns whether a redraw is due, which is
+/// when it left from a dialog button. A toast it left from runs its time
+/// again; `wakeMs` says when.
+pub fn pointerLeft(self: *KitOverlay) bool {
+    _ = toast.update(&self.toasts, .{ .pointer = .away });
+    return confirm.update(&self.dialog, .{ .pointer = confirm.no_action }) == .redraw;
 }
 
 pub const Press = union(enum) {

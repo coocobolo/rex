@@ -449,6 +449,10 @@ pub fn setCursorPosCallback(self: *Window, cb: c.GLFWcursorposfun) void {
     _ = c.glfwSetCursorPosCallback(self.handle, cb);
 }
 
+pub fn setCursorEnterCallback(self: *Window, cb: c.GLFWcursorenterfun) void {
+    _ = c.glfwSetCursorEnterCallback(self.handle, cb);
+}
+
 pub fn setScrollCallback(self: *Window, cb: c.GLFWscrollfun) void {
     _ = c.glfwSetScrollCallback(self.handle, cb);
 }

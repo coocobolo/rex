@@ -736,6 +736,7 @@ pub fn run(self: *App) !void {
     self.window.setWindowUserPointer(self);
     self.window.setCharCallback(charCb);
     self.window.setCursorPosCallback(cursorPosCb);
+    self.window.setCursorEnterCallback(cursorEnterCb);
     self.window.setFramebufferSizeCallback(framebufferSizeCb);
     self.window.setKeyCallback(keyCb);
     self.window.setMouseButtonCallback(mouseButtonCb);
@@ -2927,6 +2928,18 @@ fn sendMouseMotion(self: *App, col: u16, row: u16) void {
         log.err("sendMouseMotion: sendInput failed: {}", .{err});
     };
 }
+
+/// Only leaving matters: the move that follows an enter says where the
+/// pointer is.
+const cursorEnterCb: c.GLFWcursorenterfun = struct {
+    fn cb(handle: ?*c.GLFWwindow, entered: c_int) callconv(.c) void {
+        const app: *App = @ptrCast(@alignCast(c.glfwGetWindowUserPointer(handle) orelse return));
+        if (entered != 0) return;
+        if (app.kit) |kit| {
+            if (kit.pointerLeft()) app.needs_redraw = true;
+        }
+    }
+}.cb;
 
 const cursorPosCb: c.GLFWcursorposfun = struct {
     fn cb(handle: ?*c.GLFWwindow, xpos: f64, ypos: f64) callconv(.c) void {

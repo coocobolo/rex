@@ -110,6 +110,10 @@ pub const Entry = struct {
 
 pub const Pointer = enum(u8) { away, over };
 
+/// Lines of wrapped text one view needs at most. A text yields one line
+/// more than it has line breaks, so at most one more than it has bytes.
+pub const line_max = visible_max * (title_capacity + 1 + description_capacity + 1);
+
 pub const State = struct {
     /// `entries[0..len]`, oldest first. The first `visible_max` of them are
     /// on screen (entering, shown or leaving); the rest are waiting.

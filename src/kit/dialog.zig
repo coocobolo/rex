@@ -1,6 +1,6 @@
 //! A dialog that asks one question: a title, an optional body and a row
-//! of one to three actions over a scrim. The quit prompt is its first
-//! caller.
+//! of one to three actions over a scrim, composed of the parts in
+//! `modal.zig`. The quit prompt is its first caller.
 //!
 //! `State` is plain data, `update` is the only code that changes it and
 //! `view` writes its nodes (ADR 0009). Nothing allocates.
@@ -131,6 +131,10 @@ pub const Request = struct {
     /// The action that starts with the focus, or `no_action`.
     focus: u8 = no_action,
 };
+
+/// Lines of wrapped text one view needs at most. A text yields one line
+/// more than it has line breaks, so at most one more than it has bytes.
+pub const line_max = title_capacity + 1 + body_capacity + 1 + actions_max * (label_capacity + 1 + key_cap_capacity + 1);
 
 /// The part of the dialog a point is over.
 pub const Target = union(enum) {
@@ -294,9 +298,9 @@ fn put(bytes: []const u8, dest: []u8) u8 {
     return @intCast(len);
 }
 
-/// Most nodes one view writes: the modal frame, the title, the body, the
-/// action row and the buttons.
-pub const node_max = modal.node_max + 3 + actions_max * button.node_max;
+/// Most nodes one view writes: the dialog's parts, the title, the body and
+/// the buttons.
+pub const node_max = modal.node_max + 2 + actions_max * button.node_max;
 
 /// Writes the dialog as one root, the scrim, and returns it, or null when
 /// the dialog is closed and nothing was written. The texts point into
@@ -311,24 +315,11 @@ pub fn view(state: *const State, tree: *Tree, theme: *const Theme) tree_zig.Erro
         .width = width,
         .presence = presence,
     });
-    _ = try tree.text(state.title(), .{
-        .color = theme.foreground.fade(presence),
-        .style = .lg_semibold,
-        .width = .fill,
-    });
-    if (state.body_len > 0) {
-        _ = try tree.text(state.body(), .{
-            .color = theme.muted_foreground.fade(presence),
-            .width = .fill,
-        });
-    }
-    const actions = try tree.open(.{
-        .axis = .row,
-        .width = .fill,
-        .main = .end,
-        .cross = .center,
-        .gap = button.gap,
-    });
+    const header = try modal.header(tree);
+    try modal.title(tree, theme, state.title(), presence);
+    if (state.body_len > 0) try modal.description(tree, theme, state.body(), presence);
+    tree.close(header);
+    const footer = try modal.footer(tree);
     for (state.buttons[0..state.count], 0..) |*action, index| {
         try button.view(tree, theme, .{
             .id = actionId(@intCast(index)),
@@ -340,7 +331,7 @@ pub fn view(state: *const State, tree: *Tree, theme: *const Theme) tree_zig.Erro
             .presence = presence,
         });
     }
-    tree.close(actions);
+    tree.close(footer);
     modal.close(tree, frame);
     return frame.scrim;
 }

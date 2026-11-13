@@ -237,11 +237,13 @@ test "dialog: the card is centered, actions run left to right, the ring is on th
     try layout(&tree, measurer, 1000, 600);
     try testing.expectEqual(128, tree.nodes[scrim].box.fill.a);
 
-    // 24 + 28 + 16 + 20 + 16 + 42 + 24 = 170 high; the key cap sits
-    // inside the 36 px button. x = (1000 - 420) / 2, y = (600 - 170) / 2.
+    // 24 + (28 + 8 + 20) + 16 + 42 + 24 = 162 high: padding, the header
+    // with its title and description, the gap, the footer, padding. The
+    // key cap sits inside the 36 px button. x = (1000 - 420) / 2,
+    // y = (600 - 162) / 2.
     const card = &tree.nodes[scrim + 1];
     try testing.expectEqual(dialog.card_id, card.box.id);
-    try testing.expectEqual(tree_zig.Rect{ .x = 290, .y = 215, .w = dialog.width, .h = 170 }, card.rect);
+    try testing.expectEqual(tree_zig.Rect{ .x = 290, .y = 219, .w = dialog.width, .h = 162 }, card.rect);
 
     const stay_button = face(&tree, stay);
     const close_button = face(&tree, close);
@@ -255,8 +257,8 @@ test "dialog: the card is centered, actions run left to right, the ring is on th
     const esc = textByBytes(&tree, "Esc").?;
     try testing.expect(stay_button.rect.contains(esc.rect.x + 1, esc.rect.y + 1));
     try testing.expectEqual(Theme.dark.muted, tree.nodes[esc.parent].box.fill);
-    // Only the button that names a key has a cap: 5 + 5 + 3 nodes.
-    try testing.expectEqual(13, tree.len);
+    // Only the button that names a key has a cap: 6 + 5 + 3 nodes.
+    try testing.expectEqual(14, tree.len);
 
     // The ring slot is the button's parent. The focus started on Close.
     try testing.expect(tree.nodes[close_button.parent].box.border.a > 0);
@@ -335,8 +337,8 @@ test "dialog: each variant has its look, and hover changes the fill" {
     try testing.expectEqual(Theme.Color.transparent, face(&tree, 1).box.fill);
     try testing.expectEqual(theme.primary, face(&tree, 2).box.fill);
     try testing.expectEqual(theme.primary_foreground, textByBytes(&tree, "Save").?.content.text.color);
-    // Three buttons without key caps: 4 nodes before them (no body), 3 each.
-    try testing.expectEqual(13, tree.len);
+    // Three buttons without key caps: 5 nodes before them (no body), 3 each.
+    try testing.expectEqual(14, tree.len);
 
     _ = update(&state, .{ .pointer = 1 });
     tree.reset();

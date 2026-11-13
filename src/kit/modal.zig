@@ -1,11 +1,19 @@
-//! What every modal surface shares: a scrim over the window, a card
-//! centered on it, and the phase that fades both in and out. A surface
-//! keeps a `Phase` in its state and writes its content between `open` and
-//! `close`.
+//! The parts every dialog is composed of, after shadcn/ui's Dialog:
+//!
+//!     open .. close            Dialog and DialogContent: scrim and card
+//!       header                 DialogHeader
+//!         title                DialogTitle
+//!         description          DialogDescription
+//!       footer                 DialogFooter: a row of buttons
+//!
+//! and the `Phase` that fades the whole in and out, which a surface keeps
+//! in its state. There is no trigger part: what opens a dialog is an event
+//! to its surface's `update`.
 
 const std = @import("std");
 
 const Theme = @import("Theme.zig");
+const button = @import("button.zig");
 const motion = @import("motion.zig");
 const tree_zig = @import("tree.zig");
 const Tree = tree_zig.Tree;
@@ -14,8 +22,10 @@ const Index = tree_zig.Index;
 
 /// Inside the card.
 pub const padding = 24;
-/// Between the card's children.
+/// Between the card's children: the header, any content and the footer.
 pub const gap = 16;
+/// Between the title and the description.
+pub const header_gap = 8;
 /// The least distance between the card and the window's edge.
 pub const margin = 16;
 
@@ -125,8 +135,9 @@ pub const Options = struct {
 /// The two boxes `open` leaves open.
 pub const Frame = struct { scrim: Index, card: Index };
 
-/// Nodes the frame itself writes.
-pub const node_max = 2;
+/// Nodes the parts write, the texts and the footer's buttons aside: the
+/// scrim, the card, the header and the footer.
+pub const node_max = 4;
 
 /// Starts a root, the scrim, and the card on it. What is written until
 /// `close` is the card's content, top to bottom.
@@ -156,4 +167,42 @@ pub fn open(tree: *Tree, theme: *const Theme, options: Options) tree_zig.Error!F
 pub fn close(tree: *Tree, frame: Frame) void {
     tree.close(frame.card);
     tree.close(frame.scrim);
+}
+
+/// Starts the header: `title`, then `description` if there is one. End it
+/// with `Tree.close`.
+pub fn header(tree: *Tree) tree_zig.Error!Index {
+    return tree.open(.{ .width = .fill, .gap = header_gap });
+}
+
+/// What the dialog asks or says, in a few words. `presence` is
+/// `Phase.presence`, as for `description`.
+pub fn title(tree: *Tree, theme: *const Theme, bytes: []const u8, presence: f32) tree_zig.Error!void {
+    _ = try tree.text(bytes, .{
+        .color = theme.foreground.fade(presence),
+        .style = .lg_semibold,
+        .width = .fill,
+    });
+}
+
+/// What the title leaves open. Wraps to the card; a line feed starts a new
+/// line.
+pub fn description(tree: *Tree, theme: *const Theme, bytes: []const u8, presence: f32) tree_zig.Error!void {
+    _ = try tree.text(bytes, .{
+        .color = theme.muted_foreground.fade(presence),
+        .width = .fill,
+    });
+}
+
+/// Starts the footer: buttons left to right, pushed to the right edge. By
+/// convention the action the dialog is about comes last. End it with
+/// `Tree.close`.
+pub fn footer(tree: *Tree) tree_zig.Error!Index {
+    return tree.open(.{
+        .axis = .row,
+        .width = .fill,
+        .main = .end,
+        .cross = .center,
+        .gap = button.gap,
+    });
 }
