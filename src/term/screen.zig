@@ -391,6 +391,33 @@ pub fn Screen(comptime option: Option) type {
             return (self.scroll_offset + offset) & ring_mask;
         }
 
+        /// The cells that can be shown: each scrollback row, oldest first,
+        /// then each active row, cut to the active columns. Every other
+        /// cell of the ring is dead: rows and columns are cleared before
+        /// they enter the screen (scroll, resize, reflow), so a dead cell's
+        /// style and grapheme IDs refer to nothing and are neither kept
+        /// alive nor checked. Each slice is valid until the screen changes.
+        pub fn liveRows(self: *const Self) LiveRows {
+            return .{ .screen = self };
+        }
+
+        pub const LiveRows = struct {
+            screen: *const Self,
+            index: usize = 0,
+
+            pub fn next(it: *LiveRows) ?[]const Cell {
+                const s = it.screen;
+                const history: usize = if (comptime is_scrollback_used) s.scrollback_used else 0;
+                if (it.index >= history + s.active_rows) return null;
+                const phys = if (it.index < history)
+                    (s.scroll_offset + ring_rows - history + it.index) & ring_mask
+                else
+                    s.physRow(it.index - history);
+                it.index += 1;
+                return s.cells[phys * max_cols ..][0..s.active_cols];
+            }
+        };
+
         /// Maps display row `r` to a physical ring-buffer index, accounting
         /// for `viewport_offset`.
         ///
@@ -597,8 +624,8 @@ pub fn Screen(comptime option: Option) type {
         }
 
         /// Bounds the intern table: rebuilds it from the clusters still
-        /// referenced by a cell anywhere in the ring (screen and scrollback),
-        /// keeping their IDs, and frees everything else. The next run is
+        /// referenced by a live cell (`liveRows`), keeping their IDs, and
+        /// frees everything else. The next run is
         /// set at twice the live count (at least `grapheme_compact_min`), so
         /// the table stays within 2x the live clusters and the O(cells) scan
         /// is amortized over at least as many new interns. On allocation
@@ -620,7 +647,8 @@ pub fn Screen(comptime option: Option) type {
             var reverse = std.AutoHashMap(u64, u32).init(gpa);
             errdefer reverse.deinit();
 
-            for (self.cells) |cell| {
+            var rows = self.liveRows();
+            while (rows.next()) |cells| for (cells) |cell| {
                 if (!cell.kind.isGrapheme()) continue;
                 const cps = self.grapheme_table.get(cell.codepoint) orelse continue;
                 const gop = try table.getOrPut(cell.codepoint);
@@ -628,7 +656,7 @@ pub fn Screen(comptime option: Option) type {
                 gop.value_ptr.* = try arena.allocator().dupe(u21, cps);
                 const rev = try reverse.getOrPut(graphemeKey(cps));
                 if (!rev.found_existing) rev.value_ptr.* = cell.codepoint;
-            }
+            };
 
             self.grapheme_table.deinit();
             self.grapheme_reverse.deinit();
@@ -679,11 +707,12 @@ pub fn Screen(comptime option: Option) type {
             return self.internStyle(.{ .bg = self.styles.get(id).bg });
         }
 
-        /// Frees every style no cell (screen and scrollback) and no pen ID
-        /// refers to. O(cells): about 0.5 ms for the default ring.
+        /// Frees every style no live cell (`liveRows`) and no pen ID refers
+        /// to. O(live cells); a full ring took about 0.5 ms.
         fn sweepStyles(self: *Self) void {
             var in_use: Style.Table.InUse = .initEmpty();
-            for (self.cells) |cell| in_use.set(cell.style);
+            var rows = self.liveRows();
+            while (rows.next()) |cells| for (cells) |cell| in_use.set(cell.style);
             in_use.set(self.cursor.attr.id);
             in_use.set(self.cursor.attr.blank_id);
             _ = self.styles.sweep(&in_use);

@@ -10,7 +10,7 @@ const term = @import("../term/term.zig");
 /// cursor and margins inside the active area of both screens, the reply
 /// queue, string buffers and title within their capacity, parser counts
 /// within their caps, each grapheme intern table within its bound,
-/// every style ID in use live in its screen's table, and no wide
+/// every style ID in a live cell live in its screen's table, and no wide
 /// character in the active area missing one of its halves.
 pub fn expectTerminal(t: anytype) !void {
     try expectScreen(&t.primary);
@@ -62,13 +62,17 @@ fn expectWidePairs(s: anytype) !void {
     }
 }
 
-/// Every cell and the pen hold a live style ID (ADR 0005): no ID in use
-/// was swept or reset. The pen's IDs match its colors unless the table is
-/// full, when `internStyle` falls back to the nearest live style; its
-/// blank style is background-only either way, or the default.
+/// Every live cell (`liveRows`: scrollback and active area, active
+/// columns) and the pen hold a live style ID (ADR 0005): no ID in use
+/// was swept or reset. Dead cells are cleared before they are shown, so
+/// their IDs are not checked; a row shown without that clear fails here
+/// once its styles are swept. The pen's IDs match its colors unless the
+/// table is full, when `internStyle` falls back to the nearest live
+/// style; its blank style is background-only either way, or the default.
 fn expectStyles(s: anytype) !void {
     const table = &s.styles;
-    for (s.cells) |cell| try expectLive(table, cell.style);
+    var rows = s.liveRows();
+    while (rows.next()) |cells| for (cells) |cell| try expectLive(table, cell.style);
     const attr = s.cursor.attr;
     try expectLive(table, attr.id);
     try expectLive(table, attr.blank_id);

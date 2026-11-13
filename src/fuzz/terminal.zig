@@ -155,6 +155,7 @@ const regressions = [_][]const u8{
     @embedFile("testdata/terminal/crash-fe798e15b4b2153a.bin"),
     @embedFile("testdata/terminal/crash-3ba3d87de729075b.bin"),
     @embedFile("testdata/terminal/crash-d3907d8773be0a24.bin"),
+    @embedFile("testdata/terminal/crash-c30809f9163c46e7.bin"),
 };
 
 test "fuzz terminal" {

@@ -2186,6 +2186,60 @@ test "setActive: repeated zoom in and out cycles preserve content and cursor" {
     }
 }
 
+test "liveRows: the scrollback oldest first, then the active rows, at the active width" {
+    const alloc = testing.allocator;
+    var s = try primaryScreen(alloc);
+    defer s.destroy(alloc);
+
+    // Rows A to E on a 3-row screen: A and B scroll into the scrollback.
+    s.setActive(3, 5);
+    for ("ABCDE", 0..) |ch, i| {
+        if (i >= 3) s.scrollUp(1);
+        s.setCell(@min(i, 2), 0, .{ .codepoint = ch, .kind = .narrow });
+    }
+
+    var rows = s.liveRows();
+    for ("ABCDE") |ch| {
+        const cells = rows.next().?;
+        try testing.expectEqual(5, cells.len);
+        try testing.expectEqual(@as(u21, ch), cells[0].codepoint);
+    }
+    try testing.expectEqual(null, rows.next());
+}
+
+test "reflowBuffer after hardReset: no live cell keeps a style from before the reset" {
+    // Reflow writes into the scratch buffer and swaps it in, so rows it
+    // does not write still hold the buffer's older cells, here red ones
+    // from before the reset emptied the style table. They must stay dead.
+    const alloc = testing.allocator;
+    var s = try primaryScreen(alloc);
+    defer s.destroy(alloc);
+
+    s.setActive(6, 20);
+    s.cursor.attr.colors.fg = Style.encode(Color.fromRgb(255, 0, 0));
+    s.internPen();
+    const red = s.cursor.attr.id;
+    // Three screenfuls of red rows, so the ring holds them in physical
+    // rows the second reflow does not write.
+    for (0..3) |page| {
+        if (page > 0) s.scrollUp(6);
+        for (0..6) |r| for (0..20) |c| s.setCell(r, c, .{ .codepoint = 'x', .kind = .narrow, .style = red });
+    }
+    s.cursor.row = 5;
+    s.reflowBuffer(6, 10);
+
+    s.hardReset();
+    s.reflowBuffer(6, 15);
+
+    var rows = s.liveRows();
+    var count: usize = 0;
+    while (rows.next()) |cells| : (count += 1) {
+        try testing.expectEqual(15, cells.len);
+        for (cells) |cell| try testing.expectEqual(Style.Table.default_id, cell.style);
+    }
+    try testing.expectEqual(6, count);
+}
+
 test "reflowBuffer: widening columns unwraps soft-wrapped line and shifts cursor" {
     const alloc = testing.allocator;
     var s = try primaryScreen(alloc);
