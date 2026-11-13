@@ -1114,6 +1114,10 @@ pub fn Screen(comptime option: Option) type {
                 const new_row_mut = self.rowMutBase(self.cursor.row, false);
                 new_row_mut[0] = cell;
                 new_row_mut[1] = rightHalf(cell);
+                // Column 1 may have held the left half of a pair; its right
+                // half at column 2 is now alone. A one- or two-column row
+                // has no column 2 (on one column, 1 is the parked half).
+                if (self.active_cols > 2) self.repairWideBoundary(new_row_mut[0..self.active_cols], 2);
 
                 self.dirty_rows.set(old_row); // old row got a blank
                 self.dirty_rows.set(self.cursor.row); // new row got the wide char
