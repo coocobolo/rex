@@ -60,7 +60,7 @@ Rules that hold everywhere:
 | `memory.zig` | Per-id memory that outlives a rebuild of the view |
 | `motion.zig` | The one duration and curve every surface uses |
 | `focus.zig` | Keyboard focus order over a row or list |
-| `button.zig`, `kbd.zig`, `dialog.zig`, `sidebar.zig` | Components |
+| `button.zig`, `kbd.zig`, `dialog.zig`, `sidebar.zig`, `popup.zig` | Components |
 | `toast.zig`, `alert_dialog.zig` | Surfaces |
 
 ## Layout
@@ -79,6 +79,12 @@ one of:
 
 Text wraps to the width it ends up with. There is no scrolling, no wrapping
 of rows and no clipping yet.
+
+Roots are laid out one after another in drawing order, each against the
+window. A root can instead be anchored to a node of an earlier root
+(`Tree.anchorTo`, at most `tree.anchor_max` per view): it goes below that
+node, or above it when there is more room there, stays 8 px inside the
+window and is at least as wide as the node.
 
 ## Components
 
@@ -123,6 +129,17 @@ puts it away. Crossing 600 px hands the choice back to the width. Up and
 Down move between sections and stop at the ends; Home and End jump to the
 first and last.
 
+### Popup (`popup.zig`)
+
+A card above the page, placed against the control that opened it: the list
+of a dropdown, a menu. `popup.open` writes a transparent layer over the
+whole window and opens the card, anchored to the control; `popup.item`
+writes a row (filled when highlighted, checked when selected); `popup.close`
+ends the card. Write it after the page. The card takes the pointer over
+itself and the layer everywhere else, so the page gets neither hover nor
+clicks while it is open; a press on the layer is the surface's cue to close
+it.
+
 ## Surfaces
 
 ### Toast stack (`toast.zig`)
@@ -165,9 +182,9 @@ component, and add the new variant to it (`renderer/kit_painter_test.zig`).
 
 Specified here when built, in the ticket that first uses them:
 
-- Alert (the config-error banner): Icon, AlertTitle, AlertDescription,
-  AlertAction. It stays in place until its cause is gone, which is what sets
-  it apart from a toast.
+- Alert (the config-error banner): an icon, a title, a description and an
+  action. It stays in place until its cause is gone, which is what sets it
+  apart from a toast.
 - For the tool windows: checkbox, switch,
-  dropdown with its popup list, list row, text input, scroll container.
+  dropdown (its list is a popup), list row, text input, scroll container.
 - A focus order taken from the view, for surfaces with many controls.
