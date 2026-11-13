@@ -9,6 +9,9 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    # A green run takes about 2 minutes; without a limit a hang holds the
+    # runner for GitHub's default of 6 hours.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
 
@@ -29,4 +32,5 @@ jobs:
       - run: zig fmt --check .
       - run: zig build
       # GL tests need a display; Xvfb plus Mesa gives a software one.
-      - run: xvfb-run -a zig build test
+      # --test-timeout kills a test that hangs, names it and goes on.
+      - run: xvfb-run -a zig build test --test-timeout 2m
