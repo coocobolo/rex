@@ -11,3 +11,7 @@ pub const circle_x = 0xE084;
 pub const x = 0xE1B2;
 /// Shows and hides a side column.
 pub const panel_left = 0xE12A;
+/// A selected item in a list.
+pub const check = 0xE06C;
+/// Opens a dropdown.
+pub const chevron_down = 0xE06D;

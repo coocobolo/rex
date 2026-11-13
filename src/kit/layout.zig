@@ -10,8 +10,9 @@
 //!
 //! Widths are settled before heights, because a text's height depends on
 //! the width it wraps to: fit widths bottom-up, share out widths top-down,
-//! wrap, then the same two passes for heights, then positions. Each pass
-//! is one walk over the array; nothing allocates.
+//! wrap, then the same two passes for heights, then positions. Each root
+//! goes through the passes in turn, in drawing order; each pass is one walk
+//! over that root's nodes. Nothing allocates.
 
 const std = @import("std");
 const assert = std.debug.assert;
@@ -28,18 +29,74 @@ pub const Error = error{OutOfLines};
 
 /// Sets `rect` on every node of `tree` for a window of `viewport_width` by
 /// `viewport_height` logical pixels. Every box must be closed.
+///
+/// Roots are laid out one after another in drawing order, so an anchored
+/// root (`Tree.anchorTo`) finds its anchor already placed.
 pub fn layout(tree: *Tree, measurer: text.Measurer, viewport_width: f32, viewport_height: f32) Error!void {
     assert(tree.current == tree_zig.none);
     tree.lines.len = 0;
     const nodes = tree.nodes[0..tree.len];
+    var root: Index = 0;
+    while (root < nodes.len) {
+        const range: Range = .{ .start = root, .end = nodes[root].end };
+        const anchor = tree.anchorOf(root);
+        const target: ?Rect = if (anchor) |a| if (findBefore(nodes, root, a.target)) |node| node.rect else null else null;
 
-    fit(nodes, .horizontal, measurer);
-    distribute(nodes, .horizontal, viewport_width);
-    try wrapTexts(tree, measurer);
-    fit(nodes, .vertical, measurer);
-    distribute(nodes, .vertical, viewport_height);
-    place(nodes);
+        fit(nodes, range, .horizontal, measurer);
+        // At least as wide as its anchor, as a dropdown list is.
+        if (target) |rect| switch (nodes[root].box.width) {
+            .fit, .at_least => nodes[root].rect.w = @max(nodes[root].rect.w, rect.w),
+            .fill, .fixed, .at_most => {},
+        };
+        distribute(nodes, range, .horizontal, viewport_width);
+        try wrapTexts(tree, range, measurer);
+        fit(nodes, range, .vertical, measurer);
+        distribute(nodes, range, .vertical, viewport_height);
+        place(nodes, range);
+        if (target) |rect| {
+            const at = anchorPosition(nodes[root].rect, rect, viewport_width, viewport_height);
+            tree.translate(root, at.x, at.y);
+        }
+        root = range.end;
+    }
 }
+
+/// Between an anchored root and its anchor, in logical pixels.
+pub const anchor_gap = 4;
+/// The least room an anchored root keeps from the window's edges.
+pub const anchor_margin = 8;
+
+/// Where an anchored root of size `own` goes against `target`: below it,
+/// left edges aligned; above it when it does not fit below and there is
+/// more room above; then moved inside the window's margin.
+fn anchorPosition(own: Rect, target: Rect, viewport_width: f32, viewport_height: f32) struct { x: f32, y: f32 } {
+    const below = target.y + target.h + anchor_gap;
+    const above = target.y - anchor_gap - own.h;
+    const room_below = viewport_height - anchor_margin - below;
+    const room_above = above - anchor_margin;
+    const y = if (own.h <= room_below or room_below >= room_above) below else above;
+    return .{
+        .x = clamp(target.x, anchor_margin, viewport_width - anchor_margin - own.w),
+        .y = clamp(y, anchor_margin, viewport_height - anchor_margin - own.h),
+    };
+}
+
+/// `value` within `low` and `high`; `low` wins when they cross, so a root
+/// larger than the window keeps its top left in view.
+fn clamp(value: f32, low: f32, high: f32) f32 {
+    return @max(low, @min(value, high));
+}
+
+fn findBefore(nodes: []const Node, end: Index, id: tree_zig.Id) ?*const Node {
+    if (id == .none) return null;
+    for (nodes[0..end]) |*node| {
+        if (node.box.id == id) return node;
+    }
+    return null;
+}
+
+/// One root and its descendants: `nodes[start..end]`.
+const Range = struct { start: Index, end: Index };
 
 const Dimension = enum { horizontal, vertical };
 
@@ -107,9 +164,9 @@ fn contentExtent(nodes: []Node, index: usize, comptime dimension: Dimension) f32
 /// Bottom-up: each node's extent becomes its fixed size, or what its
 /// content needs. Children come after their parent in the array, so a
 /// backward walk sees them first. Wrapped texts already have their height.
-fn fit(nodes: []Node, comptime dimension: Dimension, measurer: text.Measurer) void {
-    var i = nodes.len;
-    while (i > 0) {
+fn fit(nodes: []Node, range: Range, comptime dimension: Dimension, measurer: text.Measurer) void {
+    var i: usize = range.end;
+    while (i > range.start) {
         i -= 1;
         const node = &nodes[i];
         const content: f32 = switch (node.content) {
@@ -128,18 +185,17 @@ fn fit(nodes: []Node, comptime dimension: Dimension, measurer: text.Measurer) vo
     }
 }
 
-/// Top-down: roots take their extent from the viewport, then every box
+/// Top-down: the root takes its extent from the viewport, then every box
 /// hands its inner extent out to its children.
-fn distribute(nodes: []Node, comptime dimension: Dimension, viewport: f32) void {
-    for (nodes, 0..) |*node, i| {
-        if (node.parent == tree_zig.none) {
-            const own = extent(node, dimension);
-            own.* = switch (size(node, dimension)) {
-                .fixed => |value| value,
-                .fill => viewport,
-                .fit, .at_most, .at_least => @min(own.*, viewport),
-            };
-        }
+fn distribute(nodes: []Node, range: Range, comptime dimension: Dimension, viewport: f32) void {
+    const root = &nodes[range.start];
+    const own = extent(root, dimension);
+    own.* = switch (size(root, dimension)) {
+        .fixed => |value| value,
+        .fill => viewport,
+        .fit, .at_most, .at_least => @min(own.*, viewport),
+    };
+    for (nodes[range.start..range.end], range.start..) |*node, i| {
         if (node.content != .box) continue;
         const inner = @max(0, extent(node, dimension).* - padding(node, dimension));
         if (isAlong(node, dimension)) {
@@ -198,8 +254,8 @@ fn distributeAlong(nodes: []Node, index: usize, comptime dimension: Dimension, i
 }
 
 /// Wraps every text to the width it was given and sets its height.
-fn wrapTexts(tree: *Tree, measurer: text.Measurer) Error!void {
-    for (tree.nodes[0..tree.len]) |*node| {
+fn wrapTexts(tree: *Tree, range: Range, measurer: text.Measurer) Error!void {
+    for (tree.nodes[range.start..range.end]) |*node| {
         switch (node.content) {
             .text => |*t| {
                 t.first_line = tree.lines.len;
@@ -211,14 +267,12 @@ fn wrapTexts(tree: *Tree, measurer: text.Measurer) Error!void {
     }
 }
 
-/// Top-down: roots sit at the viewport's top left; every box positions its
-/// children inside its padding, aligned along and across its axis.
-fn place(nodes: []Node) void {
-    for (nodes, 0..) |*node, i| {
-        if (node.parent == tree_zig.none) {
-            node.rect.x = 0;
-            node.rect.y = 0;
-        }
+/// Top-down: the root sits at the viewport's top left; every box positions
+/// its children inside its padding, aligned along and across its axis.
+fn place(nodes: []Node, range: Range) void {
+    nodes[range.start].rect.x = 0;
+    nodes[range.start].rect.y = 0;
+    for (nodes[range.start..range.end], range.start..) |*node, i| {
         if (node.content != .box) continue;
         switch (node.box.axis) {
             .row => placeChildren(nodes, i, .horizontal),

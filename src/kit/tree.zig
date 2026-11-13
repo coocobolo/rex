@@ -150,14 +150,31 @@ pub const Node = struct {
     end: Index,
 };
 
-pub const Error = error{OutOfNodes};
+pub const Error = error{ OutOfNodes, OutOfAnchors };
+
+/// A root placed against a node of an earlier root rather than the
+/// window: a popup against the control that opened it. Layout puts it
+/// below the node, or above when there is no room below, inside the
+/// window, and at least as wide as the node.
+pub const Anchor = struct {
+    /// The anchored root.
+    node: Index,
+    /// The node it is placed against. When no earlier node has this id,
+    /// the root stays at the window's top left.
+    target: Id,
+};
+
+/// Popups one view can hold.
+pub const anchor_max = 4;
 
 pub const Tree = struct {
     nodes: []Node,
     len: Index = 0,
     /// The innermost open box; new nodes become its children.
     current: Index = none,
+    anchor_len: u8 = 0,
     lines: text_zig.Lines,
+    anchors: [anchor_max]Anchor = undefined,
 
     /// `nodes` and `lines` are the caller's and bound how much one view
     /// can hold.
@@ -170,7 +187,33 @@ pub const Tree = struct {
     pub fn reset(self: *Tree) void {
         self.len = 0;
         self.current = none;
+        self.anchor_len = 0;
         self.lines.len = 0;
+    }
+
+    /// Places the root `index` against the node with id `target` (see
+    /// `Anchor`). Call it right after opening the root.
+    pub fn anchorTo(self: *Tree, index: Index, target: Id) Error!void {
+        assert(self.nodes[index].parent == none);
+        if (self.anchor_len == anchor_max) return error.OutOfAnchors;
+        self.anchors[self.anchor_len] = .{ .node = index, .target = target };
+        self.anchor_len += 1;
+    }
+
+    /// The anchor of root `index`, if it has one.
+    pub fn anchorOf(self: *const Tree, index: Index) ?Anchor {
+        for (self.anchors[0..self.anchor_len]) |anchor| {
+            if (anchor.node == index) return anchor;
+        }
+        return null;
+    }
+
+    /// The first node with id `id`, or null.
+    pub fn find(self: *const Tree, id: Id) ?*const Node {
+        for (self.items()) |*node| {
+            if (node.box.id == id) return node;
+        }
+        return null;
     }
 
     pub fn items(self: *const Tree) []const Node {
