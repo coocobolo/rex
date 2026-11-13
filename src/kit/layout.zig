@@ -4,7 +4,8 @@
 //! The rules are few. A box places its children in a row or a column with
 //! padding around them and a gap between them. A size is `fixed`, `fit`
 //! (as large as the content), `fill` (a share of what the parent has
-//! left) or `at_most` (fixed, but giving way to a smaller parent). Text wraps to the width it ends up with. Roots are laid out
+//! left), `at_most` (fixed, but giving way to a smaller parent) or `at_least`
+//! (as large as the content, with a minimum). Text wraps to the width it ends up with. Roots are laid out
 //! against the viewport, from its top left, and stack in drawing order.
 //!
 //! Widths are settled before heights, because a text's height depends on
@@ -121,6 +122,7 @@ fn fit(nodes: []Node, comptime dimension: Dimension, measurer: text.Measurer) vo
         };
         extent(node, dimension).* = switch (size(node, dimension)) {
             .fixed, .at_most => |value| value,
+            .at_least => |value| @max(content, value),
             .fit, .fill => content,
         };
     }
@@ -135,7 +137,7 @@ fn distribute(nodes: []Node, comptime dimension: Dimension, viewport: f32) void 
             own.* = switch (size(node, dimension)) {
                 .fixed => |value| value,
                 .fill => viewport,
-                .fit, .at_most => @min(own.*, viewport),
+                .fit, .at_most, .at_least => @min(own.*, viewport),
             };
         }
         if (node.content != .box) continue;
@@ -149,7 +151,7 @@ fn distribute(nodes: []Node, comptime dimension: Dimension, viewport: f32) void 
                 child_extent.* = switch (size(child, dimension)) {
                     .fixed => |value| value,
                     .fill => inner,
-                    .fit, .at_most => @min(child_extent.*, inner),
+                    .fit, .at_most, .at_least => @min(child_extent.*, inner),
                 };
             }
         }
@@ -157,8 +159,8 @@ fn distribute(nodes: []Node, comptime dimension: Dimension, viewport: f32) void 
 }
 
 /// Along the axis: `fill` children share what the others leave. Without a
-/// `fill` child, an overflow is taken from the largest `fit` or `at_most`
-/// child, which is what makes a long text in a row wrap instead of
+/// `fill` child, an overflow is taken from the largest child that is not
+/// `fixed`, which is what makes a long text in a row wrap instead of
 /// spilling out.
 fn distributeAlong(nodes: []Node, index: usize, comptime dimension: Dimension, inner: f32) void {
     var used: f32 = 0;
@@ -171,7 +173,7 @@ fn distributeAlong(nodes: []Node, index: usize, comptime dimension: Dimension, i
         switch (size(child, dimension)) {
             .fill => fills += 1,
             .fixed => used += extent(child, dimension).*,
-            .fit, .at_most => {
+            .fit, .at_most, .at_least => {
                 used += extent(child, dimension).*;
                 if (largest_fit == null or extent(child, dimension).* > extent(largest_fit.?, dimension).*) {
                     largest_fit = child;

@@ -131,6 +131,8 @@ test "kbd: a group is its caps in a row" {
     const shift = tree.nodes[3].rect;
     const p = tree.nodes[5].rect;
     try testing.expectEqual(4 * byte_width + 12, ctrl.w);
+    // One letter is 7 + 12 = 19 wide; the cap keeps its minimum.
+    try testing.expectEqual(kbd.width_min, p.w);
     try testing.expectEqual(ctrl.x + ctrl.w + kbd.gap, shift.x);
     try testing.expectEqual(shift.x + shift.w + kbd.gap, p.x);
     try testing.expectEqual(ctrl.y, p.y);

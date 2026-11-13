@@ -299,6 +299,26 @@ test "layout: an at-most size is fixed until its parent is smaller" {
     try expectRect(&tree, body, 40, 280, 220, 40);
 }
 
+test "layout: an at-least size follows its content down to a minimum" {
+    var fixture: Fixture = .{};
+    var tree = fixture.tree();
+    const row = try tree.open(.{ .axis = .row, .gap = 4 });
+    const narrow = try tree.open(.{ .width = .{ .at_least = 20 }, .padding = .symmetric(6, 2), .cross = .center });
+    const letter = try tree.text("P", .{ .color = Theme.dark.foreground });
+    tree.close(narrow);
+    const wide = try tree.open(.{ .width = .{ .at_least = 20 }, .padding = .symmetric(6, 2) });
+    _ = try tree.text("Shift", .{ .color = Theme.dark.foreground });
+    tree.close(wide);
+    tree.close(row);
+
+    try layout(&tree, measurer, 800, 600);
+
+    // 7 + 12 = 19 is under the minimum; the letter is centered in the 20.
+    try expectRect(&tree, narrow, 0, 0, 20, 24);
+    try expectRect(&tree, letter, 6.5, 2, 7, 20);
+    try expectRect(&tree, wide, 24, 0, 47, 24);
+}
+
 test "layout: an at-most child in a row gives way like a fit child" {
     var fixture: Fixture = .{};
     var tree = fixture.tree();

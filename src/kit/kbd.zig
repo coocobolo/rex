@@ -6,6 +6,10 @@ const Theme = @import("Theme.zig");
 const tree_zig = @import("tree.zig");
 const Tree = tree_zig.Tree;
 
+/// A cap is never narrower than it is tall, so a single letter gets a
+/// square.
+pub const width_min = 20;
+
 /// Nodes one cap writes.
 pub const node_max = 2;
 
@@ -21,6 +25,7 @@ pub fn groupNodes(count: usize) usize {
 /// the opacity of the surface it sits on, 0 to 1.
 pub fn view(tree: *Tree, theme: *const Theme, key: []const u8, presence: f32) tree_zig.Error!void {
     const cap = try tree.open(.{
+        .width = .{ .at_least = width_min },
         .padding = .symmetric(6, 2),
         .fill = theme.muted.fade(presence),
         .radius = Theme.radius_sm,
