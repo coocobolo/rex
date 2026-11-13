@@ -18,11 +18,21 @@ const Id = tree_zig.Id;
 pub const thickness = 8;
 /// Height of the day chart.
 pub const day_height = 96;
+/// Outer radius and thickness of the timer ring. The HTML draws a
+/// centerline of 112 with a stroke of 6.
+pub const ring_radius: f32 = 115;
+pub const ring_thickness: f32 = 6;
+/// Outer radius and thickness of the program donut. The HTML draws a
+/// centerline of 54 with a stroke of 16.
+pub const donut_radius: f32 = 62;
+pub const donut_thickness: f32 = 16;
+/// Gap between donut slices, along the centerline, in logical pixels.
+pub const donut_gap: f32 = 2;
 
 /// How one fraction is drawn.
-pub const ProgressMark = enum { bar };
+pub const ProgressMark = enum { bar, ring };
 /// How named parts are drawn.
-pub const ShareMark = enum { bar };
+pub const ShareMark = enum { bar, donut };
 /// How one value per day is drawn.
 pub const DayMark = enum { bar };
 
@@ -47,6 +57,8 @@ pub const Day = struct {
 
 /// The track and the filled part.
 pub const progress_nodes = 2;
+/// The square, the track arc and the filled arc.
+pub const ring_nodes = 3;
 
 /// The column, then each part's group, label, track and filled part.
 pub fn shareNodes(count: usize) usize {
@@ -58,11 +70,17 @@ pub fn dayNodes(count: usize) usize {
     return 1 + count * 6;
 }
 
+/// The square, then one arc per part.
+pub fn donutNodes(count: usize) usize {
+    return 1 + count;
+}
+
 /// A track and the fraction of it that `fraction` fills. Values outside
 /// 0..1 are clamped.
 pub fn progress(tree: *Tree, theme: *const Theme, mark: ProgressMark, fraction: f32, fill: Color) tree_zig.Error!void {
     switch (mark) {
         .bar => try fractionBar(tree, theme.muted, fill, fraction),
+        .ring => try ringChart(tree, theme, fraction, fill),
     }
 }
 
@@ -71,6 +89,7 @@ pub fn progress(tree: *Tree, theme: *const Theme, mark: ProgressMark, fraction: 
 pub fn share(tree: *Tree, theme: *const Theme, mark: ShareMark, parts: []const Part) tree_zig.Error!void {
     switch (mark) {
         .bar => try shareBars(tree, theme, parts),
+        .donut => try donutChart(tree, parts),
     }
 }
 
@@ -182,6 +201,65 @@ fn stripColor(y: f32, part_h: f32, total_h: f32, has_line: bool, limit_h: f32, d
     if (y < part_h) return day.part_fill;
     if (y < total_h) return day.fill;
     return .transparent;
+}
+
+const turn = std.math.tau;
+
+fn ringChart(tree: *Tree, theme: *const Theme, fraction: f32, fill: Color) tree_zig.Error!void {
+    const side = ring_radius * 2;
+    const square = try tree.open(.{
+        .width = .{ .fixed = side },
+        .height = .{ .fixed = side },
+    });
+    try segment(tree, .{
+        .radius = ring_radius,
+        .thickness = ring_thickness,
+        .sweep = turn,
+        .fill = theme.muted,
+    });
+    try segment(tree, .{
+        .radius = ring_radius,
+        .thickness = ring_thickness,
+        .sweep = clamp01(fraction) * turn,
+        .fill = fill,
+        .caps = .round,
+    });
+    tree.close(square);
+}
+
+fn donutChart(tree: *Tree, parts: []const Part) tree_zig.Error!void {
+    const side = donut_radius * 2;
+    const square = try tree.open(.{
+        .width = .{ .fixed = side },
+        .height = .{ .fixed = side },
+    });
+    var sum: f32 = 0;
+    for (parts) |part| sum += finite(part.value);
+    const count: f32 = @floatFromInt(parts.len);
+    const centerline = donut_radius - donut_thickness / 2;
+    const gap = if (parts.len > 1 and centerline > 0) donut_gap / centerline else 0;
+    const room = @max(0, turn - gap * count);
+    var cursor: f32 = 0;
+    for (parts) |part| {
+        const sweep = if (sum == 0) 0 else finite(part.value) / sum * room;
+        try segment(tree, .{
+            .radius = donut_radius,
+            .thickness = donut_thickness,
+            .start = cursor,
+            .sweep = sweep,
+            .fill = part.fill,
+        });
+        cursor += sweep + gap;
+    }
+    tree.close(square);
+}
+
+fn segment(tree: *Tree, arc: tree_zig.Arc) tree_zig.Error!void {
+    _ = try tree.arc(arc, .{ .overlay = true, .width = .fill, .height = .fill });
+}
+
+fn clamp01(value: f32) f32 {
+    return @min(1, @max(0, value));
 }
 
 fn finite(value: f32) f32 {

@@ -139,6 +139,9 @@ pub const Box = struct {
     /// Applies only to a node with an id: the shape is taken from the node
     /// `Tree.hit` finds.
     pointer: PointerShape = .arrow,
+    /// Drawn over the parent's padding box, and not counted in the
+    /// parent's size. Several share one square, as the slices of a donut do.
+    overlay: bool = false,
 };
 
 pub const Text = struct {
@@ -161,10 +164,31 @@ pub const Icon = struct {
     size: u8,
 };
 
+/// How the ends of an arc are finished.
+pub const Caps = enum(u8) {
+    butt,
+    round,
+};
+
+/// One ring segment. The node is a square of side `2 * radius`; the centre
+/// is that square's centre. `radius` is the outer edge and `thickness` runs
+/// inward. Angles are radians, 0 at the top, clockwise.
+pub const Arc = struct {
+    radius: f32,
+    thickness: f32,
+    /// Where the ink starts.
+    start: f32 = 0,
+    /// Clockwise length. A full turn is `2π`.
+    sweep: f32,
+    fill: Color,
+    caps: Caps = .butt,
+};
+
 pub const Content = union(enum) {
     box,
     text: Text,
     icon: Icon,
+    arc: Arc,
 };
 
 pub const Node = struct {
@@ -288,6 +312,11 @@ pub const Tree = struct {
 
     pub fn icon(self: *Tree, value: Icon) Error!Index {
         return self.push(.{ .icon = value }, .{});
+    }
+
+    /// An arc. `box.overlay` lays it over its parent instead of in the flow.
+    pub fn arc(self: *Tree, value: Arc, box: Box) Error!Index {
+        return self.push(.{ .arc = value }, box);
     }
 
     fn push(self: *Tree, content: Content, box: Box) Error!Index {

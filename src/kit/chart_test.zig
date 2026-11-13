@@ -1,4 +1,6 @@
-const testing = @import("std").testing;
+const std = @import("std");
+const testing = std.testing;
+const std_tau = std.math.tau;
 
 const Theme = @import("Theme.zig");
 const chart = @import("chart.zig");
@@ -104,6 +106,72 @@ test "chart: day bars share a scale and the limit lines up" {
     try testing.expectApproxEqAbs(bottom, focus.rect.y + focus.rect.h, 0.01);
     try testing.expectApproxEqAbs(@as(f32, 96) * 4 / 20, focus.rect.h, 0.01);
     try testing.expectApproxEqAbs(@as(f32, 95), sumFill(&tree, second, Theme.dark.primary), 0.01);
+}
+
+test "chart: an overlay covers its parent and does not grow it" {
+    var fixture: Fixture = .{};
+    var tree = fixture.tree();
+    const parent = try tree.open(.{ .width = .{ .fixed = 100 }, .height = .{ .fixed = 40 } });
+    _ = try tree.leaf(.{ .overlay = true, .width = .fill, .height = .fill });
+    _ = try tree.leaf(.{ .width = .{ .fixed = 10 }, .height = .{ .fixed = 10 } });
+    tree.close(parent);
+    try lay(&tree);
+    try testing.expectEqual(tree_zig.Rect{ .x = 0, .y = 0, .w = 100, .h = 40 }, tree.nodes[0].rect);
+    try testing.expectEqual(tree.nodes[0].rect, tree.nodes[1].rect);
+    try testing.expectEqual(tree_zig.Rect{ .x = 0, .y = 0, .w = 10, .h = 10 }, tree.nodes[2].rect);
+}
+
+test "chart: an overlay keeps its parent's size beside a fill sibling" {
+    var fixture: Fixture = .{};
+    var tree = fixture.tree();
+    const parent = try tree.open(.{ .axis = .row, .width = .{ .fixed = 100 }, .height = .{ .fixed = 40 } });
+    _ = try tree.leaf(.{ .overlay = true, .width = .fill, .height = .fill });
+    _ = try tree.leaf(.{ .width = .{ .fixed = 40 }, .height = .{ .fixed = 10 } });
+    _ = try tree.leaf(.{ .width = .fill, .height = .{ .fixed = 10 } });
+    tree.close(parent);
+    try lay(&tree);
+    try testing.expectEqual(tree_zig.Rect{ .x = 0, .y = 0, .w = 100, .h = 40 }, tree.nodes[1].rect);
+    try testing.expectEqual(tree_zig.Rect{ .x = 0, .y = 0, .w = 40, .h = 10 }, tree.nodes[2].rect);
+    try testing.expectEqual(tree_zig.Rect{ .x = 40, .y = 0, .w = 60, .h = 10 }, tree.nodes[3].rect);
+}
+
+test "chart: a ring is a full track and a clockwise sweep" {
+    var fixture: Fixture = .{};
+    var tree = fixture.tree();
+    try chart.progress(&tree, &Theme.dark, .ring, 0.25, Theme.dark.primary);
+    try lay(&tree);
+    try testing.expectEqual(chart.ring_nodes, tree.len);
+    const side = chart.ring_radius * 2;
+    try testing.expectEqual(tree_zig.Rect{ .x = 0, .y = 0, .w = side, .h = side }, tree.nodes[0].rect);
+    try testing.expectEqual(tree.nodes[0].rect, tree.nodes[1].rect);
+    const track = tree.nodes[1].content.arc;
+    const ink = tree.nodes[2].content.arc;
+    try testing.expectApproxEqAbs(std_tau, track.sweep, 0.001);
+    try testing.expectEqual(tree_zig.Caps.butt, track.caps);
+    try testing.expectEqual(Theme.dark.muted, track.fill);
+    try testing.expectApproxEqAbs(@as(f32, std_tau) / 4, ink.sweep, 0.001);
+    try testing.expectEqual(tree_zig.Caps.round, ink.caps);
+    try testing.expectEqual(Theme.dark.primary, ink.fill);
+}
+
+test "chart: donut slices share the square and the gaps" {
+    var fixture: Fixture = .{};
+    var tree = fixture.tree();
+    const parts = [_]chart.Part{
+        .{ .label = "Rex", .value = 1, .fill = Theme.dark.primary },
+        .{ .label = "Shell", .value = 3, .fill = Theme.dark.info },
+    };
+    try chart.share(&tree, &Theme.dark, .donut, &parts);
+    try lay(&tree);
+    try testing.expectEqual(chart.donutNodes(parts.len), tree.len);
+    const side = chart.donut_radius * 2;
+    try testing.expectEqual(tree_zig.Rect{ .x = 0, .y = 0, .w = side, .h = side }, tree.nodes[0].rect);
+    try testing.expectEqual(tree.nodes[0].rect, tree.nodes[1].rect);
+    const smaller = tree.nodes[1].content.arc;
+    const larger = tree.nodes[2].content.arc;
+    try testing.expectApproxEqAbs(smaller.sweep * 3, larger.sweep, 0.001);
+    try testing.expectEqual(tree_zig.Caps.butt, smaller.caps);
+    try testing.expectApproxEqAbs(smaller.sweep + (chart.donut_gap / (chart.donut_radius - chart.donut_thickness / 2)), larger.start, 0.001);
 }
 
 test "chart: a missing limit draws no line" {

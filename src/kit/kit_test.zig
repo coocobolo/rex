@@ -374,7 +374,7 @@ test "sizes of the kit's types" {
     try testing.expectEqual(12, @sizeOf(text.Line));
     try testing.expectEqual(104, @sizeOf(Node));
     try testing.expectEqual(8, @alignOf(Node));
-    try testing.expectEqual(40, @sizeOf(tree_zig.Box));
+    try testing.expectEqual(44, @sizeOf(tree_zig.Box));
     try testing.expectEqual(40, @sizeOf(tree_zig.Content));
     try testing.expectEqual(16, @sizeOf(tree_zig.Rect));
     try testing.expectEqual(8, @sizeOf(tree_zig.Size));

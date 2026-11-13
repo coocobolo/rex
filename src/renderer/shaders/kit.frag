@@ -8,6 +8,7 @@ flat in vec2 v_half;
 flat in vec4 v_fill;
 flat in vec4 v_border;
 flat in vec2 v_params;
+flat in vec2 v_arc;
 flat in uint v_kind;
 
 uniform sampler2D u_atlas_gray; // coverage in alpha (swizzled R8)
@@ -28,6 +29,43 @@ void main() {
     float coverage = texture(u_atlas_gray, v_uv).a;
     if (coverage < 0.004) discard;
     frag_color = vec4(v_fill.rgb, v_fill.a * coverage);
+    return;
+  }
+
+  // A ring segment. 0 is the top and the sweep runs clockwise, which is
+  // atan’s direction in this y-down pixel space after a quarter turn.
+  if (v_kind == 2u) {
+    const float TAU = 6.28318530718;
+    float outer = max(v_params.x, 0.0);
+    float thick = abs(v_params.y);
+    float inner = max(outer - thick, 0.0);
+    float d = length(v_local);
+    float ring = max(inner - d, d - outer);
+    // Coverage is zero past half a pixel, and a round cap stays inside
+    // the outer radius, so this pixel cannot be ink.
+    if (ring > 0.5) discard;
+
+    float ang = mod(atan(v_local.y, v_local.x) + 1.57079632679, TAU);
+    float start = mod(v_arc.x, TAU);
+    float sweep = clamp(v_arc.y, 0.0, TAU);
+    float cw = mod(ang - start, TAU);
+    float ccw = mod(start - ang, TAU);
+    float wedge = cw <= sweep ? -min(cw, sweep - cw) : min(cw - sweep, ccw);
+    float dist = max(ring, wedge * max(d, 1.0));
+
+    // Round caps are discs on the centerline at each end. A full turn
+    // already covers them.
+    if (v_params.y < 0.0 && sweep < TAU) {
+      float cl = max(outer - thick * 0.5, 0.0);
+      float half_t = thick * 0.5;
+      vec2 cap_a = vec2(sin(start), -cos(start)) * cl;
+      vec2 cap_b = vec2(sin(start + sweep), -cos(start + sweep)) * cl;
+      dist = min(dist, min(length(v_local - cap_a), length(v_local - cap_b)) - half_t);
+    }
+
+    float shape = clamp(0.5 - dist, 0.0, 1.0);
+    if (v_fill.a * shape < 0.004) discard;
+    frag_color = vec4(v_fill.rgb, v_fill.a * shape);
     return;
   }
 

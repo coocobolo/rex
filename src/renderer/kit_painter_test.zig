@@ -375,6 +375,22 @@ fn render(scene: Scene, variant: Theme.Variant, background: Color, scale: f32, k
     return result;
 }
 
+test "KitPainter: an arc instance is the square around its centre" {
+    const arc: tree_zig.Arc = .{
+        .radius = 10,
+        .thickness = 4,
+        .start = 1,
+        .sweep = 2,
+        .fill = .{ .r = 1, .g = 2, .b = 3, .a = 255 },
+        .caps = .round,
+    };
+    const got = KitPainter.arcInstance(arc, 100, 50, 20, 2);
+    try testing.expectEqual([4]f32{ 200, 100, 40, 40 }, got.rect);
+    try testing.expectEqual([2]f32{ 20, -8 }, got.params);
+    try testing.expectEqual([2]f32{ 1, 2 }, got.arc);
+    try testing.expectEqual(KitPainter.Kind.arc, got.kind);
+}
+
 test "KitPainter: a toast is a filled, bordered box with text, over an untouched background" {
     for ([_]f32{ 1, 1.25, 1.5 }) |scale| {
         var rendered = try render(.overlay, .dark, terminal_dark, scale, .pairs);

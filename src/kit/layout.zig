@@ -154,6 +154,7 @@ fn contentExtent(nodes: []Node, index: usize, comptime dimension: Dimension) f32
     var count: u32 = 0;
     var it = children(nodes, index);
     while (it.next()) |child| {
+        if (child.box.overlay) continue;
         const child_extent = extent(child, dimension).*;
         total = if (along) total + child_extent else @max(total, child_extent);
         count += 1;
@@ -176,6 +177,7 @@ fn fit(nodes: []Node, range: Range, comptime dimension: Dimension, measurer: tex
                 .vertical => node.rect.h,
             },
             .icon => |icon| @floatFromInt(icon.size),
+            .arc => |arc| arc.radius * 2,
             .box => contentExtent(nodes, i, dimension),
         };
         extent(node, dimension).* = switch (size(node, dimension)) {
@@ -207,6 +209,10 @@ fn distribute(nodes: []Node, range: Range, comptime dimension: Dimension, viewpo
             var it = children(nodes, i);
             while (it.next()) |child| {
                 const child_extent = extent(child, dimension);
+                if (child.box.overlay) {
+                    child_extent.* = inner;
+                    continue;
+                }
                 child_extent.* = switch (size(child, dimension)) {
                     .fixed => |value| value,
                     .fill => inner,
@@ -230,6 +236,10 @@ fn distributeAlong(nodes: []Node, index: usize, comptime dimension: Dimension, i
     var largest_fit: ?*Node = null;
     var it = children(nodes, index);
     while (it.next()) |child| {
+        if (child.box.overlay) {
+            extent(child, dimension).* = inner;
+            continue;
+        }
         count += 1;
         switch (size(child, dimension)) {
             .fill => fills += 1,
@@ -253,6 +263,7 @@ fn distributeAlong(nodes: []Node, index: usize, comptime dimension: Dimension, i
         const share = @max(0, inner - used) / @as(f32, @floatFromInt(fills));
         it = children(nodes, index);
         while (it.next()) |child| {
+            if (child.box.overlay) continue;
             if (size(child, dimension) == .fill) extent(child, dimension).* = share;
         }
     } else if (used > inner and nodes[index].box.overflow == .visible) {
@@ -272,7 +283,7 @@ fn wrapTexts(tree: *Tree, range: Range, measurer: text.Measurer) Error!void {
                 t.line_count = try text.wrap(measurer, t.bytes, t.style, t.figures, node.rect.w, &tree.lines);
                 node.rect.h = @floatFromInt(t.line_count * t.style.metrics().line_height);
             },
-            .box, .icon => {},
+            .box, .icon, .arc => {},
         }
     }
 }
@@ -307,6 +318,11 @@ fn placeChildren(nodes: []Node, index: usize, comptime along: Dimension) void {
     var cursor = offset(box.main, free);
     var it = children(nodes, index);
     while (it.next()) |child| {
+        if (child.box.overlay) {
+            child.rect.x = origin_x;
+            child.rect.y = origin_y;
+            continue;
+        }
         const across_offset = offset(box.cross, @max(0, inner_across - extent(child, across).*));
         switch (along) {
             .horizontal => {

@@ -29,7 +29,7 @@ const layout = @import("../kit/layout.zig");
 
 const log = std.log.scoped(.kit_painter);
 
-pub const Kind = enum(u32) { box = 0, glyph = 1 };
+pub const Kind = enum(u32) { box = 0, glyph = 1, arc = 2 };
 
 /// One box or glyph, as the shader reads it (`shaders/kit.vert`).
 pub const Instance = extern struct {
@@ -40,11 +40,15 @@ pub const Instance = extern struct {
     /// Box border color.
     border: Color = .transparent,
     /// Box: corner radius and border width. Glyph: its atlas x and y.
+    /// Arc: outer radius, and thickness. A negative thickness is the same
+    /// length with round caps.
     params: [2]f32,
     kind: Kind,
     /// Left, top, right and bottom in physical pixels: the shader drops
     /// what falls outside. `no_clip` for none.
     clip: Clip = no_clip,
+    /// Arc: start angle and clockwise sweep, in radians. Zero otherwise.
+    arc: [2]f32 = .{ 0, 0 },
 };
 
 pub const Clip = [4]i16;
@@ -118,7 +122,9 @@ pub fn init() Shader.Error!KitPainter {
     gl.vertexAttribIPointer(4, 1, gl.UNSIGNED_INT, stride, offsetPointer("kind"));
     gl.enableVertexAttribArray(5);
     gl.vertexAttribIPointer(5, 4, gl.SHORT, stride, offsetPointer("clip"));
-    inline for (0..6) |location| gl.vertexAttribDivisor(location, 1);
+    gl.enableVertexAttribArray(6);
+    gl.vertexAttribPointer(6, 2, gl.FLOAT, gl.FALSE, stride, offsetPointer("arc"));
+    inline for (0..7) |location| gl.vertexAttribDivisor(location, 1);
 
     gl.bindVertexArray(0);
     gl.bindBuffer(gl.ARRAY_BUFFER, 0);
@@ -208,6 +214,11 @@ pub fn paint(self: *KitPainter, tree: *const Tree, font: *KitFont, atlas: *Atlas
                     .clip = clip,
                 });
             },
+            .arc => |arc| {
+                if (!(arc.radius > 0 and arc.thickness > 0 and arc.sweep > 0)) continue;
+                if (!std.math.isFinite(arc.radius) or !std.math.isFinite(arc.sweep)) continue;
+                try self.push(arcInstance(arc, node.rect.x, node.rect.y, node.rect.w, scale));
+            },
             .text => |t| {
                 const line_height: f32 = @floatFromInt(t.style.metrics().line_height);
                 for (tree.lines.slice(t.first_line, t.line_count), 0..) |line, index| {
@@ -230,6 +241,23 @@ fn clipOf(rect: layout.PixelRect) Clip {
 
 fn intersect(a: Clip, b: Clip) Clip {
     return .{ @max(a[0], b[0]), @max(a[1], b[1]), @min(a[2], b[2]), @min(a[3], b[3]) };
+}
+
+/// The instance for `arc`. The quad is the square around its centre, of
+/// side `2 * radius` in physical pixels. `origin_x`, `origin_y` and `side`
+/// are the node's rectangle in logical pixels.
+pub fn arcInstance(arc: tree_zig.Arc, origin_x: f32, origin_y: f32, side: f32, scale: f32) Instance {
+    const center_x = (origin_x + side / 2) * scale;
+    const center_y = (origin_y + side / 2) * scale;
+    const outer = arc.radius * scale;
+    const thick = @min(arc.radius, @max(0, arc.thickness)) * scale;
+    return .{
+        .rect = .{ center_x - outer, center_y - outer, outer * 2, outer * 2 },
+        .fill = arc.fill,
+        .params = .{ outer, if (arc.caps == .round) -thick else thick },
+        .arc = .{ arc.start, arc.sweep },
+        .kind = .arc,
+    };
 }
 
 fn pixels(rect: layout.PixelRect) [4]f32 {
