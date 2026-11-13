@@ -50,7 +50,11 @@ const Scene = enum {
     toasts,
     /// Every shared component in every variant, size and state.
     specimen,
+    /// A clipping box with a larger box and a long text inside it.
+    clip,
 };
+
+const clip_text = "A line far longer than the box that holds it";
 
 const Marks = struct {
     toast: tree_zig.Index = tree_zig.none,
@@ -58,6 +62,8 @@ const Marks = struct {
     dialog: tree_zig.Index = tree_zig.none,
     confirm: tree_zig.Index = tree_zig.none,
     cancel: tree_zig.Index = tree_zig.none,
+    /// The clipping box of the `clip` scene.
+    clip: tree_zig.Index = tree_zig.none,
 };
 
 fn toast(tree: *Tree, theme: *const Theme, icon: Color, title: []const u8, description: []const u8, marks: ?*Marks) !void {
@@ -119,6 +125,19 @@ fn build(tree: *Tree, scene: Scene, theme: *const Theme, toasts: *const toast_st
         },
         .toasts => _ = try toast_stack.view(toasts, tree, theme),
         .specimen => try specimen(tree, theme, &marks),
+        .clip => {
+            const page = try tree.open(.{ .width = .fill, .height = .fill, .padding = .all(40) });
+            marks.clip = try tree.open(.{
+                .width = .{ .fixed = 100 },
+                .height = .{ .fixed = 60 },
+                .overflow = .clip,
+            });
+            _ = try tree.leaf(.{ .width = .{ .fixed = 300 }, .height = .{ .fixed = 30 }, .fill = theme.destructive });
+            _ = try tree.text(clip_text, .{ .color = theme.foreground });
+            _ = try tree.leaf(.{ .width = .{ .fixed = 300 }, .height = .{ .fixed = 300 }, .fill = theme.info });
+            tree.close(marks.clip);
+            tree.close(page);
+        },
     }
     return marks;
 }
@@ -486,6 +505,32 @@ test "KitPainter: the focus ring is a band around a button, not a fill behind it
         // Confirm lost the ring.
         const confirm = rendered.rect(rendered.marks.confirm);
         try testing.expectEqual(rgb(theme.popover), frame.at(confirm.x - 2, confirm.y + confirm.h / 2));
+    }
+}
+
+test "KitPainter: a clipping box cuts its descendants at its edges" {
+    for ([_]f32{ 1, 1.25, 1.5 }) |scale| {
+        var rendered = try render(.clip, .dark, terminal_dark, scale, .pairs);
+        defer rendered.frame.deinit();
+        const frame = &rendered.frame;
+        const box = rendered.rect(rendered.marks.clip);
+        const theme = &Theme.dark;
+        try frame.save(if (scale == 1) "clip-dark-100" else if (scale == 1.25) "clip-dark-125" else "clip-dark-150");
+
+        // Inside: the red bar, then the text wrapped to the box's width,
+        // which pushes the blue box out of it entirely.
+        try testing.expectEqual(rgb(theme.destructive), frame.at(box.x + 50, box.y + 15));
+        const area = layout.snap(box, scale);
+        try testing.expectEqual(@as(u32, @intCast(area.w * area.h)), frame.countNot(box, rgb(theme.info)));
+        try testing.expect(frame.countNot(.{ .x = box.x, .y = box.y + 30, .w = box.w, .h = 30 }, rgb(terminal_dark)) > 0);
+        // Right of the box and below it, nothing of either is drawn.
+        try testing.expectEqual(0, frame.countNot(.{ .x = box.x + box.w, .y = box.y, .w = 300, .h = box.h }, rgb(terminal_dark)));
+        try testing.expectEqual(0, frame.countNot(.{ .x = box.x, .y = box.y + box.h, .w = box.w, .h = 200 }, rgb(terminal_dark)));
+        // Glyphs wholly outside are not even sent to the GPU: fewer
+        // instances than the two visible boxes and every glyph.
+        var glyphs: u32 = 0;
+        for (clip_text) |byte| glyphs += @intFromBool(byte != ' ');
+        try testing.expect(rendered.instances < 2 + glyphs);
     }
 }
 

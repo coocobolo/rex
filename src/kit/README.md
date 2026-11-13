@@ -77,8 +77,13 @@ one of:
 | `at_most` | This many pixels, or less in a smaller parent |
 | `at_least` | As large as the content, but not below this many pixels |
 
-Text wraps to the width it ends up with. There is no scrolling, no wrapping
-of rows and no clipping yet.
+Text wraps to the width it ends up with. There is no scrolling and no
+wrapping of rows yet.
+
+A box with `.overflow = .clip` cuts its descendants at its rectangle, for
+painting and for hit-testing, and keeps their sizes instead of shrinking the
+largest one to fit. The cut is square, also at rounded corners. Clipping
+boxes nest up to 8 deep.
 
 Roots are laid out one after another in drawing order, each against the
 window. A root can instead be anchored to a node of an earlier root

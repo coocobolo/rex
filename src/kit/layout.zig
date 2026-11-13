@@ -217,7 +217,8 @@ fn distribute(nodes: []Node, range: Range, comptime dimension: Dimension, viewpo
 /// Along the axis: `fill` children share what the others leave. Without a
 /// `fill` child, an overflow is taken from the largest child that is not
 /// `fixed`, which is what makes a long text in a row wrap instead of
-/// spilling out.
+/// spilling out; a clipping box keeps its children's sizes and cuts them
+/// instead.
 fn distributeAlong(nodes: []Node, index: usize, comptime dimension: Dimension, inner: f32) void {
     var used: f32 = 0;
     var count: u32 = 0;
@@ -245,7 +246,7 @@ fn distributeAlong(nodes: []Node, index: usize, comptime dimension: Dimension, i
         while (it.next()) |child| {
             if (size(child, dimension) == .fill) extent(child, dimension).* = share;
         }
-    } else if (used > inner) {
+    } else if (used > inner and nodes[index].box.overflow == .visible) {
         if (largest_fit) |child| {
             const child_extent = extent(child, dimension);
             child_extent.* = @max(0, child_extent.* - (used - inner));

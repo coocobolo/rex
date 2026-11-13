@@ -362,3 +362,20 @@ test "sizes of the kit's types" {
     try testing.expectEqual(8, @sizeOf(tree_zig.Size));
     try testing.expectEqual(80, @sizeOf(Tree));
 }
+
+test "tree: a node a clipping ancestor cuts away is not hit there" {
+    var nodes: [4]tree_zig.Node = undefined;
+    var lines: [1]text.Line = undefined;
+    var tree = Tree.init(&nodes, &lines);
+    const inner = tree_zig.Id.of("test.inner");
+    const outer = tree_zig.Id.of("test.outer");
+    const box = try tree.open(.{ .id = outer, .width = .{ .fixed = 50 }, .height = .{ .fixed = 50 }, .overflow = .clip });
+    _ = try tree.leaf(.{ .id = inner, .width = .{ .fixed = 200 }, .height = .{ .fixed = 20 } });
+    tree.close(box);
+    try layout(&tree, measurer, 400, 400);
+    try testing.expectEqual(inner, tree.hitTest(10, 10));
+    try testing.expectEqual(tree_zig.Id.none, tree.hitTest(100, 10));
+
+    tree.nodes[box].box.overflow = .visible;
+    try testing.expectEqual(inner, tree.hitTest(100, 10));
+}

@@ -2,6 +2,8 @@
 
 in vec2 v_local;
 in vec2 v_uv;
+in vec2 v_pixel;
+flat in vec4 v_clip;
 flat in vec2 v_half;
 flat in vec4 v_fill;
 flat in vec4 v_border;
@@ -19,6 +21,9 @@ float roundedBox(vec2 p, vec2 b, float r) {
 }
 
 void main() {
+  // Outside the clipping box this instance sits in.
+  if (v_pixel.x < v_clip.x || v_pixel.y < v_clip.y || v_pixel.x >= v_clip.z || v_pixel.y >= v_clip.w) discard;
+
   if (v_kind == 1u) {
     float coverage = texture(u_atlas_gray, v_uv).a;
     if (coverage < 0.004) discard;

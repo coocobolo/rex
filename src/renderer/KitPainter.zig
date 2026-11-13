@@ -23,7 +23,8 @@ const Atlas = @import("Atlas.zig");
 const KitFont = @import("../freetype/KitFont.zig");
 const Color = @import("../kit/Theme.zig").Color;
 const text = @import("../kit/text.zig");
-const Tree = @import("../kit/tree.zig").Tree;
+const tree_zig = @import("../kit/tree.zig");
+const Tree = tree_zig.Tree;
 const layout = @import("../kit/layout.zig");
 
 const log = std.log.scoped(.kit_painter);
@@ -41,7 +42,16 @@ pub const Instance = extern struct {
     /// Box: corner radius and border width. Glyph: its atlas x and y.
     params: [2]f32,
     kind: Kind,
+    /// Left, top, right and bottom in physical pixels: the shader drops
+    /// what falls outside. `no_clip` for none.
+    clip: Clip = no_clip,
 };
+
+pub const Clip = [4]i16;
+pub const no_clip: Clip = .{ std.math.minInt(i16), std.math.minInt(i16), std.math.maxInt(i16), std.math.maxInt(i16) };
+
+/// Clipping boxes nested inside each other that one tree can hold.
+pub const clip_depth_max = 8;
 
 /// Most instances one frame can hold: a full settings page of text is a
 /// few hundred glyphs.
@@ -66,7 +76,7 @@ const IconGlyph = struct {
     metric: Atlas.Metric,
 };
 
-pub const Error = error{ OutOfInstances, GlyphCacheFull };
+pub const Error = error{ OutOfInstances, GlyphCacheFull, ClipTooDeep };
 
 shader: Shader,
 vao: gl.GLuint,
@@ -106,7 +116,9 @@ pub fn init() Shader.Error!KitPainter {
     gl.vertexAttribPointer(3, 2, gl.FLOAT, gl.FALSE, stride, offsetPointer("params"));
     gl.enableVertexAttribArray(4);
     gl.vertexAttribIPointer(4, 1, gl.UNSIGNED_INT, stride, offsetPointer("kind"));
-    inline for (0..5) |location| gl.vertexAttribDivisor(location, 1);
+    gl.enableVertexAttribArray(5);
+    gl.vertexAttribIPointer(5, 4, gl.SHORT, stride, offsetPointer("clip"));
+    inline for (0..6) |location| gl.vertexAttribDivisor(location, 1);
 
     gl.bindVertexArray(0);
     gl.bindBuffer(gl.ARRAY_BUFFER, 0);
@@ -138,10 +150,23 @@ pub fn begin(self: *KitPainter) void {
 }
 
 /// Appends the instances of a laid-out `tree`, at the scale of `font`.
-/// Trees painted later are drawn on top.
+/// Trees painted later are drawn on top. What a clipping box
+/// (`Box.overflow`) cuts away is dropped by the shader, and an instance
+/// it cuts away entirely is not appended.
 pub fn paint(self: *KitPainter, tree: *const Tree, font: *KitFont, atlas: *Atlas) Error!void {
     const scale = font.scale;
-    for (tree.items()) |*node| {
+    // The clipping boxes around the current node: where each one's
+    // descendants end, and its cut intersected with those outside it.
+    var clips: [clip_depth_max]struct { end: tree_zig.Index, clip: Clip } = undefined;
+    var depth: usize = 0;
+    for (tree.items(), 0..) |*node, node_index| {
+        while (depth > 0 and node_index >= clips[depth - 1].end) depth -= 1;
+        const clip = if (depth > 0) clips[depth - 1].clip else no_clip;
+        if (node.box.overflow == .clip) {
+            if (depth == clip_depth_max) return error.ClipTooDeep;
+            clips[depth] = .{ .end = node.end, .clip = intersect(clip, clipOf(layout.snap(node.rect, scale))) };
+            depth += 1;
+        }
         switch (node.content) {
             .box => {
                 const box = node.box;
@@ -154,6 +179,7 @@ pub fn paint(self: *KitPainter, tree: *const Tree, font: *KitFont, atlas: *Atlas
                     .border = box.border,
                     .params = .{ @as(f32, @floatFromInt(box.radius)) * scale, @floatFromInt(stroke) },
                     .kind = .box,
+                    .clip = clip,
                 });
             },
             .icon => |icon| {
@@ -179,24 +205,38 @@ pub fn paint(self: *KitPainter, tree: *const Tree, font: *KitFont, atlas: *Atlas
                     .fill = icon.color,
                     .params = .{ @floatFromInt(metric.atlas_x), @floatFromInt(metric.atlas_y) },
                     .kind = .glyph,
+                    .clip = clip,
                 });
             },
             .text => |t| {
                 const line_height: f32 = @floatFromInt(t.style.metrics().line_height);
                 for (tree.lines.slice(t.first_line, t.line_count), 0..) |line, index| {
                     const top = (node.rect.y + line_height * @as(f32, @floatFromInt(index))) * scale;
-                    try self.paintLine(t.bytes[line.start..line.end], t.style, t.color, node.rect.x * scale, @round(top + font.baseline(t.style)), font, atlas);
+                    try self.paintLine(t.bytes[line.start..line.end], t.style, t.color, node.rect.x * scale, @round(top + font.baseline(t.style)), clip, font, atlas);
                 }
             },
         }
     }
 }
 
+fn clipOf(rect: layout.PixelRect) Clip {
+    return .{
+        std.math.lossyCast(i16, rect.x),
+        std.math.lossyCast(i16, rect.y),
+        std.math.lossyCast(i16, rect.x + rect.w),
+        std.math.lossyCast(i16, rect.y + rect.h),
+    };
+}
+
+fn intersect(a: Clip, b: Clip) Clip {
+    return .{ @max(a[0], b[0]), @max(a[1], b[1]), @min(a[2], b[2]), @min(a[3], b[3]) };
+}
+
 fn pixels(rect: layout.PixelRect) [4]f32 {
     return .{ @floatFromInt(rect.x), @floatFromInt(rect.y), @floatFromInt(rect.w), @floatFromInt(rect.h) };
 }
 
-fn paintLine(self: *KitPainter, bytes: []const u8, style: text.Style, color: Color, left: f32, baseline: f32, font: *KitFont, atlas: *Atlas) Error!void {
+fn paintLine(self: *KitPainter, bytes: []const u8, style: text.Style, color: Color, left: f32, baseline: f32, clip: Clip, font: *KitFont, atlas: *Atlas) Error!void {
     var pen = left;
     var previous: ?u21 = null;
     var codepoints: text.Codepoints = .init(bytes);
@@ -227,11 +267,17 @@ fn paintLine(self: *KitPainter, bytes: []const u8, style: text.Style, color: Col
             .fill = color,
             .params = .{ @floatFromInt(metric.atlas_x), @floatFromInt(metric.atlas_y) },
             .kind = .glyph,
+            .clip = clip,
         });
     }
 }
 
+/// Appends `instance`, unless its clip cuts it away entirely.
 fn push(self: *KitPainter, instance: Instance) error{OutOfInstances}!void {
+    const clip = instance.clip;
+    const r = instance.rect;
+    if (r[0] >= @as(f32, @floatFromInt(clip[2])) or r[1] >= @as(f32, @floatFromInt(clip[3])) or
+        r[0] + r[2] <= @as(f32, @floatFromInt(clip[0])) or r[1] + r[3] <= @as(f32, @floatFromInt(clip[1]))) return;
     if (self.len == capacity) return error.OutOfInstances;
     self.instances[self.len] = instance;
     self.len += 1;

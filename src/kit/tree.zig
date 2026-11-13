@@ -78,6 +78,15 @@ pub const Axis = enum(u1) { row, column };
 /// Where children sit along an axis when there is room to spare.
 pub const Align = enum(u2) { start, center, end };
 
+/// What a box does with descendants that reach outside its rectangle.
+pub const Overflow = enum(u1) {
+    /// Draws them and lets them be hit anywhere.
+    visible,
+    /// Cuts them at its rectangle, for painting and for hit-testing. The
+    /// cut is square: rounded corners do not round it.
+    clip,
+};
+
 /// Padding in logical pixels.
 pub const Edges = struct {
     left: u8 = 0,
@@ -113,6 +122,7 @@ pub const Box = struct {
     main: Align = .start,
     /// Across `axis`.
     cross: Align = .start,
+    overflow: Overflow = .visible,
 };
 
 pub const Text = struct {
@@ -279,14 +289,25 @@ pub const Tree = struct {
     }
 
     /// The topmost node with an id under the point, or `none`. Later nodes
-    /// are drawn over earlier ones.
+    /// are drawn over earlier ones. A node a clipping ancestor cuts away
+    /// at the point is not hit there.
     pub fn hitTest(self: *const Tree, x: f32, y: f32) Id {
         var i = self.len;
         while (i > 0) {
             i -= 1;
             const node = &self.nodes[i];
-            if (node.box.id != .none and node.rect.contains(x, y)) return node.box.id;
+            if (node.box.id != .none and node.rect.contains(x, y) and !self.clippedAt(i, x, y)) return node.box.id;
         }
         return .none;
+    }
+
+    /// Whether an ancestor of node `index` clips the point away.
+    fn clippedAt(self: *const Tree, index: Index, x: f32, y: f32) bool {
+        var parent = self.nodes[index].parent;
+        while (parent != none) : (parent = self.nodes[parent].parent) {
+            const ancestor = &self.nodes[parent];
+            if (ancestor.box.overflow == .clip and !ancestor.rect.contains(x, y)) return true;
+        }
+        return false;
     }
 };
