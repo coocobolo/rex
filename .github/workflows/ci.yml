@@ -34,3 +34,24 @@ jobs:
       # GL tests need a display; Xvfb plus Mesa gives a software one.
       # --test-timeout kills a test that hangs, names it and goes on.
       - run: xvfb-run -a zig build test --test-timeout 2m
+
+  macos:
+    runs-on: macos-latest
+    # Experimental until Rex has run on a real Mac: it builds, then runs
+    # the tests that need no display.
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      # libpng is not in the SDK; FreeType finds Homebrew's through
+      # pkg-config.
+      - name: Install libpng
+        run: brew install libpng pkgconf
+
+      - uses: mlugg/setup-zig@v2.2.1
+
+      - run: zig build
+      # The term, vt and unicode suites, then the pty, pipe and driver
+      # tests of the main suite; its GL tests need a display.
+      - run: zig build test-term --test-timeout 2m
+      - run: zig build test -Dtest-filter=termio. -Dtest-filter=driver. --test-timeout 2m

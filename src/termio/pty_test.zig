@@ -7,6 +7,7 @@ const posix = std.posix;
 const system = posix.system;
 
 const Posix = @import("pty.zig").Posix;
+const pipe = @import("pipe.zig");
 const SpawnFailure = @import("pty.zig").SpawnFailure;
 const foregroundGroup = @import("pty.zig").foregroundGroup;
 const foregroundComm = @import("pty.zig").foregroundComm;
@@ -164,7 +165,7 @@ test "Posix: a failed spawn runs none of this process's exit handlers in the chi
     // has. The handler below writes to a pipe when it runs in any process
     // but this one; a failed spawn must leave the pipe empty.
     var fds: [2]posix.fd_t = undefined;
-    try testing.expectEqual(0, system.pipe2(&fds, .{ .CLOEXEC = true, .NONBLOCK = true }));
+    try pipe.open(&fds, .{ .CLOEXEC = true, .NONBLOCK = true });
     defer for (fds) |fd| {
         _ = system.close(fd);
     };

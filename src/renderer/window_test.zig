@@ -41,7 +41,8 @@ test "selections: CLIPBOARD and PRIMARY set and read back on X11" {
     try testing.expectEqualStrings("from osc 52", win.getPrimarySelection().?);
 }
 
-test "choosePlatform: auto follows the session, an explicit choice is forced" {
+test "choosePlatform: auto follows the session (Cocoa on macOS), an explicit choice is forced" {
+    const macos = @import("builtin").os.tag == .macos;
     const Case = struct {
         requested: Window.Platform,
         wayland_session: bool,
@@ -49,8 +50,8 @@ test "choosePlatform: auto follows the session, an explicit choice is forced" {
         forced: bool,
     };
     const cases = [_]Case{
-        .{ .requested = .auto, .wayland_session = true, .platform = c.GLFW_PLATFORM_WAYLAND, .forced = false },
-        .{ .requested = .auto, .wayland_session = false, .platform = c.GLFW_PLATFORM_X11, .forced = false },
+        .{ .requested = .auto, .wayland_session = true, .platform = if (macos) c.GLFW_PLATFORM_COCOA else c.GLFW_PLATFORM_WAYLAND, .forced = false },
+        .{ .requested = .auto, .wayland_session = false, .platform = if (macos) c.GLFW_PLATFORM_COCOA else c.GLFW_PLATFORM_X11, .forced = false },
         .{ .requested = .wayland, .wayland_session = true, .platform = c.GLFW_PLATFORM_WAYLAND, .forced = true },
         .{ .requested = .wayland, .wayland_session = false, .platform = c.GLFW_PLATFORM_WAYLAND, .forced = true },
         .{ .requested = .x11, .wayland_session = true, .platform = c.GLFW_PLATFORM_X11, .forced = true },

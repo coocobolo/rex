@@ -36,10 +36,18 @@ pub const PlatformChoice = struct {
     }
 };
 
+/// The GLFW platform to start on. `auto` is Cocoa on macOS, the only
+/// one built there, and on Linux follows the session; an explicit
+/// choice is forced, so on macOS it fails at start.
 pub fn choosePlatform(requested: Platform, wayland_session: bool) PlatformChoice {
     return switch (requested) {
         .auto => .{
-            .platform = if (wayland_session) c.GLFW_PLATFORM_WAYLAND else c.GLFW_PLATFORM_X11,
+            .platform = if (builtin.os.tag == .macos)
+                c.GLFW_PLATFORM_COCOA
+            else if (wayland_session)
+                c.GLFW_PLATFORM_WAYLAND
+            else
+                c.GLFW_PLATFORM_X11,
             .forced = false,
         },
         .x11 => .{ .platform = c.GLFW_PLATFORM_X11, .forced = true },

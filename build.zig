@@ -24,8 +24,8 @@ pub fn build(b: *std.Build) !void {
     GlfwResolver.add(glfw_lib, glfw_dep, target);
 
     switch (target.result.os.tag) {
-        .linux => {},
-        else => @panic("Unsupported GLFW platform"),
+        .linux, .macos => {},
+        else => @panic("Rex builds for Linux and macOS only"),
     }
 
     // glad 0.1.36, gl 4.5 compatibility, vendored: the generator only
@@ -60,7 +60,8 @@ pub fn build(b: *std.Build) !void {
         .flags = &.{
             "-DFT2_BUILD_LIBRARY",
             "-DFT_CONFIG_OPTION_USE_PNG",
-            "-DFT_CONFIG_OPTION_USE_ZLIB",
+            // FT_CONFIG_OPTION_USE_ZLIB is on in ftoption.h; defining it
+            // here as well is a macro redefinition.
             // Pair kerning from GPOS, for the UI font: Inter has no
             // legacy `kern` table. Only `FT_Get_Kerning` reads it, and
             // only plain x-advance pairs, which Inter's static files use
@@ -72,18 +73,9 @@ pub fn build(b: *std.Build) !void {
     freetype_lib.root_module.addIncludePath(
         freetype_dep.path("src"),
     );
-
-    const termio_c = b.addTranslateC(.{
-        .root_source_file = b.path("src/c.h"),
-        .target = target,
-        .optimize = optimize,
-        .link_libc = true,
-    });
-
-    termio_c.defineCMacro("_FORTIFY_SOURCE", "0");
-    termio_c.defineCMacro("_XOPEN_SOURCE", "800");
-
-    const c_mod = termio_c.createModule();
+    // On macOS libpng comes from Homebrew, outside the compiler's search
+    // path; pkg-config gives FreeType's sources its include directory.
+    if (target.result.os.tag == .macos) freetype_lib.root_module.linkSystemLibrary("png", .{});
 
     // The GLFW C API as `@import("glfw")`. The only GLFW translation in
     // the tree, so the window and input code share one set of types.
@@ -104,7 +96,6 @@ pub fn build(b: *std.Build) !void {
         .target = target,
         .link_libc = true,
         .imports = &.{
-            .{ .name = "c", .module = c_mod },
             .{ .name = "glfw", .module = glfw_mod },
         },
     });
@@ -153,8 +144,10 @@ pub fn build(b: *std.Build) !void {
         // sudo apt install libx11-dev libxcursor-dev libxrandr-dev libxinerama-dev libxi-dev libxext-dev \
         //     libwayland-dev libwayland-bin libxkbcommon-dev libpng-dev zlib1g-dev
         // Everything else a contributor needs: CONTRIBUTING.md, "Development setup".
-    } else {
-        @panic("unimplemented glfw extension link library headers");
+    } else if (target.result.os.tag == .macos) {
+        // GLFW links its frameworks (GlfwResolver.addCocoa). zlib comes
+        // with the SDK; libpng does not (Homebrew: brew install libpng),
+        // and is found through pkg-config.
     }
 
     // Rex's own `memset`, replacing compiler_rt's byte loop (#78). It needs
@@ -614,6 +607,13 @@ const glfw_posix_srcs = [_][]const u8{
     "src/posix_thread.c",
 };
 
+/// Time, thread and module code for every backend on macOS.
+const glfw_macos_srcs = [_][]const u8{
+    "src/macos_time.c",
+    "src/posix_module.c",
+    "src/posix_thread.c",
+};
+
 /// Shared by the X11 and Wayland backends on Linux.
 const glfw_linux_srcs = [_][]const u8{
     "src/linux_joystick.c",
@@ -689,14 +689,29 @@ const GlfwResolver = struct {
                 );
             },
 
+            .macos => addCocoa(compile.root_module, root),
             else => @panic("unsupported GLFW target os"),
         }
     }
 
-    fn addCocoa(module: *std.Build.Module, root: ?std.Build.LazyPath) void {
-        _ = module;
-        _ = root;
-        @panic("not implemented!");
+    /// The Cocoa backend with NSGL, and the frameworks it needs, as GLFW's
+    /// CMakeLists.txt builds it for macOS.
+    fn addCocoa(module: *std.Build.Module, root: std.Build.LazyPath) void {
+        module.addCSourceFiles(.{
+            .root = root,
+            .flags = &.{"-D_GLFW_COCOA"},
+            .files = &[_][]const u8{} ++ glfw_common_srcs ++ glfw_macos_srcs ++
+                &[_][]const u8{
+                    "src/cocoa_init.m",
+                    "src/cocoa_joystick.m",
+                    "src/cocoa_monitor.m",
+                    "src/cocoa_window.m",
+                    "src/nsgl_context.m",
+                },
+        });
+        inline for (.{ "Cocoa", "IOKit", "QuartzCore", "CoreFoundation" }) |name| {
+            module.linkFramework(name, .{});
+        }
     }
 
     fn addWin32(module: *std.Build.Module, root: ?std.Build.LazyPath) void {

@@ -7,6 +7,7 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
+const pipe = @import("../termio/pipe.zig");
 const posix = std.posix;
 const system = posix.system;
 const Theme = @import("../color/root.zig").Theme;
@@ -101,13 +102,13 @@ pub const WakeupChannel = struct {
                         .is_eventfd = true,
                     };
                 },
-                else => {}, // fallback to pipe2
+                else => {}, // fall back to a pipe
             }
         }
 
         var pipe_fds: [2]posix.fd_t = undefined;
         const pipe_flags: posix.O = .{ .CLOEXEC = true, .NONBLOCK = true };
-        if (system.pipe2(&pipe_fds, pipe_flags) == -1) return error.PipeFailed;
+        try pipe.open(&pipe_fds, pipe_flags);
 
         return .{
             .read_fd = pipe_fds[0],

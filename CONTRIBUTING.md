@@ -38,6 +38,22 @@ Color Emoji under `share/rex/fonts`, beside `bin/rex`. An omitted
 or `none` in the config stays as written. With the faces missing and
 `font.file` unset, Rex stops at startup. Missing fallbacks are skipped.
 
+### macOS (experimental)
+
+Rex also builds on macOS with the Xcode command-line tools and
+Homebrew's libpng (`brew install libpng pkgconf`; zlib comes with the
+SDK). GLFW's Cocoa backend is built from source and links Cocoa, IOKit,
+QuartzCore and CoreFoundation; `window.platform = auto` picks it. CI
+builds it and runs the tests that need no display
+(`zig build test-term`, then
+`zig build test -Dtest-filter=termio. -Dtest-filter=driver.`). It has
+not run on a real Mac yet.
+
+Not on macOS yet: live config reload (the watcher uses inotify), the
+audible bell (X11 only), the foreground program's name in the quit
+dialog and in wellbeing (both read `/proc`), and a new window opening
+in the shell's directory (it opens in Rex's own).
+
 ## Code style
 
 Check each file you touch against this list.

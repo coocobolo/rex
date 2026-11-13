@@ -4,18 +4,60 @@
 //! One end of the channel is called the master; the other end is called the slave.
 
 const std = @import("std");
-const c = @import("c");
 const builtin = @import("builtin");
 const native_os = builtin.os.tag;
 
 const posix = std.posix;
 const system = posix.system;
 
+const pipe = @import("pipe.zig");
+
 const log = std.log.scoped(.pty);
+
+/// openpty(3): in libc on glibc 2.34 and later and in libSystem on macOS,
+/// with the same signature, so no C header is needed (it is `<pty.h>` on
+/// Linux and `<util.h>` on macOS).
+extern "c" fn openpty(
+    master: *posix.fd_t,
+    slave: *posix.fd_t,
+    name: ?[*]u8,
+    termp: ?*const posix.termios,
+    winp: ?*const posix.winsize,
+) c_int;
+
+/// ioctl(2) with its request as libc declares it, `unsigned long`. std
+/// declares `c_int`, which leaves the upper half of the register
+/// unspecified on 64-bit macOS, where `TIOCSWINSZ` has bit 31 set.
+extern "c" fn ioctl(fd: posix.fd_t, request: c_ulong, ...) c_int;
+
+/// The terminal ioctls Rex sends. std 0.16.0 lacks them for macOS, so
+/// they are built there as xnu's `_IO` and `_IOW` build them
+/// (bsd/sys/ttycom.h, bsd/sys/ioccom.h).
+const tio = switch (native_os) {
+    .macos => struct {
+        const IOCSCTTY: c_ulong = ioc(0x20000000, 't', 97, 0); // _IO
+        const IOCSWINSZ: c_ulong = ioc(0x80000000, 't', 103, @sizeOf(posix.winsize)); // _IOW
+
+        fn ioc(inout: u32, group: u8, num: u8, len: u32) c_ulong {
+            return inout | ((len & 0x1fff) << 16) | (@as(u32, group) << 8) | num;
+        }
+    },
+    else => struct {
+        const IOCSCTTY: c_ulong = posix.T.IOCSCTTY;
+        const IOCSWINSZ: c_ulong = posix.T.IOCSWINSZ;
+    },
+};
+
+comptime {
+    if (native_os == .macos) {
+        std.debug.assert(tio.IOCSCTTY == 0x20007461);
+        std.debug.assert(tio.IOCSWINSZ == 0x80087467);
+    }
+}
 
 pub const Pty = blk: {
     switch (native_os) {
-        .linux, .freebsd => break :blk Posix,
+        .linux, .freebsd, .macos => break :blk Posix,
         else => @compileError("unsupported termio.pty for current platform target"),
     }
 };
@@ -25,7 +67,7 @@ pub const SignalTarget = enum { process, session };
 /// Errors that can occurs during spawn, before or shortly after forking.
 ///
 /// OpenPtyFailed: openpty() itself failed, no fds or child exist yet.
-/// PipeFailed: one of the two pipe2() calls (stdout capture or error-reporting) failed.
+/// PipeFailed: one of the two pipes (stdout capture or error reporting) could not be opened.
 /// SpawnFailed: fork() failed, or a post-fork parent-side setup step (fcntl flags) failed.
 ///
 /// Does not cover child-side setup failures, those are reported later by waitForSpawn().
@@ -171,7 +213,7 @@ pub const Posix = struct {
         var slave: posix.fd_t = undefined;
 
         const ws = option.winsize();
-        if (c.openpty(&master, &slave, null, null, @ptrCast(&ws)) == -1) return error.OpenPtyFailed;
+        if (openpty(&master, &slave, null, null, &ws) == -1) return error.OpenPtyFailed;
         errdefer {
             _ = system.close(master);
             if (slave != -1) _ = system.close(slave);
@@ -189,7 +231,7 @@ pub const Posix = struct {
         const pipe_flags: posix.O = .{ .CLOEXEC = true };
 
         var stdout_pipe: [2]posix.fd_t = .{ -1, -1 };
-        if (option.capture_stdout and system.pipe2(&stdout_pipe, pipe_flags) == -1) return error.PipeFailed;
+        if (option.capture_stdout) try pipe.open(&stdout_pipe, pipe_flags);
         errdefer {
             if (stdout_pipe[0] != -1) _ = system.close(stdout_pipe[0]);
             if (stdout_pipe[1] != -1) _ = system.close(stdout_pipe[1]);
@@ -197,7 +239,7 @@ pub const Posix = struct {
 
         // Pipe error reporting for exec on child process
         var err_pipe: [2]posix.fd_t = undefined;
-        if (system.pipe2(&err_pipe, pipe_flags) == -1) return error.PipeFailed;
+        try pipe.open(&err_pipe, pipe_flags);
         errdefer {
             _ = system.close(err_pipe[0]);
             _ = system.close(err_pipe[1]);
@@ -251,7 +293,7 @@ pub const Posix = struct {
         capture: struct { stdout_fd: posix.fd_t, error_fd: posix.fd_t },
     ) noreturn {
         report(capture.error_fd, .setsid, system.setsid());
-        report(capture.error_fd, .ioctl_tiocsctty, system.ioctl(slave, posix.T.IOCSCTTY, @as(usize, 0)));
+        report(capture.error_fd, .ioctl_tiocsctty, ioctl(slave, tio.IOCSCTTY, @as(usize, 0)));
         report(capture.error_fd, .dup2_stdin, system.dup2(slave, posix.STDIN_FILENO));
 
         if (capture.stdout_fd != -1) {
@@ -479,7 +521,7 @@ pub const Posix = struct {
             .ypixel = y,
         };
 
-        const rc = system.ioctl(self.master, posix.T.IOCSWINSZ, &ws);
+        const rc = ioctl(self.master, tio.IOCSWINSZ, &ws);
         return switch (posix.errno(rc)) {
             .SUCCESS => {},
             else => |e| {
