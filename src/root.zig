@@ -18,6 +18,7 @@ pub const termio = @import("termio/root.zig");
 pub const unicode = @import("unicode/root.zig");
 pub const driver = @import("driver/root.zig");
 
+pub const tool = @import("tool/root.zig");
 pub const dirs = @import("dirs/root.zig");
 pub const env = @import("env/root.zig");
 pub const FreeType = @import("freetype/root.zig");

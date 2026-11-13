@@ -1,9 +1,7 @@
 //! The UI kit's design tokens: the named colors, radii, spacing and control
 //! sizes every component is built from. Components name a token, never a
-//! raw color. The colors follow shadcn/ui's neutral theme
-//! (https://ui.shadcn.com/docs/theming, read 2026-11-12, converted from
-//! oklch to sRGB); `success`, `warning` and `info` are additions for toast
-//! types. Sizes are logical pixels.
+//! raw color. The palette is neutral grays in sRGB; `success`, `warning`
+//! and `info` are for toast types. Sizes are logical pixels.
 //!
 //! The theme is independent of the terminal's colors. Only its variant
 //! follows the terminal: `variantFor` picks dark or light from how bright
@@ -80,6 +78,8 @@ warning: Color,
 info: Color,
 /// Behind a dialog.
 scrim: Color,
+/// The column of sections in a tool window.
+sidebar: Color,
 
 pub const dark: Theme = .{
     .background = .rgb(0x0a0a0a),
@@ -101,6 +101,7 @@ pub const dark: Theme = .{
     .warning = .rgb(0xfe9a00),
     .info = .rgb(0x2b7fff),
     .scrim = Color.rgb(0x000000).alpha(50),
+    .sidebar = .rgb(0x171717),
 };
 
 pub const light: Theme = .{
@@ -123,9 +124,10 @@ pub const light: Theme = .{
     .warning = .rgb(0xe17100),
     .info = .rgb(0x155dfc),
     .scrim = Color.rgb(0x000000).alpha(50),
+    .sidebar = .rgb(0xfafafa),
 };
 
-/// Dialogs, toasts, cards. shadcn's radii plus 3 (maintainer, 2026-11-12).
+/// Dialogs, toasts, cards.
 pub const radius = 13;
 /// Buttons, inputs.
 pub const radius_md = 11;

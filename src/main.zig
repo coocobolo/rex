@@ -47,6 +47,11 @@ pub fn main(init: std.process.Init) !void {
     }
 
     if (subcmd) |sc| {
+        if (std.mem.eql(u8, sc, "tool")) {
+            try rex.tool.host.run(rex.tool.placeholder, init, argv0, &environ);
+            return;
+        }
+
         var stdout_buffer: [4096]u8 = undefined;
         var stdout_writer = std.Io.File.stdout().writerStreaming(init.io, &stdout_buffer);
         const out = &stdout_writer.interface;

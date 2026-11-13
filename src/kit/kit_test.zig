@@ -154,7 +154,7 @@ test "layout: a toast sizes its text column and wraps the description" {
     var tree = fixture.tree();
     const theme = &Theme.dark;
 
-    // Sonner's toast: 356 wide, 16 padding, an icon, then title over description.
+    // A toast: 356 wide, 16 padding, an icon, then title over description.
     const toast = try tree.open(.{ .axis = .row, .width = .{ .fixed = 356 }, .padding = .all(16), .gap = 10, .fill = theme.popover });
     const icon = try tree.icon(.{ .codepoint = @import("icons.zig").info, .color = theme.info, .size = 16 });
     const body = try tree.open(.{ .axis = .column, .width = .fill });
@@ -352,7 +352,7 @@ test "snap: shared edges stay shared and hairlines stay visible at fractional sc
 test "sizes of the kit's types" {
     // Reported in the ticket; a change here is a layout change to look at.
     try testing.expectEqual(4, @sizeOf(Theme.Color));
-    try testing.expectEqual(76, @sizeOf(Theme));
+    try testing.expectEqual(80, @sizeOf(Theme));
     try testing.expectEqual(12, @sizeOf(text.Line));
     try testing.expectEqual(104, @sizeOf(Node));
     try testing.expectEqual(8, @alignOf(Node));

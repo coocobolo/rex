@@ -369,6 +369,12 @@ pub fn glfwWaitEventsTimeout(timeout: f64) void {
     c.glfwWaitEventsTimeout(timeout);
 }
 
+/// Blocks until a window event arrives. No timer: a caller with nothing
+/// animating must use this, or the process wakes on the timeout.
+pub fn glfwWaitEvents() void {
+    c.glfwWaitEvents();
+}
+
 /// Sets the CLIPBOARD selection. GLFW copies `text`. Main thread only.
 pub fn setClipboard(self: *Window, text: [:0]const u8) void {
     c.glfwSetClipboardString(self.handle, text.ptr);
@@ -439,6 +445,12 @@ pub fn setKeyCallback(self: *Window, cb: c.GLFWkeyfun) void {
 
 pub fn setFramebufferSizeCallback(self: *Window, cb: c.GLFWframebuffersizefun) void {
     _ = c.glfwSetFramebufferSizeCallback(self.handle, cb);
+}
+
+/// The smallest size the user can resize the window to, in screen
+/// coordinates. No upper limit.
+pub fn setMinimumSize(self: *Window, width: c_int, height: c_int) void {
+    c.glfwSetWindowSizeLimits(self.handle, width, height, c.GLFW_DONT_CARE, c.GLFW_DONT_CARE);
 }
 
 pub fn setMouseButtonCallback(self: *Window, cb: c.GLFWmousebuttonfun) void {
