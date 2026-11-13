@@ -273,6 +273,36 @@ test "dialog: the card is centered, actions run left to right, the ring is on th
     try testing.expectEqual(null, dialog.hit(Id.none));
 }
 
+test "dialog: a button is taken when the pointer is let go on it" {
+    var state: State = .empty;
+    _ = update(&state, .{ .open = sample() });
+    try testing.expectEqual(Outcome.quiet, update(&state, .release));
+
+    try testing.expectEqual(Outcome.redraw, update(&state, .{ .press = close }));
+    try testing.expectEqual(close, state.pressed);
+    try testing.expectEqual(close, state.hover);
+    try testing.expectEqual(modal.Phase{ .entering = 0 }, state.phase);
+
+    // Off the button it no longer looks pressed, and letting go there
+    // takes nothing.
+    try testing.expectEqual(Outcome.redraw, update(&state, .{ .pointer = dialog.no_action }));
+    try testing.expectEqual(Outcome.quiet, update(&state, .release));
+    try testing.expectEqual(dialog.no_action, state.pressed);
+
+    try testing.expectEqual(Outcome.redraw, update(&state, .{ .press = close }));
+    try testing.expectEqual(Outcome{ .chosen = close }, update(&state, .release));
+    try testing.expectEqual(modal.Phase.closed, state.phase);
+    try testing.expectEqual(dialog.no_action, state.pressed);
+
+    // A dismissing button starts the fade on release.
+    _ = update(&state, .{ .open = sample() });
+    _ = update(&state, .{ .press = stay });
+    try testing.expectEqual(Outcome.redraw, update(&state, .release));
+    try testing.expect(state.phase == .leaving);
+    // No input while it leaves.
+    try testing.expectEqual(Outcome.quiet, update(&state, .{ .press = close }));
+}
+
 test "dialog: a window narrower than the card shrinks it and keeps a margin" {
     var state: State = .empty;
     _ = update(&state, .{ .open = sample() });
@@ -328,5 +358,5 @@ test "dialog: long texts are cut between code points, and its size" {
 
     // Reported in the ticket: three buttons of 60 bytes and 256 of text.
     try testing.expectEqual(60, @sizeOf(@FieldType(State, "buttons")) / dialog.actions_max);
-    try testing.expectEqual(446, @sizeOf(State));
+    try testing.expectEqual(448, @sizeOf(State));
 }

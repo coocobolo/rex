@@ -157,31 +157,25 @@ pub fn pointerMoved(self: *KitOverlay, x: f32, y: f32) bool {
     return false;
 }
 
-pub const Click = union(enum) {
-    /// Not on the kit's UI: the click belongs to the terminal.
+pub const Press = union(enum) {
+    /// Not on the kit's UI: the press belongs to the terminal.
     outside,
     /// Taken by the kit, nothing to redraw.
     taken,
     /// Taken by the kit, and a redraw is due.
     changed,
-    /// On the dialog button of this action: the dialog has closed and
-    /// the caller does what the action stands for.
-    chosen: u8,
     /// On the scrim around the dialog. Nothing happened yet: the caller
     /// decides whether that dismisses it.
     scrim,
 };
 
-/// A press of the left button at `x`, `y` in logical pixels.
-pub fn click(self: *KitOverlay, x: f32, y: f32) Click {
+/// The left button went down at `x`, `y` in logical pixels. A dialog
+/// button only looks pressed from here on; `release` is what takes it.
+pub fn press(self: *KitOverlay, x: f32, y: f32) Press {
     const id = self.tree.hitTest(x, y);
     if (self.dialog.phase != .closed) {
         return switch (confirm.hit(id) orelse return .taken) {
-            .action => |index| switch (confirm.update(&self.dialog, .{ .take = index })) {
-                .quiet => .taken,
-                .redraw, .closed => .changed,
-                .chosen => |chosen| .{ .chosen = chosen },
-            },
+            .action => |index| if (confirm.update(&self.dialog, .{ .press = index }) == .redraw) .changed else .taken,
             .scrim => .scrim,
             .card => if (confirm.update(&self.dialog, .blur) == .redraw) .changed else .taken,
         };
@@ -191,6 +185,19 @@ pub fn click(self: *KitOverlay, x: f32, y: f32) Click {
         .toast => return .taken,
         .close => |serial| return if (toast.update(&self.toasts, .{ .dismiss = serial })) .changed else .taken,
     }
+}
+
+/// Whether the left button went down on a dialog button and has not been
+/// let go: its release is the kit's, wherever the pointer is by then.
+pub fn holdsPress(self: *const KitOverlay) bool {
+    return self.dialog.pressed != confirm.no_action;
+}
+
+/// The left button was let go after a press the kit holds. Returns what
+/// the dialog did: on `.chosen` the caller does what that action stands
+/// for.
+pub fn release(self: *KitOverlay) confirm.Outcome {
+    return confirm.update(&self.dialog, .release);
 }
 
 /// Dismisses the oldest toast that is not already leaving. Returns whether

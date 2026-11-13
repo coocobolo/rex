@@ -18,6 +18,8 @@ const tree_zig = @import("../kit/tree.zig");
 const Tree = tree_zig.Tree;
 const layout = @import("../kit/layout.zig");
 const memory = @import("../kit/memory.zig");
+const button = @import("../kit/button.zig");
+const kbd = @import("../kit/kbd.zig");
 const dialog_ui = @import("../kit/dialog.zig");
 const toast_stack = @import("../kit/toast.zig");
 
@@ -44,6 +46,8 @@ const Scene = enum {
     dialog_cancel_focused,
     /// The app's toast stack (`kit/toast.zig`), its newest toast halfway in.
     toasts,
+    /// Every shared component in every variant, size and state.
+    specimen,
 };
 
 const Marks = struct {
@@ -112,8 +116,55 @@ fn build(tree: *Tree, scene: Scene, theme: *const Theme, toasts: *const toast_st
             marks.confirm = nodeWithId(tree, dialog_ui.actionId(1)) + 1;
         },
         .toasts => _ = try toast_stack.view(toasts, tree, theme),
+        .specimen => try specimen(tree, theme, &marks),
     }
     return marks;
+}
+
+/// One row per button variant with its states left to right (normal,
+/// hovered, pressed, focused, disabled), then the small size, then key
+/// caps.
+fn specimen(tree: *Tree, theme: *const Theme, marks: *Marks) !void {
+    const Row = struct { name: []const u8, variant: button.Variant, label: []const u8 };
+    const rows = [_]Row{
+        .{ .name = "Primary", .variant = .primary, .label = "Save" },
+        .{ .name = "Outline", .variant = .outline, .label = "Cancel" },
+        .{ .name = "Ghost", .variant = .ghost, .label = "Skip" },
+        .{ .name = "Destructive", .variant = .destructive, .label = "Delete" },
+    };
+    const name_width = 96;
+    const sheet = try tree.open(.{ .width = .fill, .height = .fill, .padding = .all(20), .gap = 10, .fill = theme.background });
+    for (rows, 0..) |row, at| {
+        const line = try tree.open(.{ .axis = .row, .gap = button.gap, .cross = .center });
+        _ = try tree.text(row.name, .{ .color = theme.muted_foreground, .style = .xs, .width = .{ .fixed = name_width } });
+        const first = tree.len;
+        const id = tree_zig.Id.of("specimen.button").item(@intCast(at));
+        try button.view(tree, theme, .{ .id = id, .label = row.label, .variant = row.variant });
+        try button.view(tree, theme, .{ .id = id, .label = row.label, .variant = row.variant, .state = .hovered });
+        try button.view(tree, theme, .{ .id = id, .label = row.label, .variant = row.variant, .state = .pressed });
+        try button.view(tree, theme, .{ .id = id, .label = row.label, .variant = row.variant, .focused = true });
+        try button.view(tree, theme, .{ .id = id, .label = row.label, .variant = row.variant, .state = .disabled });
+        tree.close(line);
+        if (row.variant == .primary) {
+            // Faces of the normal and the disabled button: a slot holds a
+            // face and a label, three nodes a button.
+            marks.confirm = first + 1;
+            marks.cancel = first + 4 * 3 + 1;
+        }
+    }
+    const small = try tree.open(.{ .axis = .row, .gap = button.gap, .cross = .center });
+    _ = try tree.text("Small", .{ .color = theme.muted_foreground, .style = .xs, .width = .{ .fixed = name_width } });
+    for (rows) |row| {
+        try button.view(tree, theme, .{ .id = tree_zig.Id.of("specimen.small"), .label = row.label, .variant = row.variant, .size = .sm });
+    }
+    tree.close(small);
+    const caps = try tree.open(.{ .axis = .row, .gap = 16, .cross = .center });
+    _ = try tree.text("Kbd", .{ .color = theme.muted_foreground, .style = .xs, .width = .{ .fixed = name_width - 8 } });
+    try kbd.view(tree, theme, "Esc", 1);
+    try kbd.group(tree, theme, &.{ "Ctrl", "Shift", "P" }, 1);
+    try button.view(tree, theme, .{ .id = tree_zig.Id.of("specimen.cap"), .label = "Cancel", .key_cap = "Esc" });
+    tree.close(caps);
+    tree.close(sheet);
 }
 
 const Frame = struct {
@@ -450,6 +501,27 @@ test "KitPainter: screenshots of the remaining variants" {
         var rendered = try render(shot[0], shot[1], shot[2], shot[3], shot[4]);
         defer rendered.frame.deinit();
         try rendered.frame.save(shot[5]);
+    }
+}
+
+test "KitPainter: the specimen sheet draws every component in both themes" {
+    for ([_]Theme.Variant{ .dark, .light }) |variant| {
+        var rendered = try render(.specimen, variant, terminal_dark, 1, .pairs);
+        defer rendered.frame.deinit();
+        const frame = &rendered.frame;
+        const theme = variant.theme();
+        try frame.save(if (variant == .dark) "specimen-dark-100" else "specimen-light-100");
+
+        // The sheet covers the terminal.
+        try testing.expectEqual(rgb(theme.background), frame.at(4, 4));
+        // A disabled button is its normal self at half opacity over the
+        // sheet, so its face is neither color.
+        const normal = rendered.rect(rendered.marks.confirm);
+        const disabled = rendered.rect(rendered.marks.cancel);
+        try testing.expectEqual(rgb(theme.primary), frame.at(normal.x + 6, normal.y + normal.h / 2));
+        const faded = frame.at(disabled.x + 6, disabled.y + disabled.h / 2);
+        try testing.expect(!std.mem.eql(u8, &faded, &rgb(theme.primary)));
+        try testing.expect(!std.mem.eql(u8, &faded, &rgb(theme.background)));
     }
 }
 

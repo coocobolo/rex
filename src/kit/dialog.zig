@@ -7,7 +7,9 @@
 //!
 //! The caller turns keys and clicks into events and acts on the outcome.
 //! Choosing an action closes the dialog at once and reports which;
-//! dismissing fades it out, and it takes no more input from then on.
+//! dismissing fades it out, and it takes no more input from then on. A
+//! button is taken when the pointer is let go on it, not when it goes
+//! down, so moving off before letting go takes nothing.
 
 const std = @import("std");
 const assert = std.debug.assert;
@@ -87,6 +89,9 @@ pub const State = struct {
     focus: u8 = no_action,
     /// The action under the pointer, or `no_action`.
     hover: u8 = no_action,
+    /// The action the pointer went down on and has not let go of, or
+    /// `no_action`. It looks pressed while the pointer is still over it.
+    pressed: u8 = no_action,
     /// Buttons in use: `buttons[0..count]`, drawn left to right.
     count: u8 = 0,
     /// Set by the owner, from the user's setting.
@@ -150,7 +155,12 @@ pub const Event = union(enum) {
     blur,
     /// Close without choosing: Esc, or a click outside.
     dismiss,
-    /// Take this action, as a click on its button does.
+    /// The pointer went down on this action's button.
+    press: u8,
+    /// The pointer was let go: takes the pressed action if the pointer is
+    /// still over its button.
+    release,
+    /// Take this action, as its key does.
     take: u8,
 };
 
@@ -177,6 +187,8 @@ pub fn update(state: *State, event: Event) Outcome {
         .activate => if (state.focus == no_action) .quiet else take(state, state.focus),
         .blur => blur(state),
         .dismiss => beginLeave(state),
+        .press => |index| press(state, index),
+        .release => release(state),
         .take => |index| take(state, index),
     };
 }
@@ -187,6 +199,7 @@ fn open(self: *State, request: Request) Outcome {
     if (!self.phase.enter(self.motion)) return .quiet;
     self.focus = request.focus;
     self.hover = no_action;
+    self.pressed = no_action;
     self.title_len = put(request.title, &self.title_bytes);
     self.body_len = put(request.body, &self.body_bytes);
     self.count = @intCast(request.actions.len);
@@ -205,6 +218,7 @@ fn tick(self: *State, dt_ms: u32) Outcome {
         .redraw => return .redraw,
         .closed => {
             self.hover = no_action;
+            self.pressed = no_action;
             return .closed;
         },
     }
@@ -232,6 +246,28 @@ fn blur(self: *State) Outcome {
     return .redraw;
 }
 
+fn press(self: *State, index: u8) Outcome {
+    if (!self.phase.acceptsInput() or index >= self.count) return .quiet;
+    // The pointer is over the button it went down on, whether or not a
+    // move said so before.
+    self.hover = index;
+    self.pressed = index;
+    return .redraw;
+}
+
+fn release(self: *State) Outcome {
+    const index = self.pressed;
+    if (index == no_action) return .quiet;
+    self.pressed = no_action;
+    // Moved off first: the button already looks unpressed.
+    if (self.hover != index) return .quiet;
+    return switch (take(self, index)) {
+        // The pressed look is gone even if taking did nothing.
+        .quiet => .redraw,
+        else => |outcome| outcome,
+    };
+}
+
 fn take(self: *State, index: u8) Outcome {
     if (!self.phase.acceptsInput() or index >= self.count) return .quiet;
     switch (self.buttons[index].role) {
@@ -239,6 +275,7 @@ fn take(self: *State, index: u8) Outcome {
         .choose => {
             self.phase = .closed;
             self.hover = no_action;
+            self.pressed = no_action;
             return .{ .chosen = index };
         },
     }
@@ -247,6 +284,7 @@ fn take(self: *State, index: u8) Outcome {
 fn beginLeave(self: *State) Outcome {
     if (!self.phase.leave(self.motion)) return .quiet;
     self.hover = no_action;
+    self.pressed = no_action;
     return .redraw;
 }
 
@@ -297,7 +335,7 @@ pub fn view(state: *const State, tree: *Tree, theme: *const Theme) tree_zig.Erro
             .label = action.label(),
             .key_cap = action.keyCap(),
             .variant = action.variant,
-            .state = if (state.hover == index) .hovered else .normal,
+            .state = if (state.hover != index) .normal else if (state.pressed == index) .pressed else .hovered,
             .focused = state.focus == index,
             .presence = presence,
         });

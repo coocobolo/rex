@@ -5,6 +5,9 @@
 //! holds which button is hovered or focused and passes that in; a click is
 //! found by the id the surface gave it.
 
+const std = @import("std");
+const assert = std.debug.assert;
+
 const Theme = @import("Theme.zig");
 const Color = Theme.Color;
 const kbd = @import("kbd.zig");
@@ -14,20 +17,51 @@ const Id = tree_zig.Id;
 
 /// Between two buttons in a row, and between a label and its key cap.
 pub const gap = 8;
-/// Horizontal padding inside the face.
-pub const pad = 16;
+
+pub const Size = enum(u8) {
+    default,
+    sm,
+
+    /// The face's height in logical pixels.
+    pub fn height(self: Size) u8 {
+        return switch (self) {
+            .default => Theme.control,
+            .sm => Theme.control_sm,
+        };
+    }
+
+    /// Horizontal padding inside the face.
+    pub fn pad(self: Size) u8 {
+        return switch (self) {
+            .default => 16,
+            .sm => 12,
+        };
+    }
+};
 
 pub const Variant = enum(u8) {
     /// Bordered, no fill: an action of no special weight.
     outline,
     /// Filled with `primary`: the action the surface suggests.
     primary,
+    /// Neither border nor fill until the pointer is on it: an action that
+    /// should not draw the eye.
+    ghost,
     /// Filled with `destructive`: an action that cannot be undone.
     destructive,
 };
 
-/// What the pointer is doing to the button.
-pub const State = enum(u8) { normal, hovered };
+/// What the pointer is doing to the button, or that it takes no input.
+pub const State = enum(u8) {
+    normal,
+    hovered,
+    /// The pointer went down on it and is still over it. Letting go takes
+    /// the action.
+    pressed,
+    /// Drawn at half opacity. The surface gives it neither hover nor
+    /// focus.
+    disabled,
+};
 
 pub const Options = struct {
     /// On the whole button, focus ring included, for `Tree.hitTest`.
@@ -37,6 +71,7 @@ pub const Options = struct {
     /// Empty for none.
     key_cap: []const u8 = "",
     variant: Variant = .outline,
+    size: Size = .default,
     state: State = .normal,
     /// Draws the focus ring.
     focused: bool = false,
@@ -50,15 +85,23 @@ pub const node_max = 3 + kbd.node_max;
 
 const Look = struct { fill: Color, border: Color, label: Color };
 
-/// A filled button is slightly translucent while hovered; an outline
-/// button fills. The focused button's border takes the ring color, under
-/// the ring drawn around it.
+/// A filled button is slightly translucent while hovered and more so
+/// while pressed; an outline or ghost button fills with `accent` for both.
+/// The focused button's border takes the ring color, under the ring drawn
+/// around it.
 fn look(theme: *const Theme, options: Options) Look {
-    const hovered = options.state == .hovered;
-    const solid: u8 = if (hovered) 90 else 100;
+    const touched = switch (options.state) {
+        .hovered, .pressed => true,
+        .normal, .disabled => false,
+    };
+    const solid: u8 = switch (options.state) {
+        .normal, .disabled => 100,
+        .hovered => 90,
+        .pressed => 80,
+    };
     var result: Look = switch (options.variant) {
         .outline => .{
-            .fill = if (hovered) theme.accent else .transparent,
+            .fill = if (touched) theme.accent else .transparent,
             .border = theme.input,
             .label = theme.foreground,
         },
@@ -66,6 +109,11 @@ fn look(theme: *const Theme, options: Options) Look {
             .fill = theme.primary.alpha(solid),
             .border = .transparent,
             .label = theme.primary_foreground,
+        },
+        .ghost => .{
+            .fill = if (touched) theme.accent else .transparent,
+            .border = .transparent,
+            .label = theme.foreground,
         },
         .destructive => .{
             .fill = theme.destructive.alpha(solid),
@@ -77,10 +125,17 @@ fn look(theme: *const Theme, options: Options) Look {
     return result;
 }
 
+/// How much of its surface's opacity a disabled button keeps.
+const disabled_opacity = 0.5;
+
 /// Writes the button into the innermost open box.
 pub fn view(tree: *Tree, theme: *const Theme, options: Options) tree_zig.Error!void {
+    assert(!(options.focused and options.state == .disabled));
     const colors = look(theme, options);
-    const presence = options.presence;
+    const presence = switch (options.state) {
+        .normal, .hovered, .pressed => options.presence,
+        .disabled => options.presence * disabled_opacity,
+    };
     // The face sits in a slot with room for the ring, so a row does not
     // shift when the focus moves. The ring is the slot's border, not its
     // fill, which would show through an outline button. The id is on the
@@ -94,8 +149,8 @@ pub fn view(tree: *Tree, theme: *const Theme, options: Options) tree_zig.Error!v
     });
     const face = try tree.open(.{
         .axis = .row,
-        .height = .{ .fixed = Theme.control },
-        .padding = .symmetric(pad, 0),
+        .height = .{ .fixed = @floatFromInt(options.size.height()) },
+        .padding = .symmetric(options.size.pad(), 0),
         .gap = gap,
         .main = .center,
         .cross = .center,

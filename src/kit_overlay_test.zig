@@ -54,7 +54,7 @@ test "KitOverlay: idle, it asks for no frame and no wakeup" {
     try testing.expectEqual(null, kit.wakeMs());
     try testing.expect(!fixture.frame());
     try testing.expectEqual(0, kit.painter.len);
-    try testing.expectEqual(KitOverlay.Click.outside, kit.click(700, 550));
+    try testing.expectEqual(KitOverlay.Press.outside, kit.press(700, 550));
 }
 
 test "KitOverlay: a toast from push to gone, with the frames it asks for" {
@@ -100,10 +100,10 @@ test "KitOverlay: the pointer holds a toast, a click on its close button dismiss
     try testing.expect(!kit.pointerMoved(100, 100));
     try testing.expectEqual(3000, kit.wakeMs());
 
-    try testing.expectEqual(KitOverlay.Click.outside, kit.click(100, 100));
-    try testing.expectEqual(KitOverlay.Click.taken, kit.click(500, 550));
-    try testing.expectEqual(KitOverlay.Click.changed, kit.click(750, 550));
-    try testing.expectEqual(KitOverlay.Click.taken, kit.click(750, 550));
+    try testing.expectEqual(KitOverlay.Press.outside, kit.press(100, 100));
+    try testing.expectEqual(KitOverlay.Press.taken, kit.press(500, 550));
+    try testing.expectEqual(KitOverlay.Press.changed, kit.press(750, 550));
+    try testing.expectEqual(KitOverlay.Press.taken, kit.press(750, 550));
     try testing.expect(!kit.dismissOldest());
 }
 
@@ -119,7 +119,7 @@ test "KitOverlay: the others keep asking for frames while they glide" {
     try testing.expectEqual(60_000, kit.wakeMs());
 
     // The newer, lower one goes; the older has 66 px to come down.
-    try testing.expectEqual(KitOverlay.Click.changed, kit.click(750, 550));
+    try testing.expectEqual(KitOverlay.Press.changed, kit.press(750, 550));
     _ = kit.tick(Theme.duration - 16);
     _ = fixture.frame();
     // The frame in which it is gone starts the glide.
@@ -163,7 +163,7 @@ test "KitOverlay: hidden under a modal, nothing is drawn or hit" {
     try testing.expect(fixture.frame());
     try testing.expect(kit.skipFrame());
     try testing.expectEqual(0, kit.painter.len);
-    try testing.expectEqual(KitOverlay.Click.outside, kit.click(500, 550));
+    try testing.expectEqual(KitOverlay.Press.outside, kit.press(500, 550));
     try testing.expect(!kit.skipFrame());
 }
 
@@ -240,16 +240,27 @@ test "KitOverlay: confirming a dialog closes it, the scrim does not" {
 
     try testing.expect(kit.pointerMoved(confirm[0], confirm[1]));
     try testing.expect(!kit.pointerMoved(confirm[0], confirm[1]));
-    try testing.expectEqual(KitOverlay.Click.scrim, kit.click(4, 4));
+    try testing.expectEqual(KitOverlay.Press.scrim, kit.press(4, 4));
     try testing.expectEqual(modal.Phase.open, kit.dialog.phase);
     // The card, off both buttons: the ring drops and the dialog stays.
     const card = centerOf(kit, dialog.card_id).?;
     try testing.expectEqual(1, kit.dialog.focus);
-    try testing.expectEqual(KitOverlay.Click.changed, kit.click(card[0], card[1]));
+    try testing.expectEqual(KitOverlay.Press.changed, kit.press(card[0], card[1]));
     try testing.expectEqual(dialog.no_action, kit.dialog.focus);
-    try testing.expectEqual(KitOverlay.Click.taken, kit.click(card[0], card[1]));
+    try testing.expectEqual(KitOverlay.Press.taken, kit.press(card[0], card[1]));
     try testing.expectEqual(modal.Phase.open, kit.dialog.phase);
-    try testing.expectEqual(KitOverlay.Click{ .chosen = 1 }, kit.click(confirm[0], confirm[1]));
+    // Going down on the button only presses it; letting go takes it.
+    try testing.expect(!kit.holdsPress());
+    try testing.expectEqual(KitOverlay.Press.changed, kit.press(confirm[0], confirm[1]));
+    try testing.expect(kit.holdsPress());
+    try testing.expectEqual(modal.Phase.open, kit.dialog.phase);
+    // Moved off before letting go: nothing is taken.
+    _ = kit.pointerMoved(card[0], card[1]);
+    try testing.expectEqual(dialog.Outcome.quiet, kit.release());
+    try testing.expect(!kit.holdsPress());
+    try testing.expectEqual(modal.Phase.open, kit.dialog.phase);
+    try testing.expectEqual(KitOverlay.Press.changed, kit.press(confirm[0], confirm[1]));
+    try testing.expectEqual(dialog.Outcome{ .chosen = 1 }, kit.release());
     try testing.expectEqual(modal.Phase.closed, kit.dialog.phase);
 }
 
@@ -265,18 +276,18 @@ test "KitOverlay: the dialog covers the toast stack" {
     _ = kit.tick(Theme.duration);
     try testing.expect(fixture.frame());
     // Where the toast's close button was: the scrim has it now.
-    try testing.expectEqual(KitOverlay.Click.scrim, kit.click(750, 550));
+    try testing.expectEqual(KitOverlay.Press.scrim, kit.press(750, 550));
     try testing.expectEqual(dialog.Outcome.redraw, kit.dialogInput(.dismiss));
     try testing.expect(kit.tick(Theme.duration));
     try testing.expect(fixture.frame());
-    try testing.expectEqual(KitOverlay.Click.taken, kit.click(500, 550));
+    try testing.expectEqual(KitOverlay.Press.taken, kit.press(500, 550));
 }
 
 test "KitOverlay: its size" {
     // Reported in the ticket. Nearly all of it is two tables: the font's
     // kerning pairs, and the painter's 2048 instances of 36 bytes with its
     // glyph position cache.
-    try testing.expectEqual(193992, @sizeOf(KitOverlay));
+    try testing.expectEqual(194000, @sizeOf(KitOverlay));
     try testing.expectEqual(92184, @sizeOf(@FieldType(KitOverlay, "painter")));
     try testing.expectEqual(95592, @sizeOf(@FieldType(KitOverlay, "font")));
     try testing.expectEqual(2600, @sizeOf(@FieldType(KitOverlay, "nodes")));

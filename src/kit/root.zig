@@ -22,6 +22,7 @@ test {
     _ = @import("memory_test.zig");
     _ = @import("toast_test.zig");
     _ = @import("dialog_test.zig");
+    _ = @import("button_test.zig");
     _ = Theme;
     _ = motion;
     _ = focus;

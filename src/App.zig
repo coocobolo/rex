@@ -2577,17 +2577,11 @@ const mouseButtonCb: c.GLFWmousebuttonfun = struct {
 
         if (button == c.GLFW_MOUSE_BUTTON_LEFT) {
             if (press) {
-                if (app.kit) |kit| switch (kit.click(app.mouse_x / app.content_scale, app.mouse_y / app.content_scale)) {
+                if (app.kit) |kit| switch (kit.press(app.mouse_x / app.content_scale, app.mouse_y / app.content_scale)) {
                     .outside => {},
                     .taken => return,
                     .changed => {
                         app.needs_redraw = true;
-                        // A click on Cancel started the dialog's leave.
-                        app.syncQuitPrompt();
-                        return;
-                    },
-                    .chosen => |chosen| {
-                        app.applyDialogOutcome(.{ .chosen = chosen });
                         return;
                     },
                     .scrim => {
@@ -2599,6 +2593,14 @@ const mouseButtonCb: c.GLFWmousebuttonfun = struct {
                 if (app.handleOverlayClick(col, row)) return;
                 if (scrollback_used > 0 and app.handleScrollbarClick()) return;
             } else {
+                if (app.kit) |kit| {
+                    // A dialog button is taken when the pointer is let go
+                    // on it.
+                    if (kit.holdsPress()) {
+                        app.applyDialogOutcome(kit.release());
+                        return;
+                    }
+                }
                 if (app.handleScrollbarRelease()) return;
             }
         }
