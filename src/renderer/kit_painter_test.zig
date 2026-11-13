@@ -106,8 +106,10 @@ fn build(tree: *Tree, scene: Scene, theme: *const Theme, toasts: *const toast_st
         .dialog, .dialog_cancel_focused => {
             _ = try dialog_ui.view(dialog_state, tree, theme) orelse unreachable;
             marks.dialog = nodeWithId(tree, dialog_ui.card_id);
-            marks.cancel = nodeWithId(tree, dialog_ui.actionId(0));
-            marks.confirm = nodeWithId(tree, dialog_ui.actionId(1));
+            // A button's id is on its ring slot; the face is the slot's
+            // only child.
+            marks.cancel = nodeWithId(tree, dialog_ui.actionId(0)) + 1;
+            marks.confirm = nodeWithId(tree, dialog_ui.actionId(1)) + 1;
         },
         .toasts => _ = try toast_stack.view(toasts, tree, theme),
     }

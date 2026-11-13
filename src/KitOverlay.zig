@@ -109,10 +109,7 @@ pub fn dialogInput(self: *KitOverlay, event: confirm.Event) confirm.Outcome {
 /// Whether the dialog is up and taking keys and clicks. False from the
 /// moment it starts to fade out: input is the terminal's again by then.
 pub fn dialogTakesInput(self: *const KitOverlay) bool {
-    return switch (self.dialog.phase) {
-        .entering, .open => true,
-        .closed, .leaving => false,
-    };
+    return self.dialog.phase.acceptsInput();
 }
 
 /// Advances timers and motion by `dt_ms`. Returns whether a redraw is due.
@@ -138,7 +135,7 @@ pub fn tick(self: *KitOverlay, dt_ms: u64) bool {
 /// Milliseconds until `tick` has something to do, or null when only an
 /// event can change what is shown.
 pub fn wakeMs(self: *const KitOverlay) ?u32 {
-    if (self.dialog.wakeMs()) |ms| return ms;
+    if (self.dialog.phase.wakeMs()) |ms| return ms;
     if (self.motion == .moving) return motion_zig.frame_ms;
     return self.toasts.wakeMs();
 }

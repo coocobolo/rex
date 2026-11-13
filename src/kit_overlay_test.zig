@@ -9,6 +9,7 @@ const Atlas = @import("renderer/Atlas.zig");
 const testGlContext = @import("renderer/Window.zig").testGlContext;
 const KitOverlay = @import("KitOverlay.zig");
 const dialog = @import("kit/dialog.zig");
+const modal = @import("kit/modal.zig");
 const Theme = @import("kit/Theme.zig");
 const motion = @import("kit/motion.zig");
 const Id = @import("kit/tree.zig").Id;
@@ -221,7 +222,7 @@ test "KitOverlay: a dialog enters, rests, and leaves" {
     try testing.expectEqual(dialog.Outcome.quiet, kit.dialogInput(.activate));
     try testing.expect(!kit.dialogTakesInput());
     try testing.expect(kit.tick(Theme.duration));
-    try testing.expectEqual(dialog.Phase.closed, kit.dialog.phase);
+    try testing.expectEqual(modal.Phase.closed, kit.dialog.phase);
     try testing.expect(!kit.tick(16));
 }
 
@@ -240,16 +241,16 @@ test "KitOverlay: confirming a dialog closes it, the scrim does not" {
     try testing.expect(kit.pointerMoved(confirm[0], confirm[1]));
     try testing.expect(!kit.pointerMoved(confirm[0], confirm[1]));
     try testing.expectEqual(KitOverlay.Click.scrim, kit.click(4, 4));
-    try testing.expectEqual(dialog.Phase.open, kit.dialog.phase);
+    try testing.expectEqual(modal.Phase.open, kit.dialog.phase);
     // The card, off both buttons: the ring drops and the dialog stays.
     const card = centerOf(kit, dialog.card_id).?;
     try testing.expectEqual(1, kit.dialog.focus);
     try testing.expectEqual(KitOverlay.Click.changed, kit.click(card[0], card[1]));
     try testing.expectEqual(dialog.no_action, kit.dialog.focus);
     try testing.expectEqual(KitOverlay.Click.taken, kit.click(card[0], card[1]));
-    try testing.expectEqual(dialog.Phase.open, kit.dialog.phase);
+    try testing.expectEqual(modal.Phase.open, kit.dialog.phase);
     try testing.expectEqual(KitOverlay.Click{ .chosen = 1 }, kit.click(confirm[0], confirm[1]));
-    try testing.expectEqual(dialog.Phase.closed, kit.dialog.phase);
+    try testing.expectEqual(modal.Phase.closed, kit.dialog.phase);
 }
 
 test "KitOverlay: the dialog covers the toast stack" {

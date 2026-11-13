@@ -10,6 +10,10 @@ pub const tree = @import("tree.zig");
 pub const layout = @import("layout.zig");
 pub const memory = @import("memory.zig");
 pub const motion = @import("motion.zig");
+pub const kbd = @import("kbd.zig");
+pub const button = @import("button.zig");
+pub const focus = @import("focus.zig");
+pub const modal = @import("modal.zig");
 pub const toast = @import("toast.zig");
 pub const dialog = @import("dialog.zig");
 
@@ -20,4 +24,5 @@ test {
     _ = @import("dialog_test.zig");
     _ = Theme;
     _ = motion;
+    _ = focus;
 }
