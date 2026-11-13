@@ -60,7 +60,7 @@ Rules that hold everywhere:
 | `memory.zig` | Per-id memory that outlives a rebuild of the view |
 | `motion.zig` | The one duration and curve every surface uses |
 | `focus.zig` | Keyboard focus order over a row or list |
-| `button.zig`, `kbd.zig`, `dialog.zig`, `sidebar.zig`, `popup.zig` | Components |
+| `button.zig`, `kbd.zig`, `dialog.zig`, `sidebar.zig`, `popup.zig`, `tabs.zig` | Components |
 | `toast.zig`, `alert_dialog.zig` | Surfaces |
 
 ## Text
@@ -150,6 +150,16 @@ the pane, which is dimmed; a click on the dimmed part or choosing a section
 puts it away. Crossing 600 px hands the choice back to the width. Up and
 Down move between sections and stop at the ends; Home and End jump to the
 first and last.
+
+### Tabs (`tabs.zig`)
+
+A row `control_sm` tall (32 px) filled with `muted`, with 3 px of padding.
+The current tab is a face of the height left inside that padding: `background`
+in the light theme, and `input` at 30% with an `input` border in the dark
+theme. Other labels are `muted_foreground`; the label under the pointer is
+`foreground`. Focus draws the ring as that face's border, so the row does
+not grow. The surface keeps the current, hovered and focused indexes and
+draws the page itself.
 
 ### Popup (`popup.zig`)
 
