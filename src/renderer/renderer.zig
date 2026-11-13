@@ -336,7 +336,7 @@ pub fn Renderer(comptime option: TerminalOption) type {
         /// Draws the glyph coverage when some run has an underline that
         /// skips ink, and returns the mask for the decoration pass.
         fn drawInkMask(self: *Self, frame: FrameData, glyphs: Cell.DrawArgs) ?*const InkMask {
-            if (self.decoration.option.skip_ink.styleBits() == 0) return null;
+            if (Decoration.skipInkBits(self.decoration.option.skip_ink) == 0) return null;
             if (!Decoration.anyUnderline(frame.decoration_instances)) return null;
             const width: u32 = @intFromFloat(glyphs.frame.width);
             const height: u32 = @intFromFloat(glyphs.frame.height);

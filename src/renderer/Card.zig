@@ -7,6 +7,8 @@
 const Card = @This();
 
 const std = @import("std");
+
+const window_config = @import("../config/window.zig");
 const gl = @import("gl.zig");
 const Shader = @import("Shader.zig");
 const Buffer = @import("buffer.zig").CardBuffer;
@@ -14,15 +16,9 @@ const Dimension = @import("dimension.zig").Dimension;
 
 pub const default_capacity: usize = 64;
 
-pub const BorderShape = enum {
-    rounded,
-    sharp,
-};
+pub const BorderShape = Option.BorderShape;
 
-pub const BorderStyle = enum {
-    semantic,
-    subtle,
-};
+pub const BorderStyle = Option.BorderStyle;
 
 /// Analytic SDF shape primitive selector encoded in `Instance.kind`.
 pub const Kind = enum(u32) {
@@ -33,19 +29,7 @@ pub const Kind = enum(u32) {
     pip = 4,
 };
 
-pub const Option = struct {
-    corner_radius: f32 = 8.0,
-    border_width: f32 = 1.0,
-    border_shape: BorderShape = .rounded,
-    border_style: BorderStyle = .semantic,
-
-    pub inline fn effectiveRadius(self: Option) f32 {
-        return switch (self.border_shape) {
-            .rounded => self.corner_radius,
-            .sharp => 0.0,
-        };
-    }
-};
+pub const Option = window_config.Surface;
 
 /// Single card instance aligned to 64 bytes (one CPU cache line) for instanced GPU upload.
 pub const Instance = extern struct {

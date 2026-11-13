@@ -3,6 +3,8 @@
 
 const std = @import("std");
 
+const window_config = @import("../config/window.zig");
+
 const Shader = @import("Shader.zig");
 const Dimension = @import("dimension.zig").Dimension;
 const Kind = @import("../Selection.zig").Kind;
@@ -112,35 +114,9 @@ comptime {
 
 pub const Selection = @This();
 
-pub const BorderStyle = enum(u1) {
-    /// Each row gets its own full border rectangle.
-    per_row = 0,
-    /// All rows share a single outer perimeter, with no internal row dividers.
-    unified = 1,
-};
+pub const BorderStyle = Option.BorderStyle;
 
-pub const Option = struct {
-    /// RGBA fill color, 0.0 to 1.0. The RGB part is replaced by the
-    /// selection background color when one is set; `.a` stays the fill
-    /// opacity.
-    fill_color: [4]f32 = .{ 0.2, 0.2, 0.2, 1.0 },
-
-    /// RGBA border color, 0.0 to 1.0.
-    border_color: [4]f32 = .{ 0.4, 0.4, 0.4, 1.0 },
-
-    /// Outline/border width in pixels.
-    /// 0.0 = no visible border (fill only). 2.0+ = thick border.
-    border_width: f32 = 1.5,
-
-    border_style: BorderStyle = .unified,
-
-    /// Corner radius in pixels applied to the top corners of the first row
-    /// and the bottom corners of the last row.
-    /// 0.0 = sharp corners.
-    radius: f32 = 3.0,
-
-    pub const default: Option = .{};
-};
+pub const Option = window_config.SelectionStyle;
 
 shader: Shader,
 buffer: Buffer,

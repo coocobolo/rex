@@ -3,6 +3,8 @@
 
 const std = @import("std");
 
+const window_config = @import("../config/window.zig");
+
 const Buffer = @import("buffer.zig").DecorationBuffer;
 const gl = @import("gl.zig");
 const Dimension = @import("dimension.zig").Dimension;
@@ -57,156 +59,33 @@ pub fn appendRun(runs: *std.ArrayListUnmanaged(Instance), instance: Instance) vo
     runs.appendAssumeCapacity(instance);
 }
 
-/// Adjusts one decoration line. Pixels are measured down from the top
-/// of the cell. Every field left at its default keeps the font's line.
-pub const Line = struct {
-    /// Top of the line, replacing the font's position. null keeps the
-    /// font's position.
-    y: ?f32 = null,
+pub const Option = window_config.Decoration;
+pub const Line = Option.Line;
+pub const Pattern = Option.Pattern;
+pub const Phase = Option.Phase;
+pub const SkipInk = Option.SkipInk;
+pub const Order = Option.Order;
 
-    /// Added to the position after `y`, positive moves the line down.
-    /// Unlike `y` it keeps following the font when the size changes.
-    offset: f32 = 0,
+/// Applies the user's adjustments `line` to the font line `font`, then
+/// rounds and clamps the result into a cell `cell_height` pixels tall.
+pub fn resolveLine(line: Line, font: Rasterizer.Line, cell_height: u16) Rasterizer.Line {
+    const top = (line.y orelse font.y) + line.offset;
+    const thickness = (line.thickness orelse font.thickness) * line.thickness_scale;
+    return .fit(top, thickness, cell_height);
+}
 
-    /// Thickness, replacing the font's. null keeps the font's.
-    thickness: ?f32 = null,
-
-    /// Multiplies the thickness after `thickness`.
-    thickness_scale: f32 = 1.0,
-
-    /// Applies the adjustments to the font line `font`, then rounds and
-    /// clamps the result into a cell `cell_height` pixels tall.
-    pub fn resolve(self: Line, font: Rasterizer.Line, cell_height: u16) Rasterizer.Line {
-        const top = (self.y orelse font.y) + self.offset;
-        const thickness = (self.thickness orelse font.thickness) * self.thickness_scale;
-        return .fit(top, thickness, cell_height);
-    }
-};
-
-/// On and off lengths of a dotted or dashed underline, in pixels.
-pub const Pattern = struct {
-    /// Length of each dot or dash. null derives it from the cell width.
-    length: ?f32 = null,
-    /// Space after each dot or dash. null derives it from the cell width,
-    /// or uses `length` when only that is set.
-    gap: ?f32 = null,
-};
-
-/// Where dotted, dashed and curly patterns start.
-pub const Phase = enum {
-    /// From the left edge of the window, so a pattern lines up across
-    /// rows and does not move when the run around it changes.
-    grid,
-    /// From the first cell of each run of decorated cells.
-    run,
-};
-
-/// Breaks the underline where glyph ink crosses it, like the CSS
-/// `text-decoration-skip-ink: auto` browsers apply by default.
-pub const SkipInk = struct {
-    enabled: bool = true,
-
-    /// Clearance kept between the ink and the line, in pixels, both
-    /// beside and above or below it. null uses the underline thickness.
-    gap: ?f32 = null,
-
-    /// Pieces of line shorter than this, in pixels, between two gaps are
-    /// dropped too, so no specks are left between descenders. null uses
-    /// twice the underline thickness. 0 keeps every piece.
-    min_segment: ?f32 = null,
-
-    /// Glyph coverage, 0.0 to 1.0, from which a pixel counts as ink.
-    /// Lower values also skip the faint antialiased edges.
-    threshold: f32 = 0.25,
-
-    /// Underline styles that skip ink.
-    styles: struct {
-        single: bool = true,
-        double: bool = true,
-        curly: bool = true,
-        dotted: bool = true,
-        dashed: bool = true,
-    } = .{},
-
-    /// Bit `n` set when UnderlineStyle value `n` skips ink, as the
-    /// shader reads it. 0 when skipping is off.
-    pub fn styleBits(self: SkipInk) u32 {
-        if (!self.enabled) return 0;
-        var bits: u32 = 0;
-        if (self.styles.single) bits |= 1 << @intFromEnum(UnderlineStyle.single);
-        if (self.styles.double) bits |= 1 << @intFromEnum(UnderlineStyle.double);
-        if (self.styles.curly) bits |= 1 << @intFromEnum(UnderlineStyle.curly);
-        if (self.styles.dotted) bits |= 1 << @intFromEnum(UnderlineStyle.dotted);
-        if (self.styles.dashed) bits |= 1 << @intFromEnum(UnderlineStyle.dashed);
-        return bits;
-    }
-};
-
-/// Whether decorations are drawn over or under the glyphs.
-pub const Order = enum {
-    /// Lines cross the glyphs, descenders do not hide the underline.
-    over_text,
-    /// Glyphs cover the lines, as in the background pass.
-    under_text,
-};
-
-/// User settings for decorations. The defaults draw every line where
-/// the font puts it, in the text color.
-pub const Option = struct {
-    underline: Line = .{},
-
-    /// Gap between the two lines of a double underline, in pixels.
-    /// null uses the underline thickness, narrowed down to 1 px when
-    /// that keeps the upper line below the baseline, off the glyphs.
-    double_gap: ?f32 = null,
-
-    /// Curly underline, a sine wave centred on the underline.
-    curly: struct {
-        /// Height of a crest above the centre, in pixels. null uses one and
-        /// a half underline thicknesses. The wave is kept inside the cell.
-        amplitude: ?f32 = null,
-        /// Length of one full wave, in pixels. null uses the cell width,
-        /// one wave per cell.
-        wavelength: ?f32 = null,
-    } = .{},
-
-    /// null fields fit whole dots into each cell, each as long as the
-    /// space after it.
-    dotted: Pattern = .{},
-
-    /// null fields draw one dash per cell, half the cell long and
-    /// centred in it.
-    dashed: Pattern = .{},
-
-    phase: Phase = .grid,
-
-    skip_ink: SkipInk = .{},
-
-    strikethrough: Line = .{},
-
-    /// Fonts have no overline metric: by default it sits at the top of
-    /// the cell, as thick as the resolved underline.
-    overline: Line = .{},
-
-    /// Fixed color for each kind of line. null draws it in the text
-    /// color, after SGR 7, DECSCNM and the selection text color.
-    color: struct {
-        underline: ?[3]u8 = null,
-        strikethrough: ?[3]u8 = null,
-        overline: ?[3]u8 = null,
-    } = .{},
-
-    /// Opacity of every line, 0.0 to 1.0, on top of the dim alpha.
-    alpha: f32 = 1.0,
-
-    /// Lines of SGR 2 (dim) text are dimmed like the text.
-    dim: bool = true,
-
-    /// Lines of SGR 5 and 6 (blink) text blink with the text.
-    blink: bool = true,
-
-    order: Order = .over_text,
-};
+/// Bit `n` set when UnderlineStyle value `n` skips ink, as the shader
+/// reads it. 0 when skipping is off.
+pub fn skipInkBits(skip: SkipInk) u32 {
+    if (!skip.enabled) return 0;
+    var bits: u32 = 0;
+    if (skip.styles.single) bits |= 1 << @intFromEnum(UnderlineStyle.single);
+    if (skip.styles.double) bits |= 1 << @intFromEnum(UnderlineStyle.double);
+    if (skip.styles.curly) bits |= 1 << @intFromEnum(UnderlineStyle.curly);
+    if (skip.styles.dotted) bits |= 1 << @intFromEnum(UnderlineStyle.dotted);
+    if (skip.styles.dashed) bits |= 1 << @intFromEnum(UnderlineStyle.dashed);
+    return bits;
+}
 
 /// Where each decoration line sits, in whole pixels down from the top
 /// of the cell, as the shaders read it.
@@ -240,15 +119,15 @@ pub const Metrics = struct {
     /// Resolves the font's lines through the user's `option`.
     pub fn resolve(font: Rasterizer.Metrics, option: Option) Metrics {
         const height = font.cell_height;
-        const underline = option.underline.resolve(.{
+        const underline = resolveLine(option.underline, .{
             .y = font.underline_y,
             .thickness = font.underline_thickness,
         }, height);
-        const strikethrough = option.strikethrough.resolve(.{
+        const strikethrough = resolveLine(option.strikethrough, .{
             .y = font.strikethrough_y,
             .thickness = font.strikethrough_thickness,
         }, height);
-        const overline = option.overline.resolve(.{
+        const overline = resolveLine(option.overline, .{
             .y = 0,
             .thickness = underline.thickness,
         }, height);
@@ -403,7 +282,7 @@ pub fn draw(
     if (ink_mask) |mask| {
         mask.bind(gl.TEXTURE2);
         self.shader.set1i("u_ink_mask", 2);
-        self.shader.set1ui("u_skip_ink_styles", self.option.skip_ink.styleBits());
+        self.shader.set1ui("u_skip_ink_styles", skipInkBits(self.option.skip_ink));
         self.shader.set1f("u_ink_threshold", self.option.skip_ink.threshold);
     } else {
         self.shader.set1ui("u_skip_ink_styles", 0);

@@ -1,6 +1,8 @@
 const Window = @This();
 
 const std = @import("std");
+
+const window_config = @import("../config/window.zig");
 const builtin = @import("builtin");
 
 const log = std.log.scoped(.window);
@@ -12,7 +14,7 @@ const Dimension = @import("dimension.zig").Dimension;
 
 /// The windowing platform the config asks for. `auto` is Wayland on a
 /// Wayland session and X11 otherwise (ADR 0001, decision 3).
-pub const Platform = enum { auto, wayland, x11 };
+pub const Platform = window_config.Platform;
 
 /// The GLFW platform `init` starts on, and whether the user forced it.
 /// Only an `auto` choice of Wayland may fall back to X11.

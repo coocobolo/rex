@@ -1,6 +1,8 @@
 const Scrollbar = @This();
 
 const std = @import("std");
+
+const window_config = @import("../config/window.zig");
 const log = std.log.scoped(.scrollbar);
 
 const gl = @import("gl.zig");
@@ -89,29 +91,7 @@ pub const Thumb = struct {
     }
 };
 
-pub const Option = struct {
-    /// normal thumb width (px)
-    width: f32 = 5.0,
-    /// expanded width on hover
-    hover_width: f32 = 8.0,
-    /// gap from window right edge
-    gap: f32 = 2.0,
-    /// minimum thumb height (px)
-    min_thumb_height: f32 = 20.0,
-    /// corner radius (px)
-    radius: f32 = 4.0,
-    track_color: [4]f32 = .{ 0.05, 0.05, 0.05, 1.0 },
-    thumb_color: [4]f32 = .{ 0.7, 0.7, 0.7, 0.85 },
-    thumb_hover_color: [4]f32 = .{ 0.9, 0.9, 0.9, 0.95 },
-    /// Animation speed, as the fraction of the gap closed per ms.
-    lerp_speed: f32 = 0.009,
-    /// hide when at live view
-    auto_hide: bool = true,
-    /// target alpha when hidden, applied only when auto_hide is enabled
-    auto_hide_alpha: f32 = 0.25,
-
-    pub const default: Option = .{};
-};
+pub const Option = window_config.Scrollbar;
 
 shader: Shader,
 vao: gl.GLuint,

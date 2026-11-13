@@ -1,4 +1,6 @@
 const std = @import("std");
+
+const window_config = @import("../config/window.zig");
 const log = std.log.scoped(.background);
 
 const gl = @import("gl.zig");
@@ -27,12 +29,7 @@ comptime {
 
 pub const Background = @This();
 
-pub const Option = struct {
-    /// Global background opacity multiplier (0.0-1.0).
-    alpha: f32 = 1.0,
-
-    pub const default: Option = .{};
-};
+pub const Option = window_config.Background;
 
 shader: Shader,
 buffer: Buffer,
