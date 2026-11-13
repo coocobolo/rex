@@ -18,7 +18,6 @@ pub const default: Config = .{
     .blink = .default,
     .font = .default,
     .keymap = default_keymap,
-    .termio = .default,
     .theme = .graphite,
     .window = .default,
     .environments = Config.default_environments,

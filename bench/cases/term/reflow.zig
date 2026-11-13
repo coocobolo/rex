@@ -1,7 +1,7 @@
 //! Reflow benchmark: `Terminal.resize` on a primary screen whose ring
 //! (scrollback + active area) is nearly full, i.e. what one zoom step or
 //! one frame of window dragging costs on the production geometry
-//! (`config.Config.default_terminal`: 4096-row ring, 220 max columns).
+//! (`App.default_terminal_option`: 4096-row ring, 220 max columns).
 //!
 //! Each case fills the ring once, untimed, by feeding generated output
 //! through the real parser, so soft-wrap flags, wide cells and margin
@@ -35,7 +35,7 @@ const Result = support.Result;
 
 const term = @import("root.zig");
 
-const option = rex.config.Config.default_terminal;
+const option = rex.App.default_terminal_option;
 const Term = rex.terminal.Terminal(option);
 
 const Size = struct { rows: u16, cols: u16 };

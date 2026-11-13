@@ -9,15 +9,13 @@ const std = @import("std");
 
 const window_types = @import("window.zig");
 const overlay = @import("overlay.zig");
-const FontConfig = @import("../freetype/Config.zig");
+const font_config = @import("font.zig");
 const Binding = @import("../input/binding.zig").Binding;
-const WellbeingOption = @import("../builtin/wellbeing/root.zig").Option;
-const SpawnOption = @import("../termio/pty.zig").SpawnOption;
+const WellbeingOption = @import("wellbeing.zig").Wellbeing;
 const Theme = @import("../color/Theme.zig");
 const Tokens = @import("../color/Tokens.zig").Tokens;
 const Classifier = @import("../unicode/Classifier.zig");
 const PlainVar = @import("../env/root.zig").PlainVar;
-const TerminalOption = @import("../term/term.zig").Option;
 const Motion = @import("../kit/motion.zig").Mode;
 const ColorScheme = @import("../kit/Theme.zig").ColorScheme;
 
@@ -25,7 +23,6 @@ blink: Blink,
 font: Font,
 keymap: []const Binding,
 wellbeing: WellbeingOption = .{},
-termio: SpawnOption,
 shell: Shell = .{},
 ui: Ui = .{},
 theme: Theme,
@@ -42,17 +39,6 @@ selection: Selection,
 clipboard: Clipboard = .{},
 /// Stores list of plain environment variable using "KEY=VALUE" format
 environments: []const PlainVar,
-/// Grid limits and identity: max_rows (200), max_cols (220),
-/// tab_width (8), max_scrollback (3896), ambiguous_width (.narrow),
-/// name ("rex") and version ("0.1.0"). Rows plus scrollback should
-/// be a power of two so the ring wastes nothing, see
-/// TerminalOption.optimized.
-///
-/// These size the screen at compile time, so the types below read
-/// them from the root file: main.zig declares
-/// `pub const rex_terminal_option = config.terminal;`. App.init
-/// fails to compile when the two differ.
-terminal: TerminalOption = default_terminal,
 /// Threading configuration: .single for in-loop synchronous execution,
 /// or .multi for dedicated background worker thread with wait-free triple buffer.
 threading: Threading = .{},
@@ -217,10 +203,10 @@ pub const default_environments: []const PlainVar = &.{
 };
 
 /// The terminal font. Sizes are in logical pixels (pixels at 100% scale);
-/// the rasterizer gets `FontConfig.pixelSize(size, content_scale)` device
-/// pixels.
+/// the rasterizer gets `pixelSize(size, content_scale)` device pixels
+/// (`freetype/Config.zig`).
 pub const Font = struct {
-    faces: FontConfig.Faces,
+    faces: font_config.Faces,
     size: u32,
     /// Smallest and largest size that increase_font_size and
     /// decrease_font_size reach.
@@ -259,15 +245,4 @@ pub const Threading = struct {
         single,
         multi,
     };
-};
-
-/// Terminal limits used when the root file sets none, as in tests.
-/// 200 rows plus 3896 scrollback lines fill a 4096 row ring.
-pub const default_terminal: TerminalOption = .{
-    .max_rows = 200,
-    .max_cols = 220,
-    .tab_width = 8,
-    .max_scrollback = 3896,
-    .name = "rex",
-    .version = "0.1.0",
 };

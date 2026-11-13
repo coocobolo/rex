@@ -1,38 +1,15 @@
 const std = @import("std");
+const wellbeing_config = @import("../../config/wellbeing.zig");
 const storage = @import("storage.zig");
 const secondsCeil = @import("tracker.zig").secondsCeil;
 
-pub const AnimationKind = enum {
-    none,
-    pulse_dim,
-    grayscale_wave,
-    warm_glow,
-};
+pub const AnimationKind = wellbeing_config.AnimationKind;
 
-pub const ReminderAction = enum {
-    /// Block terminal input while the reminder is shown.
-    lock_input,
-};
+pub const ReminderAction = wellbeing_config.ReminderAction;
 
-pub const EyesightOption = struct {
-    enabled: bool = true,
-    interval_ms: u64 = 20 * std.time.ms_per_min,
-    duration_ms: u64 = 20 * std.time.ms_per_s,
-    during_reminder: std.EnumSet(ReminderAction) = .empty,
-    /// `none`: no animation.
-    animation: AnimationKind = .pulse_dim,
-    prompt: []const u8 = "Look at an object 20 feet away for 20 seconds.",
-};
+pub const EyesightOption = wellbeing_config.EyesightOption;
 
-pub const MovementOption = struct {
-    enabled: bool = true,
-    interval_ms: u64 = 50 * std.time.ms_per_min,
-    duration_ms: u64 = 60 * std.time.ms_per_s,
-    during_reminder: std.EnumSet(ReminderAction) = .empty,
-    /// `none`: no animation.
-    animation: AnimationKind = .grayscale_wave,
-    prompt: []const u8 = "Time to stand up, stretch your back, and move.",
-};
+pub const MovementOption = wellbeing_config.MovementOption;
 
 pub const AlertKind = enum {
     none,

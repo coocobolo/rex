@@ -1,38 +1,11 @@
 const std = @import("std");
+const wellbeing_config = @import("../../config/wellbeing.zig");
 
-/// A time of day on the 24-hour clock.
-pub const TimeOfDay = struct {
-    /// 0 to 23.
-    hour: u5,
-    /// 0 to 59.
-    minute: u6,
+pub const TimeOfDay = wellbeing_config.TimeOfDay;
 
-    /// Minutes since midnight.
-    pub fn minutes(self: TimeOfDay) u11 {
-        std.debug.assert(self.hour < 24 and self.minute < 60);
-        return @as(u11, self.hour) * 60 + self.minute;
-    }
-};
+pub const WindowAction = wellbeing_config.WindowAction;
 
-pub const WindowAction = enum {
-    /// Warm the screen colors by `warmth_factor`.
-    warm_colors,
-    mute_bell,
-};
-
-pub const WinddownOption = struct {
-    /// Off by default: it tints the screen and mutes the bell every evening,
-    /// which only someone who asked for it expects.
-    enabled: bool = false,
-    /// The window starts at `start` and ends at `end`; it crosses midnight
-    /// when `end` is earlier than `start`.
-    start: TimeOfDay = .{ .hour = 21, .minute = 0 },
-    end: TimeOfDay = .{ .hour = 7, .minute = 0 },
-    during_window: std.EnumSet(WindowAction) = .initMany(&.{ .warm_colors, .mute_bell }),
-    /// How warm `warm_colors` makes the screen, from 0 to 1.
-    warmth_factor: f32 = 0.85,
-    prompt: []const u8 = "Wind-down time. Time to wrap up work for today 🌙",
-};
+pub const WinddownOption = wellbeing_config.WinddownOption;
 
 pub const WinddownEngine = struct {
     option: WinddownOption,

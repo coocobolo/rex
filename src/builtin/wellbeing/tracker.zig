@@ -1,4 +1,5 @@
 const std = @import("std");
+const wellbeing_config = @import("../../config/wellbeing.zig");
 const storage = @import("storage.zig");
 const posix = std.posix;
 const system = posix.system;
@@ -11,26 +12,9 @@ pub fn secondsCeil(ms: u64) u64 {
     return ms / std.time.ms_per_s + @intFromBool(ms % std.time.ms_per_s != 0);
 }
 
-pub const LimitAction = enum {
-    /// Fade the screen to grayscale over `grayscale_transition_ms`.
-    grayscale,
-    /// Block terminal input while the limit alert is shown.
-    lock_input,
-    /// Animate the screen while the limit alert is shown.
-    animation,
-};
+pub const LimitAction = wellbeing_config.LimitAction;
 
-pub const TrackerOption = struct {
-    idle_threshold_ms: u64 = 3 * std.time.ms_per_min,
-    /// null: no daily limit.
-    daily_limit_ms: ?u64 = null,
-    proc_sample_interval_ms: u64 = 5 * std.time.ms_per_s,
-    /// What happens once the daily limit is reached.
-    on_limit: std.EnumSet(LimitAction) = .initOne(.grayscale),
-    /// How long `grayscale` takes to fade in fully.
-    grayscale_transition_ms: u64 = 30 * std.time.ms_per_s,
-    track_foreground_apps: bool = true,
-};
+pub const TrackerOption = wellbeing_config.TrackerOption;
 
 pub const Tracker = struct {
     option: TrackerOption,

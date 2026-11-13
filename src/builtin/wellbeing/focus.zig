@@ -1,4 +1,5 @@
 const std = @import("std");
+const wellbeing_config = @import("../../config/wellbeing.zig");
 
 const max_u64 = std.math.maxInt(u64);
 
@@ -9,51 +10,7 @@ pub const Phase = enum(u8) {
     long_break = 3,
 };
 
-pub const Option = struct {
-    display: Display = .{},
-    long_break_ms: u64 = 15 * 60_000,
-    short_break_ms: u64 = 5 * 60_000,
-    task_ms: u64 = 25 * 60_000,
-    tasks_before_long_break: u8 = 4,
-    time_fields: TimeFields = .initMany(&.{ .minute, .second }),
-    timer: Count = .countdown,
-    on_phase_end: PhaseEnd = .wait,
-    during_task: std.EnumSet(TaskAction) = .initOne(.mute_bell),
-    on_break: std.EnumSet(BreakAction) = .initMany(&.{ .prompt, .animation }),
-    on_alert: std.EnumSet(AlertAction) = .initOne(.pause),
-
-    /// Whether the timer shows the time left or the time spent.
-    pub const Count = enum { countdown, countup };
-    pub const PhaseEnd = enum {
-        /// Wait for the user to start the next phase.
-        wait,
-        start_next,
-    };
-    pub const TaskAction = enum { mute_bell };
-    pub const BreakAction = enum {
-        /// Show a break suggestion, a different one each break.
-        prompt,
-        /// Block terminal input for the whole break.
-        lock_input,
-        /// Animate the screen while the prompt is shown; shows the prompt.
-        animation,
-    };
-    pub const AlertAction = enum {
-        /// Pause a running task while a reminder blocks input.
-        pause,
-    };
-    pub const TimeField = enum { hour, minute, second, millisecond };
-    pub const TimeFields = std.EnumSet(TimeField);
-
-    pub const Display = struct {
-        task_icon: []const u8 = "FOCUS",
-        break_icon: []const u8 = "BREAK",
-        paused_icon: []const u8 = "PAUSED",
-        separator: []const u8 = "  ",
-    };
-
-    pub const default: Option = .{};
-};
+pub const Option = wellbeing_config.Focus;
 
 /// How a phase of the shared timer is kept (stored as `storage.Timer.run`).
 pub const Run = enum(u8) {

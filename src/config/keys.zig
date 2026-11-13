@@ -17,8 +17,8 @@ const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 const Config = @import("Config.zig");
 const Theme = @import("../color/Theme.zig");
-const FontConfig = @import("../freetype/Config.zig");
-const TimeOfDay = @import("../builtin/wellbeing/winddown.zig").TimeOfDay;
+const Face = @import("font.zig").Face;
+const TimeOfDay = @import("wellbeing.zig").TimeOfDay;
 
 /// Section headers as users write them; dotted names are subsections (`[modal.blur]`).
 pub const Section = enum {
@@ -363,10 +363,8 @@ pub const section_fields = [_]struct { Section, []const u8 }{
 /// row, in `section_fields` nor here, so adding a field is a decision. This
 /// list is also what could become configurable later.
 pub const internal = [_][]const u8{
-    // Startup and process settings, set by main.zig or fixed at compile time.
+    // Startup and process settings, set by main.zig.
     "blink",
-    "termio",
-    "terminal",
     "threading",
     // Colors and UI tokens: a `[colors]` section later (#33).
     "tokens",
@@ -566,7 +564,7 @@ pub const ListItem = union(enum) {
     none,
     /// Back to the base list.
     default,
-    face: FontConfig.Face,
+    face: Face,
 };
 
 /// Parses one `fallback = ...` line.
@@ -627,7 +625,7 @@ fn applyKey(comptime key: Key, config: *Config, ctx: Context, text: []const u8) 
     };
     if (key.kind == .path or key.kind == .directory_path) {
         const path = try resolvePath(ctx, try unquote(ctx.arena, text));
-        fieldPtr(Config, key.field, config).* = if (Value == FontConfig.Face) .static(path) else path;
+        fieldPtr(Config, key.field, config).* = if (Value == Face) .static(path) else path;
         return;
     }
     if (key.kind == .word_characters) {
@@ -733,8 +731,8 @@ fn checkRow(comptime key: Key, comptime T: type) void {
         .set => isEnumSet(Value) and !@hasField(Value.Key, "none") and !@hasField(Value.Key, "default"),
         .font_weight => @typeInfo(Value) == .float,
         .theme => Value == Theme,
-        .font_fallback => Value == []const FontConfig.Face,
-        .path => Value == [*:0]const u8 or Value == FontConfig.Face,
+        .font_fallback => Value == []const Face,
+        .path => Value == [*:0]const u8 or Value == Face,
         .program_path, .directory_path, .text => Value == [:0]const u8,
         .shell_argument => Value == []const [:0]const u8,
         .word_characters => Value == []const u8,

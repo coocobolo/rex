@@ -1,4 +1,5 @@
 const std = @import("std");
+const wellbeing_config = @import("../../config/wellbeing.zig");
 const Io = std.Io;
 
 pub const storage = @import("storage.zig");
@@ -14,32 +15,7 @@ pub const overlay = @import("overlay.zig");
 
 const log = std.log.scoped(.wellbeing);
 
-pub const Option = struct {
-    enabled: bool = true,
-
-    privacy: struct {
-        state_dir: ?[]const u8 = null,
-        state_filename: []const u8 = "wellbeing.bin",
-    } = .{},
-
-    screen_time: tracker.TrackerOption = .{},
-    eyesight: reminders.EyesightOption = .{},
-    movement: reminders.MovementOption = .{},
-    focus: focus.Option = .default,
-    winddown: winddown.WinddownOption = .{},
-
-    // Domain-specific UI behaviors
-    lock_screen: struct {
-        enabled: bool = true,
-        dim_strength: f32 = 0.50,
-    } = .{},
-
-    dashboard: struct {
-        modal_enabled: bool = true,
-    } = .{},
-
-    pub const default: Option = .{};
-};
+pub const Option = wellbeing_config.Wellbeing;
 
 pub const Wellbeing = struct {
     option: Option,

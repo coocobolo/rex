@@ -83,25 +83,24 @@ const Config = rex.config.Config;
 const Loaded = rex.config.Loaded;
 const diagnostics = rex.config.diagnostics;
 
+/// Grid limits and identity: 200 rows plus 3896 lines of scrollback fill
+/// a 4096 row ring, so it wastes nothing (see `TerminalOption.optimized`).
+/// They size the screen at compile time; no key sets them.
+pub const default_terminal_option: TerminalOption = .{
+    .max_rows = 200,
+    .max_cols = 220,
+    .tab_width = 8,
+    .max_scrollback = 3896,
+    .name = "rex",
+    .version = "0.1.0",
+};
+
 /// Terminal limits the screen, frame and renderer types are built
-/// with: the root rex_terminal_option when declared, else the defaults.
+/// with: the root `rex_terminal_option` when declared, else the defaults.
 pub const terminal_option: TerminalOption = if (@hasDecl(root, "rex_terminal_option"))
     root.rex_terminal_option
 else
-    Config.default_terminal;
-
-/// Whether two terminal options are the same, comparing strings by
-/// content.
-fn sameTerminalOption(a: TerminalOption, b: TerminalOption) bool {
-    return a.max_rows == b.max_rows and
-        a.max_cols == b.max_cols and
-        a.tab_width == b.tab_width and
-        a.max_scrollback == b.max_scrollback and
-        a.ambiguous_width == b.ambiguous_width and
-        std.mem.eql(u8, a.name, b.name) and
-        std.mem.eql(u8, a.version, b.version) and
-        a.max_clipboard_bytes == b.max_clipboard_bytes;
-}
+    default_terminal_option;
 
 pub const FrameBuilderType = FrameBuilder(terminal_option);
 pub const FrameType = rex.terminal.Frame(terminal_option);
@@ -417,10 +416,6 @@ pub fn init(
     config: *const Config,
     custom_config_path: ?[]const u8,
 ) !App {
-    if (!sameTerminalOption(config.terminal, terminal_option)) {
-        return error.TerminalOptionMismatch;
-    }
-
     log.debug("envi.block.len: {d}", .{environ.block.slice.len});
 
     const home_dir = try environ.getAlloc(gpa, "HOME");
@@ -501,7 +496,7 @@ pub fn init(
     // must not keep Rex from starting: fall back to the login shell in
     // Rex's own directory, and say so.
     var failure: ?rex.termio.pty.SpawnFailure = null;
-    var pty = spawnShell(gpa, io, active_config.termio, active_config.shell, login_shell, block.slice, &failure) catch |err| switch (err) {
+    var pty = spawnShell(gpa, io, active_config.shell, login_shell, block.slice, &failure) catch |err| switch (err) {
         error.SpawnFailed => if (isDefaultShell(active_config.shell)) {
             if (failure) |f| log.err("the shell failed to start: {f}", .{f}) else log.err("the shell failed to start: {}", .{err});
             return err;
@@ -513,7 +508,7 @@ pub fn init(
                 "[shell] failed to start; started the login shell instead";
             log.err("{s}", .{message});
             startup_banner = Banner.init(.err, "Shell error", message);
-            break :blk try spawnShell(gpa, io, active_config.termio, .{}, login_shell, block.slice, &failure);
+            break :blk try spawnShell(gpa, io, .{}, login_shell, block.slice, &failure);
         },
         else => return err,
     };
@@ -1767,7 +1762,6 @@ fn snapToLiveView(self: *App) void {
 fn spawnShell(
     gpa: std.mem.Allocator,
     io: std.Io,
-    termio: rex.termio.pty.SpawnOption,
     shell: Config.Shell,
     login_shell: [:0]const u8,
     envp: [*:null]const ?[*:0]const u8,
@@ -1778,6 +1772,7 @@ fn spawnShell(
     argv[0] = shell.program orelse login_shell;
     for (shell.arguments, argv[1..]) |argument, *slot| slot.* = argument;
 
+    const termio: rex.termio.pty.SpawnOption = .default;
     var pty = try Pty.spawn(.{
         .argv = argv.ptr,
         .capture_stdout = termio.capture_stdout,
@@ -3702,13 +3697,13 @@ test "spawnShell: a missing program or directory fails to spawn, the defaults st
     const envp: [*:null]const ?[*:0]const u8 = &.{null};
 
     var failure: ?rex.termio.pty.SpawnFailure = null;
-    try std.testing.expectError(error.SpawnFailed, spawnShell(gpa, io, .default, .{ .program = "/nonexistent/rex-test-shell" }, "/bin/sh", envp, &failure));
+    try std.testing.expectError(error.SpawnFailed, spawnShell(gpa, io, .{ .program = "/nonexistent/rex-test-shell" }, "/bin/sh", envp, &failure));
     try std.testing.expectEqual(.execve, failure.?.stage);
-    try std.testing.expectError(error.SpawnFailed, spawnShell(gpa, io, .default, .{ .working_directory = "/nonexistent/rex-test-dir" }, "/bin/sh", envp, &failure));
+    try std.testing.expectError(error.SpawnFailed, spawnShell(gpa, io, .{ .working_directory = "/nonexistent/rex-test-dir" }, "/bin/sh", envp, &failure));
     try std.testing.expectEqual(.chdir, failure.?.stage);
 
     // The fallback: no program (the login shell) and no directory.
-    var pty = try spawnShell(gpa, io, .default, .{ .arguments = &.{ "-c", "exit 0" } }, "/bin/sh", envp, &failure);
+    var pty = try spawnShell(gpa, io, .{ .arguments = &.{ "-c", "exit 0" } }, "/bin/sh", envp, &failure);
     pty.close(io);
     try std.testing.expect(!isDefaultShell(.{ .arguments = &.{"-l"} }));
     try std.testing.expect(isDefaultShell(.{}));
@@ -3732,7 +3727,6 @@ test "App: a config reload starts from the defaults, in its own arena" {
             .min_size = 6,
         },
         .keymap = rex.input.default_keymap,
-        .termio = .{},
         .theme = Theme.graphite,
         .window = .default,
         .scroll = .{},

@@ -70,7 +70,7 @@ noinline fn zeroRowStosq(dest: [*]Cell, n: usize) void {
         : .{ .memory = true, .rdi = true, .rcx = true });
 }
 
-const widths = .{ 80, rex.config.Config.default_terminal.max_cols };
+const widths = .{ 80, rex.App.default_terminal_option.max_cols };
 
 const Context = struct {
     row: []align(64) Cell,

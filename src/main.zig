@@ -13,10 +13,6 @@ pub const std_options: std.Options = .{
 /// The built-in defaults; config files apply on top of them.
 const config = rex.config.default;
 
-/// Terminal limits for the screen types, which App reads at compile
-/// time. Set them in config.terminal.
-pub const rex_terminal_option = config.terminal;
-
 pub fn main(init: std.process.Init) !void {
     // Short-lived work that runs once (argument handling, the config
     // subcommands) uses the process arena. The app itself allocates and
@@ -89,7 +85,7 @@ fn runCommand(
         defer envmap.deinit();
         var dirs = try rex.dirs.Application.resolve(
             arena,
-            rex_terminal_option.name,
+            rex.App.terminal_option.name,
             home_dir,
             &envmap,
         );
@@ -164,7 +160,7 @@ const help =
 ;
 
 fn configLocate(io: std.Io, arena: std.mem.Allocator, environ: *const std.process.Environ, out: *std.Io.Writer) !void {
-    const user_path = try rex.config.paths.userFromEnviron(arena, environ, rex_terminal_option.name);
+    const user_path = try rex.config.paths.userFromEnviron(arena, environ, rex.App.terminal_option.name);
     const system_path = rex.config.paths.system;
     try out.print("System config: {s} [{s}]\n", .{ system_path, if (exists(io, system_path)) "found" else "not found" });
     try out.print("User config:   {s} [{s}]\n", .{ user_path, if (exists(io, user_path)) "found" else "not found" });
@@ -178,7 +174,7 @@ fn exists(io: std.Io, path: []const u8) bool {
 /// Prints every problem of the file at `explicit_path`, or of the user file,
 /// applied on this build's defaults. Exits 1 if it has errors.
 fn configValidate(io: std.Io, arena: std.mem.Allocator, environ: *const std.process.Environ, explicit_path: ?[]const u8, out: *std.Io.Writer) !void {
-    const path = explicit_path orelse try rex.config.paths.userFromEnviron(arena, environ, rex_terminal_option.name);
+    const path = explicit_path orelse try rex.config.paths.userFromEnviron(arena, environ, rex.App.terminal_option.name);
     const home: ?[]const u8 = environ.getAlloc(arena, "HOME") catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         else => null,

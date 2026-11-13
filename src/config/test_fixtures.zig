@@ -15,7 +15,6 @@ pub const test_config: Config = .{
         .min_size = 6,
     },
     .keymap = &.{},
-    .termio = .{},
     .theme = Theme.graphite,
     .window = .default,
     .selection = .default,

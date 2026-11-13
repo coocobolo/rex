@@ -13,7 +13,7 @@ const keys = @import("keys.zig");
 const Config = @import("Config.zig");
 const keybind = @import("keybind.zig");
 const Binding = @import("../input/binding.zig").Binding;
-const Face = @import("../freetype/Config.zig").Face;
+const Face = @import("font.zig").Face;
 const PlainVar = @import("../env/root.zig").PlainVar;
 
 pub const Error = struct {
