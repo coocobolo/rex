@@ -157,3 +157,48 @@ test "Posix: resizing something that is not a tty is ResizeFailed" {
     defer testing.log_level = shown;
     try testing.expectError(error.ResizeFailed, pty.resize(24, 80, 0, 0));
 }
+
+test "Posix: a failed spawn runs none of this process's exit handlers in the child" {
+    // The child is a fork of a possibly threaded process, so it must leave
+    // with _exit: an exit handler can wait on a thread that only the parent
+    // has. The handler below writes to a pipe when it runs in any process
+    // but this one; a failed spawn must leave the pipe empty.
+    var fds: [2]posix.fd_t = undefined;
+    try testing.expectEqual(0, system.pipe2(&fds, .{ .CLOEXEC = true, .NONBLOCK = true }));
+    defer for (fds) |fd| {
+        _ = system.close(fd);
+    };
+
+    exit_probe.parent = system.getpid();
+    exit_probe.fd = fds[1];
+    // Children forked by later tests must not write to a reused descriptor.
+    defer exit_probe.fd = -1;
+    if (!exit_probe.registered) {
+        try testing.expectEqual(0, __cxa_atexit(exit_probe.handler, null, null));
+        exit_probe.registered = true;
+    }
+
+    const argv = [_:null]?[*:0]const u8{ "/nonexistent/rex-test-program", null };
+    var pty: Posix = try Posix.spawn(.{ .argv = &argv });
+    defer pty.close(testing.io);
+    // Returns once the child has exited.
+    try testing.expectError(error.SpawnFailed, pty.waitForSpawn());
+
+    var byte: [1]u8 = undefined;
+    try testing.expectEqual(posix.E.AGAIN, posix.errno(system.read(fds[0], &byte, 1)));
+}
+
+/// libc's registration behind atexit(3); std has no binding for either.
+/// Handlers stay registered for the life of the process.
+extern "c" fn __cxa_atexit(func: *const fn (?*anyopaque) callconv(.c) void, arg: ?*anyopaque, dso: ?*anyopaque) c_int;
+
+const exit_probe = struct {
+    var parent: posix.pid_t = 0;
+    var fd: posix.fd_t = -1;
+    var registered = false;
+
+    fn handler(_: ?*anyopaque) callconv(.c) void {
+        if (fd == -1 or system.getpid() == parent) return;
+        _ = system.write(fd, "x", 1);
+    }
+};

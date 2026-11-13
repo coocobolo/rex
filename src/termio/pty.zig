@@ -548,7 +548,12 @@ pub const Posix = struct {
             written += @intCast(n);
         }
 
-        system.exit(1);
+        // _exit, not exit: this is the forked child of a possibly threaded
+        // process. exit() runs atexit handlers and library destructors,
+        // which can wait on locks or threads that exist only in the parent.
+        // Under glibc 2.43 the child hung in exit() whenever the parent had
+        // a Mesa thread.
+        system._exit(1);
     }
 };
 
