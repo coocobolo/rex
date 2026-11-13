@@ -6,6 +6,8 @@
 //! interactive action prompts, and sub-cell mouse hit-testing.
 
 const std = @import("std");
+
+const overlay_config = @import("../config/overlay.zig");
 const Allocator = std.mem.Allocator;
 const wc = @import("../unicode/wcwidth.zig");
 const Tokens = @import("../color/Tokens.zig").Tokens;
@@ -38,27 +40,11 @@ pub const Variant = enum {
     critical,
 };
 
-pub const Position = enum {
-    top_right,
-    top_center,
-    bottom_right,
-};
+pub const Position = Option.Position;
 
 pub const BorderStyle = Card.BorderStyle;
 
-pub const Option = struct {
-    enabled: bool = true,
-    position: Position = .top_right,
-    icon_style: Icon.IconStyle = .auto,
-    duration_ms: u32 = 5000,
-    min_cols: u16 = 32,
-    max_cols: u16 = 48,
-    margin_cols: u16 = 2,
-    margin_rows: u16 = 1,
-    dismiss_str: ?[]const u8 = null,
-    action_prompt: []const u8 = ">",
-    action_margin: u16 = 1,
-};
+pub const Option = overlay_config.Toast;
 
 pub const Request = struct {
     title: []const u8,

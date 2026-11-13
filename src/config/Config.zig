@@ -8,11 +8,7 @@
 const std = @import("std");
 
 const window_types = @import("window.zig");
-const Toast = @import("../ui/Toast.zig");
-const Banner = @import("../ui/Banner.zig");
-const Icon = @import("../ui/Icon.zig");
-const Modal = @import("../ui/Modal.zig");
-const Button = @import("../ui/Button.zig");
+const overlay = @import("overlay.zig");
 const FontConfig = @import("../freetype/Config.zig");
 const Binding = @import("../input/binding.zig").Binding;
 const WellbeingOption = @import("../builtin/wellbeing/root.zig").Option;
@@ -124,17 +120,17 @@ pub const Window = struct {
     /// Each component's own look over `surface`; read through `surfaceFor`.
     surfaces: Surfaces = .{},
     /// In-terminal toast notification options.
-    toast: Toast.Option = .{},
+    toast: overlay.Toast = .{},
     /// Configuration diagnostic notification banner options.
-    banner: Banner.Option = .{},
+    banner: overlay.Banner = .{},
     /// Semantic icon rendering options.
-    icon: Icon.Option = .{},
+    icon: overlay.Icon = .{},
     /// Modal dialog options including dimensions, dimming, and default focus.
-    modal: Modal.Option = .{},
+    modal: overlay.Modal = .{},
     /// Copy and labels for the quit confirmation modal dialog.
     quit_dialog: QuitDialog = .{},
     /// Interactive button primitive options.
-    button: Button.Option = .{},
+    button: overlay.Button = .{},
     /// What closing the window does.
     on_close: OnClose = .ask_if_running,
 

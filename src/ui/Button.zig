@@ -5,6 +5,8 @@
 //! and registers mouse hit-test regions into the active hotspot table.
 
 const std = @import("std");
+
+const overlay_config = @import("../config/overlay.zig");
 const Tokens = @import("../color/Tokens.zig").Tokens;
 const Card = @import("../renderer/Card.zig");
 const Table = @import("hotspot.zig").Table;
@@ -27,13 +29,7 @@ pub const Style = enum {
     ghost,
 };
 
-pub const Option = struct {
-    focus_indicator: []const u8 = ">",
-    icon_style: Icon.IconStyle = .auto,
-    corner_radius: f32 = 4.0,
-    border_width: f32 = 1.0,
-    focus_border_width: f32 = 1.5,
-};
+pub const Option = overlay_config.Button;
 
 pub const Request = struct {
     col: u16,

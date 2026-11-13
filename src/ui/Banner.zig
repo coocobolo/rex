@@ -6,6 +6,8 @@
 //! interactive dismiss buttons with hotspot hit-testing.
 
 const std = @import("std");
+
+const overlay_config = @import("../config/overlay.zig");
 const Tokens = @import("../color/Tokens.zig").Tokens;
 const Card = @import("../renderer/Card.zig");
 const Rect = @import("Rect.zig").Rect;
@@ -25,28 +27,11 @@ pub const Level = enum {
     info,
 };
 
-/// Whether the banner floats over the terminal or is docked to its edge.
-pub const Placement = enum {
-    floating,
-    docked,
-};
+pub const Placement = Option.Placement;
 
-pub const Position = enum {
-    top_center,
-    top_right,
-    top_left,
-};
+pub const Position = Option.Position;
 
-pub const Option = struct {
-    enabled: bool = true,
-    placement: Placement = .floating,
-    position: Position = .top_center,
-    min_cols: u16 = 36,
-    max_cols: u16 = 72,
-    margin_cols: u16 = 2,
-    margin_rows: u16 = 1,
-    dismiss_str: []const u8 = "✕",
-};
+pub const Option = overlay_config.Banner;
 
 pub const Layout = struct {
     col: u16 = 0,

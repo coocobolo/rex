@@ -1,7 +1,7 @@
 const std = @import("std");
 const keys = @import("keys.zig");
 const Config = @import("Config.zig");
-const Toast = @import("../ui/Toast.zig");
+const overlay = @import("overlay.zig");
 const test_config = @import("test_fixtures.zig").test_config;
 
 fn testConfig() Config {
@@ -25,7 +25,7 @@ fn applyText(config: *Config, section: keys.Section, name: []const u8, text: []c
 
 test "FieldType: resolves nested struct paths" {
     try std.testing.expect(keys.FieldType(Config, "window.dim_alpha") == f32);
-    try std.testing.expect(keys.FieldType(Config, "window.toast.position") == Toast.Position);
+    try std.testing.expect(keys.FieldType(Config, "window.toast.position") == overlay.Toast.Position);
     try std.testing.expect(keys.FieldType(Config, "font.faces.regular") == [*:0]const u8);
     try std.testing.expect(keys.FieldType(Config, "wellbeing.screen_time.daily_limit_ms") == ?u64);
 }

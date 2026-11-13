@@ -5,6 +5,8 @@
 //! prompt rows with keyboard focus highlights, and deterministic cell-grid hit-testing.
 
 const std = @import("std");
+
+const overlay_config = @import("../config/overlay.zig");
 const Allocator = std.mem.Allocator;
 const Tokens = @import("../color/Tokens.zig").Tokens;
 const Background = @import("../renderer/Background.zig");
@@ -24,32 +26,11 @@ const FocusGroup = @import("focus.zig").FocusGroup;
 
 pub const Modal = @This();
 
-pub const DefaultFocus = enum {
-    confirm,
-    cancel,
-};
+pub const DefaultFocus = Option.DefaultFocus;
 
-/// What a click outside an open dialog does.
-pub const OutsideClick = enum { close, ignore };
+pub const OutsideClick = Option.OutsideClick;
 
-pub const Option = struct {
-    /// Dialog width, in terminal columns.
-    cols: u16 = 46,
-    /// Opacity of the darkened backdrop behind the dialog, 0 to 1.
-    backdrop_opacity: f32 = 180.0 / 255.0,
-    blur: bool = false,
-    blur_radius: u8 = 12,
-    on_outside_click: OutsideClick = .close,
-    icon_style: Icon.IconStyle = .auto,
-    default_focus: DefaultFocus = .confirm,
-
-    /// `backdrop_opacity` as the alpha byte the renderer uses; out-of-range
-    /// and non-finite values are clamped (non-finite counts as 0).
-    pub fn backdropAlpha(self: Option) u8 {
-        const opacity = if (std.math.isFinite(self.backdrop_opacity)) std.math.clamp(self.backdrop_opacity, 0, 1) else 0;
-        return @intFromFloat(@round(opacity * 255));
-    }
-};
+pub const Option = overlay_config.Modal;
 
 pub const Action = struct {
     prompt: []const u8 = ">",
