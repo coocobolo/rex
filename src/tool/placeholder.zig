@@ -200,6 +200,7 @@ fn dropdownRow(state: *const State, tree: *Tree, theme: *const Theme) kit.tree.E
     const touched = state.hover == .trigger or state.dropdown == .open;
     const trigger = try tree.open(.{
         .id = trigger_id,
+        .pointer = .hand,
         .axis = .row,
         .width = .{ .at_least = 160 },
         .height = .{ .fixed = Theme.control },

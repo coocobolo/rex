@@ -253,9 +253,16 @@ fn Host(comptime Tool: type) type {
             if (Tool.update(&self.state, event)) self.redraw = true;
         }
 
-        /// Tells the tool when the node under the pointer changed.
+        /// Tells the tool when the node under the pointer changed, and
+        /// shows the shape that node asks for.
         fn pointerMoved(self: *Self) void {
-            const id = if (self.pointer_x < 0) .none else self.tree.hitTest(self.pointer_x, self.pointer_y);
+            const node = if (self.pointer_x < 0) null else self.tree.hit(self.pointer_x, self.pointer_y);
+            const id = if (node) |n| n.box.id else .none;
+            self.window.setPointerShape(if (node) |n| switch (n.box.pointer) {
+                .arrow => .arrow,
+                .hand => .hand,
+                .text => .text,
+            } else .arrow);
             if (id == self.over) return;
             self.over = id;
             self.send(.{ .pointer = id });

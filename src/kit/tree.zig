@@ -87,6 +87,15 @@ pub const Overflow = enum(u1) {
     clip,
 };
 
+/// The pointer's shape over a node that hit-testing finds.
+pub const PointerShape = enum(u2) {
+    arrow,
+    /// Something that acts when clicked: a button, an item.
+    hand,
+    /// Text that can be typed into or selected.
+    text,
+};
+
 /// Padding in logical pixels.
 pub const Edges = struct {
     left: u8 = 0,
@@ -123,6 +132,9 @@ pub const Box = struct {
     /// Across `axis`.
     cross: Align = .start,
     overflow: Overflow = .visible,
+    /// Applies only to a node with an id: the shape is taken from the node
+    /// `Tree.hit` finds.
+    pointer: PointerShape = .arrow,
 };
 
 pub const Text = struct {
@@ -292,13 +304,18 @@ pub const Tree = struct {
     /// are drawn over earlier ones. A node a clipping ancestor cuts away
     /// at the point is not hit there.
     pub fn hitTest(self: *const Tree, x: f32, y: f32) Id {
+        return if (self.hit(x, y)) |node| node.box.id else .none;
+    }
+
+    /// The node `hitTest` finds, or null.
+    pub fn hit(self: *const Tree, x: f32, y: f32) ?*const Node {
         var i = self.len;
         while (i > 0) {
             i -= 1;
             const node = &self.nodes[i];
-            if (node.box.id != .none and node.rect.contains(x, y) and !self.clippedAt(i, x, y)) return node.box.id;
+            if (node.box.id != .none and node.rect.contains(x, y) and !self.clippedAt(i, x, y)) return node;
         }
-        return .none;
+        return null;
     }
 
     /// Whether an ancestor of node `index` clips the point away.

@@ -86,6 +86,15 @@ test "button: a disabled button is drawn at half opacity" {
     try testing.expectEqual(theme.primary_foreground.fade(0.5), tree.nodes[2].content.text.color);
 }
 
+test "button: the pointer is a hand over a button, an arrow over a disabled one" {
+    const theme = &Theme.dark;
+    var fixture: Fixture = .{};
+    var tree = try one(&fixture, theme, .{ .id = id, .label = "Save" });
+    try testing.expectEqual(tree_zig.PointerShape.hand, tree.hit(10, 10).?.box.pointer);
+    tree = try one(&fixture, theme, .{ .id = id, .label = "Save", .state = .disabled });
+    try testing.expectEqual(tree_zig.PointerShape.arrow, tree.hit(10, 10).?.box.pointer);
+}
+
 test "button: the focus ring surrounds the face without moving it, and carries the id" {
     const theme = &Theme.dark;
     var fixture: Fixture = .{};

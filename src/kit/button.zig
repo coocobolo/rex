@@ -142,6 +142,7 @@ pub fn view(tree: *Tree, theme: *const Theme, options: Options) tree_zig.Error!v
     // slot: a click on the ring is a click on the button.
     const slot = try tree.open(.{
         .id = options.id,
+        .pointer = if (options.state == .disabled) .arrow else .hand,
         .padding = .all(Theme.ring_width),
         .border = if (options.focused) theme.ring.alpha(Theme.ring_opacity).fade(presence) else .transparent,
         .border_width = Theme.ring_width,

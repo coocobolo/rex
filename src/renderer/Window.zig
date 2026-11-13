@@ -146,6 +146,16 @@ silent_bell_logged: bool = false,
 /// Whether a PRIMARY write this platform can't do has been logged, so it's
 /// logged once.
 no_primary_logged: bool = false,
+/// The standard cursors made so far, by shape; destroyed with the window.
+cursors: [@typeInfo(PointerShape).@"enum".fields.len]?*c.GLFWcursor = @splat(null),
+pointer_shape: PointerShape = .arrow,
+
+/// The pointer shapes a window can show.
+pub const PointerShape = enum(u8) {
+    arrow,
+    hand,
+    text,
+};
 
 /// The OpenGL core version the renderer needs: the shaders are GLSL 330
 /// and every GL call is core in 3.3. Keep it there so the renderer runs
@@ -274,6 +284,7 @@ fn gladGetProcAddress(name: [*c]const u8) callconv(.c) ?*anyopaque {
 }
 
 pub fn deinit(self: *Window) void {
+    for (self.cursors) |cursor| if (cursor) |made| c.glfwDestroyCursor(made);
     switch (self.xlib) {
         .loaded => |*xlib| xlib.close(),
         .unloaded, .failed => {},
@@ -445,6 +456,25 @@ pub fn setKeyCallback(self: *Window, cb: c.GLFWkeyfun) void {
 
 pub fn setFramebufferSizeCallback(self: *Window, cb: c.GLFWframebuffersizefun) void {
     _ = c.glfwSetFramebufferSizeCallback(self.handle, cb);
+}
+
+/// Shows `shape` while the pointer is over the window. The cursor is made
+/// on first use; a platform that has no such shape keeps the current one
+/// (GLFW reports the error to its callback).
+pub fn setPointerShape(self: *Window, shape: PointerShape) void {
+    if (shape == self.pointer_shape) return;
+    const slot = &self.cursors[@intFromEnum(shape)];
+    if (slot.* == null and shape != .arrow) {
+        slot.* = c.glfwCreateStandardCursor(switch (shape) {
+            .arrow => unreachable,
+            .hand => c.GLFW_POINTING_HAND_CURSOR,
+            .text => c.GLFW_IBEAM_CURSOR,
+        });
+        if (slot.* == null) return;
+    }
+    // Null is the platform's default arrow.
+    c.glfwSetCursor(self.handle, slot.*);
+    self.pointer_shape = shape;
 }
 
 /// The smallest size the user can resize the window to, in screen

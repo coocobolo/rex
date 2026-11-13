@@ -377,6 +377,7 @@ pub fn view(state: *const State, tree: *Tree, theme: *const Theme) tree_zig.Erro
         tree.close(body);
         const close = try tree.open(.{
             .id = closeId(entry.serial),
+            .pointer = .hand,
             .width = .{ .fixed = line_height },
             .height = .{ .fixed = line_height },
             .main = .center,

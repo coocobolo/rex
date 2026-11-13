@@ -71,6 +71,7 @@ pub const ItemOptions = struct {
 pub fn item(tree: *Tree, theme: *const Theme, options: ItemOptions) tree_zig.Error!void {
     const row = try tree.open(.{
         .id = options.id,
+        .pointer = .hand,
         .axis = .row,
         .width = .fill,
         .height = .{ .fixed = item_height },

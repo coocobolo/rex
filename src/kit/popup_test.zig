@@ -96,6 +96,14 @@ test "popup: the card and the layer take the pointer from the page" {
     try testing.expectEqual(layer_id, fixture.tree.hitTest(600, 500));
 }
 
+test "popup: the hand shows over items, the arrow over the layer" {
+    var fixture: Fixture = .{};
+    try fixture.build(40, 100, 800, 600);
+    try testing.expectEqual(tree_zig.PointerShape.hand, fixture.tree.hit(60, 190).?.box.pointer);
+    // Over the trigger the page would show, the layer's arrow wins.
+    try testing.expectEqual(tree_zig.PointerShape.arrow, fixture.tree.hit(60, 110).?.box.pointer);
+}
+
 test "popup: highlighted items are filled, the selected one is checked" {
     var fixture: Fixture = .{};
     try fixture.build(40, 100, 800, 600);

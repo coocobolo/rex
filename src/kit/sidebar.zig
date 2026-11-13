@@ -350,6 +350,7 @@ fn menuButton(tree: *Tree, theme: *const Theme, item: Item, index: u8, state: *c
     const hovered = std.meta.eql(state.hover, Target{ .item = index });
     const face = try tree.open(.{
         .id = itemId(index),
+        .pointer = .hand,
         .axis = .row,
         .width = .fill,
         .height = .{ .fixed = row_height },
@@ -374,6 +375,7 @@ fn menuButton(tree: *Tree, theme: *const Theme, item: Item, index: u8, state: *c
 fn toggleButton(tree: *Tree, theme: *const Theme, state: *const State) tree_zig.Error!void {
     const face = try tree.open(.{
         .id = toggle_id,
+        .pointer = .hand,
         .width = .{ .fixed = row_height },
         .height = .{ .fixed = row_height },
         .main = .center,
