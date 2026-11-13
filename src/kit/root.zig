@@ -18,6 +18,7 @@ pub const toast = @import("toast.zig");
 pub const alert_dialog = @import("alert_dialog.zig");
 pub const sidebar = @import("sidebar.zig");
 pub const popup = @import("popup.zig");
+pub const tabs = @import("tabs.zig");
 
 test {
     _ = @import("kit_test.zig");
@@ -27,6 +28,7 @@ test {
     _ = @import("button_test.zig");
     _ = @import("sidebar_test.zig");
     _ = @import("popup_test.zig");
+    _ = @import("tabs_test.zig");
     _ = Theme;
     _ = motion;
     _ = focus;
