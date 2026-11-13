@@ -70,6 +70,10 @@ pub const Size = union(enum) {
     /// As large as its content, but not smaller than this many logical
     /// pixels.
     at_least: f32,
+    /// This fraction of the parent's inner size, from 0 to 1. A value
+    /// outside that range is clamped. It does not enlarge a parent that
+    /// is sizing to its content.
+    fraction: f32,
 };
 
 /// The direction a box lays its children out in.

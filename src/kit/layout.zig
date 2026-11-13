@@ -4,8 +4,9 @@
 //! The rules are few. A box places its children in a row or a column with
 //! padding around them and a gap between them. A size is `fixed`, `fit`
 //! (as large as the content), `fill` (a share of what the parent has
-//! left), `at_most` (fixed, but giving way to a smaller parent) or `at_least`
-//! (as large as the content, with a minimum). Text wraps to the width it ends up with. Roots are laid out
+//! left), `at_most` (fixed, but giving way to a smaller parent), `at_least`
+//! (as large as the content, with a minimum) or `fraction` (that much of
+//! the parent's inner size). Text wraps to the width it ends up with. Roots are laid out
 //! against the viewport, from its top left, and stack in drawing order.
 //!
 //! Widths are settled before heights, because a text's height depends on
@@ -46,7 +47,7 @@ pub fn layout(tree: *Tree, measurer: text.Measurer, viewport_width: f32, viewpor
         // At least as wide as its anchor, as a dropdown list is.
         if (target) |rect| switch (nodes[root].box.width) {
             .fit, .at_least => nodes[root].rect.w = @max(nodes[root].rect.w, rect.w),
-            .fill, .fixed, .at_most => {},
+            .fill, .fixed, .at_most, .fraction => {},
         };
         distribute(nodes, range, .horizontal, viewport_width);
         try wrapTexts(tree, range, measurer);
@@ -180,6 +181,7 @@ fn fit(nodes: []Node, range: Range, comptime dimension: Dimension, measurer: tex
         extent(node, dimension).* = switch (size(node, dimension)) {
             .fixed, .at_most => |value| value,
             .at_least => |value| @max(content, value),
+            .fraction => 0,
             .fit, .fill => content,
         };
     }
@@ -193,6 +195,7 @@ fn distribute(nodes: []Node, range: Range, comptime dimension: Dimension, viewpo
     own.* = switch (size(root, dimension)) {
         .fixed => |value| value,
         .fill => viewport,
+        .fraction => |value| viewport * clamp01(value),
         .fit, .at_most, .at_least => @min(own.*, viewport),
     };
     for (nodes[range.start..range.end], range.start..) |*node, i| {
@@ -207,6 +210,7 @@ fn distribute(nodes: []Node, range: Range, comptime dimension: Dimension, viewpo
                 child_extent.* = switch (size(child, dimension)) {
                     .fixed => |value| value,
                     .fill => inner,
+                    .fraction => |value| inner * clamp01(value),
                     .fit, .at_most, .at_least => @min(child_extent.*, inner),
                 };
             }
@@ -230,6 +234,11 @@ fn distributeAlong(nodes: []Node, index: usize, comptime dimension: Dimension, i
         switch (size(child, dimension)) {
             .fill => fills += 1,
             .fixed => used += extent(child, dimension).*,
+            .fraction => |value| {
+                const taken = inner * clamp01(value);
+                extent(child, dimension).* = taken;
+                used += taken;
+            },
             .fit, .at_most, .at_least => {
                 used += extent(child, dimension).*;
                 if (largest_fit == null or extent(child, dimension).* > extent(largest_fit.?, dimension).*) {
@@ -311,6 +320,10 @@ fn placeChildren(nodes: []Node, index: usize, comptime along: Dimension) void {
         }
         cursor += extent(child, along).* + @as(f32, @floatFromInt(box.gap));
     }
+}
+
+fn clamp01(value: f32) f32 {
+    return @min(1, @max(0, value));
 }
 
 fn offset(alignment: tree_zig.Align, free: f32) f32 {
