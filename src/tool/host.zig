@@ -147,7 +147,10 @@ fn Host(comptime Tool: type) type {
             var painter: KitPainter = try .init();
             errdefer painter.deinit();
 
-            var atlas: Atlas = try .create(gpa, .{});
+            // A quarter of the terminal's 2048: UI text in five styles fits
+            // with room even at 2x, and the textures take 5 MB instead of
+            // 20 (measured: 15 MB less resident under Mesa's llvmpipe).
+            var atlas: Atlas = try .create(gpa, .{ .width = 1024, .height = 1024 });
             errdefer atlas.destroy();
 
             const self = try gpa.create(Self);
