@@ -8,8 +8,8 @@ const testing = std.testing;
 const Atlas = @import("renderer/Atlas.zig");
 const testGlContext = @import("renderer/Window.zig").testGlContext;
 const KitOverlay = @import("KitOverlay.zig");
+const alert_dialog = @import("kit/alert_dialog.zig");
 const dialog = @import("kit/dialog.zig");
-const modal = @import("kit/modal.zig");
 const toast = @import("kit/toast.zig");
 const Theme = @import("kit/Theme.zig");
 const motion = @import("kit/motion.zig");
@@ -125,11 +125,11 @@ test "KitOverlay: a pointer that leaves the window lets go of what it was over" 
     _ = kit.openDialog(prompt());
     _ = kit.tick(Theme.duration);
     _ = fixture.frame();
-    const confirm = centerOf(kit, dialog.actionId(1)).?;
+    const confirm = centerOf(kit, alert_dialog.actionId(1)).?;
     try testing.expect(kit.pointerMoved(confirm[0], confirm[1]));
     try testing.expectEqual(1, kit.dialog.hover);
     try testing.expect(kit.pointerLeft());
-    try testing.expectEqual(dialog.no_action, kit.dialog.hover);
+    try testing.expectEqual(alert_dialog.no_action, kit.dialog.hover);
     try testing.expect(!kit.pointerLeft());
 }
 
@@ -244,12 +244,12 @@ test "KitOverlay: after the atlas is cleared, glyphs are rasterized again" {
     try testing.expectEqual(before, kit.painter.len);
 }
 
-const prompt_actions = [_]dialog.Action{
+const prompt_actions = [_]alert_dialog.Action{
     .{ .label = "Cancel", .role = .dismiss, .key_cap = "Esc" },
     .{ .label = "Close window", .variant = .destructive },
 };
 
-fn prompt() dialog.Request {
+fn prompt() alert_dialog.Request {
     return .{
         .title = "Close this window?",
         .body = "A program is still running.",
@@ -278,13 +278,13 @@ test "KitOverlay: a dialog enters, rests, and leaves" {
     try testing.expect(fixture.frame());
     try testing.expect(kit.painter.len > 20);
 
-    try testing.expectEqual(dialog.Outcome.redraw, kit.dialogInput(.dismiss));
+    try testing.expectEqual(alert_dialog.Outcome.redraw, kit.dialogInput(.dismiss));
     try testing.expectEqual(motion.frame_ms, kit.wakeMs());
     // Keys do nothing while it is leaving.
-    try testing.expectEqual(dialog.Outcome.quiet, kit.dialogInput(.activate));
+    try testing.expectEqual(alert_dialog.Outcome.quiet, kit.dialogInput(.activate));
     try testing.expect(!kit.dialogTakesInput());
     try testing.expect(kit.tick(Theme.duration));
-    try testing.expectEqual(modal.Phase.closed, kit.dialog.phase);
+    try testing.expectEqual(dialog.Phase.closed, kit.dialog.phase);
     try testing.expect(!kit.tick(16));
 }
 
@@ -296,34 +296,34 @@ test "KitOverlay: confirming a dialog closes it, the scrim does not" {
     _ = kit.openDialog(prompt());
     _ = kit.tick(Theme.duration);
     try testing.expect(fixture.frame());
-    const confirm = centerOf(kit, dialog.actionId(1)).?;
-    const cancel = centerOf(kit, dialog.actionId(0)).?;
+    const confirm = centerOf(kit, alert_dialog.actionId(1)).?;
+    const cancel = centerOf(kit, alert_dialog.actionId(0)).?;
     try testing.expect(confirm[0] > cancel[0]);
 
     try testing.expect(kit.pointerMoved(confirm[0], confirm[1]));
     try testing.expect(!kit.pointerMoved(confirm[0], confirm[1]));
     try testing.expectEqual(KitOverlay.Press.scrim, kit.press(4, 4));
-    try testing.expectEqual(modal.Phase.open, kit.dialog.phase);
+    try testing.expectEqual(dialog.Phase.open, kit.dialog.phase);
     // The card, off both buttons: the ring drops and the dialog stays.
-    const card = centerOf(kit, dialog.card_id).?;
+    const card = centerOf(kit, alert_dialog.card_id).?;
     try testing.expectEqual(1, kit.dialog.focus);
     try testing.expectEqual(KitOverlay.Press.changed, kit.press(card[0], card[1]));
-    try testing.expectEqual(dialog.no_action, kit.dialog.focus);
+    try testing.expectEqual(alert_dialog.no_action, kit.dialog.focus);
     try testing.expectEqual(KitOverlay.Press.taken, kit.press(card[0], card[1]));
-    try testing.expectEqual(modal.Phase.open, kit.dialog.phase);
+    try testing.expectEqual(dialog.Phase.open, kit.dialog.phase);
     // Going down on the button only presses it; letting go takes it.
     try testing.expect(!kit.holdsPress());
     try testing.expectEqual(KitOverlay.Press.changed, kit.press(confirm[0], confirm[1]));
     try testing.expect(kit.holdsPress());
-    try testing.expectEqual(modal.Phase.open, kit.dialog.phase);
+    try testing.expectEqual(dialog.Phase.open, kit.dialog.phase);
     // Moved off before letting go: nothing is taken.
     _ = kit.pointerMoved(card[0], card[1]);
-    try testing.expectEqual(dialog.Outcome.quiet, kit.release());
+    try testing.expectEqual(alert_dialog.Outcome.quiet, kit.release());
     try testing.expect(!kit.holdsPress());
-    try testing.expectEqual(modal.Phase.open, kit.dialog.phase);
+    try testing.expectEqual(dialog.Phase.open, kit.dialog.phase);
     try testing.expectEqual(KitOverlay.Press.changed, kit.press(confirm[0], confirm[1]));
-    try testing.expectEqual(dialog.Outcome{ .chosen = 1 }, kit.release());
-    try testing.expectEqual(modal.Phase.closed, kit.dialog.phase);
+    try testing.expectEqual(alert_dialog.Outcome{ .chosen = 1 }, kit.release());
+    try testing.expectEqual(dialog.Phase.closed, kit.dialog.phase);
 }
 
 test "KitOverlay: the dialog covers the toast stack" {
@@ -339,7 +339,7 @@ test "KitOverlay: the dialog covers the toast stack" {
     try testing.expect(fixture.frame());
     // Where the toast's close button was: the scrim has it now.
     try testing.expectEqual(KitOverlay.Press.scrim, kit.press(750, 550));
-    try testing.expectEqual(dialog.Outcome.redraw, kit.dialogInput(.dismiss));
+    try testing.expectEqual(alert_dialog.Outcome.redraw, kit.dialogInput(.dismiss));
     try testing.expect(kit.tick(Theme.duration));
     try testing.expect(fixture.frame());
     try testing.expectEqual(KitOverlay.Press.taken, kit.press(500, 550));

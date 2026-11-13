@@ -1,348 +1,208 @@
-//! A dialog that asks one question: a title, an optional body and a row
-//! of one to three actions over a scrim, composed of the parts in
-//! `modal.zig`. The quit prompt is its first caller.
+//! The parts every dialog is composed of, after shadcn/ui's Dialog:
 //!
-//! `State` is plain data, `update` is the only code that changes it and
-//! `view` writes its nodes (ADR 0009). Nothing allocates.
+//!     open .. close            Dialog and DialogContent: scrim and card
+//!       header                 DialogHeader
+//!         title                DialogTitle
+//!         description          DialogDescription
+//!       footer                 DialogFooter: a row of buttons
 //!
-//! The caller turns keys and clicks into events and acts on the outcome.
-//! Choosing an action closes the dialog at once and reports which;
-//! dismissing fades it out, and it takes no more input from then on. A
-//! button is taken when the pointer is let go on it, not when it goes
-//! down, so moving off before letting go takes nothing.
+//! and the `Phase` that fades the whole in and out, which a surface keeps
+//! in its state. There is no trigger part: what opens a dialog is an event
+//! to its surface's `update`.
 
 const std = @import("std");
-const assert = std.debug.assert;
 
 const Theme = @import("Theme.zig");
 const button = @import("button.zig");
-const focus = @import("focus.zig");
-const modal = @import("modal.zig");
 const motion = @import("motion.zig");
-const text = @import("text.zig");
 const tree_zig = @import("tree.zig");
 const Tree = tree_zig.Tree;
 const Id = tree_zig.Id;
 const Index = tree_zig.Index;
 
-/// The card's width in logical pixels, padding included. A narrower window
-/// shrinks it.
-pub const width = 420;
+/// Inside the card.
+pub const padding = 24;
+/// Between the card's children: the header, any content and the footer.
+pub const gap = 16;
+/// Between the title and the description.
+pub const header_gap = 8;
+/// The least distance between the card and the window's edge.
+pub const margin = 16;
 
-pub const actions_max = 3;
-pub const title_capacity = 96;
-pub const body_capacity = 160;
-pub const label_capacity = 48;
-pub const key_cap_capacity = 8;
-
-pub const scrim_id = Id.of("dialog.scrim");
-pub const card_id = Id.of("dialog");
-
-/// The id of the button of action `index`.
-pub fn actionId(index: u8) Id {
-    return Id.of("dialog.action").item(index);
-}
-
-/// No action: the value of `State.focus` and `State.hover` when no button
-/// has the focus or the pointer.
-pub const no_action = actions_max;
-
-/// What taking a button does.
-pub const Role = enum(u8) {
-    /// Reports `Outcome.chosen` with the action's index.
-    choose,
-    /// Dismisses the dialog, as Esc does.
-    dismiss,
-};
-
-/// One button of a request. The texts are copied.
-pub const Action = struct {
-    label: []const u8,
-    variant: button.Variant = .outline,
-    role: Role = .choose,
-    /// The key that takes this action, shown in a cap after the label
-    /// ("Esc"). Empty for none. Display only: the caller binds the key.
-    key_cap: []const u8 = "",
-};
-
-const Button = struct {
-    variant: button.Variant,
-    role: Role,
-    label_len: u8,
-    key_cap_len: u8,
-    label_bytes: [label_capacity]u8,
-    key_cap_bytes: [key_cap_capacity]u8,
-
-    fn label(self: *const Button) []const u8 {
-        return self.label_bytes[0..self.label_len];
-    }
-
-    fn keyCap(self: *const Button) []const u8 {
-        return self.key_cap_bytes[0..self.key_cap_len];
-    }
-};
-
-pub const State = struct {
-    phase: modal.Phase = .closed,
-    /// The action with the focus ring, taken by `activate`; `no_action`
-    /// for none, when `activate` does nothing.
-    focus: u8 = no_action,
-    /// The action under the pointer, or `no_action`.
-    hover: u8 = no_action,
-    /// The action the pointer went down on and has not let go of, or
-    /// `no_action`. It looks pressed while the pointer is still over it.
-    pressed: u8 = no_action,
-    /// Buttons in use: `buttons[0..count]`, drawn left to right.
-    count: u8 = 0,
-    /// Set by the owner, from the user's setting.
-    motion: motion.Mode = .full,
-    title_len: u8 = 0,
-    body_len: u8 = 0,
-    title_bytes: [title_capacity]u8 = undefined,
-    body_bytes: [body_capacity]u8 = undefined,
-    buttons: [actions_max]Button = undefined,
-
-    pub const empty: State = .{};
-
-    pub fn title(self: *const State) []const u8 {
-        return self.title_bytes[0..self.title_len];
-    }
-
-    pub fn body(self: *const State) []const u8 {
-        return self.body_bytes[0..self.body_len];
-    }
-
-    /// The label of action `index`.
-    pub fn label(self: *const State, index: u8) []const u8 {
-        return self.buttons[index].label();
-    }
-};
-
-/// What to ask. Every text is copied and cut at its capacity on a code
-/// point boundary, so nothing needs to outlive the call.
-pub const Request = struct {
-    title: []const u8,
-    /// Wrapped to the card's width; a line feed starts a new line. Empty
-    /// for no body.
-    body: []const u8 = "",
-    /// One to `actions_max` buttons, left to right. By convention the
-    /// action the dialog is about comes last.
-    actions: []const Action,
-    /// The action that starts with the focus, or `no_action`.
-    focus: u8 = no_action,
-};
-
-/// Lines of wrapped text one view needs at most. A text yields one line
-/// more than it has line breaks, so at most one more than it has bytes.
-pub const line_max = title_capacity + 1 + body_capacity + 1 + actions_max * (label_capacity + 1 + key_cap_capacity + 1);
-
-/// The part of the dialog a point is over.
-pub const Target = union(enum) {
-    scrim,
-    /// The card, beside its buttons.
-    card,
-    /// The button of this action.
-    action: u8,
-};
-
-pub const Event = union(enum) {
-    open: Request,
-    /// This many milliseconds passed.
-    tick: u32,
-    /// The pointer is over this action's button now, or over none
-    /// (`no_action`).
-    pointer: u8,
-    focus: focus.Direction,
-    /// Take the focused action.
-    activate,
-    /// Take the focus off the buttons, as a click beside them does.
-    blur,
-    /// Close without choosing: Esc, or a click outside.
-    dismiss,
-    /// The pointer went down on this action's button.
-    press: u8,
-    /// The pointer was let go: takes the pressed action if the pointer is
-    /// still over its button.
-    release,
-    /// Take this action, as its key does.
-    take: u8,
-};
-
-/// What an event did, for the caller to act on.
-pub const Outcome = union(enum) {
-    /// Nothing: the event did not apply, or changed nothing on screen.
-    quiet,
-    /// The view changed; a redraw is due.
-    redraw,
-    /// This action was chosen. The dialog is closed and a redraw is due.
-    chosen: u8,
-    /// The fade-out ended. The dialog is closed and a redraw is due.
+pub const Phase = union(enum) {
     closed,
+    /// Fading in; milliseconds since it started. It already takes input.
+    entering: u16,
+    open,
+    /// Fading out; milliseconds since it started. It no longer takes
+    /// input.
+    leaving: u16,
+
+    /// 0 (invisible) to 1 (fully shown): the opacity of everything drawn.
+    pub fn presence(self: Phase, mode: motion.Mode) f32 {
+        return switch (self) {
+            .closed => 0,
+            .entering => |elapsed| motion.progress(mode, elapsed),
+            .open => 1,
+            .leaving => |elapsed| 1 - motion.progress(mode, elapsed),
+        };
+    }
+
+    pub fn acceptsInput(self: Phase) bool {
+        return switch (self) {
+            .entering, .open => true,
+            .closed, .leaving => false,
+        };
+    }
+
+    /// Milliseconds until the phase needs a `tick`, or null when only an
+    /// event can change it: it is closed, or open and at rest.
+    pub fn wakeMs(self: Phase) ?u32 {
+        return switch (self) {
+            .entering, .leaving => motion.frame_ms,
+            .closed, .open => null,
+        };
+    }
+
+    /// Starts fading in, from as far as it had faded out. Returns false,
+    /// changing nothing, when it is already entering or open.
+    pub fn enter(self: *Phase, mode: motion.Mode) bool {
+        const duration = motion.duration(mode);
+        self.* = switch (self.*) {
+            .entering, .open => return false,
+            .closed => .{ .entering = 0 },
+            .leaving => |elapsed| .{ .entering = duration - @min(elapsed, duration) },
+        };
+        return true;
+    }
+
+    /// Starts fading out, from as far as it had faded in. Returns false,
+    /// changing nothing, when it is already leaving or closed.
+    pub fn leave(self: *Phase, mode: motion.Mode) bool {
+        const duration = motion.duration(mode);
+        self.* = switch (self.*) {
+            .closed, .leaving => return false,
+            .entering => |elapsed| .{ .leaving = duration - @min(elapsed, duration) },
+            .open => .{ .leaving = 0 },
+        };
+        return true;
+    }
+
+    pub const Step = enum {
+        /// Nothing moved.
+        quiet,
+        /// The fade advanced; a redraw is due.
+        redraw,
+        /// The fade-out ended; a redraw is due.
+        closed,
+    };
+
+    /// `dt_ms` milliseconds passed.
+    pub fn tick(self: *Phase, mode: motion.Mode, dt_ms: u32) Step {
+        const dt: u16 = std.math.lossyCast(u16, dt_ms);
+        const duration = motion.duration(mode);
+        switch (self.*) {
+            .closed, .open => return .quiet,
+            .entering => |elapsed| {
+                const now = elapsed +| dt;
+                self.* = if (now >= duration) .open else .{ .entering = now };
+                return .redraw;
+            },
+            .leaving => |elapsed| {
+                const now = elapsed +| dt;
+                if (now >= duration) {
+                    self.* = .closed;
+                    return .closed;
+                }
+                self.* = .{ .leaving = now };
+                return .redraw;
+            },
+        }
+    }
 };
 
-/// Applies `event` and returns what it did. This is the only function that
-/// changes a `State`.
-pub fn update(state: *State, event: Event) Outcome {
-    return switch (event) {
-        .open => |request| open(state, request),
-        .tick => |dt_ms| tick(state, dt_ms),
-        .pointer => |index| hoverAt(state, index),
-        .focus => |direction| move(state, direction),
-        .activate => if (state.focus == no_action) .quiet else take(state, state.focus),
-        .blur => blur(state),
-        .dismiss => beginLeave(state),
-        .press => |index| press(state, index),
-        .release => release(state),
-        .take => |index| take(state, index),
-    };
-}
+pub const Options = struct {
+    /// On the scrim: a click here is beside the card.
+    scrim_id: Id,
+    card_id: Id,
+    /// The card's width in logical pixels, padding included. A narrower
+    /// window shrinks it, keeping `margin` on both sides.
+    width: f32,
+    /// `Phase.presence`.
+    presence: f32,
+};
 
-fn open(self: *State, request: Request) Outcome {
-    assert(request.actions.len >= 1 and request.actions.len <= actions_max);
-    assert(request.focus < request.actions.len or request.focus == no_action);
-    if (!self.phase.enter(self.motion)) return .quiet;
-    self.focus = request.focus;
-    self.hover = no_action;
-    self.pressed = no_action;
-    self.title_len = put(request.title, &self.title_bytes);
-    self.body_len = put(request.body, &self.body_bytes);
-    self.count = @intCast(request.actions.len);
-    for (request.actions, self.buttons[0..self.count]) |action, *stored| {
-        stored.variant = action.variant;
-        stored.role = action.role;
-        stored.label_len = put(action.label, &stored.label_bytes);
-        stored.key_cap_len = put(action.key_cap, &stored.key_cap_bytes);
-    }
-    return .redraw;
-}
+/// The two boxes `open` leaves open.
+pub const Frame = struct { scrim: Index, card: Index };
 
-fn tick(self: *State, dt_ms: u32) Outcome {
-    switch (self.phase.tick(self.motion, dt_ms)) {
-        .quiet => return .quiet,
-        .redraw => return .redraw,
-        .closed => {
-            self.hover = no_action;
-            self.pressed = no_action;
-            return .closed;
-        },
-    }
-}
+/// Nodes the parts write, the texts and the footer's buttons aside: the
+/// scrim, the card, the header and the footer.
+pub const node_max = 4;
 
-fn hoverAt(self: *State, index: u8) Outcome {
-    if (!self.phase.acceptsInput()) return .quiet;
-    const over = if (index < self.count) index else no_action;
-    if (self.hover == over) return .quiet;
-    self.hover = over;
-    return .redraw;
-}
-
-fn move(self: *State, direction: focus.Direction) Outcome {
-    if (!self.phase.acceptsInput()) return .quiet;
-    const before = self.focus;
-    self.focus = focus.move(before, self.count, direction);
-    return if (self.focus == before) .quiet else .redraw;
-}
-
-fn blur(self: *State) Outcome {
-    if (!self.phase.acceptsInput()) return .quiet;
-    if (self.focus == no_action) return .quiet;
-    self.focus = no_action;
-    return .redraw;
-}
-
-fn press(self: *State, index: u8) Outcome {
-    if (!self.phase.acceptsInput() or index >= self.count) return .quiet;
-    // The pointer is over the button it went down on, whether or not a
-    // move said so before.
-    self.hover = index;
-    self.pressed = index;
-    return .redraw;
-}
-
-fn release(self: *State) Outcome {
-    const index = self.pressed;
-    if (index == no_action) return .quiet;
-    self.pressed = no_action;
-    // Moved off first: the button already looks unpressed.
-    if (self.hover != index) return .quiet;
-    return switch (take(self, index)) {
-        // The pressed look is gone even if taking did nothing.
-        .quiet => .redraw,
-        else => |outcome| outcome,
-    };
-}
-
-fn take(self: *State, index: u8) Outcome {
-    if (!self.phase.acceptsInput() or index >= self.count) return .quiet;
-    switch (self.buttons[index].role) {
-        .dismiss => return beginLeave(self),
-        .choose => {
-            self.phase = .closed;
-            self.hover = no_action;
-            self.pressed = no_action;
-            return .{ .chosen = index };
-        },
-    }
-}
-
-fn beginLeave(self: *State) Outcome {
-    if (!self.phase.leave(self.motion)) return .quiet;
-    self.hover = no_action;
-    self.pressed = no_action;
-    return .redraw;
-}
-
-fn put(bytes: []const u8, dest: []u8) u8 {
-    const len = text.cut(bytes, dest.len);
-    @memcpy(dest[0..len], bytes[0..len]);
-    return @intCast(len);
-}
-
-/// Most nodes one view writes: the dialog's parts, the title, the body and
-/// the buttons.
-pub const node_max = modal.node_max + 2 + actions_max * button.node_max;
-
-/// Writes the dialog as one root, the scrim, and returns it, or null when
-/// the dialog is closed and nothing was written. The texts point into
-/// `state`: rebuild the view after every `update`.
-pub fn view(state: *const State, tree: *Tree, theme: *const Theme) tree_zig.Error!?Index {
-    if (state.phase == .closed) return null;
-    const presence = state.phase.presence(state.motion);
-
-    const frame = try modal.open(tree, theme, .{
-        .scrim_id = scrim_id,
-        .card_id = card_id,
-        .width = width,
-        .presence = presence,
+/// Starts a root, the scrim, and the card on it. What is written until
+/// `close` is the card's content, top to bottom.
+pub fn open(tree: *Tree, theme: *const Theme, options: Options) tree_zig.Error!Frame {
+    const scrim = try tree.open(.{
+        .id = options.scrim_id,
+        .width = .fill,
+        .height = .fill,
+        .padding = .all(margin),
+        .main = .center,
+        .cross = .center,
+        .fill = theme.scrim.fade(options.presence),
     });
-    const header = try modal.header(tree);
-    try modal.title(tree, theme, state.title(), presence);
-    if (state.body_len > 0) try modal.description(tree, theme, state.body(), presence);
-    tree.close(header);
-    const footer = try modal.footer(tree);
-    for (state.buttons[0..state.count], 0..) |*action, index| {
-        try button.view(tree, theme, .{
-            .id = actionId(@intCast(index)),
-            .label = action.label(),
-            .key_cap = action.keyCap(),
-            .variant = action.variant,
-            .state = if (state.hover != index) .normal else if (state.pressed == index) .pressed else .hovered,
-            .focused = state.focus == index,
-            .presence = presence,
-        });
-    }
-    tree.close(footer);
-    modal.close(tree, frame);
-    return frame.scrim;
+    const card = try tree.open(.{
+        .id = options.card_id,
+        .width = .{ .at_most = options.width },
+        .padding = .all(padding),
+        .gap = gap,
+        .fill = theme.popover.fade(options.presence),
+        .border = theme.border.fade(options.presence),
+        .border_width = Theme.border_width,
+        .radius = Theme.radius,
+    });
+    return .{ .scrim = scrim, .card = card };
 }
 
-/// The part of the dialog that node `id` belongs to, or null for a node
-/// of another surface. Pass what `Tree.hitTest` returned.
-pub fn hit(id: Id) ?Target {
-    if (id == scrim_id) return .scrim;
-    if (id == card_id) return .card;
-    for (0..actions_max) |index| {
-        if (id == actionId(@intCast(index))) return .{ .action = @intCast(index) };
-    }
-    return null;
+pub fn close(tree: *Tree, frame: Frame) void {
+    tree.close(frame.card);
+    tree.close(frame.scrim);
+}
+
+/// Starts the header: `title`, then `description` if there is one. End it
+/// with `Tree.close`.
+pub fn header(tree: *Tree) tree_zig.Error!Index {
+    return tree.open(.{ .width = .fill, .gap = header_gap });
+}
+
+/// What the dialog asks or says, in a few words. `presence` is
+/// `Phase.presence`, as for `description`.
+pub fn title(tree: *Tree, theme: *const Theme, bytes: []const u8, presence: f32) tree_zig.Error!void {
+    _ = try tree.text(bytes, .{
+        .color = theme.foreground.fade(presence),
+        .style = .lg_semibold,
+        .width = .fill,
+    });
+}
+
+/// What the title leaves open. Wraps to the card; a line feed starts a new
+/// line.
+pub fn description(tree: *Tree, theme: *const Theme, bytes: []const u8, presence: f32) tree_zig.Error!void {
+    _ = try tree.text(bytes, .{
+        .color = theme.muted_foreground.fade(presence),
+        .width = .fill,
+    });
+}
+
+/// Starts the footer: buttons left to right, pushed to the right edge. By
+/// convention the action the dialog is about comes last. End it with
+/// `Tree.close`.
+pub fn footer(tree: *Tree) tree_zig.Error!Index {
+    return tree.open(.{
+        .axis = .row,
+        .width = .fill,
+        .main = .end,
+        .cross = .center,
+        .gap = button.gap,
+    });
 }

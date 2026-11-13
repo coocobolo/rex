@@ -20,7 +20,7 @@ const layout = @import("../kit/layout.zig");
 const memory = @import("../kit/memory.zig");
 const button = @import("../kit/button.zig");
 const kbd = @import("../kit/kbd.zig");
-const dialog_ui = @import("../kit/dialog.zig");
+const alert_dialog = @import("../kit/alert_dialog.zig");
 const toast_stack = @import("../kit/toast.zig");
 
 const inter: KitFont.Files = .{
@@ -40,10 +40,12 @@ const terminal_light: Color = .rgb(0xfbfaf7);
 const Scene = enum {
     /// Hand-built banner and toasts, as approved in the token preview.
     overlay,
-    /// The confirm dialog (`kit/dialog.zig`), fully in.
+    /// The confirm dialog (`kit/alert_dialog.zig`), fully in.
     dialog,
     /// The same dialog after one Tab: the ring is on Cancel.
     dialog_cancel_focused,
+    /// The same dialog with a media icon above its title.
+    dialog_media,
     /// The app's toast stack (`kit/toast.zig`), its newest toast halfway in.
     toasts,
     /// Every shared component in every variant, size and state.
@@ -83,7 +85,7 @@ fn toast(tree: *Tree, theme: *const Theme, icon: Color, title: []const u8, descr
     }
 }
 
-fn build(tree: *Tree, scene: Scene, theme: *const Theme, toasts: *const toast_stack.State, dialog_state: *const dialog_ui.State) !Marks {
+fn build(tree: *Tree, scene: Scene, theme: *const Theme, toasts: *const toast_stack.State, dialog_state: *const alert_dialog.State) !Marks {
     var marks: Marks = .{};
     switch (scene) {
         .overlay => {
@@ -107,13 +109,13 @@ fn build(tree: *Tree, scene: Scene, theme: *const Theme, toasts: *const toast_st
             try toast(tree, theme, theme.success, "Copied 3 lines", "Selection is on the clipboard.", &marks);
             tree.close(stack);
         },
-        .dialog, .dialog_cancel_focused => {
-            _ = try dialog_ui.view(dialog_state, tree, theme) orelse unreachable;
-            marks.dialog = nodeWithId(tree, dialog_ui.card_id);
+        .dialog, .dialog_cancel_focused, .dialog_media => {
+            _ = try alert_dialog.view(dialog_state, tree, theme) orelse unreachable;
+            marks.dialog = nodeWithId(tree, alert_dialog.card_id);
             // A button's id is on its ring slot; the face is the slot's
             // only child.
-            marks.cancel = nodeWithId(tree, dialog_ui.actionId(0)) + 1;
-            marks.confirm = nodeWithId(tree, dialog_ui.actionId(1)) + 1;
+            marks.cancel = nodeWithId(tree, alert_dialog.actionId(0)) + 1;
+            marks.confirm = nodeWithId(tree, alert_dialog.actionId(1)) + 1;
         },
         .toasts => _ = try toast_stack.view(toasts, tree, theme),
         .specimen => try specimen(tree, theme, &marks),
@@ -231,7 +233,7 @@ const Rendered = struct {
     /// The texts of the `toasts` scene live here.
     toasts: toast_stack.State,
     /// The texts of the `dialog` scene live here.
-    dialog: dialog_ui.State,
+    dialog: alert_dialog.State,
 
     fn card(self: *const Rendered, serial: u32) tree_zig.Rect {
         for (self.tree_nodes[0..self.tree_len]) |node| {
@@ -274,8 +276,9 @@ fn render(scene: Scene, variant: Theme.Variant, background: Color, scale: f32, k
     var tree: Tree = .init(&result.tree_nodes, &lines);
     result.toasts = .empty;
     result.dialog = .empty;
-    if (scene == .dialog or scene == .dialog_cancel_focused) {
-        _ = dialog_ui.update(&result.dialog, .{ .open = .{
+    if (scene == .dialog or scene == .dialog_cancel_focused or scene == .dialog_media) {
+        _ = alert_dialog.update(&result.dialog, .{ .open = .{
+            .media = if (scene == .dialog_media) icons.triangle_alert else 0,
             .title = "Close this window?",
             .body = "A program is still running: nvim. Closing the window ends it.",
             .actions = &.{
@@ -285,8 +288,8 @@ fn render(scene: Scene, variant: Theme.Variant, background: Color, scale: f32, k
             .focus = 1,
         } });
         // Fully in, so the shot is the resting dialog rather than a fade.
-        _ = dialog_ui.update(&result.dialog, .{ .tick = Theme.duration });
-        if (scene == .dialog_cancel_focused) _ = dialog_ui.update(&result.dialog, .{ .focus = .next });
+        _ = alert_dialog.update(&result.dialog, .{ .tick = Theme.duration });
+        if (scene == .dialog_cancel_focused) _ = alert_dialog.update(&result.dialog, .{ .focus = .next });
     }
     const pushes = [_]toast_stack.Push{
         .{ .title = "Couldn\u{2019}t save wellbeing data", .description = "AccessDenied in /home/user/.local/state/rex/wellbeing", .kind = .err, .duration_ms = 5000 },
@@ -496,6 +499,8 @@ test "KitPainter: screenshots of the remaining variants" {
         .{ .dialog, .dark, terminal_dark, 1, .off, "dialog-dark-100-no-kerning" },
         .{ .overlay, .dark, terminal_dark, 1, .off, "overlay-dark-100-no-kerning" },
         .{ .toasts, .light, terminal_light, 1, .pairs, "toasts-light-100" },
+        .{ .dialog_media, .dark, terminal_dark, 1, .pairs, "dialog-media-dark-100" },
+        .{ .dialog_media, .light, terminal_light, 1, .pairs, "dialog-media-light-100" },
     };
     for (shots) |shot| {
         var rendered = try render(shot[0], shot[1], shot[2], shot[3], shot[4]);

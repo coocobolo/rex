@@ -2,17 +2,18 @@ const std = @import("std");
 const testing = std.testing;
 
 const Theme = @import("Theme.zig");
+const icons = @import("icons.zig");
 const motion = @import("motion.zig");
 const text = @import("text.zig");
 const tree_zig = @import("tree.zig");
 const Tree = tree_zig.Tree;
 const Id = tree_zig.Id;
 const layout = @import("layout.zig").layout;
+const alert_dialog = @import("alert_dialog.zig");
 const dialog = @import("dialog.zig");
-const modal = @import("modal.zig");
-const State = dialog.State;
-const update = dialog.update;
-const Outcome = dialog.Outcome;
+const State = alert_dialog.State;
+const update = alert_dialog.update;
+const Outcome = alert_dialog.Outcome;
 
 const byte_width = 7;
 
@@ -28,19 +29,19 @@ const measurer: text.Measurer = .{ .context = &no_state, .widthFn = fixedWidth }
 const stay = 0;
 const close = 1;
 
-const sample_actions = [_]dialog.Action{
+const sample_actions = [_]alert_dialog.Action{
     .{ .label = "Stay", .role = .dismiss, .key_cap = "Esc" },
     .{ .label = "Close", .variant = .destructive },
 };
 
 /// A quit prompt: an outline button that dismisses, then a destructive
 /// one, which has the focus.
-fn sample() dialog.Request {
+fn sample() alert_dialog.Request {
     return .{ .title = "Close?", .body = "Running", .actions = &sample_actions, .focus = close };
 }
 
 const Fixture = struct {
-    nodes: [dialog.node_max]tree_zig.Node = undefined,
+    nodes: [alert_dialog.node_max]tree_zig.Node = undefined,
     lines: [8]text.Line = undefined,
 
     fn tree(self: *Fixture) Tree {
@@ -59,7 +60,7 @@ fn nodeById(tree: *const Tree, id: Id) ?*const tree_zig.Node {
 /// slot that carries the id.
 fn face(tree: *const Tree, index: u8) *const tree_zig.Node {
     for (tree.items(), 0..) |node, at| {
-        if (node.box.id == dialog.actionId(index)) return &tree.nodes[at + 1];
+        if (node.box.id == alert_dialog.actionId(index)) return &tree.nodes[at + 1];
     }
     unreachable;
 }
@@ -79,20 +80,20 @@ test "dialog: enters, sits, leaves, and is gone" {
     try testing.expectEqual(null, state.phase.wakeMs());
 
     try testing.expectEqual(Outcome.redraw, update(&state, .{ .open = sample() }));
-    try testing.expectEqual(modal.Phase{ .entering = 0 }, state.phase);
+    try testing.expectEqual(dialog.Phase{ .entering = 0 }, state.phase);
     try testing.expectEqual(motion.frame_ms, state.phase.wakeMs());
     // A second open while it is up does nothing.
     try testing.expectEqual(Outcome.quiet, update(&state, .{ .open = sample() }));
 
     try testing.expectEqual(Outcome.redraw, update(&state, .{ .tick = 100 }));
-    try testing.expectEqual(modal.Phase{ .entering = 100 }, state.phase);
+    try testing.expectEqual(dialog.Phase{ .entering = 100 }, state.phase);
     try testing.expectEqual(Outcome.redraw, update(&state, .{ .tick = 100 }));
-    try testing.expectEqual(modal.Phase.open, state.phase);
+    try testing.expectEqual(dialog.Phase.open, state.phase);
     try testing.expectEqual(null, state.phase.wakeMs());
     try testing.expectEqual(Outcome.quiet, update(&state, .{ .tick = 1000 }));
 
     try testing.expectEqual(Outcome.redraw, update(&state, .dismiss));
-    try testing.expectEqual(modal.Phase{ .leaving = 0 }, state.phase);
+    try testing.expectEqual(dialog.Phase{ .leaving = 0 }, state.phase);
     // Nothing is taken while it is leaving.
     try testing.expectEqual(Outcome.quiet, update(&state, .dismiss));
     try testing.expectEqual(Outcome.quiet, update(&state, .activate));
@@ -100,7 +101,7 @@ test "dialog: enters, sits, leaves, and is gone" {
 
     try testing.expectEqual(Outcome.redraw, update(&state, .{ .tick = 199 }));
     try testing.expectEqual(Outcome.closed, update(&state, .{ .tick = 1 }));
-    try testing.expectEqual(modal.Phase.closed, state.phase);
+    try testing.expectEqual(dialog.Phase.closed, state.phase);
     try testing.expectEqual(null, state.phase.wakeMs());
 }
 
@@ -110,31 +111,31 @@ test "dialog: opened again while leaving, it comes back from where it was" {
     _ = update(&state, .{ .tick = Theme.duration });
     _ = update(&state, .dismiss);
     _ = update(&state, .{ .tick = 50 });
-    try testing.expectEqual(modal.Phase{ .leaving = 50 }, state.phase);
+    try testing.expectEqual(dialog.Phase{ .leaving = 50 }, state.phase);
 
     var again = sample();
     again.title = "Again?";
     again.focus = stay;
     try testing.expectEqual(Outcome.redraw, update(&state, .{ .open = again }));
-    try testing.expectEqual(modal.Phase{ .entering = 150 }, state.phase);
+    try testing.expectEqual(dialog.Phase{ .entering = 150 }, state.phase);
     try testing.expectEqualStrings("Again?", state.title());
     try testing.expectEqual(stay, state.focus);
     // The focused action dismisses, so it leaves from as far as it got.
     try testing.expectEqual(Outcome.redraw, update(&state, .activate));
-    try testing.expectEqual(modal.Phase{ .leaving = 50 }, state.phase);
+    try testing.expectEqual(dialog.Phase{ .leaving = 50 }, state.phase);
 }
 
 test "dialog: with motion off it opens and closes at the next tick" {
     var state: State = .{ .motion = .none };
     try testing.expectEqual(Outcome.redraw, update(&state, .{ .open = sample() }));
     try testing.expectEqual(Outcome.redraw, update(&state, .{ .tick = 1 }));
-    try testing.expectEqual(modal.Phase.open, state.phase);
+    try testing.expectEqual(dialog.Phase.open, state.phase);
 
     var fixture: Fixture = .{};
     var tree = fixture.tree();
     try testing.expectEqual(Outcome.redraw, update(&state, .dismiss));
     // Leaving with motion off, it is already invisible.
-    const scrim = (try dialog.view(&state, &tree, &Theme.dark)).?;
+    const scrim = (try alert_dialog.view(&state, &tree, &Theme.dark)).?;
     try testing.expectEqual(0, tree.nodes[scrim].box.fill.a);
     try testing.expectEqual(Outcome.closed, update(&state, .{ .tick = 1 }));
 }
@@ -147,7 +148,7 @@ test "dialog: choosing closes at once and says which, a dismiss button leaves" {
     try testing.expectEqual(Outcome.quiet, update(&state, .{ .pointer = close }));
     try testing.expectEqual(close, state.hover);
     // Off both buttons, and an index no button has.
-    try testing.expectEqual(Outcome.redraw, update(&state, .{ .pointer = dialog.no_action }));
+    try testing.expectEqual(Outcome.redraw, update(&state, .{ .pointer = alert_dialog.no_action }));
     try testing.expectEqual(Outcome.quiet, update(&state, .{ .pointer = 2 }));
 
     // Taking an action does not depend on the focus: a caller's shortcut,
@@ -155,7 +156,7 @@ test "dialog: choosing closes at once and says which, a dismiss button leaves" {
     _ = update(&state, .{ .focus = .next });
     try testing.expectEqual(stay, state.focus);
     try testing.expectEqual(Outcome{ .chosen = close }, update(&state, .{ .take = close }));
-    try testing.expectEqual(modal.Phase.closed, state.phase);
+    try testing.expectEqual(dialog.Phase.closed, state.phase);
 
     _ = update(&state, .{ .open = sample() });
     try testing.expectEqual(Outcome{ .chosen = close }, update(&state, .activate));
@@ -170,14 +171,14 @@ test "dialog: choosing closes at once and says which, a dismiss button leaves" {
 }
 
 test "dialog: focus walks the row and wraps, and starts where asked" {
-    const three = [_]dialog.Action{
+    const three = [_]alert_dialog.Action{
         .{ .label = "Discard", .variant = .destructive },
         .{ .label = "Cancel", .role = .dismiss },
         .{ .label = "Save", .variant = .primary },
     };
     var state: State = .empty;
     _ = update(&state, .{ .open = .{ .title = "Save changes?", .actions = &three } });
-    try testing.expectEqual(dialog.no_action, state.focus);
+    try testing.expectEqual(alert_dialog.no_action, state.focus);
     // Nothing is taken until a button has the ring.
     try testing.expectEqual(Outcome.quiet, update(&state, .activate));
 
@@ -212,15 +213,15 @@ test "dialog: a click off the buttons drops the ring" {
     try testing.expectEqual(close, state.focus);
 
     try testing.expectEqual(Outcome.redraw, update(&state, .blur));
-    try testing.expectEqual(dialog.no_action, state.focus);
-    try testing.expectEqual(modal.Phase.open, state.phase);
+    try testing.expectEqual(alert_dialog.no_action, state.focus);
+    try testing.expectEqual(dialog.Phase.open, state.phase);
     try testing.expectEqual(Outcome.quiet, update(&state, .blur));
     try testing.expectEqual(Outcome.quiet, update(&state, .activate));
 
     var fixture: Fixture = .{};
     var tree = fixture.tree();
-    _ = try dialog.view(&state, &tree, &Theme.dark);
-    const button = nodeById(&tree, dialog.actionId(close)).?;
+    _ = try alert_dialog.view(&state, &tree, &Theme.dark);
+    const button = nodeById(&tree, alert_dialog.actionId(close)).?;
     try testing.expectEqual(0, tree.nodes[button.parent].box.border.a);
     try testing.expectEqual(0, button.box.border.a);
 }
@@ -233,7 +234,7 @@ test "dialog: the card is centered, actions run left to right, the ring is on th
 
     var fixture: Fixture = .{};
     var tree = fixture.tree();
-    const scrim = (try dialog.view(&state, &tree, &Theme.dark)).?;
+    const scrim = (try alert_dialog.view(&state, &tree, &Theme.dark)).?;
     try layout(&tree, measurer, 1000, 600);
     try testing.expectEqual(128, tree.nodes[scrim].box.fill.a);
 
@@ -242,8 +243,8 @@ test "dialog: the card is centered, actions run left to right, the ring is on th
     // key cap sits inside the 36 px button. x = (1000 - 420) / 2,
     // y = (600 - 162) / 2.
     const card = &tree.nodes[scrim + 1];
-    try testing.expectEqual(dialog.card_id, card.box.id);
-    try testing.expectEqual(tree_zig.Rect{ .x = 290, .y = 219, .w = dialog.width, .h = 162 }, card.rect);
+    try testing.expectEqual(alert_dialog.card_id, card.box.id);
+    try testing.expectEqual(tree_zig.Rect{ .x = 290, .y = 219, .w = alert_dialog.width, .h = 162 }, card.rect);
 
     const stay_button = face(&tree, stay);
     const close_button = face(&tree, close);
@@ -264,15 +265,15 @@ test "dialog: the card is centered, actions run left to right, the ring is on th
     try testing.expect(tree.nodes[close_button.parent].box.border.a > 0);
     try testing.expectEqual(0, tree.nodes[stay_button.parent].box.border.a);
 
-    try testing.expectEqual(dialog.Target{ .action = close }, dialog.hit(tree.hitTest(close_button.rect.x + 4, close_button.rect.y + 4)));
-    try testing.expectEqual(dialog.Target{ .action = stay }, dialog.hit(tree.hitTest(stay_button.rect.x + 4, stay_button.rect.y + 4)));
+    try testing.expectEqual(alert_dialog.Target{ .action = close }, alert_dialog.hit(tree.hitTest(close_button.rect.x + 4, close_button.rect.y + 4)));
+    try testing.expectEqual(alert_dialog.Target{ .action = stay }, alert_dialog.hit(tree.hitTest(stay_button.rect.x + 4, stay_button.rect.y + 4)));
     // The ring around a button belongs to it: a click there is not a click
     // on the card, which would drop the focus.
     const ring = tree.nodes[close_button.parent].rect;
-    try testing.expectEqual(dialog.Target{ .action = close }, dialog.hit(tree.hitTest(ring.x + 1, ring.y + 1)));
-    try testing.expectEqual(dialog.Target.card, dialog.hit(tree.hitTest(card.rect.x + 4, card.rect.y + 4)));
-    try testing.expectEqual(dialog.Target.scrim, dialog.hit(tree.hitTest(4, 4)));
-    try testing.expectEqual(null, dialog.hit(Id.none));
+    try testing.expectEqual(alert_dialog.Target{ .action = close }, alert_dialog.hit(tree.hitTest(ring.x + 1, ring.y + 1)));
+    try testing.expectEqual(alert_dialog.Target.card, alert_dialog.hit(tree.hitTest(card.rect.x + 4, card.rect.y + 4)));
+    try testing.expectEqual(alert_dialog.Target.scrim, alert_dialog.hit(tree.hitTest(4, 4)));
+    try testing.expectEqual(null, alert_dialog.hit(Id.none));
 }
 
 test "dialog: a button is taken when the pointer is let go on it" {
@@ -283,18 +284,18 @@ test "dialog: a button is taken when the pointer is let go on it" {
     try testing.expectEqual(Outcome.redraw, update(&state, .{ .press = close }));
     try testing.expectEqual(close, state.pressed);
     try testing.expectEqual(close, state.hover);
-    try testing.expectEqual(modal.Phase{ .entering = 0 }, state.phase);
+    try testing.expectEqual(dialog.Phase{ .entering = 0 }, state.phase);
 
     // Off the button it no longer looks pressed, and letting go there
     // takes nothing.
-    try testing.expectEqual(Outcome.redraw, update(&state, .{ .pointer = dialog.no_action }));
+    try testing.expectEqual(Outcome.redraw, update(&state, .{ .pointer = alert_dialog.no_action }));
     try testing.expectEqual(Outcome.quiet, update(&state, .release));
-    try testing.expectEqual(dialog.no_action, state.pressed);
+    try testing.expectEqual(alert_dialog.no_action, state.pressed);
 
     try testing.expectEqual(Outcome.redraw, update(&state, .{ .press = close }));
     try testing.expectEqual(Outcome{ .chosen = close }, update(&state, .release));
-    try testing.expectEqual(modal.Phase.closed, state.phase);
-    try testing.expectEqual(dialog.no_action, state.pressed);
+    try testing.expectEqual(dialog.Phase.closed, state.phase);
+    try testing.expectEqual(alert_dialog.no_action, state.pressed);
 
     // A dismissing button starts the fade on release.
     _ = update(&state, .{ .open = sample() });
@@ -305,22 +306,49 @@ test "dialog: a button is taken when the pointer is let go on it" {
     try testing.expectEqual(Outcome.quiet, update(&state, .{ .press = close }));
 }
 
+test "dialog: media is an icon in a box above the title" {
+    var state: State = .empty;
+    _ = update(&state, .{ .open = .{ .media = icons.triangle_alert, .title = "Close?", .actions = &sample_actions } });
+    _ = update(&state, .{ .tick = Theme.duration });
+
+    var fixture: Fixture = .{};
+    var tree = fixture.tree();
+    const scrim = (try alert_dialog.view(&state, &tree, &Theme.dark)).?;
+    try layout(&tree, measurer, 1000, 600);
+
+    // Scrim, card, header, then the box and its icon, then the title.
+    const box = tree.nodes[scrim + 3];
+    const icon = tree.nodes[scrim + 4];
+    const title = tree.nodes[scrim + 5];
+    try testing.expectEqual(Theme.dark.muted, box.box.fill);
+    try testing.expectEqual(alert_dialog.media_box, box.rect.w);
+    try testing.expectEqual(alert_dialog.media_box, box.rect.h);
+    try testing.expectEqual(icons.triangle_alert, icon.content.icon.codepoint);
+    try testing.expectEqual(box.rect.x + (alert_dialog.media_box - alert_dialog.media_icon) / 2, icon.rect.x);
+    try testing.expectEqual(box.rect.y + box.rect.h + dialog.header_gap, title.rect.y);
+
+    // A later request without media shows none.
+    _ = update(&state, .{ .take = close });
+    _ = update(&state, .{ .open = sample() });
+    try testing.expectEqual(0, state.media);
+}
+
 test "dialog: a window narrower than the card shrinks it and keeps a margin" {
     var state: State = .empty;
     _ = update(&state, .{ .open = sample() });
 
     var fixture: Fixture = .{};
     var tree = fixture.tree();
-    const scrim = (try dialog.view(&state, &tree, &Theme.dark)).?;
+    const scrim = (try alert_dialog.view(&state, &tree, &Theme.dark)).?;
     try layout(&tree, measurer, 360, 600);
 
     const card = tree.nodes[scrim + 1].rect;
-    try testing.expectEqual(modal.margin, card.x);
-    try testing.expectEqual(360 - 2 * modal.margin, card.w);
+    try testing.expectEqual(dialog.margin, card.x);
+    try testing.expectEqual(360 - 2 * dialog.margin, card.w);
 }
 
 test "dialog: each variant has its look, and hover changes the fill" {
-    const three = [_]dialog.Action{
+    const three = [_]alert_dialog.Action{
         .{ .label = "Discard", .variant = .destructive },
         .{ .label = "Cancel", .role = .dismiss },
         .{ .label = "Save", .variant = .primary },
@@ -332,7 +360,7 @@ test "dialog: each variant has its look, and hover changes the fill" {
 
     var fixture: Fixture = .{};
     var tree = fixture.tree();
-    _ = try dialog.view(&state, &tree, theme);
+    _ = try alert_dialog.view(&state, &tree, theme);
     try testing.expectEqual(theme.destructive, face(&tree, 0).box.fill);
     try testing.expectEqual(Theme.Color.transparent, face(&tree, 1).box.fill);
     try testing.expectEqual(theme.primary, face(&tree, 2).box.fill);
@@ -342,11 +370,11 @@ test "dialog: each variant has its look, and hover changes the fill" {
 
     _ = update(&state, .{ .pointer = 1 });
     tree.reset();
-    _ = try dialog.view(&state, &tree, theme);
+    _ = try alert_dialog.view(&state, &tree, theme);
     try testing.expectEqual(theme.accent, face(&tree, 1).box.fill);
     _ = update(&state, .{ .pointer = 2 });
     tree.reset();
-    _ = try dialog.view(&state, &tree, theme);
+    _ = try alert_dialog.view(&state, &tree, theme);
     try testing.expectEqual(theme.primary.alpha(90), face(&tree, 2).box.fill);
     try testing.expectEqual(Theme.Color.transparent, face(&tree, 1).box.fill);
 }
@@ -359,6 +387,6 @@ test "dialog: long texts are cut between code points, and its size" {
     try testing.expectEqual(1, state.count);
 
     // Reported in the ticket: three buttons of 60 bytes and 256 of text.
-    try testing.expectEqual(60, @sizeOf(@FieldType(State, "buttons")) / dialog.actions_max);
-    try testing.expectEqual(448, @sizeOf(State));
+    try testing.expectEqual(60, @sizeOf(@FieldType(State, "buttons")) / alert_dialog.actions_max);
+    try testing.expectEqual(452, @sizeOf(State));
 }

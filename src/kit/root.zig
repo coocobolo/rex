@@ -13,15 +13,15 @@ pub const motion = @import("motion.zig");
 pub const kbd = @import("kbd.zig");
 pub const button = @import("button.zig");
 pub const focus = @import("focus.zig");
-pub const modal = @import("modal.zig");
-pub const toast = @import("toast.zig");
 pub const dialog = @import("dialog.zig");
+pub const toast = @import("toast.zig");
+pub const alert_dialog = @import("alert_dialog.zig");
 
 test {
     _ = @import("kit_test.zig");
     _ = @import("memory_test.zig");
     _ = @import("toast_test.zig");
-    _ = @import("dialog_test.zig");
+    _ = @import("alert_dialog_test.zig");
     _ = @import("button_test.zig");
     _ = Theme;
     _ = motion;

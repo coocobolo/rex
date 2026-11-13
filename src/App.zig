@@ -24,7 +24,7 @@ const system = posix.system;
 
 const rex = @import("root.zig");
 const KitOverlay = @import("KitOverlay.zig");
-const kit_dialog = @import("kit/dialog.zig");
+const alert_dialog = @import("kit/alert_dialog.zig");
 
 const unicode = rex.unicode;
 
@@ -1993,7 +1993,7 @@ pub fn requestQuit(self: *App) void {
             .ask => self.programRunning(),
         };
         const program = if (running) self.foregroundProgram(&name_buf) else null;
-        var body_buf: [kit_dialog.body_capacity]u8 = undefined;
+        var body_buf: [alert_dialog.body_capacity]u8 = undefined;
         _ = kit.openDialog(.{
             .title = "Close this window?",
             .body = quitDialogBodyFor(running, program, &body_buf),
@@ -2009,7 +2009,7 @@ pub fn requestQuit(self: *App) void {
 }
 
 /// The quit prompt's buttons in the kit's dialog, and their indexes.
-const quit_actions = [_]kit_dialog.Action{
+const quit_actions = [_]alert_dialog.Action{
     .{ .label = "Cancel", .role = .dismiss, .key_cap = "Esc" },
     .{ .label = "Close window", .variant = .destructive },
 };
@@ -2038,7 +2038,7 @@ fn foregroundProgram(self: *const App, buf: []u8) ?[]const u8 {
 
 /// Applies an outcome of the kit's dialog, which only the quit prompt
 /// opens: choosing "Close window" closes the window.
-fn applyDialogOutcome(self: *App, outcome: kit_dialog.Outcome) void {
+fn applyDialogOutcome(self: *App, outcome: alert_dialog.Outcome) void {
     switch (outcome) {
         .quiet => {},
         .redraw, .closed => {
@@ -2114,7 +2114,7 @@ fn routeKeyToUi(self: *App, maybe_key: ?rex.input.Key, mods: rex.input.Modifiers
 fn handleQuitModalKey(self: *App, k: rex.input.Key, mods: rex.input.Modifiers) void {
     if (self.kit) |kit| {
         // Y, Q, N and Backspace are this prompt's own shortcuts.
-        const event: ?kit_dialog.Event = switch (k) {
+        const event: ?alert_dialog.Event = switch (k) {
             .tab => .{ .focus = if (mods.shift) .previous else .next },
             .left, .up => .{ .focus = .previous },
             .right, .down => .{ .focus = .next },
@@ -2586,7 +2586,7 @@ const mouseButtonCb: c.GLFWmousebuttonfun = struct {
                         return;
                     },
                     .scrim => {
-                        const event: kit_dialog.Event = if (app.config.window.modal.on_outside_click == .close) .dismiss else .blur;
+                        const event: alert_dialog.Event = if (app.config.window.modal.on_outside_click == .close) .dismiss else .blur;
                         app.applyDialogOutcome(kit.dialogInput(event));
                         return;
                     },
@@ -3550,7 +3550,7 @@ test "ScrollAccumulator: smooth line accumulation and direction reversal" {
 
 test "quit dialog copy: the running program, or the idle ask" {
     const testing = std.testing;
-    var buf: [kit_dialog.body_capacity]u8 = undefined;
+    var buf: [alert_dialog.body_capacity]u8 = undefined;
     try testing.expectEqualStrings("Closing the window ends the shell.", quitDialogBodyFor(false, null, &buf));
     try testing.expectEqualStrings("A program is still running. Closing the window ends it.", quitDialogBodyFor(true, null, &buf));
     try testing.expectEqualStrings(
