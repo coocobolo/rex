@@ -279,6 +279,40 @@ test "layout: a root never grows past the viewport" {
     try expectRect(&tree, message, 16, 12, 288, 20);
 }
 
+test "layout: an at-most size is fixed until its parent is smaller" {
+    var fixture: Fixture = .{};
+    var tree = fixture.tree();
+    const scrim = try tree.open(.{ .width = .fill, .height = .fill, .padding = .all(16), .main = .center, .cross = .center });
+    const card = try tree.open(.{ .width = .{ .at_most = 420 }, .padding = .all(24) });
+    const body = try tree.text("a" ** 20 ++ " " ++ "b" ** 20, .{ .color = Theme.dark.foreground, .width = .fill });
+    tree.close(card);
+    tree.close(scrim);
+
+    try layout(&tree, measurer, 800, 600);
+    try expectRect(&tree, card, 190, 266, 420, 68);
+    try expectRect(&tree, body, 214, 290, 372, 20);
+
+    // Narrower than the card: it keeps the scrim's padding on both sides
+    // and its text wraps to what is left.
+    try layout(&tree, measurer, 300, 600);
+    try expectRect(&tree, card, 16, 256, 268, 88);
+    try expectRect(&tree, body, 40, 280, 220, 40);
+}
+
+test "layout: an at-most child in a row gives way like a fit child" {
+    var fixture: Fixture = .{};
+    var tree = fixture.tree();
+    const row = try tree.open(.{ .axis = .row, .width = .{ .fixed = 300 }, .gap = 10 });
+    const label = try tree.leaf(.{ .width = .{ .fixed = 100 }, .height = .{ .fixed = 20 } });
+    const field = try tree.leaf(.{ .width = .{ .at_most = 240 }, .height = .{ .fixed = 20 } });
+    tree.close(row);
+
+    try layout(&tree, measurer, 800, 600);
+
+    try expectRect(&tree, label, 0, 0, 100, 20);
+    try expectRect(&tree, field, 110, 0, 190, 20);
+}
+
 test "snap: shared edges stay shared and hairlines stay visible at fractional scales" {
     const left: tree_zig.Rect = .{ .x = 0, .y = 0, .w = 10.5, .h = 13 };
     const right: tree_zig.Rect = .{ .x = 10.5, .y = 0, .w = 10.5, .h = 13 };

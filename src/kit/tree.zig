@@ -64,6 +64,9 @@ pub const Size = union(enum) {
     fill,
     /// This many logical pixels.
     fixed: f32,
+    /// This many logical pixels, or what the parent has room for when that
+    /// is less.
+    at_most: f32,
 };
 
 /// The direction a box lays its children out in.

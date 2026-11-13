@@ -21,10 +21,11 @@ const Tree = tree_zig.Tree;
 const Id = tree_zig.Id;
 const Index = tree_zig.Index;
 
-/// The card's width in logical pixels, padding included. Fixed: layout
-/// has no "at most" size, so a narrower window clips the card instead of
-/// shrinking it.
+/// The card's width in logical pixels, padding included. A narrower window
+/// shrinks it, keeping `margin` on both sides.
 pub const width = 420;
+/// The least distance between the card and the window's edge.
+pub const margin = 16;
 pub const padding = 24;
 /// Between the title, the body and the actions.
 pub const gap = 16;
@@ -382,13 +383,14 @@ pub fn view(state: *const State, tree: *Tree, theme: *const Theme) tree_zig.Erro
         .id = scrim_id,
         .width = .fill,
         .height = .fill,
+        .padding = .all(margin),
         .main = .center,
         .cross = .center,
         .fill = theme.scrim.fade(presence),
     });
     const card = try tree.open(.{
         .id = card_id,
-        .width = .{ .fixed = width },
+        .width = .{ .at_most = width },
         .padding = .all(padding),
         .gap = gap,
         .fill = theme.popover.fade(presence),

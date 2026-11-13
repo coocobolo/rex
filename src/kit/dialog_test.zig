@@ -259,6 +259,20 @@ test "dialog: the card is centered, actions run left to right, the ring is on th
     try testing.expectEqual(null, dialog.hit(Id.none));
 }
 
+test "dialog: a window narrower than the card shrinks it and keeps a margin" {
+    var state: State = .empty;
+    _ = update(&state, .{ .open = sample() });
+
+    var fixture: Fixture = .{};
+    var tree = fixture.tree();
+    const scrim = (try dialog.view(&state, &tree, &Theme.dark)).?;
+    try layout(&tree, measurer, 360, 600);
+
+    const card = tree.nodes[scrim + 1].rect;
+    try testing.expectEqual(dialog.margin, card.x);
+    try testing.expectEqual(360 - 2 * dialog.margin, card.w);
+}
+
 test "dialog: each variant has its look, and hover changes the fill" {
     const three = [_]dialog.Action{
         .{ .label = "Discard", .variant = .destructive },
