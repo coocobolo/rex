@@ -1399,6 +1399,27 @@ test "insert mode at column 0 keeps a shifted wide character whole" {
     try testing.expectEqual(@as(u32, 'z'), t.active().cellAt(0, 0).codepoint);
 }
 
+test "insert mode: a narrow character before a wide one shifts the pair whole" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+    t.resize(2, 6);
+    t.feed("\xe4\xb8\xad\r\x1b[4hz"); // 中, back to column 0, insert z
+    try expectNoSplitWide(&t, 0);
+    try testing.expectEqual(@as(u32, 'z'), t.active().cellAt(0, 0).codepoint);
+    try testing.expectEqual(@as(u32, 0x4E2D), t.active().cellAt(0, 1).codepoint);
+}
+
+test "insert mode: a wide character before a narrow and a wide one keeps both" {
+    var t = try Term.create(alloc);
+    defer t.destroy(alloc);
+    t.resize(2, 8);
+    t.feed("a\xe4\xb8\xad\r\x1b[4h\xe6\x96\x87"); // a中, back to column 0, insert 文
+    try expectNoSplitWide(&t, 0);
+    try testing.expectEqual(@as(u32, 0x6587), t.active().cellAt(0, 0).codepoint);
+    try testing.expectEqual(@as(u32, 'a'), t.active().cellAt(0, 2).codepoint);
+    try testing.expectEqual(@as(u32, 0x4E2D), t.active().cellAt(0, 3).codepoint);
+}
+
 test "a wide character wrapping onto a pair at columns 1 and 2 leaves no right half" {
     var t = try Term.create(alloc);
     defer t.destroy(alloc);
