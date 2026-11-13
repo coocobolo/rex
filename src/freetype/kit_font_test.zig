@@ -43,10 +43,13 @@ test "KitFont: pair kerning comes from GPOS and tightens AV" {
     defer plain.destroy();
 
     try testing.expectEqual(0, plain.kern(.lg_semibold, 'A', 'V'));
+    // At 18 px: A,V -1.359 px, T,o -1.406 px, n,n 0 (measured 2026-11-12).
+    // The variable face gives 0 for every pair.
     const av = kerned.kern(.lg_semibold, 'A', 'V');
-    std.debug.print("\nInter 18 px semibold: kern(A,V) = {d:.3} px, kern(T,o) = {d:.3} px, kern(n,n) = {d:.3} px\n", .{ av, kerned.kern(.lg_semibold, 'T', 'o'), kerned.kern(.lg_semibold, 'n', 'n') });
-    // About -1.4 px at 18 px; the variable face gives 0 here.
     try testing.expect(av < -1 and av > -2);
+    const to = kerned.kern(.lg_semibold, 'T', 'o');
+    try testing.expect(to < -1 and to > -2);
+    try testing.expectEqual(0, kerned.kern(.lg_semibold, 'n', 'n'));
     try testing.expect(kerned.width("AVATAR", .lg_semibold) < plain.width("AVATAR", .lg_semibold));
     try testing.expectEqual(plain.width("nnnn", .sm), kerned.width("nnnn", .sm));
 }

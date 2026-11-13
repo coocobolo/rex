@@ -300,9 +300,11 @@ test "sizes of the kit's types" {
     try testing.expectEqual(4, @sizeOf(Theme.Color));
     try testing.expectEqual(76, @sizeOf(Theme));
     try testing.expectEqual(12, @sizeOf(text.Line));
-    std.debug.print("\nkit sizes: Node {d} (align {d}), Box {d}, Content {d}, Rect {d}, Size {d}, Tree {d}\n", .{
-        @sizeOf(Node),             @alignOf(Node),         @sizeOf(tree_zig.Box),
-        @sizeOf(tree_zig.Content), @sizeOf(tree_zig.Rect), @sizeOf(tree_zig.Size),
-        @sizeOf(Tree),
-    });
+    try testing.expectEqual(104, @sizeOf(Node));
+    try testing.expectEqual(8, @alignOf(Node));
+    try testing.expectEqual(40, @sizeOf(tree_zig.Box));
+    try testing.expectEqual(40, @sizeOf(tree_zig.Content));
+    try testing.expectEqual(16, @sizeOf(tree_zig.Rect));
+    try testing.expectEqual(8, @sizeOf(tree_zig.Size));
+    try testing.expectEqual(48, @sizeOf(Tree));
 }
