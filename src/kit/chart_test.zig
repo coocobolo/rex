@@ -62,7 +62,7 @@ test "chart: progress fills the fraction of a muted track" {
     try testing.expectEqual(Theme.dark.primary, tree.nodes[1].box.fill);
 }
 
-test "chart: share rows are sized to the largest value" {
+test "chart: the share strip cuts its width by each part's share" {
     var fixture: Fixture = .{};
     var tree = fixture.tree();
     const parts = [_]chart.Part{
@@ -72,12 +72,23 @@ test "chart: share rows are sized to the largest value" {
     try chart.share(&tree, &Theme.dark, .bar, &parts);
     try lay(&tree);
     try testing.expectEqual(chart.shareNodes(parts.len), tree.len);
-    const shorter = tree.nodes[4];
-    const longer = tree.nodes[8];
-    try testing.expectApproxEqAbs(@as(f32, 200) / 3, shorter.rect.w, 0.01);
-    try testing.expectEqual(@as(f32, 200), longer.rect.w);
-    try testing.expectEqual(Theme.dark.primary, shorter.box.fill);
-    try testing.expectEqual(Theme.dark.info, longer.box.fill);
+    try testing.expectEqual(@as(f32, chart.strip_height), tree.nodes[0].rect.h);
+    // Slots are a quarter and three quarters of 200; the first leaves the
+    // gap after its segment, the last runs to the end.
+    try testing.expectApproxEqAbs(@as(f32, 50), tree.nodes[1].rect.w, 0.01);
+    try testing.expectApproxEqAbs(@as(f32, 50 - chart.strip_gap), tree.nodes[2].rect.w, 0.01);
+    try testing.expectApproxEqAbs(@as(f32, 150), tree.nodes[4].rect.w, 0.01);
+    try testing.expectApproxEqAbs(@as(f32, 200), tree.nodes[4].rect.x + tree.nodes[4].rect.w, 0.01);
+    try testing.expectEqual(Theme.dark.primary, tree.nodes[2].box.fill);
+    try testing.expectEqual(Theme.dark.info, tree.nodes[4].box.fill);
+}
+
+/// Day bars in a box 96 high, as a card gives them their height.
+fn dayChart(tree: *Tree, items: []const chart.Day, limit: ?f32) !void {
+    const box = try tree.open(.{ .width = .fill, .height = .{ .fixed = 96 } });
+    try chart.days(tree, &Theme.dark, .bar, items, limit);
+    tree.close(box);
+    try lay(tree);
 }
 
 test "chart: day bars share a scale and the limit lines up" {
@@ -87,25 +98,31 @@ test "chart: day bars share a scale and the limit lines up" {
         .{ .total = 10, .part = 4, .fill = Theme.dark.muted, .part_fill = Theme.dark.primary },
         .{ .total = 20, .part = 30, .fill = Theme.dark.muted, .part_fill = Theme.dark.primary },
     };
-    try chart.days(&tree, &Theme.dark, .bar, &items, 10);
-    try lay(&tree);
-    try testing.expect(tree.len <= chart.dayNodes(items.len));
+    try dayChart(&tree, &items, 10);
+    try testing.expectEqual(1 + chart.dayNodes(items.len), tree.len);
 
-    const first = 1;
+    const first = 2;
     const second: usize = tree.nodes[first].end;
-    try testing.expectEqual(chart.day_height, tree.nodes[first].rect.h);
+    try testing.expectEqual(@as(f32, 96), tree.nodes[first].rect.h);
     try testing.expectEqual(tree.nodes[first].rect.w, tree.nodes[second].rect.w);
+
+    // The scale is the larger of the limit and the tallest day, 20.
+    const bottom = tree.nodes[first].rect.y + tree.nodes[first].rect.h;
+    const bar_a = findFill(&tree, first, Theme.dark.muted).?;
+    try testing.expectApproxEqAbs(@as(f32, 48), bar_a.rect.h, 0.01);
+    try testing.expectApproxEqAbs(bottom, bar_a.rect.y + bar_a.rect.h, 0.01);
+    const part_a = findFill(&tree, first, Theme.dark.primary).?;
+    try testing.expectApproxEqAbs(@as(f32, 48) * 4 / 10, part_a.rect.h, 0.01);
+    try testing.expectApproxEqAbs(bottom, part_a.rect.y + part_a.rect.h, 0.01);
+    // A part larger than its total fills the bar and no more.
+    try testing.expectApproxEqAbs(@as(f32, 96), findFill(&tree, second, Theme.dark.primary).?.rect.h, 0.01);
 
     const line_a = findFill(&tree, first, Theme.dark.border).?;
     const line_b = findFill(&tree, second, Theme.dark.border).?;
     try testing.expectEqual(line_a.rect.y, line_b.rect.y);
     try testing.expectEqual(@as(f32, 1), line_a.rect.h);
-
-    const focus = findFill(&tree, first, Theme.dark.primary).?;
-    const bottom = tree.nodes[first].rect.y + tree.nodes[first].rect.h;
-    try testing.expectApproxEqAbs(bottom, focus.rect.y + focus.rect.h, 0.01);
-    try testing.expectApproxEqAbs(@as(f32, 96) * 4 / 20, focus.rect.h, 0.01);
-    try testing.expectApproxEqAbs(@as(f32, 95), sumFill(&tree, second, Theme.dark.primary), 0.01);
+    // The hairline's bottom edge is at the limit: 10 of 20, half of 96.
+    try testing.expectApproxEqAbs(bottom - 48, line_a.rect.y + 1, 0.01);
 }
 
 test "chart: an overlay covers its parent and does not grow it" {
@@ -180,9 +197,8 @@ test "chart: a missing limit draws no line" {
     const items = [_]chart.Day{
         .{ .total = 5, .part = 1, .fill = Theme.dark.muted, .part_fill = Theme.dark.primary },
     };
-    try chart.days(&tree, &Theme.dark, .bar, &items, null);
-    try lay(&tree);
-    try testing.expect(findFill(&tree, 1, Theme.dark.border) == null);
+    try dayChart(&tree, &items, null);
+    try testing.expect(findFill(&tree, 2, Theme.dark.border) == null);
 }
 
 fn findFill(tree: *const Tree, column: usize, color: Theme.Color) ?*const tree_zig.Node {
@@ -190,12 +206,4 @@ fn findFill(tree: *const Tree, column: usize, color: Theme.Color) ?*const tree_z
         if (node.box.fill == color and node.rect.h > 0) return node;
     }
     return null;
-}
-
-fn sumFill(tree: *const Tree, column: usize, color: Theme.Color) f32 {
-    var total: f32 = 0;
-    for (tree.nodes[column + 1 .. tree.nodes[column].end]) |*node| {
-        if (node.box.fill == color) total += node.rect.h;
-    }
-    return total;
 }

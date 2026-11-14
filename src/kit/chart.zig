@@ -1,10 +1,11 @@
-//! Bars for the dashboard. Each view takes the numbers and a mark. The
-//! mark shipped here is `bar`. A ring, a donut, a line, an area or a
-//! radar is another mark on the same numbers, added when the kit can
-//! draw it.
+//! Charts for the dashboard. Each view takes the numbers and a mark: a
+//! progress is a bar or a ring, a share a strip or a donut, days are bars.
+//! A line, an area or a radar is another mark on the same numbers, added
+//! when the kit can draw it.
 //!
-//! A bar's length is a `fraction` of its track. The caller chooses the
-//! colors. The limit line uses `border`.
+//! Lengths are `fraction`s of the parent, so a chart takes the size its
+//! parent gives it. The caller chooses the colors. The limit line uses
+//! `border`.
 
 const std = @import("std");
 
@@ -14,10 +15,11 @@ const tree_zig = @import("tree.zig");
 const Tree = tree_zig.Tree;
 const Id = tree_zig.Id;
 
-/// Thickness of a progress bar and of one share row's bar.
+/// Thickness of a progress bar.
 pub const thickness = 8;
-/// Height of the day chart.
-pub const day_height = 96;
+/// Height of the share strip, and the room each segment leaves after it.
+pub const strip_height = 12;
+pub const strip_gap = 2;
 /// Outer radius and thickness of the timer ring. The HTML draws a
 /// centerline of 112 with a stroke of 6.
 pub const ring_radius: f32 = 115;
@@ -60,12 +62,13 @@ pub const progress_nodes = 2;
 /// The square, the track arc and the filled arc.
 pub const ring_nodes = 3;
 
-/// The column, then each part's group, label, track and filled part.
+/// The strip, then each part's slot and segment.
 pub fn shareNodes(count: usize) usize {
-    return 1 + count * 4;
+    return 1 + count * 2;
 }
 
-/// The row, then each day's column and up to five strips inside it.
+/// The row, then each day's column, its bar and the part inside it, and
+/// the limit's overlay, line and spacer.
 pub fn dayNodes(count: usize) usize {
     return 1 + count * 6;
 }
@@ -84,18 +87,19 @@ pub fn progress(tree: *Tree, theme: *const Theme, mark: ProgressMark, fraction: 
     }
 }
 
-/// One part under the next. The name sits above its bar, so every bar
-/// has the same width and is sized to the largest value.
+/// Each part's share of the sum: one strip cut into segments, or a donut.
+/// The names are not drawn; the surface lists them beside the chart.
 pub fn share(tree: *Tree, theme: *const Theme, mark: ShareMark, parts: []const Part) tree_zig.Error!void {
+    _ = theme;
     switch (mark) {
-        .bar => try shareBars(tree, theme, parts),
+        .bar => try shareStrip(tree, parts),
         .donut => try donutChart(tree, parts),
     }
 }
 
-/// One column per day. `part` sits at the bottom of `total`. `limit` is
-/// the same unit as `total`; null draws no line. The line is one strip
-/// in each column at the same height.
+/// One column per day, as tall as the parent gives the row. `part` sits at
+/// the bottom of `total`. `limit` is the same unit as `total`; null draws
+/// no line. The line is a hairline in each column at the same height.
 pub fn days(tree: *Tree, theme: *const Theme, mark: DayMark, items: []const Day, limit: ?f32) tree_zig.Error!void {
     switch (mark) {
         .bar => try dayBars(tree, theme, items, limit),
@@ -118,23 +122,30 @@ fn fractionBar(tree: *Tree, track: Color, fill: Color, fraction: f32) tree_zig.E
     tree.close(bar);
 }
 
-fn shareBars(tree: *Tree, theme: *const Theme, parts: []const Part) tree_zig.Error!void {
-    var scale: f32 = 0;
-    for (parts) |part| scale = @max(scale, finite(part.value));
-    const column = try tree.open(.{ .width = .fill, .gap = Theme.space });
-    for (parts) |part| {
-        const item = try tree.open(.{
+/// Segments in a row, each the part's fraction of the sum wide. The room
+/// after each one but the last is padding inside its slot, so the
+/// fractions add up to the strip whatever its width. A segment is rounded
+/// on its own: a clip would cut the strip's corners square.
+fn shareStrip(tree: *Tree, parts: []const Part) tree_zig.Error!void {
+    var sum: f32 = 0;
+    for (parts) |part| sum += finite(part.value);
+    const strip = try tree.open(.{ .axis = .row, .width = .fill, .height = .{ .fixed = strip_height } });
+    for (parts, 0..) |part, index| {
+        const last = index + 1 == parts.len;
+        const slot = try tree.open(.{
             .id = part.id,
-            .width = .fill,
-            .gap = Theme.space,
+            .width = .{ .fraction = if (sum == 0) 0 else finite(part.value) / sum },
+            .height = .fill,
+            .padding = .{ .right = if (last) 0 else strip_gap },
         });
-        _ = try tree.text(part.label, .{ .color = theme.foreground, .style = .sm });
-        const fraction: f32 = if (scale == 0) 0 else finite(part.value) / scale;
-        try fractionBar(tree, theme.muted, part.fill, fraction);
-        tree.close(item);
+        _ = try tree.leaf(.{ .width = .fill, .height = .fill, .fill = part.fill, .radius = Theme.radius_sm / 3 });
+        tree.close(slot);
     }
-    tree.close(column);
+    tree.close(strip);
 }
+
+/// Radius of a day's bar and of the part inside it.
+const day_radius = 6;
 
 fn dayBars(tree: *Tree, theme: *const Theme, items: []const Day, limit: ?f32) tree_zig.Error!void {
     var scale: f32 = if (limit) |lim| finite(lim) else 0;
@@ -142,65 +153,45 @@ fn dayBars(tree: *Tree, theme: *const Theme, items: []const Day, limit: ?f32) tr
     const row = try tree.open(.{
         .axis = .row,
         .width = .fill,
-        .height = .{ .fixed = day_height },
+        .height = .fill,
         .gap = Theme.space,
     });
     for (items) |day| try dayColumn(tree, theme, day, limit, scale);
     tree.close(row);
 }
 
+/// A column the row's height. Its bar stands on the baseline at `total`
+/// of the scale, the part inside it at `part` of the bar. The limit is an
+/// overlay whose hairline sits on a spacer that tall.
 fn dayColumn(tree: *Tree, theme: *const Theme, day: Day, limit: ?f32, scale: f32) tree_zig.Error!void {
     const column = try tree.open(.{
         .id = day.id,
         .width = .fill,
-        .height = .{ .fixed = day_height },
+        .height = .fill,
+        .main = .end,
     });
-    const height: f32 = day_height;
-    const total_h = if (scale == 0) 0 else height * finite(day.total) / scale;
-    const part_h = if (scale == 0) 0 else height * @min(finite(day.part), finite(day.total)) / scale;
-    const has_line = limit != null;
-    const limit_h: f32 = if (limit) |lim| blk: {
-        if (scale == 0) break :blk 0;
-        break :blk @min(height - 1, height * finite(lim) / scale);
-    } else 0;
-
-    var edges = [_]f32{ 0, height, part_h, total_h, 0, 0 };
-    var count: usize = 4;
-    if (has_line) {
-        edges[count] = limit_h;
-        edges[count + 1] = @min(height, limit_h + 1);
-        count += 2;
-    }
-    sortEdges(edges[0..count]);
-    var unique: usize = 0;
-    for (edges[0..count]) |edge| {
-        if (unique == 0 or edge != edges[unique - 1]) {
-            edges[unique] = edge;
-            unique += 1;
-        }
-    }
-
-    var index = unique;
-    while (index > 1) {
-        index -= 1;
-        const hi = edges[index];
-        const lo = edges[index - 1];
-        if (hi <= lo) continue;
-        const mid = (hi + lo) / 2;
-        _ = try tree.leaf(.{
-            .width = .fill,
-            .height = .{ .fixed = hi - lo },
-            .fill = stripColor(mid, part_h, total_h, has_line, limit_h, day, theme),
-        });
+    const total = finite(day.total);
+    const bar = try tree.open(.{
+        .width = .fill,
+        .height = .{ .fraction = if (scale == 0) 0 else total / scale },
+        .main = .end,
+        .fill = day.fill,
+        .radius = day_radius,
+    });
+    _ = try tree.leaf(.{
+        .width = .fill,
+        .height = .{ .fraction = if (total == 0) 0 else @min(finite(day.part), total) / total },
+        .fill = day.part_fill,
+        .radius = day_radius,
+    });
+    tree.close(bar);
+    if (limit) |lim| {
+        const overlay = try tree.open(.{ .overlay = true, .width = .fill, .height = .fill, .main = .end });
+        _ = try tree.leaf(.{ .width = .fill, .height = .{ .fixed = 1 }, .fill = theme.border });
+        _ = try tree.leaf(.{ .width = .fill, .height = .{ .fraction = if (scale == 0) 0 else finite(lim) / scale } });
+        tree.close(overlay);
     }
     tree.close(column);
-}
-
-fn stripColor(y: f32, part_h: f32, total_h: f32, has_line: bool, limit_h: f32, day: Day, theme: *const Theme) Color {
-    if (has_line and y >= limit_h and y < limit_h + 1) return theme.border;
-    if (y < part_h) return day.part_fill;
-    if (y < total_h) return day.fill;
-    return .transparent;
 }
 
 const turn = std.math.tau;
@@ -265,14 +256,4 @@ fn clamp01(value: f32) f32 {
 fn finite(value: f32) f32 {
     if (!std.math.isFinite(value) or value < 0) return 0;
     return value;
-}
-
-fn sortEdges(edges: []f32) void {
-    var i: usize = 1;
-    while (i < edges.len) : (i += 1) {
-        const key = edges[i];
-        var j = i;
-        while (j > 0 and edges[j - 1] > key) : (j -= 1) edges[j] = edges[j - 1];
-        edges[j] = key;
-    }
 }
