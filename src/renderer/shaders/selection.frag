@@ -15,8 +15,10 @@ uniform uint u_border_style;
 out vec4 frag_color;
 
 // Border style values (must match BorderStyle enum)
-const uint BORDER_STYLE_PER_ROW = 0u;
+const uint BORDER_STYLE_SPLIT = 0u;
 const uint BORDER_STYLE_UNIFIED = 1u;
+const uint BORDER_STYLE_UNDERLINE = 2u;
+const uint BORDER_STYLE_LEFT_BAR = 3u;
 
 // Per-corner rounded rectangle SDF.
 // radii = (TL, TR, BR, BL) | (top-left, top-right, bottom-right, bottom-left)
@@ -86,9 +88,7 @@ void main() {
   float prev_overlap_w = prev_overlap.y - prev_overlap.x;
   float next_overlap_w = next_overlap.y - next_overlap.x;
 
-  float r_base = (u_border_style == BORDER_STYLE_UNIFIED)
-                     ? min(u_radius, min(v_size.x, v_size.y) * 0.5)
-                     : u_radius;
+  float r_base = min(u_radius, min(v_size.x, v_size.y) * 0.5);
 
   float r_TL = (is_first || step_TL) ? r_base : 0.0;
   float r_TR = (is_first || step_TR) ? r_base : 0.0;
@@ -114,9 +114,29 @@ void main() {
     }
   }
 
+  // Discard pixels in the half-border overhang that belong to an overlapping adjacent row.
+  if (u_border_style == BORDER_STYLE_SPLIT) {
+    if (!is_first && prev_overlap_w > 0.0 && pixel.y < 0.0 &&
+        pixel.x >= prev_overlap.x && pixel.x <= prev_overlap.y) {
+      discard;
+    }
+    if (!is_last && next_overlap_w > 0.0 && pixel.y > v_size.y &&
+        pixel.x >= next_overlap.x && pixel.x <= next_overlap.y) {
+      discard;
+    }
+  }
+
+  float pad_top = (!is_first && u_border_style == BORDER_STYLE_SPLIT)
+                      ? 0.5 * u_border_width
+                      : 0.0;
+  float pad_bot = (!is_last && u_border_style == BORDER_STYLE_SPLIT)
+                      ? 0.5 * u_border_width
+                      : 0.0;
+
   // radii = (TL, TR, BR, BL)
   vec4 radii = vec4(r_TL, r_TR, r_BR, r_BL);
-  float d = roundedBoxCorners(pixel, v_size, radii);
+  float d = roundedBoxCorners(vec2(pixel.x, pixel.y + pad_top),
+                              vec2(v_size.x, v_size.y + pad_top + pad_bot), radii);
 
   if (u_border_style == BORDER_STYLE_UNIFIED && r_base > 0.0) {
     float r_conc_max = r_base * 0.5;
@@ -139,26 +159,42 @@ void main() {
   // Outer shape.
   float outer = 1.0 - smoothstep(-0.5, 0.5, d);
 
-  // Inner shape.
-  float inner = 1.0 - smoothstep(-u_border_width - 0.5, -u_border_width + 0.5, d);
+  float border_alpha = 0.0;
+  float fill_alpha = outer;
 
-  float border = outer - inner;
-  float suppress = 0.0;
+  if (u_border_style == BORDER_STYLE_UNDERLINE) {
+    float stroke = 1.0 - smoothstep(-0.5, 0.5, v_size.y - pixel.y - u_border_width);
+    border_alpha = outer * stroke;
+    fill_alpha = outer * (1.0 - stroke);
+  } else if (u_border_style == BORDER_STYLE_LEFT_BAR) {
+    float stroke = 1.0 - smoothstep(-0.5, 0.5, pixel.x - u_border_width);
+    border_alpha = outer * stroke;
+    fill_alpha = outer * (1.0 - stroke);
+  } else {
+    // Inner shape.
+    float inner = 1.0 - smoothstep(-u_border_width - 0.5, -u_border_width + 0.5, d);
 
-  if (u_border_style == BORDER_STYLE_UNIFIED) {
-    bool in_top_zone = !is_first && pixel.y < u_border_width + 0.5;
-    bool in_bot_zone = !is_last && pixel.y > v_size.y - u_border_width - 0.5;
+    float border = outer - inner;
+    float suppress = 0.0;
 
-    if (in_top_zone) {
-      suppress = max(suppress, seamSuppress(pixel.x, prev_overlap, u_border_width));
+    if (u_border_style == BORDER_STYLE_UNIFIED) {
+      bool in_top_zone = !is_first && pixel.y < u_border_width + 0.5;
+      bool in_bot_zone = !is_last && pixel.y > v_size.y - u_border_width - 0.5;
+      if (in_top_zone) {
+        suppress = max(suppress, seamSuppress(pixel.x, prev_overlap, u_border_width));
+      }
+      if (in_bot_zone) {
+        suppress = max(suppress, seamSuppress(pixel.x, next_overlap, u_border_width));
+      }
     }
-    if (in_bot_zone) {
-      suppress = max(suppress, seamSuppress(pixel.x, next_overlap, u_border_width));
+
+    border_alpha = border * (1.0 - suppress);
+    fill_alpha = mix(inner, 1.0, suppress);
+    if (u_border_style == BORDER_STYLE_SPLIT &&
+        (pixel.y < 0.0 || pixel.y > v_size.y)) {
+      fill_alpha = 0.0;
     }
   }
-
-  float border_alpha = border * (1.0 - suppress);
-  float fill_alpha = mix(inner, 1.0, suppress);
   vec4 fill = vec4(u_color.rgb, u_color.a * fill_alpha);
   vec4 outline = vec4(u_border_color.rgb, u_border_color.a * border_alpha);
 

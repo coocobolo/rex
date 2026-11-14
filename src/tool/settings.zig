@@ -241,7 +241,7 @@ fn keyMeta(comptime section: keys.Section, comptime key_name: []const u8) KeyMet
             .description = "Outline thickness in logical pixels (0 hides the border).",
         } else if (std.mem.eql(u8, key_name, "border_style")) .{
             .label = "Border Style",
-            .description = "Outline multi-line selections as one perimeter or per row.",
+            .description = "Selection border appearance: unified perimeter, split rows, underline, or left bar.",
         } else if (std.mem.eql(u8, key_name, "radius")) .{
             .label = "Corner Radius",
             .description = "Corner radius of selection highlights in pixels (0 for sharp corners).",

@@ -569,7 +569,7 @@ test "settings: selection appearance keys edit and reset on Window & Shell" {
     try testing.expectEqual(cfg.selection.border_color, state.activeConfig().selection.border_color);
     try testing.expectEqualStrings("#666666", state.inputs[bc_idx].text());
 
-    // Step border_width up (+1.0 from 1.5 -> 2.5) and select border_style = per_row.
+    // Step border_width up (+1.0 from 1.5 -> 2.5) and select border_style = split.
     const bw_idx = keyIndex(.selection, "border_width");
     const inc_id = Id.of("settings.inc").item(bw_idx);
     _ = settings.update(&state, .{ .pointer = .{ .id = inc_id } });
@@ -582,11 +582,11 @@ test "settings: selection appearance keys edit and reset on Window & Shell" {
     _ = settings.update(&state, .{ .pointer = .{ .id = bs_select_id } });
     _ = settings.update(&state, .{ .press = bs_select_id });
     _ = settings.update(&state, .release);
-    const per_row_id = Id.of("settings.choice").item(0);
-    _ = settings.update(&state, .{ .pointer = .{ .id = per_row_id } });
-    _ = settings.update(&state, .{ .press = per_row_id });
+    const split_id = Id.of("settings.choice").item(0);
+    _ = settings.update(&state, .{ .pointer = .{ .id = split_id } });
+    _ = settings.update(&state, .{ .press = split_id });
     try testing.expect(settings.update(&state, .release));
     const BorderStyle = @import("../config/selection.zig").BorderStyle;
     try testing.expectEqual(BorderStyle.unified, cfg.selection.border_style);
-    try testing.expectEqual(BorderStyle.per_row, state.activeConfig().selection.border_style);
+    try testing.expectEqual(BorderStyle.split, state.activeConfig().selection.border_style);
 }

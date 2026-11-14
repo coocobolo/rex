@@ -19,6 +19,7 @@ flat out uint v_flags;
 flat out vec2 v_prev_span; // (left, right) in local pixel space
 flat out vec2 v_next_span; // (left, right) in local pixel space
 
+const uint BORDER_STYLE_SPLIT = 0u;
 const uint BORDER_STYLE_UNIFIED = 1u;
 
 void main() {
@@ -41,6 +42,8 @@ void main() {
 
   float pad_left = 0.0;
   float pad_right = 0.0;
+  float pad_top = 0.0;
+  float pad_bot = 0.0;
   if (u_border_style == BORDER_STYLE_UNIFIED && u_radius > 0.0) {
     float max_pad = min(u_radius * 0.5, size.y * 0.5);
     bool conc_left = (!is_first && prev_span.x < 0.0 && prev_span.y > 0.0) ||
@@ -50,10 +53,16 @@ void main() {
         (!is_last && next_span.y > size.x && next_span.x < size.x);
     if (conc_left) pad_left = max_pad;
     if (conc_right) pad_right = max_pad;
+  } else if (u_border_style == BORDER_STYLE_SPLIT && u_border_width > 0.0) {
+    // Center horizontal row borders on interior seams (±0.5 * border_width) so
+    // touching seams and exposed ledges align at 1x thickness without jogging.
+    float half_w = 0.5 * u_border_width;
+    if (!is_first) pad_top = half_w;
+    if (!is_last) pad_bot = half_w;
   }
 
-  vec2 local_pixel =
-      vec2(mix(-pad_left, size.x + pad_right, a_quad.x), a_quad.y * size.y);
+  vec2 local_pixel = vec2(mix(-pad_left, size.x + pad_right, a_quad.x),
+                          mix(-pad_top, size.y + pad_bot, a_quad.y));
   vec2 pixel = cell_tl + local_pixel;
   vec2 ndc = (pixel / u_screen_size) * 2.0 - 1.0;
   gl_Position = vec4(ndc.x, -ndc.y, 0.0, 1.0);

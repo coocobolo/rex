@@ -415,7 +415,7 @@ const enum_names = [_]struct { []const u8, []const []const u8 }{
     .{ "ui.color_scheme", &.{ "auto", "dark", "light" } },
     .{ "clipboard.osc52_write", &.{ "allow", "deny" } },
     .{ "clipboard.osc52_read", &.{ "allow", "deny" } },
-    .{ "selection.border_style", &.{ "per_row", "unified" } },
+    .{ "selection.border_style", &.{ "split", "unified", "underline", "left_bar" } },
     .{ "modal.on_outside_click", &.{ "close", "ignore" } },
     .{ "wellbeing.screen_time.on_limit", &.{ "grayscale", "lock_input", "animation" } },
     .{ "wellbeing.focus.timer", &.{ "countdown", "countup" } },
@@ -520,14 +520,14 @@ test "apply: [selection] appearance keys parse, validate bounds, and reset to de
     try applyText(&config, .selection, "border_color", "#abcdef");
     try applyText(&config, .selection, "border_opacity", "0.5");
     try applyText(&config, .selection, "border_width", "2.5");
-    try applyText(&config, .selection, "border_style", "per_row");
+    try applyText(&config, .selection, "border_style", "split");
     try applyText(&config, .selection, "radius", "4.0");
 
     try std.testing.expectApproxEqAbs(@as(f32, 0.6), config.selection.opacity, 1e-6);
     try std.testing.expectEqual(Rgb{ .r = 0xAB, .g = 0xCD, .b = 0xEF }, config.selection.border_color);
     try std.testing.expectApproxEqAbs(@as(f32, 0.5), config.selection.border_opacity, 1e-6);
     try std.testing.expectApproxEqAbs(@as(f32, 2.5), config.selection.border_width, 1e-6);
-    try std.testing.expectEqual(@import("selection.zig").BorderStyle.per_row, config.selection.border_style);
+    try std.testing.expectEqual(@import("selection.zig").BorderStyle.split, config.selection.border_style);
     try std.testing.expectApproxEqAbs(@as(f32, 4.0), config.selection.radius, 1e-6);
 
     try std.testing.expectError(error.OutOfRange, applyText(&config, .selection, "opacity", "1.5"));
@@ -538,4 +538,9 @@ test "apply: [selection] appearance keys parse, validate bounds, and reset to de
 
     try applyText(&config, .selection, "border_color", "default");
     try std.testing.expectEqual(Config.Selection.default.border_color, config.selection.border_color);
+
+    try applyText(&config, .selection, "border_style", "underline");
+    try std.testing.expectEqual(@import("selection.zig").BorderStyle.underline, config.selection.border_style);
+    try applyText(&config, .selection, "border_style", "left_bar");
+    try std.testing.expectEqual(@import("selection.zig").BorderStyle.left_bar, config.selection.border_style);
 }

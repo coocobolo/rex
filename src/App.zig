@@ -3461,7 +3461,7 @@ test "rendererSelectionOption: maps Config.Selection onto renderer Selection.Opt
         .border_color = .{ .r = 0xFF, .g = 0x80, .b = 0x00 },
         .border_opacity = 0.5,
         .border_width = 2.0,
-        .border_style = .per_row,
+        .border_style = .split,
         .radius = 6.0,
     };
     const mapped = rendererSelectionOption(custom);
@@ -3471,7 +3471,7 @@ test "rendererSelectionOption: maps Config.Selection onto renderer Selection.Opt
     try testing.expectApproxEqAbs(@as(f32, 0.0), mapped.border_color[2], 1e-6);
     try testing.expectApproxEqAbs(@as(f32, 0.5), mapped.border_color[3], 1e-6);
     try testing.expectApproxEqAbs(@as(f32, 2.0), mapped.border_width, 1e-6);
-    try testing.expectEqual(renderer_mod.Selection.BorderStyle.per_row, mapped.border_style);
+    try testing.expectEqual(renderer_mod.Selection.BorderStyle.split, mapped.border_style);
     try testing.expectApproxEqAbs(@as(f32, 6.0), mapped.radius, 1e-6);
 }
 
