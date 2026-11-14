@@ -697,4 +697,16 @@ test "settings: ui.color_scheme renders as three-icon segmented control under Ap
     try testing.expectEqual(.auto, state.activeConfig().ui.color_scheme);
     // Default terminal background is dark, so Auto resolves to the dark UI theme.
     try testing.expectEqual(&kit.Theme.dark, settings.currentTheme(&state));
+
+    // Hovering the monitor segment shows the clarifying tooltip.
+    tree.reset();
+    try settings.view(&state, &tree, settings.currentTheme(&state));
+    try kit.layout.layout(&tree, measurer, 960, 720);
+    var saw_match_tooltip = false;
+    for (tree.nodes[0..tree.len]) |node| {
+        if (node.content == .text and std.mem.eql(u8, node.content.text.bytes, "Match terminal theme")) {
+            saw_match_tooltip = true;
+        }
+    }
+    try testing.expect(saw_match_tooltip);
 }

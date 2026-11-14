@@ -183,7 +183,7 @@ fn keyMeta(comptime section: keys.Section, comptime key_name: []const u8) KeyMet
             .description = "Play smooth transitions in menus and overlays, or switch immediately.",
         } else if (std.mem.eql(u8, key_name, "color_scheme")) .{
             .label = "Interface Theme",
-            .description = "Light or dark look for settings, dialogs, and overlays (or match the terminal).",
+            .description = "Light or dark look for settings, dialogs, and overlays, or match your terminal theme.",
         } else @compileError("unmapped ui key: " ++ key_name),
 
         .window => if (std.mem.eql(u8, key_name, "background_opacity")) .{
@@ -2168,7 +2168,13 @@ fn comptimeKeyLabels(comptime key: keys.Key, comptime display: bool) []const []c
         .@"enum" => |e| {
             comptime var list: [e.fields.len][]const u8 = undefined;
             inline for (e.fields, 0..) |f, i| {
-                list[i] = if (display) comptime humanToken(f.name) else f.name;
+                list[i] = if (display)
+                    if (kind == .segmented and std.mem.eql(u8, f.name, "auto"))
+                        "Match terminal theme"
+                    else
+                        comptime humanToken(f.name)
+                else
+                    f.name;
             }
             const final = list;
             return &final;
