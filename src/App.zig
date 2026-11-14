@@ -1055,6 +1055,8 @@ fn buildSelectionState(self: *App, frame: *const FrameType) ?SelectionState {
         break :blk null;
     };
 
+    const fg_alpha: u8 = @intFromFloat(@round(self.config.selection.foreground_opacity * 255.0));
+
     return .{
         .active = true,
         .start_row = start_row,
@@ -1063,6 +1065,7 @@ fn buildSelectionState(self: *App, frame: *const FrameType) ?SelectionState {
         .end_col = end_col,
         .bg = background,
         .fg = foreground,
+        .fg_alpha = fg_alpha,
         .kind = self.selection.kind,
     };
 }

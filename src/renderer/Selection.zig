@@ -15,6 +15,7 @@ pub const State = struct {
     end_col: u16,
     active: bool,
     fg: ?[3]u8,
+    fg_alpha: u8 = 255,
     bg: ?[3]u8,
     kind: Kind,
 
@@ -22,6 +23,7 @@ pub const State = struct {
         .active = false,
         .bg = null,
         .fg = null,
+        .fg_alpha = 255,
         .start_row = 0,
         .start_col = 0,
         .end_row = 0,

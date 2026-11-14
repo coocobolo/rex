@@ -158,6 +158,7 @@ pub const Selection = struct {
     mouse_double_click_interval_ms: u32 = 500,
     classifier: Classifier.Option,
     opacity: f32 = 1.0,
+    foreground_opacity: f32 = 1.0,
     border_opacity: f32 = 1.0,
     border_width: f32 = 1.5,
     radius: f32 = 3.0,

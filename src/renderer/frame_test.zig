@@ -249,3 +249,11 @@ test "build: SGR 58 reaches the underline through the cell's style" {
     try testing.expectEqual([3]u8{ 200, 100, 50 }, t.palette.resolveKeyRgb(a.underline, .foreground));
     try testing.expectEqual(term.Style.default_key, b.underline);
 }
+
+test "blendRgb: interpolates selection foreground between base and target" {
+    const base = [3]u8{ 40, 100, 200 };
+    const target = [3]u8{ 240, 20, 100 };
+    try testing.expectEqual(base, Frame.blendRgb(base, target, 0));
+    try testing.expectEqual(target, Frame.blendRgb(base, target, 255));
+    try testing.expectEqual([3]u8{ 140, 60, 150 }, Frame.blendRgb(base, target, 128));
+}

@@ -293,6 +293,7 @@ const tail_rows = [_]Key{
 
     .{ .section = .selection, .name = "extra_word_characters", .field = "selection.classifier.extra_word_chars", .kind = .word_characters },
     .{ .section = .selection, .name = "opacity", .field = "selection.opacity", .kind = .fraction },
+    .{ .section = .selection, .name = "foreground_opacity", .field = "selection.foreground_opacity", .kind = .fraction },
     .{ .section = .selection, .name = "border_color", .field = "selection.border_color", .kind = .color },
     .{ .section = .selection, .name = "border_opacity", .field = "selection.border_opacity", .kind = .fraction },
     .{ .section = .selection, .name = "border_width", .field = "selection.border_width", .bounds = .{ .min = 0, .max = 20 } },

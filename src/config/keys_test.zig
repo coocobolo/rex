@@ -517,6 +517,7 @@ test "apply: [selection] appearance keys parse, validate bounds, and reset to de
     const Rgb = @import("../color/Rgb.zig");
     var config = testConfig();
     try applyText(&config, .selection, "opacity", "0.6");
+    try applyText(&config, .selection, "foreground_opacity", "0.4");
     try applyText(&config, .selection, "border_color", "#abcdef");
     try applyText(&config, .selection, "border_opacity", "0.5");
     try applyText(&config, .selection, "border_width", "2.5");
@@ -524,6 +525,7 @@ test "apply: [selection] appearance keys parse, validate bounds, and reset to de
     try applyText(&config, .selection, "radius", "4.0");
 
     try std.testing.expectApproxEqAbs(@as(f32, 0.6), config.selection.opacity, 1e-6);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.4), config.selection.foreground_opacity, 1e-6);
     try std.testing.expectEqual(Rgb{ .r = 0xAB, .g = 0xCD, .b = 0xEF }, config.selection.border_color);
     try std.testing.expectApproxEqAbs(@as(f32, 0.5), config.selection.border_opacity, 1e-6);
     try std.testing.expectApproxEqAbs(@as(f32, 2.5), config.selection.border_width, 1e-6);

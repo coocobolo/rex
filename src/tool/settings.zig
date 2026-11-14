@@ -230,6 +230,9 @@ fn keyMeta(comptime section: keys.Section, comptime key_name: []const u8) KeyMet
         } else if (std.mem.eql(u8, key_name, "opacity")) .{
             .label = "Selection Opacity",
             .description = "Fill opacity of the selection highlight (0.0–1.0).",
+        } else if (std.mem.eql(u8, key_name, "foreground_opacity")) .{
+            .label = "Foreground Opacity",
+            .description = "Blend strength of selection foreground over text colors (0.0 keeps original, 1.0 replaces).",
         } else if (std.mem.eql(u8, key_name, "border_color")) .{
             .label = "Border Color",
             .description = "Outline color drawn around selected text.",

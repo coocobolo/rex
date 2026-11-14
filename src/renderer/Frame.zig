@@ -39,6 +39,19 @@ pub fn cellColors(palette: *const Palette, style: term.Style, cell: term.Cell, r
     return .{ foreground, background };
 }
 
+/// Linearly blends `base` toward `target` by `alpha / 255`.
+pub fn blendRgb(base: [3]u8, target: [3]u8, alpha: u8) [3]u8 {
+    if (alpha == 0) return base;
+    if (alpha == 255) return target;
+    const a: u16 = alpha;
+    const inv: u16 = 255 - a;
+    return .{
+        @intCast((@as(u16, base[0]) * inv + @as(u16, target[0]) * a + 127) / 255),
+        @intCast((@as(u16, base[1]) * inv + @as(u16, target[1]) * a + 127) / 255),
+        @intCast((@as(u16, base[2]) * inv + @as(u16, target[2]) * a + 127) / 255),
+    };
+}
+
 /// User settings of the frame builder.
 pub const BuilderOption = struct {
     /// Opacity of SGR 2 (dim) text, 0.0 to 1.0. Decorations follow it
@@ -864,7 +877,9 @@ pub fn Builder(comptime option: Option) type {
 
                 const in_selection = has_selection and selection_state.?.contains(row, col);
                 if (in_selection) {
-                    if (selection_state.?.fg) |sel_fg| foreground = sel_fg;
+                    if (selection_state.?.fg) |sel_fg| {
+                        foreground = blendRgb(foreground, sel_fg, selection_state.?.fg_alpha);
+                    }
                 }
 
                 const foreground_alpha: u8 = if (c.flags.dim) self.dim_alpha else 255;
