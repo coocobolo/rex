@@ -47,6 +47,7 @@ test "button: each variant has its fill, border and label color" {
     const cases = [_]Case{
         .{ .variant = .outline, .fill = .transparent, .border = theme.input, .label = theme.foreground },
         .{ .variant = .primary, .fill = theme.primary, .border = .transparent, .label = theme.primary_foreground },
+        .{ .variant = .secondary, .fill = theme.secondary, .border = .transparent, .label = theme.foreground },
         .{ .variant = .ghost, .fill = .transparent, .border = .transparent, .label = theme.ghost_foreground },
         .{ .variant = .destructive, .fill = theme.destructive.alpha(20), .border = .transparent, .label = theme.destructive },
     };
@@ -68,6 +69,7 @@ test "button: hover and press change the fill" {
         .{ .variant = .outline, .hovered = theme.accent, .pressed = theme.accent },
         .{ .variant = .ghost, .hovered = theme.accent, .pressed = theme.accent },
         .{ .variant = .primary, .hovered = theme.primary.alpha(90), .pressed = theme.primary.alpha(80) },
+        .{ .variant = .secondary, .hovered = theme.secondary.alpha(80), .pressed = theme.secondary.alpha(60) },
         .{ .variant = .destructive, .hovered = theme.destructive.alpha(20), .pressed = theme.destructive.alpha(30) },
     };
     for (cases) |case| {

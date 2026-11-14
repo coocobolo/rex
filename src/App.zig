@@ -2393,13 +2393,13 @@ const PendingClipboard = union(enum) {
 };
 
 const clipboard_actions = [_]alert_dialog.Action{
-    .{ .label = "Deny", .role = .dismiss, .key_cap = "Esc" },
-    .{ .label = "Allow Once", .variant = .primary },
+    .{ .label = "Allow Once", .variant = .secondary },
     .{ .label = "Always Allow" },
+    .{ .label = "Deny", .role = .dismiss, .key_cap = "Esc" },
 };
-const clipboard_deny = 0;
-const clipboard_allow_once = 1;
-const clipboard_allow_always = 2;
+const clipboard_allow_once = 0;
+const clipboard_allow_always = 1;
+const clipboard_deny = 2;
 
 /// What App does with an OSC 52 request (ADR 0006).
 const ClipboardAction = union(enum) {
