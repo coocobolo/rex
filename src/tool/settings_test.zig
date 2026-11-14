@@ -590,3 +590,103 @@ test "settings: selection appearance keys edit and reset on Window & Shell" {
     try testing.expectEqual(BorderStyle.unified, cfg.selection.border_style);
     try testing.expectEqual(BorderStyle.split, state.activeConfig().selection.border_style);
 }
+
+test "settings: ui.color_scheme renders as three-icon segmented control under Appearance General" {
+    const gpa = testing.allocator;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const dir_path = try std.fs.path.join(gpa, &.{ ".zig-cache", "tmp", &tmp.sub_path });
+    defer gpa.free(dir_path);
+    const cfg_path = try std.fs.path.join(gpa, &.{ dir_path, "config" });
+    defer gpa.free(cfg_path);
+
+    const cfg = config_defaults.default;
+    var state = try settings.init(.{
+        .gpa = gpa,
+        .io = testing.io,
+        .config = &cfg,
+        .state_dir = dir_path,
+        .config_path = cfg_path,
+        .home_dir = dir_path,
+        .wake_loop = struct {
+            fn wake() void {}
+        }.wake,
+    });
+    defer settings.deinit(&state);
+
+    state.frame.current = @intFromEnum(settings.Page.appearance);
+    _ = settings.update(&state, .{ .size = .{ .width = 960, .height = 720 } });
+
+    const cs_idx = keyIndex(.ui, "color_scheme");
+    const auto_id = Id.of("settings.segment").item(@as(u32, cs_idx) * 8 + 0);
+    const dark_id = Id.of("settings.segment").item(@as(u32, cs_idx) * 8 + 1);
+
+    // Hover the Dark segment so the tree includes its tooltip as well.
+    _ = settings.update(&state, .{ .pointer = .{ .id = dark_id } });
+
+    var nodes: [settings.node_max]kit.tree.Node = undefined;
+    var lines: [settings.line_max]kit.text.Line = undefined;
+    var tree = kit.tree.Tree.init(&nodes, &lines);
+    try settings.view(&state, &tree, &kit.Theme.dark);
+    try kit.layout.layout(&tree, measurer, 960, 720);
+
+    var general_count: usize = 0;
+    var general_pos: ?usize = null;
+    var theme_pos: ?usize = null;
+    var scheme_pos: ?usize = null;
+    var overrides_pos: ?usize = null;
+    var saw_monitor = false;
+    var saw_moon = false;
+    var saw_sun = false;
+    var saw_dark_tooltip = false;
+    for (tree.nodes[0..tree.len], 0..) |node, i| {
+        switch (node.content) {
+            .text => |txt| {
+                if (std.mem.eql(u8, txt.bytes, "General")) {
+                    general_count += 1;
+                    general_pos = i;
+                } else if (std.mem.eql(u8, txt.bytes, "Color Theme") and theme_pos == null) {
+                    theme_pos = i;
+                } else if (std.mem.eql(u8, txt.bytes, "UI Color Scheme") and scheme_pos == null) {
+                    scheme_pos = i;
+                } else if (std.mem.eql(u8, txt.bytes, "Theme Overrides") and overrides_pos == null) {
+                    overrides_pos = i;
+                } else if (std.mem.eql(u8, txt.bytes, "Dark")) {
+                    saw_dark_tooltip = true;
+                }
+            },
+            .icon => |ic| {
+                if (ic.codepoint == kit.icons.monitor) saw_monitor = true;
+                if (ic.codepoint == kit.icons.moon) saw_moon = true;
+                if (ic.codepoint == kit.icons.sun) saw_sun = true;
+            },
+            else => {},
+        }
+    }
+    try testing.expectEqual(@as(usize, 1), general_count);
+    try testing.expect(general_pos.? < theme_pos.?);
+    try testing.expect(theme_pos.? < scheme_pos.?);
+    try testing.expect(scheme_pos.? < overrides_pos.?);
+    try testing.expect(saw_monitor and saw_moon and saw_sun);
+    try testing.expect(saw_dark_tooltip);
+
+    // Click Dark segment.
+    _ = settings.update(&state, .{ .press = dark_id });
+    try testing.expect(settings.update(&state, .release));
+    try testing.expectEqual(.dark, state.activeConfig().ui.color_scheme);
+
+    // Keyboard: focus Auto segment, Right twice -> Light segment, Enter -> .light, then Back/Click Auto -> .auto.
+    state.focused = .{ .key_segment = .{ .key = cs_idx, .idx = 0 } };
+    try testing.expect(settings.update(&state, .{ .key = .{ .key = .right } }));
+    try testing.expectEqual(settings.Target{ .key_segment = .{ .key = cs_idx, .idx = 1 } }, state.focused);
+    try testing.expect(settings.update(&state, .{ .key = .{ .key = .right } }));
+    try testing.expectEqual(settings.Target{ .key_segment = .{ .key = cs_idx, .idx = 2 } }, state.focused);
+    try testing.expect(settings.update(&state, .{ .key = .{ .key = .enter } }));
+    try testing.expectEqual(.light, state.activeConfig().ui.color_scheme);
+
+    _ = settings.update(&state, .{ .pointer = .{ .id = auto_id } });
+    _ = settings.update(&state, .{ .press = auto_id });
+    try testing.expect(settings.update(&state, .release));
+    try testing.expectEqual(.auto, state.activeConfig().ui.color_scheme);
+}

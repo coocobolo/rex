@@ -27,6 +27,7 @@ const toggle = kit.toggle;
 const select = kit.select;
 const slider = kit.slider;
 const input = kit.input;
+const tooltip = kit.tooltip;
 const Theme = kit.Theme;
 const Tree = kit.tree.Tree;
 const Id = kit.tree.Id;
@@ -598,6 +599,7 @@ const ControlKind = enum {
     duration,
     stepper,
     select,
+    segmented,
     enum_set,
     list,
     color,
@@ -605,6 +607,7 @@ const ControlKind = enum {
 };
 
 fn controlKind(comptime key: keys.Key) ControlKind {
+    if (key.section == .ui and std.mem.eql(u8, key.name, "color_scheme")) return .segmented;
     if (key.kind == .theme or key.kind == .font_weight) return .select;
     if (key.kind == .fraction) return .slider;
     if (key.kind == .duration) return .duration;
@@ -631,6 +634,7 @@ pub const Target = union(enum) {
     key_switch: u16,
     key_slider: u16,
     key_select: u16,
+    key_segment: struct { key: u16, idx: u8 },
     select_choice: usize,
     key_checkbox: struct { key: u16, bit: u8 },
     key_input: u16,
@@ -667,6 +671,10 @@ fn incId(idx: u16) Id {
 
 fn selectId(idx: u16) Id {
     return Id.of("settings.select").item(idx);
+}
+
+fn segmentId(idx: u16, seg: usize) Id {
+    return Id.of("settings.segment").item(@as(u32, idx) * 8 + @as(u32, @intCast(seg)));
 }
 
 fn choiceId(idx: usize) Id {
@@ -1220,6 +1228,28 @@ fn handleKey(state: *State, press: host.KeyPress) bool {
             },
             else => {},
         },
+        .key_segment => |seg| switch (press.key) {
+            .enter, .space => return activate(state, .{ .key_segment = seg }),
+            .left => {
+                if (seg.idx > 0) {
+                    state.focused = .{ .key_segment = .{ .key = seg.key, .idx = seg.idx - 1 } };
+                    ensureFocusedVisible(state);
+                    return true;
+                }
+            },
+            .right => {
+                if (@as(usize, seg.idx) + 1 < row_infos[seg.key].display_labels.len) {
+                    state.focused = .{ .key_segment = .{ .key = seg.key, .idx = seg.idx + 1 } };
+                    ensureFocusedVisible(state);
+                    return true;
+                }
+            },
+            .escape => {
+                state.focused = .none;
+                return true;
+            },
+            else => {},
+        },
         .ansi_colors_toggle => switch (press.key) {
             .enter, .space => return activate(state, .ansi_colors_toggle),
             .escape => {
@@ -1260,43 +1290,68 @@ fn handleKey(state: *State, press: host.KeyPress) bool {
     return moved;
 }
 
-fn pageFocusTargets(page: Page, ansi_open: bool, out: []Target) usize {
+const max_section_count = @typeInfo(keys.Section).@"enum".fields.len;
+
+fn pageSections(page: Page, out: *[max_section_count]keys.Section) []const keys.Section {
+    var seen = std.EnumSet(keys.Section).initEmpty();
     var count: usize = 0;
-    var ansi_toggle_added = false;
     for (row_infos, 0..) |info, i| {
         const idx: u16 = @intCast(i);
-        if (keys.availableHere(idx) and info.page == page) {
-            if (info.is_ansi_color) {
-                if (!ansi_toggle_added) {
-                    out[count] = .ansi_colors_toggle;
-                    count += 1;
-                    ansi_toggle_added = true;
+        if (keys.availableHere(idx) and info.page == page and !seen.contains(info.display_section)) {
+            seen.insert(info.display_section);
+            out[count] = info.display_section;
+            count += 1;
+        }
+    }
+    return out[0..count];
+}
+
+fn pageFocusTargets(page: Page, ansi_open: bool, out: []Target) usize {
+    var count: usize = 0;
+    var sec_buf: [max_section_count]keys.Section = undefined;
+    for (pageSections(page, &sec_buf)) |sec| {
+        var ansi_toggle_added = false;
+        for (row_infos, 0..) |info, i| {
+            const idx: u16 = @intCast(i);
+            if (keys.availableHere(idx) and info.page == page and info.display_section == sec) {
+                if (info.is_ansi_color) {
+                    if (!ansi_toggle_added) {
+                        out[count] = .ansi_colors_toggle;
+                        count += 1;
+                        ansi_toggle_added = true;
+                    }
+                    if (!ansi_open) continue;
                 }
-                if (!ansi_open) continue;
-            }
-            switch (info.kind) {
-                .toggle => {
-                    out[count] = .{ .key_switch = idx };
-                    count += 1;
-                },
-                .slider => {
-                    out[count] = .{ .key_slider = idx };
-                    count += 1;
-                },
-                .select, .enum_set => {
-                    out[count] = .{ .key_select = idx };
-                    count += 1;
-                },
-                .duration => {
-                    out[count] = .{ .key_input = idx };
-                    count += 1;
-                    out[count] = .{ .key_select = idx };
-                    count += 1;
-                },
-                .stepper, .text_input, .list, .color => {
-                    out[count] = .{ .key_input = idx };
-                    count += 1;
-                },
+                switch (info.kind) {
+                    .toggle => {
+                        out[count] = .{ .key_switch = idx };
+                        count += 1;
+                    },
+                    .slider => {
+                        out[count] = .{ .key_slider = idx };
+                        count += 1;
+                    },
+                    .select, .enum_set => {
+                        out[count] = .{ .key_select = idx };
+                        count += 1;
+                    },
+                    .segmented => {
+                        for (0..info.display_labels.len) |seg_i| {
+                            out[count] = .{ .key_segment = .{ .key = idx, .idx = @intCast(seg_i) } };
+                            count += 1;
+                        }
+                    },
+                    .duration => {
+                        out[count] = .{ .key_input = idx };
+                        count += 1;
+                        out[count] = .{ .key_select = idx };
+                        count += 1;
+                    },
+                    .stepper, .text_input, .list, .color => {
+                        out[count] = .{ .key_input = idx };
+                        count += 1;
+                    },
+                }
             }
         }
     }
@@ -1350,6 +1405,7 @@ fn targetId(target: Target) ?Id {
         .key_switch => |idx| switchId(idx),
         .key_slider => |idx| sliderId(idx),
         .key_select => |idx| selectId(idx),
+        .key_segment => |seg| segmentId(seg.key, seg.idx),
         .key_input => |idx| inputId(idx),
         .color_reset => |idx| colorResetId(idx),
         .stepper_dec => |idx| decId(idx),
@@ -1421,6 +1477,11 @@ fn activate(state: *State, target: Target) bool {
                 .highlight = highlight,
                 .top = fitPopupTop(highlight, count, highlight -| (popup_max_items / 2)),
             };
+            return true;
+        },
+        .key_segment => |seg| {
+            if (!std.meta.eql(state.focused, target)) blurFocused(state);
+            chooseSelect(state, seg.key, seg.idx);
             return true;
         },
         .select_choice => |choice| {
@@ -1509,6 +1570,13 @@ fn over(state: *const State, id: Id) Target {
             .toggle => if (id == switchId(idx)) return .{ .key_switch = idx },
             .slider => if (id == sliderId(idx)) return .{ .key_slider = idx },
             .select => if (id == selectId(idx)) return .{ .key_select = idx },
+            .segmented => {
+                for (0..info.display_labels.len) |seg_i| {
+                    if (id == segmentId(idx, seg_i)) {
+                        return .{ .key_segment = .{ .key = idx, .idx = @intCast(seg_i) } };
+                    }
+                }
+            },
             .duration => {
                 if (id == inputId(idx)) return .{ .key_input = idx };
                 if (id == selectId(idx)) return .{ .key_select = idx };
@@ -1640,7 +1708,7 @@ fn chooseSelect(state: *State, idx: u16, choice: usize) void {
         }
         return;
     }
-    if (info.kind == .select and choice < info.labels.len) {
+    if ((info.kind == .select or info.kind == .segmented) and choice < info.labels.len) {
         commitValue(state, idx, info.labels[choice]);
     }
 }
@@ -1971,6 +2039,17 @@ pub fn view(state: *const State, tree: *Tree, theme: *const Theme) kit.tree.Erro
 
     if (state.open_select) |sel| {
         try viewSelectPopup(state, tree, theme, sel.key, sel.highlight);
+    } else if (state.hover == .key_segment) {
+        const seg = state.hover.key_segment;
+        const info = row_infos[seg.key];
+        if (seg.idx < info.display_labels.len) {
+            const card = try tooltip.open(tree, theme, segmentId(seg.key, seg.idx));
+            _ = try tree.text(info.display_labels[seg.idx], .{
+                .color = theme.foreground,
+                .style = .xs,
+            });
+            tooltip.close(tree, card);
+        }
     }
 }
 
@@ -2001,6 +2080,7 @@ fn viewScrollbar(state: *const State, tree: *Tree, theme: *const Theme) kit.tree
 
 const RowInfo = struct {
     section: keys.Section,
+    display_section: keys.Section,
     page: ?Page,
     meta: KeyMeta,
     kind: ControlKind,
@@ -2037,7 +2117,7 @@ fn comptimeKeyLabels(comptime key: keys.Key, comptime display: bool) []const []c
         const final = list;
         return &final;
     }
-    if (kind != .select) return &.{};
+    if (kind != .select and kind != .segmented) return &.{};
     if (key.kind == .theme) {
         comptime var list: [keys.theme_preset_list.len][]const u8 = undefined;
         list[0] = if (display) "Default" else "default";
@@ -2080,12 +2160,18 @@ fn comptimeKeyLabels(comptime key: keys.Key, comptime display: bool) []const []c
     }
 }
 
+fn displaySection(comptime key: keys.Key) keys.Section {
+    if (key.section == .ui and std.mem.eql(u8, key.name, "color_scheme")) return .root;
+    return key.section;
+}
+
 const row_infos: [keys.table.len]RowInfo = blk: {
     @setEvalBranchQuota(keys.eval_branch_quota);
     var table: [keys.table.len]RowInfo = undefined;
     for (keys.table, 0..) |key, i| {
         table[i] = .{
             .section = key.section,
+            .display_section = displaySection(key),
             .page = pageForSection(key.section),
             .meta = keyMeta(key.section, key.name),
             .kind = controlKind(key),
@@ -2261,54 +2347,53 @@ fn viewAnsiCollapsible(
 
 fn viewPage(state: *const State, tree: *Tree, theme: *const Theme, page: Page) kit.tree.Error!void {
     const cfg = state.activeConfig();
-    var current_section: ?keys.Section = null;
-    var section_open: ?kit.tree.Index = null;
-    var first_in_section = true;
-    var ansi_drawn = false;
+    var sec_buf: [max_section_count]keys.Section = undefined;
+    for (pageSections(page, &sec_buf)) |sec| {
+        var section_open: ?kit.tree.Index = null;
+        var first_in_section = true;
+        var ansi_drawn = false;
 
-    for (row_infos, 0..) |info, i| {
-        const idx: u16 = @intCast(i);
-        if (keys.availableHere(idx) and info.page == page) {
-            if (info.is_ansi_color) {
-                if (!ansi_drawn) {
-                    if (section_open) |open_box| {
-                        tree.close(open_box);
-                        section_open = null;
+        for (row_infos, 0..) |info, i| {
+            const idx: u16 = @intCast(i);
+            if (keys.availableHere(idx) and info.page == page and info.display_section == sec) {
+                if (info.is_ansi_color) {
+                    if (!ansi_drawn) {
+                        if (section_open) |open_box| {
+                            tree.close(open_box);
+                            section_open = null;
+                        }
+                        try viewAnsiCollapsible(state, tree, theme, cfg);
+                        ansi_drawn = true;
                     }
-                    try viewAnsiCollapsible(state, tree, theme, cfg);
-                    ansi_drawn = true;
+                    continue;
                 }
-                continue;
+                if (section_open == null) {
+                    _ = try tree.text(section_titles.get(sec), .{
+                        .color = theme.foreground,
+                        .style = .sm_medium,
+                    });
+                    section_open = try tree.open(.{
+                        .width = .fill,
+                        .padding = .all(14),
+                        .gap = 12,
+                        .fill = theme.card,
+                        .border = theme.border,
+                        .border_width = Theme.border_width,
+                        .radius = Theme.radius_md,
+                    });
+                } else if (!first_in_section) {
+                    _ = try tree.leaf(.{
+                        .width = .fill,
+                        .height = .{ .fixed = 1 },
+                        .fill = theme.border,
+                    });
+                }
+                first_in_section = false;
+                try viewKeyRow(state, tree, theme, info, idx, cfg);
             }
-            if (current_section == null or current_section.? != info.section) {
-                if (section_open) |open_box| tree.close(open_box);
-                current_section = info.section;
-                first_in_section = true;
-                _ = try tree.text(section_titles.get(info.section), .{
-                    .color = theme.foreground,
-                    .style = .sm_medium,
-                });
-                section_open = try tree.open(.{
-                    .width = .fill,
-                    .padding = .all(14),
-                    .gap = 12,
-                    .fill = theme.card,
-                    .border = theme.border,
-                    .border_width = Theme.border_width,
-                    .radius = Theme.radius_md,
-                });
-            } else if (!first_in_section) {
-                _ = try tree.leaf(.{
-                    .width = .fill,
-                    .height = .{ .fixed = 1 },
-                    .fill = theme.border,
-                });
-            }
-            first_in_section = false;
-            try viewKeyRow(state, tree, theme, info, idx, cfg);
         }
+        if (section_open) |open_box| tree.close(open_box);
     }
-    if (section_open) |open_box| tree.close(open_box);
 }
 
 const pct_labels: [101][]const u8 = blk: {
@@ -2325,11 +2410,12 @@ fn pctLabel(ratio: f32) []const u8 {
     return pct_labels[@min(pct, 100)];
 }
 
-const GroupEdge = enum { left, right };
+const GroupEdge = enum { left, middle, right };
 
 fn openGroupSegment(tree: *Tree, theme: *const Theme, options: struct {
     id: Id,
     edge: GroupEdge,
+    fill: ?Theme.Color = null,
     hovered: bool = false,
     disabled: bool = false,
     width: kit.tree.Size = .fit,
@@ -2343,33 +2429,52 @@ fn openGroupSegment(tree: *Tree, theme: *const Theme, options: struct {
         .cross = .center,
         .pointer = if (options.disabled) .arrow else .hand,
     });
-    if (options.hovered and !options.disabled) {
-        const bg = theme.accent;
-        // Round all corners concentrically with the outer border, then square
-        // off the half adjacent to the group's inner divider.
-        _ = try tree.leaf(.{
-            .overlay = true,
-            .width = .fill,
-            .height = .fill,
-            .fill = bg,
-            .radius = Theme.radius_md - Theme.border_width,
-        });
-        const mask = try tree.open(.{
-            .overlay = true,
-            .axis = .row,
-            .width = .fill,
-            .height = .fill,
-        });
-        if (options.edge == .left) {
-            _ = try tree.leaf(.{ .width = .fill, .height = .fill });
-            _ = try tree.leaf(.{ .width = .fill, .height = .fill, .fill = bg });
+    const bg: ?Theme.Color = if (options.disabled)
+        null
+    else
+        options.fill orelse if (options.hovered) theme.accent else null;
+    if (bg) |fill_color| {
+        if (options.edge == .middle) {
+            _ = try tree.leaf(.{
+                .overlay = true,
+                .width = .fill,
+                .height = .fill,
+                .fill = fill_color,
+            });
         } else {
-            _ = try tree.leaf(.{ .width = .fill, .height = .fill, .fill = bg });
-            _ = try tree.leaf(.{ .width = .fill, .height = .fill });
+            // Round all corners concentrically with the outer border, then square
+            // off the half adjacent to the group's inner divider.
+            _ = try tree.leaf(.{
+                .overlay = true,
+                .width = .fill,
+                .height = .fill,
+                .fill = fill_color,
+                .radius = Theme.radius_md - Theme.border_width,
+            });
+            const mask = try tree.open(.{
+                .overlay = true,
+                .axis = .row,
+                .width = .fill,
+                .height = .fill,
+            });
+            if (options.edge == .left) {
+                _ = try tree.leaf(.{ .width = .fill, .height = .fill });
+                _ = try tree.leaf(.{ .width = .fill, .height = .fill, .fill = fill_color });
+            } else {
+                _ = try tree.leaf(.{ .width = .fill, .height = .fill, .fill = fill_color });
+                _ = try tree.leaf(.{ .width = .fill, .height = .fill });
+            }
+            tree.close(mask);
         }
-        tree.close(mask);
     }
     return seg;
+}
+
+fn segmentIcon(token: []const u8) u21 {
+    if (std.mem.eql(u8, token, "auto")) return kit.icons.monitor;
+    if (std.mem.eql(u8, token, "dark")) return kit.icons.moon;
+    if (std.mem.eql(u8, token, "light")) return kit.icons.sun;
+    return kit.icons.none;
 }
 
 fn stepperSegment(tree: *Tree, theme: *const Theme, options: struct {
@@ -2715,6 +2820,75 @@ fn viewKeyRow(
                 .focused = std.meta.eql(state.focused, Target{ .key_select = idx }),
             });
         },
+        .segmented => {
+            const current_idx = currentSelectIndex(idx, cfg);
+            const count = info.display_labels.len;
+            var hovered_any = false;
+            var focused_any = false;
+            for (0..count) |seg_i| {
+                const seg_target: Target = .{ .key_segment = .{ .key = idx, .idx = @intCast(seg_i) } };
+                if (std.meta.eql(state.hover, seg_target)) hovered_any = true;
+                if (std.meta.eql(state.focused, seg_target)) focused_any = true;
+            }
+            const colors = groupColors(theme, false, focused_any, hovered_any);
+
+            const ring = try tree.open(.{
+                .padding = .all(Theme.ring_width),
+                .border = colors.ring,
+                .border_width = Theme.ring_width,
+                .radius = Theme.radius_md + Theme.ring_width,
+            });
+            const compound = try tree.open(.{
+                .axis = .row,
+                .height = .{ .fixed = Theme.control_sm },
+                .padding = .all(Theme.border_width),
+                .cross = .center,
+                .fill = theme.background,
+                .border = colors.border,
+                .border_width = Theme.border_width,
+                .radius = Theme.radius_md,
+            });
+            for (0..count) |seg_i| {
+                if (seg_i > 0) {
+                    _ = try tree.leaf(.{
+                        .width = .{ .fixed = 1 },
+                        .height = .fill,
+                        .fill = theme.border,
+                    });
+                }
+                const seg_target: Target = .{ .key_segment = .{ .key = idx, .idx = @intCast(seg_i) } };
+                const is_selected = if (current_idx) |cur| cur == seg_i else false;
+                const is_hovered = std.meta.eql(state.hover, seg_target);
+                const is_focused = std.meta.eql(state.focused, seg_target);
+                const edge: GroupEdge = if (seg_i == 0)
+                    .left
+                else if (seg_i + 1 == count)
+                    .right
+                else
+                    .middle;
+                const seg_fill: ?Theme.Color = if (is_selected)
+                    theme.accent
+                else if (is_hovered or is_focused)
+                    theme.muted
+                else
+                    null;
+
+                const cell = try openGroupSegment(tree, theme, .{
+                    .id = segmentId(idx, seg_i),
+                    .edge = edge,
+                    .fill = seg_fill,
+                    .width = .{ .fixed = Theme.control_sm },
+                });
+                _ = try tree.icon(.{
+                    .codepoint = segmentIcon(info.labels[seg_i]),
+                    .color = if (is_selected or is_hovered or is_focused) theme.foreground else theme.muted_foreground,
+                    .size = Theme.icon,
+                });
+                tree.close(cell);
+            }
+            tree.close(compound);
+            tree.close(ring);
+        },
         .enum_set => {
             const is_open = if (state.open_select) |sel| sel.key == idx else false;
             try select.trigger(tree, theme, .{
@@ -3026,7 +3200,7 @@ fn selectChoiceCount(key_idx: u16) usize {
 fn currentSelectIndex(key_idx: u16, cfg: *const Config) ?usize {
     @setEvalBranchQuota(keys.eval_branch_quota);
     inline for (keys.table, 0..) |key, i| {
-        if (comptime controlKind(key) == .select) {
+        if (comptime controlKind(key) == .select or controlKind(key) == .segmented) {
             if (i == key_idx) {
                 const val = keys.fieldValue(Config, key.field, cfg);
                 if (key.kind == .theme) {

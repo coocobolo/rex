@@ -17,3 +17,6 @@ skip-forward
 ellipsis
 rotate-ccw
 external-link
+monitor
+moon
+sun

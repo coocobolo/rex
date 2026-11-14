@@ -21,3 +21,6 @@ pub const skip_forward = 0xE160;
 pub const ellipsis = 0xE0B6;
 pub const rotate_ccw = 0xE148;
 pub const external_link = 0xE0B9;
+pub const monitor = 0xE11D;
+pub const moon = 0xE11E;
+pub const sun = 0xE178;
