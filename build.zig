@@ -60,19 +60,14 @@ pub fn build(b: *std.Build) !void {
     });
     freetype_lib.root_module.addCSourceFiles(.{
         .root = freetype_dep.path(""),
-        .files = &freetype_base_srcs, // mirrors CMakeLists.txt's BASE_SRCS list (only includes whats needed)
+        .files = &freetype_base_srcs,
         .flags = &.{
             "-DFT2_BUILD_LIBRARY",
-            "-DFT_CONFIG_OPTION_USE_PNG",
-            // FT_CONFIG_OPTION_USE_ZLIB is on in ftoption.h; defining it
-            // here as well is a macro redefinition.
-            // Pair kerning from GPOS, for the UI font: Inter has no
-            // legacy `kern` table. Only `FT_Get_Kerning` reads it, and
-            // only plain x-advance pairs, which Inter's static files use
-            // and its variable file does not.
-            "-DTT_CONFIG_OPTION_GPOS_KERNING",
+            "-DFT_CONFIG_OPTIONS_H=\"rex_ftoption.h\"",
+            "-DFT_CONFIG_MODULES_H=\"rex_ftmodule.h\"",
         },
     });
+    freetype_lib.root_module.addIncludePath(b.path("vendor/freetype"));
     freetype_lib.root_module.addIncludePath(freetype_dep.path("include"));
     freetype_lib.root_module.addIncludePath(
         freetype_dep.path("src"),
@@ -106,9 +101,8 @@ pub fn build(b: *std.Build) !void {
     });
     mod.addIncludePath(freetype_dep.path("include"));
     mod.linkLibrary(freetype_lib);
-    // FreeType is built with FT_CONFIG_OPTION_USE_ZLIB and
-    // FT_CONFIG_OPTION_USE_PNG, so its final consumer links both.
-    mod.linkSystemLibrary("z", .{});
+    // FreeType is built with FT_CONFIG_OPTION_USE_PNG, so its final
+    // consumer links libpng.
     mod.linkSystemLibrary("png", .{});
     mod.addIncludePath(glad_dir.path(b, "include"));
     mod.linkLibrary(glad_lib);
@@ -586,48 +580,52 @@ const Tests = struct {
     }
 };
 
+// Subset of upstream CMakeLists.txt BASE_SRCS needed by Rex (SFNT/TrueType,
+// CFF/OpenType, variable axes, PNG color bitmaps, auto-hinter, smooth raster).
+// Re-enable any omitted component here and in vendor/freetype/rex_ftmodule.h
+// or vendor/freetype/rex_ftoption.h.
 const freetype_base_srcs = [_][]const u8{
     "src/autofit/autofit.c",
     "src/base/ftbase.c",
-    "src/base/ftbbox.c",
-    "src/base/ftbdf.c",
+    // "src/base/ftbbox.c",
+    // "src/base/ftbdf.c",
     "src/base/ftbitmap.c",
-    "src/base/ftcid.c",
-    "src/base/ftfstype.c",
-    "src/base/ftgasp.c",
-    "src/base/ftglyph.c",
-    "src/base/ftgxval.c",
+    // "src/base/ftcid.c",
+    // "src/base/ftfstype.c",
+    // "src/base/ftgasp.c",
+    // "src/base/ftglyph.c",
+    // "src/base/ftgxval.c",
     "src/base/ftinit.c",
     "src/base/ftmm.c",
-    "src/base/ftotval.c",
-    "src/base/ftpatent.c",
-    "src/base/ftpfr.c",
-    "src/base/ftstroke.c",
-    "src/base/ftsynth.c",
-    "src/base/fttype1.c",
-    "src/base/ftwinfnt.c",
+    // "src/base/ftotval.c",
+    // "src/base/ftpatent.c",
+    // "src/base/ftpfr.c",
+    // "src/base/ftstroke.c",
+    // "src/base/ftsynth.c",
+    // "src/base/fttype1.c",
+    // "src/base/ftwinfnt.c",
 
-    "src/bdf/bdf.c",
-    "src/bzip2/ftbzip2.c",
-    "src/cache/ftcache.c",
+    // "src/bdf/bdf.c",
+    // "src/bzip2/ftbzip2.c",
+    // "src/cache/ftcache.c",
     "src/cff/cff.c",
-    "src/cid/type1cid.c",
-    "src/gzip/ftgzip.c",
-    "src/lzw/ftlzw.c",
-    "src/pcf/pcf.c",
-    "src/pfr/pfr.c",
+    // "src/cid/type1cid.c",
+    // "src/gzip/ftgzip.c",
+    // "src/lzw/ftlzw.c",
+    // "src/pcf/pcf.c",
+    // "src/pfr/pfr.c",
     "src/psaux/psaux.c",
     "src/pshinter/pshinter.c",
     "src/psnames/psnames.c",
-    "src/raster/raster.c",
-    "src/sdf/sdf.c",
+    // "src/raster/raster.c",
+    // "src/sdf/sdf.c",
     "src/sfnt/sfnt.c",
     "src/smooth/smooth.c",
-    "src/svg/svg.c",
+    // "src/svg/svg.c",
     "src/truetype/truetype.c",
-    "src/type1/type1.c",
-    "src/type42/type42.c",
-    "src/winfonts/winfnt.c",
+    // "src/type1/type1.c",
+    // "src/type42/type42.c",
+    // "src/winfonts/winfnt.c",
 
     "src/base/ftdebug.c",
     "src/base/ftsystem.c",
