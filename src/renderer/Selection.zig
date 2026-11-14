@@ -3,6 +3,7 @@
 
 const std = @import("std");
 
+const gl = @import("gl.zig");
 const Shader = @import("Shader.zig");
 const Dimension = @import("dimension.zig").Dimension;
 const Kind = @import("../Selection.zig").Kind;
@@ -136,6 +137,9 @@ pub const Option = struct {
     /// 0.0 = sharp corners.
     radius: f32 = 3.0,
 
+    /// Dual Kawase backdrop blur radius behind selection glass (0 = disabled).
+    blur_radius: u8 = 0,
+
     pub const default: Option = .{};
 };
 
@@ -170,11 +174,14 @@ pub fn upload(self: *Selection, instances: []const Instance) void {
 }
 
 /// Draws the selection highlight for the current frame. `color_override`
-/// replaces the RGB of `Option.fill_color`.
+/// replaces the RGB of `Option.fill_color`. When `backdrop_tex` is non-null,
+/// the fill samples the blurred scene texture at screen coordinates for frosted
+/// glass shading.
 pub fn draw(
     self: *Selection,
     instances_len: usize,
     color_override: ?[3]u8,
+    backdrop_tex: ?gl.GLuint,
     dimension: struct {
         cell: Dimension(f32),
         frame: Dimension(f32),
@@ -211,5 +218,18 @@ pub fn draw(
     );
     self.shader.set1f("u_border_width", self.option.border_width);
     self.shader.set1ui("u_border_style", @intFromEnum(self.option.border_style));
+    if (backdrop_tex) |tex| {
+        gl.activeTexture(gl.TEXTURE1);
+        gl.bindTexture(gl.TEXTURE_2D, tex);
+        self.shader.set1ui("u_has_backdrop", 1);
+        self.shader.set1i("u_backdrop", 1);
+    } else {
+        self.shader.set1ui("u_has_backdrop", 0);
+    }
     self.buffer.draw(instances_len);
+    if (backdrop_tex != null) {
+        gl.activeTexture(gl.TEXTURE1);
+        gl.bindTexture(gl.TEXTURE_2D, 0);
+        gl.activeTexture(gl.TEXTURE0);
+    }
 }

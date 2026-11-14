@@ -164,6 +164,7 @@ pub const Selection = struct {
     radius: f32 = 3.0,
     border_color: Rgb = .{ .r = 0x66, .g = 0x66, .b = 0x66 },
     border_style: selection_types.BorderStyle = .unified,
+    blur_radius: u8 = 0,
 
     pub const default: Selection = .{ .classifier = .default };
 };

@@ -35,7 +35,8 @@ void main() {
     sum += texture(u_texture, v_uv + vec2(-d.x, -d.y));
 
     // Normalize: 4.0 + 4*2.0 + 4*1.0 = 16.0
-    vec3 blurred = (sum * 0.0625).rgb;
+    vec4 avg = sum * 0.0625;
+    vec3 blurred = avg.rgb;
 
     if (u_is_final != 0) {
         // Vibrancy preservation: subtle 15% saturation retention
@@ -49,6 +50,6 @@ void main() {
         float noise = (dither(gl_FragCoord.xy) - 0.5) / 255.0;
         frag_color = vec4(clamp(tinted + vec3(noise), 0.0, 1.0), 1.0);
     } else {
-        frag_color = vec4(blurred, 1.0);
+        frag_color = avg;
     }
 }

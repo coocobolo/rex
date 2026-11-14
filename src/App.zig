@@ -1484,7 +1484,7 @@ pub fn reloadConfig(self: *App) void {
     // Live update renderer background color, alpha, and terminal theme
     const resolved_theme = self.config.resolvedTheme();
     self.background_color = normalizedBackground(resolved_theme.background, self.config.window.background.alpha);
-    self.renderer.selection.option = rendererSelectionOption(self.config.selection);
+    self.renderer.setSelectionOption(rendererSelectionOption(self.config.selection));
     if (self.kit) |kit| {
         kit.configure(self.config.ui);
         if (!self.config.window.banner.enabled) {
@@ -3441,6 +3441,7 @@ fn rendererSelectionOption(sel: Config.Selection) renderer_mod.Selection.Option 
     out.border_width = sel.border_width;
     out.border_style = sel.border_style;
     out.radius = sel.radius;
+    out.blur_radius = sel.blur_radius;
     return out;
 }
 
@@ -3466,6 +3467,7 @@ test "rendererSelectionOption: maps Config.Selection onto renderer Selection.Opt
         .border_width = 2.0,
         .border_style = .split,
         .radius = 6.0,
+        .blur_radius = 12,
     };
     const mapped = rendererSelectionOption(custom);
     try testing.expectApproxEqAbs(@as(f32, 0.75), mapped.fill_color[3], 1e-6);
@@ -3476,6 +3478,7 @@ test "rendererSelectionOption: maps Config.Selection onto renderer Selection.Opt
     try testing.expectApproxEqAbs(@as(f32, 2.0), mapped.border_width, 1e-6);
     try testing.expectEqual(renderer_mod.Selection.BorderStyle.split, mapped.border_style);
     try testing.expectApproxEqAbs(@as(f32, 6.0), mapped.radius, 1e-6);
+    try testing.expectEqual(@as(u8, 12), mapped.blur_radius);
 }
 
 test "normalizedBackground: scales 0..255 Rgb channels into 0..1 GL clearColor floats" {

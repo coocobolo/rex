@@ -40,6 +40,7 @@ pub fn Renderer(comptime option: TerminalOption) type {
 
         background: Background,
         blur: Blur,
+        selection_blur: Blur,
         cell: Cell,
         cell_ascender: i16,
         cell_dimension: Dimension(f32),
@@ -77,9 +78,13 @@ pub fn Renderer(comptime option: TerminalOption) type {
             var blur = try Blur.init();
             errdefer blur.deinit();
 
+            var selection_blur = try Blur.init();
+            errdefer selection_blur.deinit();
+
             var self: Self = .{
                 .background = background,
                 .blur = blur,
+                .selection_blur = selection_blur,
                 .cell = cell,
                 .cell_ascender = undefined,
                 .cell_dimension = undefined,
@@ -105,6 +110,17 @@ pub fn Renderer(comptime option: TerminalOption) type {
             self.blur.invalidate();
         }
 
+        /// Updates selection appearance options and invalidates cached blur
+        /// pyramids when needed.
+        pub fn setSelectionOption(self: *Self, opt: Selection.Option) void {
+            if (std.meta.eql(self.selection.option, opt)) return;
+            if (self.selection.option.blur_radius != opt.blur_radius) {
+                self.selection_blur.invalidate();
+            }
+            self.selection.option = opt;
+            self.blur.invalidate();
+        }
+
         /// Takes the cell size and baseline from the font, and resolves
         /// the decoration lines from the font and the decoration option.
         /// Called at init and whenever the font size changes.
@@ -115,10 +131,13 @@ pub fn Renderer(comptime option: TerminalOption) type {
                 .height = @floatFromInt(font.cell_height),
             };
             self.decoration_metrics = .resolve(font, self.decoration.option);
+            self.blur.invalidate();
+            self.selection_blur.invalidate();
         }
 
         pub fn deinit(self: *Self) void {
             self.blur.deinit();
+            self.selection_blur.deinit();
             self.cell.deinit();
             self.decoration.deinit();
             self.ink_mask.deinit();
@@ -172,33 +191,10 @@ pub fn Renderer(comptime option: TerminalOption) type {
                 self.blur.compositeCached(fb_w, fb_h, self.modal_blur_radius, 0, scrimColor(background_color));
                 return;
             }
-            if (blur_active) {
-                self.blur.beginScene(fb_w, fb_h);
-            }
 
             gl.enable(gl.BLEND);
-            const r_in = background_color[0] * self.color_tint[0];
-            const g_in = background_color[1] * self.color_tint[1];
-            const b_in = background_color[2] * self.color_tint[2];
-            const luma = r_in * 0.2126 + g_in * 0.7152 + b_in * 0.0722;
-            const r_out = r_in + (luma - r_in) * self.grayscale;
-            const g_out = g_in + (luma - g_in) * self.grayscale;
-            const b_out = b_in + (luma - b_in) * self.grayscale;
-            gl.clearColor(
-                r_out,
-                g_out,
-                b_out,
-                background_color[3],
-            );
-            gl.clear(gl.COLOR_BUFFER_BIT);
-            gl.blendFuncSeparate(
-                gl.SRC_ALPHA,
-                gl.ONE_MINUS_SRC_ALPHA,
-                gl.ONE,
-                gl.ONE_MINUS_SRC_ALPHA,
-            );
 
-            // Pass 1: background quads (spliced sub-buffer upload when dirty range is bounded)
+            // Upload dirty GPU instance buffers once before any offscreen capture pass.
             if (frame.dirty.cells or frame.dirty.selection) {
                 if (frame.bg_spliced_range) |spliced| {
                     self.background.uploadRange(frame.background_instances, spliced.offset, spliced.count);
@@ -206,30 +202,7 @@ pub fn Renderer(comptime option: TerminalOption) type {
                     self.background.upload(frame.background_instances);
                 }
             }
-            self.background.draw(
-                frame.background_instances.len,
-                .{
-                    .cell = self.cell_dimension,
-                    .frame = frame_dimension,
-                },
-                background_color[3],
-                self.grayscale,
-                self.color_tint,
-            );
-
-            // Pass: 1.5: selection rendering
             if (frame.dirty.selection) self.selection.upload(frame.selection_instances);
-            self.selection.draw(
-                frame.selection_instances.len,
-                selection_bg,
-                .{
-                    .cell = self.cell_dimension,
-                    .frame = frame_dimension,
-                },
-            );
-
-            // Pass 2 and 3: decorations and glyphs, in the configured order.
-            // A spliced range is a sub-buffer upload; a null range uploads the stream.
             if (frame.dirty.cells) {
                 self.cell.uploadRanges(
                     frame.gray_instances,
@@ -243,6 +216,7 @@ pub fn Renderer(comptime option: TerminalOption) type {
                     self.decoration.upload(frame.decoration_instances);
                 }
             }
+
             const glyphs: Cell.DrawArgs = .{
                 .atlas = atlas,
                 .ascender = @floatFromInt(self.cell_ascender),
@@ -255,11 +229,57 @@ pub fn Renderer(comptime option: TerminalOption) type {
                 .grayscale = self.grayscale,
                 .color_tint = self.color_tint,
             };
+
+            // Compute ink mask before binding offscreen scene FBOs (InkMask.end binds FBO 0).
             const ink_mask = self.drawInkMask(frame, glyphs);
-            const decorations_over_text = self.decoration.option.order == .over_text;
-            if (!decorations_over_text) self.drawDecorations(frame, frame_dimension, ink_mask, cursor_state.blink_on, cursor_state.blink_rapid_on);
-            self.cell.draw(glyphs);
-            if (decorations_over_text) self.drawDecorations(frame, frame_dimension, ink_mask, cursor_state.blink_on, cursor_state.blink_rapid_on);
+
+            const selection_backdrop = self.prepareSelectionBackdrop(
+                frame,
+                frame_dimension,
+                fb_w,
+                fb_h,
+                background_color,
+                focused,
+                glyphs,
+                ink_mask,
+                cursor_state.blink_on,
+                cursor_state.blink_rapid_on,
+            );
+
+            if (blur_active) {
+                self.blur.beginScene(fb_w, fb_h);
+            } else {
+                gl.bindFramebuffer(gl.FRAMEBUFFER, 0);
+                gl.viewport(0, 0, @intCast(fb_w), @intCast(fb_h));
+            }
+
+            self.clearScene(background_color);
+
+            // Pass 1: background quads
+            self.background.draw(
+                frame.background_instances.len,
+                .{
+                    .cell = self.cell_dimension,
+                    .frame = frame_dimension,
+                },
+                background_color[3],
+                self.grayscale,
+                self.color_tint,
+            );
+
+            // Pass 1.5: selection rendering
+            self.selection.draw(
+                frame.selection_instances.len,
+                selection_bg,
+                selection_backdrop,
+                .{
+                    .cell = self.cell_dimension,
+                    .frame = frame_dimension,
+                },
+            );
+
+            // Pass 2 and 3: decorations and glyphs, in the configured order.
+            self.drawTextPasses(frame, frame_dimension, glyphs, ink_mask, cursor_state.blink_on, cursor_state.blink_rapid_on);
 
             // Pass 4: cursor
             if (frame.dirty.cursor) self.cursor.upload(frame.cursor_state);
@@ -297,6 +317,90 @@ pub fn Renderer(comptime option: TerminalOption) type {
                 );
                 self.blur.markCached(scene_key);
             }
+        }
+
+        fn clearScene(self: *const Self, background_color: [4]f32) void {
+            const r_in = background_color[0] * self.color_tint[0];
+            const g_in = background_color[1] * self.color_tint[1];
+            const b_in = background_color[2] * self.color_tint[2];
+            const luma = r_in * 0.2126 + g_in * 0.7152 + b_in * 0.0722;
+            const r_out = r_in + (luma - r_in) * self.grayscale;
+            const g_out = g_in + (luma - g_in) * self.grayscale;
+            const b_out = b_in + (luma - b_in) * self.grayscale;
+            gl.clearColor(r_out, g_out, b_out, background_color[3]);
+            gl.clear(gl.COLOR_BUFFER_BIT);
+            gl.blendFuncSeparate(
+                gl.SRC_ALPHA,
+                gl.ONE_MINUS_SRC_ALPHA,
+                gl.ONE,
+                gl.ONE_MINUS_SRC_ALPHA,
+            );
+        }
+
+        fn drawTextPasses(
+            self: *Self,
+            frame: FrameData,
+            frame_dimension: Dimension(f32),
+            glyphs: Cell.DrawArgs,
+            ink_mask: ?*const InkMask,
+            blink_on: bool,
+            blink_rapid_on: bool,
+        ) void {
+            const decorations_over_text = self.decoration.option.order == .over_text;
+            if (!decorations_over_text) self.drawDecorations(frame, frame_dimension, ink_mask, blink_on, blink_rapid_on);
+            self.cell.draw(glyphs);
+            if (decorations_over_text) self.drawDecorations(frame, frame_dimension, ink_mask, blink_on, blink_rapid_on);
+        }
+
+        fn prepareSelectionBackdrop(
+            self: *Self,
+            frame: FrameData,
+            frame_dimension: Dimension(f32),
+            fb_w: u32,
+            fb_h: u32,
+            background_color: [4]f32,
+            focused: bool,
+            glyphs: Cell.DrawArgs,
+            ink_mask: ?*const InkMask,
+            blink_on: bool,
+            blink_rapid_on: bool,
+        ) ?gl.GLuint {
+            const blur_radius = self.selection.option.blur_radius;
+            if (blur_radius == 0 or frame.selection_instances.len == 0) {
+                self.selection_blur.invalidate();
+                return null;
+            }
+
+            const key: Blur.SceneKey = .{
+                .background = background_color,
+                .color_tint = self.color_tint,
+                .width = fb_w,
+                .height = fb_h,
+                .blur_radius = blur_radius,
+                .grayscale = self.grayscale,
+                .focused = focused,
+                .blink_rapid_on = blink_rapid_on,
+            };
+
+            if (frame.dirty.cells or frame.dirty.blink or !self.selection_blur.hasCachedPyramid(key)) {
+                self.selection_blur.beginScene(fb_w, fb_h);
+                self.clearScene(background_color);
+                self.background.draw(
+                    frame.background_instances.len,
+                    .{
+                        .cell = self.cell_dimension,
+                        .frame = frame_dimension,
+                    },
+                    background_color[3],
+                    self.grayscale,
+                    self.color_tint,
+                );
+                self.drawTextPasses(frame, frame_dimension, glyphs, ink_mask, blink_on, blink_rapid_on);
+                self.selection_blur.filterPyramid(blur_radius);
+                self.selection_blur.markCached(key);
+            }
+
+            return self.selection_blur.blurredTexture();
         }
 
         fn scrimColor(bg: [4]f32) [3]u8 {

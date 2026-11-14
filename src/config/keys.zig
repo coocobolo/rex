@@ -299,6 +299,7 @@ const tail_rows = [_]Key{
     .{ .section = .selection, .name = "border_width", .field = "selection.border_width", .bounds = .{ .min = 0, .max = 20 } },
     .{ .section = .selection, .name = "border_style", .field = "selection.border_style" },
     .{ .section = .selection, .name = "radius", .field = "selection.radius", .bounds = .{ .min = 0, .max = 20 } },
+    .{ .section = .selection, .name = "blur_radius", .field = "selection.blur_radius" },
 
     .{ .section = .clipboard, .name = "osc52_write", .field = "clipboard.osc52_write" },
     .{ .section = .clipboard, .name = "osc52_read", .field = "clipboard.osc52_read" },

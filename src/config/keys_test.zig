@@ -523,6 +523,7 @@ test "apply: [selection] appearance keys parse, validate bounds, and reset to de
     try applyText(&config, .selection, "border_width", "2.5");
     try applyText(&config, .selection, "border_style", "split");
     try applyText(&config, .selection, "radius", "4.0");
+    try applyText(&config, .selection, "blur_radius", "12");
 
     try std.testing.expectApproxEqAbs(@as(f32, 0.6), config.selection.opacity, 1e-6);
     try std.testing.expectApproxEqAbs(@as(f32, 0.4), config.selection.foreground_opacity, 1e-6);
@@ -531,10 +532,12 @@ test "apply: [selection] appearance keys parse, validate bounds, and reset to de
     try std.testing.expectApproxEqAbs(@as(f32, 2.5), config.selection.border_width, 1e-6);
     try std.testing.expectEqual(@import("selection.zig").BorderStyle.split, config.selection.border_style);
     try std.testing.expectApproxEqAbs(@as(f32, 4.0), config.selection.radius, 1e-6);
+    try std.testing.expectEqual(@as(u8, 12), config.selection.blur_radius);
 
     try std.testing.expectError(error.OutOfRange, applyText(&config, .selection, "opacity", "1.5"));
     try std.testing.expectError(error.OutOfRange, applyText(&config, .selection, "border_width", "25"));
     try std.testing.expectError(error.OutOfRange, applyText(&config, .selection, "radius", "21"));
+    try std.testing.expectError(error.OutOfRange, applyText(&config, .selection, "blur_radius", "256"));
     try std.testing.expectError(error.InvalidValue, applyText(&config, .selection, "border_style", "rounded"));
     try std.testing.expectError(error.InvalidValue, applyText(&config, .selection, "border_color", "inherit"));
 

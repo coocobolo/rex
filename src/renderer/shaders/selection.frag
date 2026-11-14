@@ -11,6 +11,9 @@ uniform float u_radius;
 uniform float u_border_width;
 uniform vec4 u_border_color;
 uniform uint u_border_style;
+uniform uint u_has_backdrop;
+uniform sampler2D u_backdrop;
+uniform vec2 u_screen_size;
 
 out vec4 frag_color;
 
@@ -195,12 +198,31 @@ void main() {
       fill_alpha = 0.0;
     }
   }
-  vec4 fill = vec4(u_color.rgb, u_color.a * fill_alpha);
+  vec4 fill;
+  if (u_has_backdrop != 0u) {
+    vec2 screen_uv = gl_FragCoord.xy / max(u_screen_size, vec2(1.0));
+    vec4 backdrop = texture(u_backdrop, screen_uv);
+    float luma = dot(backdrop.rgb, vec3(0.2126, 0.7152, 0.0722));
+    vec3 vibrant = mix(vec3(luma), backdrop.rgb, 1.45);
+    float noise = (fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715)))) - 0.5) / 255.0;
+    vec3 glass_rgb = clamp(mix(vibrant, u_color.rgb, u_color.a) + vec3(noise), 0.0, 1.0);
+    float glass_a = mix(backdrop.a, 1.0, u_color.a) * fill_alpha;
+    fill = vec4(glass_rgb, glass_a);
+  } else {
+    fill = vec4(u_color.rgb, u_color.a * fill_alpha);
+  }
   vec4 outline = vec4(u_border_color.rgb, u_border_color.a * border_alpha);
 
-  // Composite border over fill.
-  frag_color = outline + fill * (1.0 - outline.a);
-  if (frag_color.a < 0.01) discard;
+  if (u_has_backdrop != 0u) {
+    float out_a = outline.a + fill.a * (1.0 - outline.a);
+    if (out_a < 0.01) discard;
+    vec3 out_rgb = (outline.rgb * outline.a + fill.rgb * fill.a * (1.0 - outline.a)) / out_a;
+    frag_color = vec4(out_rgb, out_a);
+  } else {
+    // Composite border over fill.
+    frag_color = outline + fill * (1.0 - outline.a);
+    if (frag_color.a < 0.01) discard;
+  }
 }
 
 // void main() {

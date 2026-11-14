@@ -248,6 +248,9 @@ fn keyMeta(comptime section: keys.Section, comptime key_name: []const u8) KeyMet
         } else if (std.mem.eql(u8, key_name, "radius")) .{
             .label = "Corner Radius",
             .description = "Corner radius of selection highlights in pixels (0 for sharp corners).",
+        } else if (std.mem.eql(u8, key_name, "blur_radius")) .{
+            .label = "Blur Radius",
+            .description = "Gaussian-like Dual Kawase blur radius for frosted selection glass (0 disables).",
         } else @compileError("unmapped selection key: " ++ key_name),
 
         .clipboard => if (std.mem.eql(u8, key_name, "osc52_write")) .{

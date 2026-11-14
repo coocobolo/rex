@@ -173,15 +173,10 @@ pub fn beginScene(self: *Blur, width: u32, height: u32) void {
     gl.viewport(0, 0, @intCast(self.width), @intCast(self.height));
 }
 
-/// Performs progressive Dual Kawase filtering and composites the blurred backdrop onto target framebuffer.
-pub fn renderBlur(
-    self: *Blur,
-    width: u32,
-    height: u32,
-    blur_radius: u8,
-    dim_alpha: u8,
-    scrim_rgb: [3]u8,
-) void {
+/// Runs the progressive Dual Kawase downsample and upsample pyramid from
+/// `scene_tex` into `levels[0].tex`, leaving the blurred texture bound to no
+/// target framebuffer.
+pub fn filterPyramid(self: *Blur, blur_radius: u8) void {
     const active_levels: usize = if (blur_radius <= 4)
         1
     else if (blur_radius <= 8)
@@ -219,34 +214,57 @@ pub fn renderBlur(
         src_h = dst.height;
     }
 
+    if (active_levels > 1) {
+        self.up_shader.use();
+        self.up_shader.set1i("u_texture", 0);
+        self.up_shader.set1f("u_offset", base_offset);
+        self.up_shader.set1i("u_is_final", 0);
+
+        var cur_idx = active_levels - 1;
+        while (cur_idx > 0) : (cur_idx -= 1) {
+            const src = &self.levels[cur_idx];
+            const dst = &self.levels[cur_idx - 1];
+
+            gl.bindFramebuffer(gl.FRAMEBUFFER, dst.fbo);
+            gl.viewport(0, 0, @intCast(dst.width), @intCast(dst.height));
+
+            const up_hp_x = 0.5 / @as(f32, @floatFromInt(src.width));
+            const up_hp_y = 0.5 / @as(f32, @floatFromInt(src.height));
+            self.up_shader.set2f("u_half_pixel", up_hp_x, up_hp_y);
+
+            gl.bindTexture(gl.TEXTURE_2D, src.tex);
+            gl.drawArrays(gl.TRIANGLES, 0, 3);
+        }
+    }
+
+    gl.bindFramebuffer(gl.FRAMEBUFFER, 0);
+    gl.bindTexture(gl.TEXTURE_2D, 0);
+    gl.bindVertexArray(0);
+    gl.useProgram(0);
+}
+
+/// Returns the blurred `levels[0]` texture produced by `filterPyramid`.
+pub fn blurredTexture(self: *const Blur) gl.GLuint {
+    return self.levels[0].tex;
+}
+
+/// Performs progressive Dual Kawase filtering and composites the blurred backdrop onto target framebuffer.
+pub fn renderBlur(
+    self: *Blur,
+    width: u32,
+    height: u32,
+    blur_radius: u8,
+    dim_alpha: u8,
+    scrim_rgb: [3]u8,
+) void {
+    self.filterPyramid(blur_radius);
+
+    const base_offset: f32 = 1.0 + (@as(f32, @floatFromInt(blur_radius)) / 32.0) * 0.4;
+    gl.bindVertexArray(self.dummy_vao);
+    gl.activeTexture(gl.TEXTURE0);
     self.up_shader.use();
     self.up_shader.set1i("u_texture", 0);
     self.up_shader.set1f("u_offset", base_offset);
-
-    self.up_shader.set1f("u_dim_alpha", @as(f32, @floatFromInt(dim_alpha)) / 255.0);
-    self.up_shader.set3f(
-        "u_scrim_color",
-        @as(f32, @floatFromInt(scrim_rgb[0])) / 255.0,
-        @as(f32, @floatFromInt(scrim_rgb[1])) / 255.0,
-        @as(f32, @floatFromInt(scrim_rgb[2])) / 255.0,
-    );
-
-    var cur_idx = active_levels - 1;
-    while (cur_idx > 0) : (cur_idx -= 1) {
-        const src = &self.levels[cur_idx];
-        const dst = &self.levels[cur_idx - 1];
-
-        gl.bindFramebuffer(gl.FRAMEBUFFER, dst.fbo);
-        gl.viewport(0, 0, @intCast(dst.width), @intCast(dst.height));
-
-        self.up_shader.set1i("u_is_final", 0);
-        const up_hp_x = 0.5 / @as(f32, @floatFromInt(src.width));
-        const up_hp_y = 0.5 / @as(f32, @floatFromInt(src.height));
-        self.up_shader.set2f("u_half_pixel", up_hp_x, up_hp_y);
-
-        gl.bindTexture(gl.TEXTURE_2D, src.tex);
-        gl.drawArrays(gl.TRIANGLES, 0, 3);
-    }
 
     // Final Upsample Pass: Level 0 -> Target Framebuffer (Screen) with Scrim & Dither
     self.drawFinalPass(width, height, dim_alpha, scrim_rgb);
