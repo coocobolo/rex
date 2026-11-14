@@ -1033,7 +1033,7 @@ fn renderFrame(self: *App) !bool {
         frame.overlay_card_instances = self.wellbeing_overlay.card_buffer.items;
         frame.overlay_gray_instances = self.wellbeing_overlay.gray_buffer.items;
         frame.overlay_color_instances = self.wellbeing_overlay.color_buffer.items;
-        const has_modal = (self.quit_confirm_open and self.kit == null) or self.wellbeing_overlay.dashboard_open;
+        const has_modal = self.quit_confirm_open and self.kit == null;
         frame.overlay_has_modal = has_modal;
         frame.modal_blur = self.config.window.modal.blur;
         frame.modal_blur_radius = self.config.window.modal.blur_radius;
@@ -1639,7 +1639,6 @@ fn handleAction(self: *App, action: rex.input.Action) void {
         },
         .wellbeing_dismiss => {
             self.wellbeing_state.dismissAlert();
-            self.wellbeing_overlay.dashboard_open = false;
             self.quit_confirm_open = false;
             self.toast_queue.dismissAll();
             if (self.kit) |kit| _ = kit.dismissAll();
@@ -2120,11 +2119,6 @@ fn routeKeyToUi(self: *App, maybe_key: ?rex.input.Key, mods: rex.input.Modifiers
         return true;
     }
 
-    if (self.wellbeing_overlay.dashboard_open) {
-        self.handleDashboardKey(k);
-        return true;
-    }
-
     if (self.wellbeing_state.input_locked) {
         return true;
     }
@@ -2193,85 +2187,6 @@ fn handleQuitModalKey(self: *App, k: rex.input.Key, mods: rex.input.Modifiers) v
     }
 }
 
-fn handleDashboardKey(self: *App, k: rex.input.Key) void {
-    switch (k) {
-        .escape, .q => {
-            self.wellbeing_overlay.dashboard_open = false;
-            self.frame_builder.last_generation = null;
-            self.needs_redraw = true;
-        },
-        .tab => {
-            self.wellbeing_overlay.nextTab();
-            self.frame_builder.last_generation = null;
-            self.needs_redraw = true;
-        },
-        .num_1, .kp_1 => {
-            self.wellbeing_overlay.selectTab(0);
-            self.frame_builder.last_generation = null;
-            self.needs_redraw = true;
-        },
-        .num_2, .kp_2 => {
-            self.wellbeing_overlay.selectTab(1);
-            self.frame_builder.last_generation = null;
-            self.needs_redraw = true;
-        },
-        .num_3, .kp_3 => {
-            self.wellbeing_overlay.selectTab(2);
-            self.frame_builder.last_generation = null;
-            self.needs_redraw = true;
-        },
-        .left, .h => {
-            if (self.wellbeing_overlay.active_tab == .activity) {
-                self.wellbeing_overlay.moveSelectedDay(-1, self.wellbeing_state.data.history_count);
-                self.frame_builder.last_generation = null;
-                self.needs_redraw = true;
-            }
-        },
-        .right, .l => {
-            if (self.wellbeing_overlay.active_tab == .activity) {
-                self.wellbeing_overlay.moveSelectedDay(1, self.wellbeing_state.data.history_count);
-                self.frame_builder.last_generation = null;
-                self.needs_redraw = true;
-            }
-        },
-        .c => {
-            var card_buf: [2048]u8 = undefined;
-            const card = self.wellbeing_state.renderDashboard(&card_buf);
-            if (card.len < card_buf.len) {
-                card_buf[card.len] = 0;
-                c.glfwSetClipboardString(self.window.handle, card_buf[0..card.len :0].ptr);
-            }
-            self.wellbeing_state.current_alert = .{
-                .kind = .healthy_break,
-                .prompt = "Dashboard card copied to clipboard.",
-                .remaining_s = 5,
-            };
-            self.frame_builder.last_generation = null;
-            self.needs_redraw = true;
-        },
-        .r => {
-            if (self.wellbeing_overlay.active_tab == .pomodoro) {
-                self.wellbeing_state.resetFocus(self.wallMs());
-            } else {
-                _ = self.purgeWellbeingHistory();
-            }
-            self.frame_builder.last_generation = null;
-            self.needs_redraw = true;
-        },
-        .p => {
-            self.wellbeing_state.toggleFocus(self.wallMs());
-            self.frame_builder.last_generation = null;
-            self.needs_redraw = true;
-        },
-        .s => {
-            self.wellbeing_state.skipFocus(self.wallMs());
-            self.frame_builder.last_generation = null;
-            self.needs_redraw = true;
-        },
-        else => {},
-    }
-}
-
 const charCb: c.GLFWcharfun = struct {
     fn cb(window: ?*c.GLFWwindow, codepoint: c_uint) callconv(.c) void {
         const app: *App = @ptrCast(@alignCast(c.glfwGetWindowUserPointer(window) orelse return));
@@ -2279,7 +2194,7 @@ const charCb: c.GLFWcharfun = struct {
             app.skip_next_char = false;
             return;
         }
-        if (app.quit_confirm_open or app.wellbeing_overlay.dashboard_open or app.wellbeing_state.input_locked) return;
+        if (app.quit_confirm_open or app.wellbeing_state.input_locked) return;
         app.wellbeing_state.recordActivity();
         app.selection = .empty;
         app.needs_redraw = true;
@@ -2671,61 +2586,14 @@ fn handleOverlayClick(self: *App, col: u16, row: u16) bool {
                 self.needs_redraw = true;
                 return true;
             },
-            .tab_select => |idx| {
-                self.wellbeing_overlay.selectTab(idx);
-                self.frame_builder.last_generation = null;
-                self.needs_redraw = true;
-            },
-            .chart_select => |idx| {
-                self.wellbeing_overlay.selected_day_idx = idx;
-                self.frame_builder.last_generation = null;
-                self.needs_redraw = true;
-            },
             .button => |id| {
                 if (std.enums.fromInt(WellbeingOverlay.ButtonId, id)) |btn_id| {
                     switch (btn_id) {
                         .close => {
-                            if (self.wellbeing_overlay.dashboard_open) {
-                                self.wellbeing_overlay.dashboard_open = false;
-                            } else if (self.wellbeing_overlay.toast_active) {
+                            if (self.wellbeing_overlay.toast_active) {
                                 self.wellbeing_state.dismissAlert();
                                 self.wellbeing_overlay.toast_active = false;
                             }
-                            self.frame_builder.last_generation = null;
-                            self.needs_redraw = true;
-                        },
-                        .toggle_focus => {
-                            self.wellbeing_state.toggleFocus(self.wallMs());
-                            self.frame_builder.last_generation = null;
-                            self.needs_redraw = true;
-                        },
-                        .skip_focus => {
-                            self.wellbeing_state.skipFocus(self.wallMs());
-                            self.frame_builder.last_generation = null;
-                            self.needs_redraw = true;
-                        },
-                        .reset_focus => {
-                            self.wellbeing_state.resetFocus(self.wallMs());
-                            self.frame_builder.last_generation = null;
-                            self.needs_redraw = true;
-                        },
-                        .purge_history => {
-                            _ = self.purgeWellbeingHistory();
-                            self.frame_builder.last_generation = null;
-                            self.needs_redraw = true;
-                        },
-                        .copy_card => {
-                            var card_buf: [2048]u8 = undefined;
-                            const card = self.wellbeing_state.renderDashboard(&card_buf);
-                            if (card.len < card_buf.len) {
-                                card_buf[card.len] = 0;
-                                c.glfwSetClipboardString(self.window.handle, card_buf[0..card.len :0].ptr);
-                            }
-                            self.wellbeing_state.current_alert = .{
-                                .kind = .healthy_break,
-                                .prompt = "Dashboard card copied to clipboard.",
-                                .remaining_s = 5,
-                            };
                             self.frame_builder.last_generation = null;
                             self.needs_redraw = true;
                         },
@@ -2751,22 +2619,6 @@ fn handleOverlayClick(self: *App, col: u16, row: u16) bool {
                 self.quit_confirm_open = false;
                 self.frame_builder.last_generation = null;
                 self.needs_redraw = true;
-            }
-        }
-        return true;
-    }
-
-    if (self.wellbeing_overlay.dashboard_open) {
-        if (self.wellbeing_overlay.card_buffer.items.len > 0) {
-            const c_item = self.wellbeing_overlay.card_buffer.items[0];
-            if (col < c_item.col or col >= c_item.col + c_item.width or
-                row < c_item.row or row >= c_item.row + c_item.height)
-            {
-                if (self.config.window.modal.on_outside_click == .close) {
-                    self.wellbeing_overlay.dashboard_open = false;
-                    self.frame_builder.last_generation = null;
-                    self.needs_redraw = true;
-                }
             }
         }
         return true;
@@ -3662,13 +3514,13 @@ test "App: routeKeyToUi unified dispatcher consumes modal keys and suppresses te
     // Simulate modal close with 'q': routeKeyToUi handles the key and returns true.
     // The caller in keyCb automatically sets skip_next_char = true without the modal handler
     // needing to manage any low-level GLFW callback suppression state.
-    var dashboard_open = true;
+    var quit_confirm_open = true;
     var skip_next_char = false;
 
     // Simulated routeKeyToUi
     const key_consumed = blk: {
-        if (dashboard_open) {
-            dashboard_open = false; // Closed by 'q'
+        if (quit_confirm_open) {
+            quit_confirm_open = false; // Dismissed by Escape
             break :blk true;
         }
         break :blk false;
@@ -3680,13 +3532,13 @@ test "App: routeKeyToUi unified dispatcher consumes modal keys and suppresses te
 
     try testing.expect(key_consumed);
     try testing.expect(skip_next_char);
-    try testing.expect(!dashboard_open);
+    try testing.expect(!quit_confirm_open);
 
     // In charCb: character callback is suppressed and skip flag consumed
     var char_sent = false;
     if (skip_next_char) {
         skip_next_char = false;
-    } else if (!dashboard_open) {
+    } else if (!quit_confirm_open) {
         char_sent = true;
     }
     try testing.expect(!char_sent);
@@ -3694,7 +3546,7 @@ test "App: routeKeyToUi unified dispatcher consumes modal keys and suppresses te
 
     // Subsequent normal typing is unconsumed and reaches the terminal
     const normal_key_consumed = blk: {
-        if (dashboard_open) {
+        if (quit_confirm_open) {
             break :blk true;
         }
         break :blk false;
@@ -3707,7 +3559,7 @@ test "App: routeKeyToUi unified dispatcher consumes modal keys and suppresses te
 
     if (skip_next_char) {
         skip_next_char = false;
-    } else if (!dashboard_open) {
+    } else if (!quit_confirm_open) {
         char_sent = true;
     }
     try testing.expect(char_sent);

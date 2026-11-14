@@ -1613,11 +1613,6 @@ test "overlay: state flags and active detection" {
 
     try testing.expect(!ov.isActive());
 
-    ov.dashboard_open = true;
-    try testing.expect(ov.isActive());
-    ov.dashboard_open = false;
-    try testing.expect(!ov.isActive());
-
     ov.toast_active = true;
     try testing.expect(ov.isActive());
     ov.toast_active = false;
@@ -1788,28 +1783,4 @@ test "overlay: dashboard layout geometry and symmetric padding" {
     try testing.expectEqual(@as(u16, 3), content_col - rect.col);
     // Right padding: (rect.col + rect.width - 1) - max_content_col = 72 - 69 = 3
     try testing.expectEqual(@as(u16, 3), (rect.col + rect.width - 1) - max_content_col);
-}
-
-test "overlay: dashboard tab navigation and history day selection" {
-    var ov = overlay.Overlay.init();
-    defer ov.deinit(testing.allocator);
-
-    try testing.expectEqual(overlay.DashboardTab.overview, ov.active_tab);
-    ov.nextTab();
-    try testing.expectEqual(overlay.DashboardTab.pomodoro, ov.active_tab);
-    ov.nextTab();
-    try testing.expectEqual(overlay.DashboardTab.activity, ov.active_tab);
-    ov.nextTab();
-    try testing.expectEqual(overlay.DashboardTab.overview, ov.active_tab);
-
-    ov.selectTab(2);
-    try testing.expectEqual(overlay.DashboardTab.activity, ov.active_tab);
-
-    // 3 history days + 1 today = 4 total days (indices 0..3)
-    ov.moveSelectedDay(-1, 3);
-    try testing.expectEqual(@as(?u16, 2), ov.selected_day_idx);
-    ov.moveSelectedDay(-5, 3);
-    try testing.expectEqual(@as(?u16, 0), ov.selected_day_idx);
-    ov.moveSelectedDay(10, 3);
-    try testing.expectEqual(@as(?u16, 3), ov.selected_day_idx);
 }

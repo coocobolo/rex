@@ -61,20 +61,8 @@ pub const Drawer = text.Drawer;
 pub const progress_bar = @import("ProgressBar.zig");
 pub const ProgressBar = progress_bar.ProgressBar;
 
-pub const ring_gauge = @import("RingGauge.zig");
-pub const RingGauge = ring_gauge.RingGauge;
-
 pub const step_indicator = @import("StepIndicator.zig");
 pub const StepIndicator = step_indicator.StepIndicator;
-
-pub const bar_chart = @import("BarChart.zig");
-pub const BarChart = bar_chart.BarChart;
-
-pub const stat_card = @import("StatCard.zig");
-pub const StatCard = stat_card.StatCard;
-
-pub const tab_bar = @import("TabBar.zig");
-pub const TabBar = tab_bar.TabBar;
 
 test {
     _ = @import("Rect.zig");
@@ -93,10 +81,6 @@ test {
     _ = @import("icon_test.zig");
     _ = @import("Text.zig");
     _ = @import("ProgressBar.zig");
-    _ = @import("RingGauge.zig");
     _ = @import("StepIndicator.zig");
-    _ = @import("BarChart.zig");
-    _ = @import("StatCard.zig");
-    _ = @import("TabBar.zig");
     std.testing.refAllDecls(@This());
 }

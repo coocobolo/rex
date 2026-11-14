@@ -14,8 +14,6 @@ pub const Tag = enum(u8) {
     toast_dismiss = 4,
     toast_action = 5,
     banner_dismiss = 6,
-    tab_select = 7,
-    chart_select = 8,
 };
 
 pub const Action = union(Tag) {
@@ -26,8 +24,6 @@ pub const Action = union(Tag) {
     toast_dismiss: u64,
     toast_action: u64,
     banner_dismiss: u64,
-    tab_select: u8,
-    chart_select: u16,
 };
 
 pub const Hotspot = extern struct {
@@ -50,8 +46,6 @@ pub const Hotspot = extern struct {
             .toast_dismiss => .{ .toast_dismiss = self.action_payload },
             .toast_action => .{ .toast_action = self.action_payload },
             .banner_dismiss => .{ .banner_dismiss = self.action_payload },
-            .tab_select => .{ .tab_select = @intCast(self.action_payload & 0xFF) },
-            .chart_select => .{ .chart_select = @intCast(self.action_payload & 0xFFFF) },
         };
     }
 };
@@ -75,8 +69,6 @@ pub const Table = struct {
             .toast_dismiss => |id| id,
             .toast_action => |id| id,
             .banner_dismiss => |id| id,
-            .tab_select => |idx| idx,
-            .chart_select => |idx| idx,
             .none, .modal_dismiss => 0,
         };
         self.items[self.count] = .{
@@ -140,15 +132,11 @@ test "Table: generic widget payload round-trip" {
 
     var table: Table = .{};
     table.add(0, 0, 10, 1, .{ .button = 101 });
-    table.add(10, 0, 10, 1, .{ .tab_select = 2 });
-    table.add(20, 0, 10, 1, .{ .chart_select = 13 });
     table.add(30, 0, 10, 1, .{ .banner_dismiss = 7 });
     table.add(0, 5, 20, 3, .{ .toast_action = 42 });
     table.add(18, 5, 2, 1, .{ .toast_dismiss = 42 });
 
     try testing.expectEqual(@as(u64, 101), table.hitTest(2, 0).?.button);
-    try testing.expectEqual(@as(u8, 2), table.hitTest(12, 0).?.tab_select);
-    try testing.expectEqual(@as(u16, 13), table.hitTest(22, 0).?.chart_select);
     try testing.expectEqual(@as(u64, 7), table.hitTest(32, 0).?.banner_dismiss);
 
     const dismiss_hit = table.hitTest(19, 5);
