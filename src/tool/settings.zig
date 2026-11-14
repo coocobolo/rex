@@ -605,6 +605,7 @@ fn controlKind(comptime key: keys.Key) ControlKind {
 
 pub const Target = union(enum) {
     none,
+    sidebar,
     key_switch: u16,
     key_slider: u16,
     key_select: u16,
@@ -1008,6 +1009,15 @@ fn handleKey(state: *State, press: host.KeyPress) bool {
             },
             else => {},
         },
+        .sidebar => switch (press.key) {
+            .enter, .space => return cycleFocus(state, false),
+            .escape => {
+                _ = state.frame.update(page_count, .blur);
+                state.focused = .none;
+                return true;
+            },
+            else => {},
+        },
         else => {},
     }
 
@@ -1023,12 +1033,15 @@ fn handleKey(state: *State, press: host.KeyPress) bool {
     if (state.frame.current != prev_page) {
         state.scroll = 0;
         state.scroll_max = 0;
+        if (state.focused != .sidebar) state.focused = .none;
+    }
+    if (!state.frame.shown() and state.focused == .sidebar) {
         state.focused = .none;
     }
     return moved;
 }
 
-fn pageFocusTargets(page: Page, out: *[keys.table.len * 2]Target) usize {
+fn pageFocusTargets(page: Page, out: []Target) usize {
     @setEvalBranchQuota(keys.eval_branch_quota);
     var count: usize = 0;
     inline for (keys.table, 0..) |key, i| {
@@ -1065,8 +1078,13 @@ fn pageFocusTargets(page: Page, out: *[keys.table.len * 2]Target) usize {
 
 fn cycleFocus(state: *State, reverse: bool) bool {
     const page: Page = @enumFromInt(state.frame.current);
-    var targets: [keys.table.len * 2]Target = undefined;
-    const count = pageFocusTargets(page, &targets);
+    var targets: [keys.table.len * 2 + 1]Target = undefined;
+    var count: usize = 0;
+    if (state.frame.shown()) {
+        targets[0] = .sidebar;
+        count = 1;
+    }
+    count += pageFocusTargets(page, targets[count..]);
     if (count == 0) return false;
 
     state.open_select = null;
@@ -1078,6 +1096,9 @@ fn cycleFocus(state: *State, reverse: bool) bool {
             break;
         }
     }
+    if (found == null and state.focused == .none and state.frame.shown() and state.frame.focused) {
+        found = 0;
+    }
 
     const next_idx: usize = if (found) |cur|
         if (reverse) (if (cur == 0) count - 1 else cur - 1) else (cur + 1) % count
@@ -1088,7 +1109,12 @@ fn cycleFocus(state: *State, reverse: bool) bool {
 
     blurFocused(state);
     state.focused = targets[next_idx];
-    ensureFocusedVisible(state);
+    if (state.focused == .sidebar) {
+        _ = state.frame.update(page_count, .focus);
+    } else {
+        _ = state.frame.update(page_count, .blur);
+        ensureFocusedVisible(state);
+    }
     return true;
 }
 
@@ -1131,12 +1157,13 @@ fn blurFocused(state: *State) void {
         const idx = state.focused.key_input;
         if (!keys.isList(idx) and state.dirty[idx]) commitInput(state, idx);
     }
+    _ = state.frame.update(page_count, .blur);
     state.focused = .none;
 }
 
 fn activate(state: *State, target: Target) bool {
     switch (target) {
-        .none, .layer => return false,
+        .none, .sidebar, .layer => return false,
         .key_switch => |idx| {
             blurFocused(state);
             toggleSwitch(state, idx);

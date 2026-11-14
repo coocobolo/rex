@@ -241,17 +241,22 @@ test "settings: Tab and Shift+Tab cycle focus across page controls" {
 
     try testing.expectEqual(settings.Target.none, state.focused);
     try testing.expect(settings.update(&state, .{ .key = .{ .key = .tab } }));
-    try testing.expect(state.focused != .none);
-    const first = state.focused;
+    try testing.expectEqual(settings.Target.sidebar, state.focused);
+    try testing.expect(state.frame.focused);
 
     try testing.expect(settings.update(&state, .{ .key = .{ .key = .tab } }));
-    try testing.expect(!std.meta.eql(first, state.focused));
+    try testing.expect(state.focused == .key_select);
+    try testing.expect(!state.frame.focused);
+    const first_control = state.focused;
 
     try testing.expect(settings.update(&state, .{ .key = .{ .key = .tab, .mods = .{ .shift = true } } }));
-    try testing.expectEqual(first, state.focused);
+    try testing.expectEqual(settings.Target.sidebar, state.focused);
+    try testing.expect(state.frame.focused);
+
+    try testing.expect(settings.update(&state, .{ .key = .{ .key = .tab } }));
+    try testing.expectEqual(first_control, state.focused);
 
     // First control on Appearance is Color Theme select; Enter opens its popup.
-    try testing.expect(state.focused == .key_select);
     try testing.expect(settings.update(&state, .{ .key = .{ .key = .enter } }));
     try testing.expect(state.open_select != null);
     try testing.expect(settings.update(&state, .{ .key = .{ .key = .escape } }));
