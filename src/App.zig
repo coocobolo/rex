@@ -1625,23 +1625,8 @@ fn handleAction(self: *App, action: rex.input.Action) void {
         .focus_toggle_phase_end => {
             self.wellbeing_state.toggleFocusPhaseEnd();
         },
-        .wellbeing_dashboard => {
-            if (self.wellbeing_state.option.dashboard.modal_enabled) {
-                self.wellbeing_overlay.dashboard_open = !self.wellbeing_overlay.dashboard_open;
-                self.needs_redraw = true;
-            } else {
-                var card_buf: [2048]u8 = undefined;
-                const card = self.wellbeing_state.renderDashboard(&card_buf);
-                if (card.len < card_buf.len) {
-                    card_buf[card.len] = 0;
-                    c.glfwSetClipboardString(self.window.handle, card_buf[0..card.len :0].ptr);
-                }
-                self.wellbeing_state.current_alert = .{
-                    .kind = .healthy_break,
-                    .prompt = "Wellbeing dashboard copied to clipboard.",
-                    .remaining_s = 10,
-                };
-            }
+        .wellbeing_dashboard => if (self.wellbeing_state.option.enabled) {
+            self.openWellbeingDashboard();
         },
         .wellbeing_clear => {
             if (self.purgeWellbeingHistory()) {
@@ -1694,20 +1679,35 @@ fn handleAction(self: *App, action: rex.input.Action) void {
     }
 }
 
+fn resolveExe(self: *const App, buf: *[std.fs.max_path_bytes]u8, label: []const u8) []const u8 {
+    // Linux reads /proc/self/exe here, which works whatever PATH and
+    // the working directory have become since rex started.
+    const len = std.process.executablePath(self.io, buf) catch |err| {
+        log.warn("{s}: executable path unavailable ({}), using argv[0]", .{ label, err });
+        return self.argv0;
+    };
+    return buf[0..len];
+}
+
+/// Starts the wellbeing dashboard as a separate process. A second start
+/// hits the tool's lock and exits; `reapChild` collects it.
+fn openWellbeingDashboard(self: *App) void {
+    var exe_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const exe = self.resolveExe(&exe_buf, "wellbeing dashboard");
+    const child = spawnDetached(self.io, &.{ exe, "wellbeing" }, .inherit) catch |err| {
+        log.err("wellbeing dashboard: cannot start {s}: {}", .{ exe, err });
+        return;
+    };
+    reapDetached(child, "wellbeing dashboard");
+}
+
 /// Starts another rex as a separate process in the shell's working
 /// directory. The new window does not depend on this one: it has its
 /// own process group and null stdio, and outlives this process. A
 /// failure is logged and this window carries on.
 fn openNewWindow(self: *App) void {
     var exe_buf: [std.fs.max_path_bytes]u8 = undefined;
-    // Linux reads /proc/self/exe here, which works whatever PATH and
-    // the working directory have become since rex started.
-    const exe: []const u8 = if (std.process.executablePath(self.io, &exe_buf)) |len|
-        exe_buf[0..len]
-    else |err| blk: {
-        log.warn("new window: executable path unavailable ({}), using argv[0]", .{err});
-        break :blk self.argv0;
-    };
+    const exe = self.resolveExe(&exe_buf, "new window");
 
     // chdir follows the /proc/<pid>/cwd link to wherever the shell is.
     var cwd_buf: [32]u8 = undefined;
@@ -1717,18 +1717,22 @@ fn openNewWindow(self: *App) void {
     else
         null;
 
-    const child = spawnWindow(self.io, exe, if (shell_cwd) |path| .{ .path = path } else .inherit) catch |err| retry: {
+    const child = spawnDetached(self.io, &.{exe}, if (shell_cwd) |path| .{ .path = path } else .inherit) catch |err| retry: {
         if (shell_cwd == null) break :retry err;
         log.warn("new window: cannot start in the shell's directory ({}), retrying here", .{err});
-        break :retry spawnWindow(self.io, exe, .inherit);
+        break :retry spawnDetached(self.io, &.{exe}, .inherit);
     } catch |err| {
         log.err("new window: cannot start {s}: {}", .{ exe, err });
         return;
     };
 
+    reapDetached(child, "new window");
+}
+
+fn reapDetached(child: std.process.Child, label: []const u8) void {
     const child_pid = child.id orelse return;
     reapInBackground(child_pid) catch |err| {
-        log.warn("new window: no reaper thread ({}); pid {d} stays a zombie until rex exits", .{ err, child_pid });
+        log.warn("{s}: no reaper thread ({}); pid {d} stays a zombie until rex exits", .{ label, err, child_pid });
     };
 }
 
@@ -1744,15 +1748,15 @@ fn reapInBackground(pid: posix.pid_t) std.Thread.SpawnError!void {
     reaper.detach();
 }
 
-fn spawnWindow(io: std.Io, exe: []const u8, cwd: std.process.Child.Cwd) std.process.SpawnError!std.process.Child {
+fn spawnDetached(io: std.Io, argv: []const []const u8, cwd: std.process.Child.Cwd) std.process.SpawnError!std.process.Child {
     return std.process.spawn(io, .{
-        .argv = &.{exe},
+        .argv = argv,
         .cwd = cwd,
         .stdin = .ignore,
         .stdout = .ignore,
         .stderr = .ignore,
         // Its own process group, so a hangup or Ctrl+C aimed at this
-        // rex's group does not reach the new window.
+        // rex's group does not reach the child.
         .pgid = 0,
     });
 }
