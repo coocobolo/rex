@@ -338,3 +338,95 @@ test "today: an idle window wakes at the next local midnight" {
     const wait = dashboard.waitAt(&state, now_ms).?;
     try testing.expect(wait >= 1 and wait <= std.time.s_per_day);
 }
+
+fn history(data: *const storage.PersistentData, wb_option: *const WellbeingOption, day: u32, period: dashboard.Period) dashboard.History {
+    var result: dashboard.History = .{};
+    dashboard.computeHistory(&result, data, wb_option, day, period);
+    return result;
+}
+
+test "history: averages skip days off, and the week compares with the one before" {
+    var data: storage.PersistentData = .{};
+    // Day 200: the week before (193..199) had two days of 1h; this week
+    // (200..206) has 2h and 4h, with a day off between them.
+    data.history[0] = .{ .day = 195, .active_screen_s = 3600, .focus_s = 600 };
+    data.history[1] = .{ .day = 197, .active_screen_s = 3600, .focus_s = 600 };
+    data.history[2] = .{ .day = 202, .active_screen_s = 2 * 3600, .focus_s = 1800, .eyesight_breaks = 2 };
+    data.history_count = 3;
+    data.today = .{ .day = 206, .active_screen_s = 4 * 3600, .focus_s = 3600, .movement_breaks = 1 };
+    const week = history(&data, &option("unused"), 206, .week);
+
+    try testing.expectEqualStrings("3h", week.cards[0].value.slice());
+    try testing.expectEqualStrings("\u{2191} 2h from the week before", week.cards[0].note.slice());
+    try testing.expectEqualStrings("45m", week.cards[1].value.slice());
+    try testing.expectEqualStrings("\u{2191} 35m \u{00b7} 25% of screen time", week.cards[1].note.slice());
+    try testing.expectEqualStrings("0.5 an hour", week.cards[3].value.slice());
+    try testing.expectEqualStrings("3 breaks in 6h of screen time", week.cards[3].note.slice());
+
+    // Fourteen days have nothing before them in the file to compare with.
+    const fortnight = history(&data, &option("unused"), 206, .fortnight);
+    try testing.expectEqualStrings("2h", fortnight.cards[0].value.slice());
+    try testing.expectEqualStrings("over 4 days with screen time", fortnight.cards[0].note.slice());
+}
+
+test "history: the day furthest over the limit is named by its weekday" {
+    var data: storage.PersistentData = .{};
+    // Day 105 was a Thursday, day 106 (today) a Friday.
+    data.history[0] = .{ .day = 105, .active_screen_s = 7 * 3600 };
+    data.history[1] = .{ .day = 103, .active_screen_s = 6 * 3600 + 600 };
+    data.history_count = 2;
+    data.today = .{ .day = 106 };
+    var wb_option = option("unused");
+    wb_option.screen_time.daily_limit_ms = 6 * std.time.ms_per_hour;
+    const week = history(&data, &wb_option, 106, .week);
+    try testing.expectEqualStrings("2 days", week.cards[2].value.slice());
+    try testing.expectEqualStrings("of 7 \u{00b7} most on Thursday, by 1h", week.cards[2].note.slice());
+
+    wb_option.screen_time.daily_limit_ms = null;
+    const unlimited = history(&data, &wb_option, 106, .week);
+    try testing.expectEqualStrings("No daily limit", unlimited.cards[2].note.slice());
+}
+
+test "history: programs add up across the days by name" {
+    var data: storage.PersistentData = .{};
+    data.history[0] = .{ .day = 50 };
+    data.history[0].top_apps[0].setName("nvim");
+    data.history[0].top_apps[0].seconds = 600;
+    data.history_count = 1;
+    data.today = .{ .day = 51 };
+    data.today.top_apps[0].setName("zsh");
+    data.today.top_apps[0].seconds = 900;
+    data.today.top_apps[1].setName("nvim");
+    data.today.top_apps[1].seconds = 600;
+    const week = history(&data, &option("unused"), 51, .week);
+    try testing.expectEqual(2, week.program_count);
+    try testing.expectEqualStrings("nvim", week.programs[0].name.slice());
+    try testing.expectEqual(1200, week.programs[0].seconds);
+    try testing.expectEqualStrings("zsh", week.programs[1].name.slice());
+}
+
+test "history: hovering a day fills its tooltip, and the period switch works" {
+    var tmp: StateTmp = .init();
+    defer tmp.deinit();
+    const dir = try tmp.path();
+    const config = configWith(dir);
+    var state = try openDashboard(&config, dir);
+    defer dashboard.deinit(&state);
+    state.page = .history;
+    // 1 March 2026 (day 20513) was a Sunday.
+    state.wb.data.today = .{ .day = 20513, .active_screen_s = 3600, .tasks_completed = 1, .eyesight_breaks = 2 };
+    dashboard.refreshHistoryAt(&state, 20513);
+
+    try testing.expect(dashboard.update(&state, .{ .pointer = kit.tree.Id.of("wellbeing.day").item(6) }));
+    try testing.expectEqualStrings("Sunday, 1 March", state.tip.title.slice());
+    try testing.expectEqualStrings("Screen 1h \u{00b7} Focus 0m", state.tip.time.slice());
+    try testing.expectEqualStrings("1 task \u{00b7} 2 breaks", state.tip.counts.slice());
+    try buildView(&state);
+
+    const fortnight = kit.tree.Id.of("wellbeing.period").item(1);
+    _ = dashboard.update(&state, .{ .pointer = fortnight });
+    _ = dashboard.update(&state, .{ .press = fortnight });
+    try testing.expect(dashboard.update(&state, .release));
+    try testing.expectEqual(dashboard.Period.fortnight, state.period);
+    try buildView(&state);
+}

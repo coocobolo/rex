@@ -52,7 +52,7 @@ test "chart: a fraction fills that much of its parent" {
 test "chart: progress fills the fraction of a muted track" {
     var fixture: Fixture = .{};
     var tree = fixture.tree();
-    try chart.progress(&tree, &Theme.dark, .bar, 0.25, Theme.dark.primary);
+    try chart.progress(&tree, &Theme.dark, .bar, 0.25, Theme.dark.primary, chart.thickness);
     try lay(&tree);
     try testing.expectEqual(chart.progress_nodes, tree.len);
     try testing.expectEqual(Theme.dark.muted, tree.nodes[0].box.fill);
@@ -106,23 +106,26 @@ test "chart: day bars share a scale and the limit lines up" {
     try testing.expectEqual(@as(f32, 96), tree.nodes[first].rect.h);
     try testing.expectEqual(tree.nodes[first].rect.w, tree.nodes[second].rect.w);
 
-    // The scale is the larger of the limit and the tallest day, 20.
-    const bottom = tree.nodes[first].rect.y + tree.nodes[first].rect.h;
+    // The scale is the larger of the limit and the tallest day, 20, over
+    // the column less its slot padding: 92.
+    const inner: f32 = 96 - 2 * chart.slot_pad;
+    const bottom = tree.nodes[first].rect.y + tree.nodes[first].rect.h - chart.slot_pad;
     const bar_a = findFill(&tree, first, Theme.dark.muted).?;
-    try testing.expectApproxEqAbs(@as(f32, 48), bar_a.rect.h, 0.01);
+    try testing.expectApproxEqAbs(inner / 2, bar_a.rect.h, 0.01);
     try testing.expectApproxEqAbs(bottom, bar_a.rect.y + bar_a.rect.h, 0.01);
     const part_a = findFill(&tree, first, Theme.dark.primary).?;
-    try testing.expectApproxEqAbs(@as(f32, 48) * 4 / 10, part_a.rect.h, 0.01);
+    try testing.expectApproxEqAbs(inner / 2 * 4 / 10, part_a.rect.h, 0.01);
     try testing.expectApproxEqAbs(bottom, part_a.rect.y + part_a.rect.h, 0.01);
     // A part larger than its total fills the bar and no more.
-    try testing.expectApproxEqAbs(@as(f32, 96), findFill(&tree, second, Theme.dark.primary).?.rect.h, 0.01);
+    try testing.expectApproxEqAbs(inner, findFill(&tree, second, Theme.dark.primary).?.rect.h, 0.01);
 
     const line_a = findFill(&tree, first, Theme.dark.border).?;
     const line_b = findFill(&tree, second, Theme.dark.border).?;
     try testing.expectEqual(line_a.rect.y, line_b.rect.y);
     try testing.expectEqual(@as(f32, 1), line_a.rect.h);
-    // The hairline's bottom edge is at the limit: 10 of 20, half of 96.
-    try testing.expectApproxEqAbs(bottom - 48, line_a.rect.y + 1, 0.01);
+    // The hairline's bottom edge is at the limit: 10 of 20, half the bars'
+    // height, so it meets the top of the first bar.
+    try testing.expectApproxEqAbs(bar_a.rect.y, line_a.rect.y + 1, 0.01);
 }
 
 test "chart: an overlay covers its parent and does not grow it" {
@@ -155,7 +158,7 @@ test "chart: an overlay keeps its parent's size beside a fill sibling" {
 test "chart: a ring is a full track and a clockwise sweep" {
     var fixture: Fixture = .{};
     var tree = fixture.tree();
-    try chart.progress(&tree, &Theme.dark, .ring, 0.25, Theme.dark.primary);
+    try chart.progress(&tree, &Theme.dark, .ring, 0.25, Theme.dark.primary, chart.thickness);
     try lay(&tree);
     try testing.expectEqual(chart.ring_nodes, tree.len);
     const side = chart.ring_radius * 2;

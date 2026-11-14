@@ -18,6 +18,7 @@ const chart = kit.chart;
 const icons = kit.icons;
 const popup = kit.popup;
 const tabs = kit.tabs;
+const tooltip = kit.tooltip;
 const Theme = kit.Theme;
 const Tree = kit.tree.Tree;
 const Id = kit.tree.Id;
@@ -52,6 +53,28 @@ pub const Page = enum(u8) {
 
 const page_count = @typeInfo(Page).@"enum".fields.len;
 
+/// How many days History shows.
+pub const Period = enum(u8) {
+    week,
+    fortnight,
+
+    pub fn days(self: Period) u8 {
+        return switch (self) {
+            .week => 7,
+            .fortnight => history_days,
+        };
+    }
+
+    fn label(self: Period) []const u8 {
+        return switch (self) {
+            .week => "7 days",
+            .fortnight => "14 days",
+        };
+    }
+};
+
+const period_count = @typeInfo(Period).@"enum".fields.len;
+
 /// What the pointer is on, or what the left button went down on.
 const Over = union(enum) {
     none,
@@ -63,6 +86,9 @@ const Over = union(enum) {
     reset,
     /// The popup's layer, outside its card.
     outside,
+    period: Period,
+    /// A History column, by its index among the days shown.
+    day: u8,
 };
 
 const tab_id = Id.of("wellbeing.tab");
@@ -72,6 +98,8 @@ const skip_id = Id.of("wellbeing.skip");
 const more_id = Id.of("wellbeing.more");
 const reset_id = Id.of("wellbeing.reset");
 const layer_id = Id.of("wellbeing.layer");
+const period_id = Id.of("wellbeing.period");
+const day_id = Id.of("wellbeing.day");
 
 fn over(id: Id) Over {
     if (id == chip_id) return .chip;
@@ -83,12 +111,18 @@ fn over(id: Id) Over {
     inline for (0..page_count) |index| {
         if (id == tab_id.item(index)) return .{ .tab = @enumFromInt(index) };
     }
+    inline for (0..period_count) |index| {
+        if (id == period_id.item(index)) return .{ .period = @enumFromInt(index) };
+    }
+    for (0..history_days) |index| {
+        if (id == day_id.item(@intCast(index))) return .{ .day = @intCast(index) };
+    }
     return .none;
 }
 
 /// The frame: the root, the header, the tab list, the spacer and the
 /// timer chip (its box, dot, time and phase).
-const frame_nodes = 3 + tabs.nodeMax(page_count) + 1 + 4;
+const frame_nodes = 3 + tabs.nodeMax(page_count) + 1 + @as(usize, @max(4, tabs.nodeMax(period_count)));
 /// The Focus page: its column, the timer block (label, time, task line and
 /// the larger of the two marks: a bar, or a ring in its square under an
 /// overlaid column), the button row and three buttons, and the popup with
@@ -102,13 +136,22 @@ const today_nodes = 1 + 1 + 4 * (4 + chart.progress_nodes) + 1 + 2 + week_nodes 
 /// Card, header row, title, spacer, two legend items (row, swatch, text),
 /// the chart's column, the bars, and the label row with a box and text
 /// per day.
-const week_nodes = 4 + 2 * 3 + 1 + chart.dayNodes(week_days) + 1 + week_days * 2;
+const week_nodes = daysNodes(week_days);
+/// Card, header row, title, spacer, three legend items (row, swatch,
+/// text), the chart's column, the bars, and the label row with a box and
+/// text per day.
+fn daysNodes(comptime count: usize) usize {
+    return 4 + 3 * 3 + 1 + chart.dayNodes(count) + 1 + count * 2;
+}
+/// The History page: like Today with cards of three nodes and no bar, two
+/// weeks of days, and the tooltip (card, column, three lines).
+const history_nodes = 1 + 1 + 4 * 4 + 1 + 2 + daysNodes(history_days) + programs_nodes + 5;
 /// Card, title, the chart's box and the larger mark, the list and a row
 /// per program (row, swatch, name, time, share box and share); or one
 /// line when there are none.
 const programs_nodes = 2 + 1 + @as(usize, @max(chart.shareNodes(program_rows), chart.donutNodes(program_rows))) + 1 + program_rows * 6;
 
-pub const node_max = frame_nodes + @as(usize, @max(focus_nodes, today_nodes));
+pub const node_max = frame_nodes + @as(usize, @max(focus_nodes, @max(today_nodes, history_nodes)));
 /// At most one line per text node: no text here wraps.
 pub const line_max = node_max;
 
@@ -129,6 +172,9 @@ pub const State = struct {
     shown: Shown = .{},
     /// What `refresh` last computed from the day's records.
     today: Today = .{},
+    period: Period = .week,
+    history: History = .{},
+    tip: Tip = .{},
     local_clock: wellbeing.localtime.Clock = .{},
     /// Wall-clock second of the next local midnight, when the pages roll
     /// over to a new day.
@@ -207,11 +253,13 @@ const program_names = program_rows - 1;
 pub const Today = struct {
     cards: [card_count]Card = @splat(.{}),
     /// Oldest first; the last is today.
-    week: [week_days]WeekDay = @splat(.{}),
+    week: [week_days]DaySummary = @splat(.{}),
     /// Today's day of the week, 0 for Sunday.
     weekday: u8 = 0,
     /// The daily limit in seconds; 0 for none.
     limit_s: u32 = 0,
+    /// "6h limit", for the chart's legend.
+    limit_label: Label(16) = .{},
     programs: [program_rows]Program = @splat(.{}),
     program_count: u8 = 0,
 
@@ -233,10 +281,47 @@ pub const Card = struct {
     over: bool = false,
 };
 
-pub const WeekDay = struct {
+pub const DaySummary = struct {
     screen_s: u32 = 0,
     focus_s: u32 = 0,
+    tasks: u16 = 0,
+    breaks: u16 = 0,
+
+    fn of(rec: wellbeing.storage.DayRecord) DaySummary {
+        return .{
+            .screen_s = rec.active_screen_s,
+            .focus_s = rec.focus_s,
+            .tasks = rec.tasks_completed,
+            .breaks = rec.eyesight_breaks +| rec.movement_breaks,
+        };
+    }
 };
+
+const history_days = 14;
+
+/// The History page as `refresh` last computed it, for `State.period`.
+pub const History = struct {
+    cards: [Today.card_count]Card = @splat(.{}),
+    /// Oldest first; the last is today. The page shows the last
+    /// `Period.days`.
+    days: [history_days]DaySummary = @splat(.{}),
+    /// Today's day of the week, 0 for Sunday, and its local day number.
+    weekday: u8 = 0,
+    day: u32 = 0,
+    programs: [program_rows]Program = @splat(.{}),
+    program_count: u8 = 0,
+};
+
+/// The tooltip of the History column under the pointer.
+pub const Tip = struct {
+    title: Label(32) = .{},
+    time: Label(40) = .{},
+    counts: Label(32) = .{},
+};
+
+const history_card_titles = [Today.card_count][]const u8{ "Screen time a day", "Focus a day", "Over the limit", "Breaks" };
+const weekday_long = [7][]const u8{ "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday" };
+const month_names = [12][]const u8{ "January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December" };
 
 pub const Program = struct {
     name: Label(wellbeing.storage.max_comm_len) = .{},
@@ -334,10 +419,12 @@ pub fn update(state: *State, event: host.Event) bool {
     const hover = state.hover;
     const pressed = state.pressed;
     const menu = state.menu;
+    const period = state.period;
     const timer_changed = switch (event) {
         .size => false,
         .pointer => |id| blk: {
             state.hover = over(id);
+            refreshTip(state);
             break :blk false;
         },
         .press => |id| blk: {
@@ -357,8 +444,8 @@ pub fn update(state: *State, event: host.Event) bool {
         },
         .key => |press| key(state, press),
     };
-    return timer_changed or state.page != page or !std.meta.eql(state.hover, hover) or
-        !std.meta.eql(state.pressed, pressed) or state.menu != menu;
+    return timer_changed or state.page != page or state.period != period or
+        !std.meta.eql(state.hover, hover) or !std.meta.eql(state.pressed, pressed) or state.menu != menu;
 }
 
 /// Ctrl+Tab and Ctrl+Shift+Tab switch pages, Space starts or pauses the
@@ -391,6 +478,12 @@ fn act(state: *State, target: Over) bool {
             state.page = .focus;
             return false;
         },
+        .period => |period| {
+            state.period = period;
+            refreshHistory(state);
+            return false;
+        },
+        .day => return false,
         .more => {
             state.menu = if (state.menu == .open) .closed else .open;
             return false;
@@ -414,10 +507,15 @@ pub fn view(state: *const State, tree: *Tree, theme: *const Theme) kit.tree.Erro
     try header(state, tree, theme);
     switch (state.page) {
         .today => try todayPage(state, tree, theme),
-        .history => {},
+        .history => try historyPage(state, tree, theme),
         .focus => try focusPage(state, tree, theme),
     }
     tree.close(root);
+
+    if (state.page == .history) switch (state.hover) {
+        .day => |index| try dayTooltip(state, tree, theme, index),
+        else => {},
+    };
 
     if (state.page == .focus and state.menu == .open) {
         const card = try popup.open(tree, theme, .{ .layer_id = layer_id, .anchor = more_id });
@@ -432,6 +530,9 @@ pub fn view(state: *const State, tree: *Tree, theme: *const Theme) kit.tree.Erro
 
 /// Room between cards, and around the page under the header.
 const card_gap = 16;
+/// Thickness of a stat card's bar, and of the space a card without one
+/// keeps in its place.
+const card_bar = 4;
 
 fn cardBox(theme: *const Theme, height: kit.tree.Size, gap: u8) kit.tree.Box {
     return .{
@@ -459,29 +560,37 @@ fn todayPage(state: *const State, tree: *Tree, theme: *const Theme) kit.tree.Err
             0 => if (card.over) theme.destructive else theme.primary,
             else => theme.info,
         };
-        try statCard(tree, theme, card_title, card, fill);
+        try statCard(tree, theme, card_title, card, fill, true);
     }
     tree.close(cards);
     // Three fifths and two fifths; the gap is padding inside the first.
     const lower = try tree.open(.{ .axis = .row, .width = .fill, .height = .fill });
     const left = try tree.open(.{ .width = .{ .fraction = 0.6 }, .height = .fill, .padding = .{ .right = card_gap } });
-    try weekCard(state, tree, theme);
+    try daysCard(tree, theme, .{
+        .card_title = "This week",
+        .days = &state.today.week,
+        .weekday = state.today.weekday,
+        .limit_s = state.today.limit_s,
+        .limit_label = state.today.limit_label.slice(),
+    });
     tree.close(left);
     const right = try tree.open(.{ .width = .{ .fraction = 0.4 }, .height = .fill });
-    try programsCard(state, tree, theme, "Programs today");
+    try programsCard(state, tree, theme, "Programs today", state.today.programs[0..state.today.program_count]);
     tree.close(right);
     tree.close(lower);
     tree.close(page);
 }
 
-fn statCard(tree: *Tree, theme: *const Theme, card_title: []const u8, card: *const Card, fill: Theme.Color) kit.tree.Error!void {
-    const box = try tree.open(cardBox(theme, .fit, 6));
+fn statCard(tree: *Tree, theme: *const Theme, card_title: []const u8, card: *const Card, fill: Theme.Color, with_bar: bool) kit.tree.Error!void {
+    const box = try tree.open(cardBox(theme, .fit, if (with_bar) 6 else 4));
     _ = try tree.text(card_title, .{ .color = theme.muted_foreground, .style = .xs });
     _ = try tree.text(card.value.slice(), .{ .color = theme.foreground, .style = .xl_semibold, .figures = .tabular });
-    if (card.fraction < 0) {
-        _ = try tree.leaf(.{ .height = .{ .fixed = chart.thickness } });
-    } else {
-        try chart.progress(tree, theme, .bar, card.fraction, fill);
+    if (with_bar) {
+        if (card.fraction < 0) {
+            _ = try tree.leaf(.{ .height = .{ .fixed = card_bar } });
+        } else {
+            try chart.progress(tree, theme, .bar, card.fraction, fill, card_bar);
+        }
     }
     _ = try tree.text(card.note.slice(), .{ .color = theme.muted_foreground, .style = .xs });
     tree.close(box);
@@ -495,24 +604,53 @@ fn legend(tree: *Tree, theme: *const Theme, label: []const u8, color: Theme.Colo
     tree.close(item);
 }
 
+/// The limit's hairline and its length, beside the legend.
+fn limitLegend(tree: *Tree, theme: *const Theme, label: []const u8) kit.tree.Error!void {
+    const item = try tree.open(.{ .axis = .row, .gap = 6, .cross = .center });
+    _ = try tree.leaf(.{ .width = .{ .fixed = 12 }, .height = .{ .fixed = 1 }, .fill = theme.muted_foreground });
+    _ = try tree.text(label, .{ .color = theme.muted_foreground, .style = .xs });
+    tree.close(item);
+}
+
 fn screenFill(theme: *const Theme) Theme.Color {
     return theme.chart[theme.chart.len - 1];
 }
 
-fn weekCard(state: *const State, tree: *Tree, theme: *const Theme) kit.tree.Error!void {
+/// What a day chart shows: the days, oldest first and the last one today,
+/// with the limit and, on History, the day under the pointer.
+const DayChart = struct {
+    card_title: []const u8,
+    days: []const DaySummary,
+    /// Today's day of the week, 0 for Sunday.
+    weekday: u8,
+    limit_s: u32,
+    limit_label: []const u8,
+    /// Ids on the columns, for hover and the tooltip; `.none` for none.
+    ids: Id = .none,
+    hovered: ?u8 = null,
+};
+
+fn isHovered(hovered: ?u8, index: usize) bool {
+    return if (hovered) |h| h == index else false;
+}
+
+fn daysCard(tree: *Tree, theme: *const Theme, options: DayChart) kit.tree.Error!void {
     const box = try tree.open(cardBox(theme, .fill, 12));
     const head = try tree.open(.{ .axis = .row, .width = .fill, .gap = 12, .cross = .center });
-    _ = try tree.text("This week", .{ .color = theme.foreground, .style = .sm_medium });
+    _ = try tree.text(options.card_title, .{ .color = theme.foreground, .style = .sm_medium });
     _ = try tree.leaf(.{ .width = .fill });
     try legend(tree, theme, "Screen", screenFill(theme));
     try legend(tree, theme, "Focus", theme.info);
+    if (options.limit_s != 0) try limitLegend(tree, theme, options.limit_label);
     tree.close(head);
 
-    const today = &state.today;
-    var items: [week_days]chart.Day = undefined;
-    for (&items, &today.week) |*item, day| {
-        const past_limit = today.limit_s != 0 and day.screen_s > today.limit_s;
+    var items: [history_days]chart.Day = undefined;
+    const shown = items[0..options.days.len];
+    for (shown, options.days, 0..) |*item, day, index| {
+        const past_limit = options.limit_s != 0 and day.screen_s > options.limit_s;
         item.* = .{
+            .id = if (options.ids == .none) .none else options.ids.item(@intCast(index)),
+            .slot = if (isHovered(options.hovered, index)) theme.muted else .transparent,
             .total = @floatFromInt(day.screen_s),
             .part = @floatFromInt(day.focus_s),
             .fill = if (past_limit) theme.destructive.alpha(30) else screenFill(theme),
@@ -520,16 +658,18 @@ fn weekCard(state: *const State, tree: *Tree, theme: *const Theme) kit.tree.Erro
         };
     }
     const area = try tree.open(.{ .width = .fill, .height = .fill });
-    try chart.days(tree, theme, .bar, &items, if (today.limit_s == 0) null else @floatFromInt(today.limit_s));
+    try chart.days(tree, theme, .bar, shown, if (options.limit_s == 0) null else @floatFromInt(options.limit_s));
     tree.close(area);
 
+    const count = options.days.len;
     const labels = try tree.open(.{ .axis = .row, .width = .fill, .gap = Theme.space });
-    for (0..week_days) |index| {
-        const last = index + 1 == week_days;
-        const weekday = (today.weekday + 7 - (week_days - 1 - index)) % 7;
+    for (0..count) |index| {
+        const last = index + 1 == count;
+        const weekday = (options.weekday + 7 * 3 - (count - 1 - index)) % 7;
+        const bright = last or isHovered(options.hovered, index);
         const cell = try tree.open(.{ .width = .fill, .cross = .center });
         _ = try tree.text(if (last) "Today" else weekday_names[weekday], .{
-            .color = if (last) theme.foreground else theme.muted_foreground,
+            .color = if (bright) theme.foreground else theme.muted_foreground,
             .style = .xs,
         });
         tree.close(cell);
@@ -538,11 +678,9 @@ fn weekCard(state: *const State, tree: *Tree, theme: *const Theme) kit.tree.Erro
     tree.close(box);
 }
 
-fn programsCard(state: *const State, tree: *Tree, theme: *const Theme, card_title: []const u8) kit.tree.Error!void {
+fn programsCard(state: *const State, tree: *Tree, theme: *const Theme, card_title: []const u8, rows: []const Program) kit.tree.Error!void {
     const box = try tree.open(cardBox(theme, .fill, 12));
     _ = try tree.text(card_title, .{ .color = theme.foreground, .style = .sm_medium });
-    const today = &state.today;
-    const rows = today.programs[0..today.program_count];
     if (rows.len == 0) {
         const empty = if (state.wb.option.screen_time.track_foreground_apps) "No programs recorded yet" else "Program tracking is off";
         _ = try tree.text(empty, .{ .color = theme.muted_foreground });
@@ -576,6 +714,53 @@ fn programsCard(state: *const State, tree: *Tree, theme: *const Theme, card_titl
     tree.close(box);
 }
 
+fn historyPage(state: *const State, tree: *Tree, theme: *const Theme) kit.tree.Error!void {
+    const history = &state.history;
+    const page = try tree.open(.{
+        .width = .fill,
+        .height = .fill,
+        .padding = .{ .left = 24, .right = 24, .top = 4, .bottom = 24 },
+        .gap = card_gap,
+    });
+    const cards = try tree.open(.{ .axis = .row, .width = .fill, .gap = card_gap });
+    for (&history.cards, history_card_titles) |*card, card_title| {
+        try statCard(tree, theme, card_title, card, theme.info, false);
+    }
+    tree.close(cards);
+    const lower = try tree.open(.{ .axis = .row, .width = .fill, .height = .fill });
+    const left = try tree.open(.{ .width = .{ .fraction = 0.6 }, .height = .fill, .padding = .{ .right = card_gap } });
+    const count = state.period.days();
+    try daysCard(tree, theme, .{
+        .card_title = "Each day",
+        .days = history.days[history_days - count ..],
+        .weekday = history.weekday,
+        .limit_s = state.today.limit_s,
+        .limit_label = state.today.limit_label.slice(),
+        .ids = day_id,
+        .hovered = switch (state.hover) {
+            .day => |index| index,
+            else => null,
+        },
+    });
+    tree.close(left);
+    const right = try tree.open(.{ .width = .{ .fraction = 0.4 }, .height = .fill });
+    try programsCard(state, tree, theme, "Where the time went", history.programs[0..history.program_count]);
+    tree.close(right);
+    tree.close(lower);
+    tree.close(page);
+}
+
+/// The hovered day's date and numbers, anchored to its column.
+fn dayTooltip(state: *const State, tree: *Tree, theme: *const Theme, index: u8) kit.tree.Error!void {
+    const card = try tooltip.open(tree, theme, day_id.item(index));
+    const lines = try tree.open(.{ .padding = .symmetric(2, 4), .gap = 2 });
+    _ = try tree.text(state.tip.title.slice(), .{ .color = theme.foreground, .style = .xs });
+    _ = try tree.text(state.tip.time.slice(), .{ .color = theme.muted_foreground, .style = .xs, .figures = .tabular });
+    _ = try tree.text(state.tip.counts.slice(), .{ .color = theme.muted_foreground, .style = .xs });
+    tree.close(lines);
+    tooltip.close(tree, card);
+}
+
 fn header(state: *const State, tree: *Tree, theme: *const Theme) kit.tree.Error!void {
     const row = try tree.open(.{
         .axis = .row,
@@ -597,12 +782,29 @@ fn header(state: *const State, tree: *Tree, theme: *const Theme) kit.tree.Error!
         },
     });
     _ = try tree.leaf(.{ .width = .fill });
-    if (state.page != .focus and state.shown.phase != .idle) try timerChip(state, tree, theme);
+    switch (state.page) {
+        .today => if (state.shown.phase != .idle) try timerChip(state, tree, theme),
+        .focus => {},
+        .history => {
+            var periods: [period_count]tabs.Tab = undefined;
+            for (&periods, 0..) |*tab, index| {
+                tab.* = .{ .id = period_id.item(@intCast(index)), .label = @as(Period, @enumFromInt(index)).label() };
+            }
+            try tabs.view(tree, theme, .{
+                .tabs = &periods,
+                .current = @intFromEnum(state.period),
+                .hovered = switch (state.hover) {
+                    .period => |period| @intFromEnum(period),
+                    else => tabs.none,
+                },
+            });
+        },
+    }
     tree.close(row);
 }
 
-/// The running timer, on the pages that do not show it: a dot in the
-/// phase's color, the time and the phase. A click opens Focus.
+/// The running timer, on Today: a dot in the phase's color, the time and
+/// the phase. A click opens Focus. History has its period switch there.
 fn timerChip(state: *const State, tree: *Tree, theme: *const Theme) kit.tree.Error!void {
     const touched = std.meta.eql(state.hover, Over.chip);
     const chip = try tree.open(.{
@@ -643,14 +845,14 @@ fn focusPage(state: *const State, tree: *Tree, theme: *const Theme) kit.tree.Err
         .bar => {
             const block = try tree.open(.{ .width = .{ .at_most = 400 }, .gap = 8, .cross = .center });
             try timerText(state, tree, theme, .xxxl_semibold);
-            try chart.progress(tree, theme, .bar, state.shown.fraction, color);
+            try chart.progress(tree, theme, .bar, state.shown.fraction, color, 6);
             _ = try tree.text(state.taskLine(), .{ .color = theme.muted_foreground });
             tree.close(block);
         },
         .ring => {
             const side = chart.ring_radius * 2;
             const square = try tree.open(.{ .width = .{ .fixed = side }, .height = .{ .fixed = side } });
-            try chart.progress(tree, theme, .ring, state.shown.fraction, color);
+            try chart.progress(tree, theme, .ring, state.shown.fraction, color, 6);
             const inside = try tree.open(.{ .overlay = true, .width = .fill, .height = .fill, .gap = 4, .main = .center, .cross = .center });
             try timerText(state, tree, theme, .xxl_semibold);
             _ = try tree.text(state.taskLine(), .{ .color = theme.muted_foreground });
@@ -749,6 +951,188 @@ fn refreshToday(state: *State, now_ms: i64) void {
     state.today_key = current;
     state.today_revision +%= 1;
     computeToday(&state.today, data, &state.wb.option, day);
+    computeHistory(&state.history, data, &state.wb.option, day, state.period);
+    refreshTip(state);
+}
+
+/// For tests: History as of local day `day`.
+pub fn refreshHistoryAt(state: *State, day: u32) void {
+    state.today_key.day = day;
+    computeToday(&state.today, &state.wb.data, &state.wb.option, day);
+    refreshHistory(state);
+}
+
+fn refreshHistory(state: *State) void {
+    computeHistory(&state.history, &state.wb.data, &state.wb.option, state.today_key.day, state.period);
+    refreshTip(state);
+}
+
+fn refreshTip(state: *State) void {
+    const index = switch (state.hover) {
+        .day => |index| index,
+        else => return,
+    };
+    const count = state.period.days();
+    if (index >= count) return;
+    const history = &state.history;
+    const back: u32 = count - 1 - index;
+    const day = history.day -| back;
+    const summary = history.days[history_days - count + index];
+    const civil = (std.time.epoch.EpochDay{ .day = day }).calculateYearDay().calculateMonthDay();
+    state.tip.title.set("{s}, {d} {s}", .{
+        weekday_long[(day + 4) % 7],
+        civil.day_index + 1,
+        month_names[@intFromEnum(civil.month) - 1],
+    });
+    var screen: Label(12) = .{};
+    var focused: Label(12) = .{};
+    screen.duration(summary.screen_s);
+    focused.duration(summary.focus_s);
+    state.tip.time.set("Screen {s} \u{00b7} Focus {s}", .{ screen.slice(), focused.slice() });
+    state.tip.counts.set("{d} {s} \u{00b7} {d} {s}", .{
+        summary.tasks,
+        if (summary.tasks == 1) "task" else "tasks",
+        summary.breaks,
+        if (summary.breaks == 1) "break" else "breaks",
+    });
+}
+
+fn limitSeconds(option: *const wellbeing.Option) u32 {
+    const ms = option.screen_time.daily_limit_ms orelse return 0;
+    return @intCast(@min(ms / std.time.ms_per_s, std.math.maxInt(u32)));
+}
+
+/// Averages over the days in the period that saw any screen time, so a
+/// day off does not pull them down. Only the 7-day view compares with the
+/// period before: the file keeps 14 days and today.
+pub fn computeHistory(history: *History, data: *const wellbeing.storage.PersistentData, option: *const wellbeing.Option, day: u32, period: Period) void {
+    history.day = day;
+    history.weekday = @intCast((day + 4) % 7);
+    for (&history.days, 0..) |*entry, index| {
+        const back: u32 = @intCast(history_days - 1 - index);
+        entry.* = if (day >= back) .of(record(data, day - back)) else .{};
+    }
+    const count = period.days();
+    const shown = history.days[history_days - count ..];
+    const now = average(shown);
+    const before: ?Average = switch (period) {
+        .week => blk: {
+            const earlier = average(history.days[0..week_days]);
+            break :blk if (earlier.days == 0) null else earlier;
+        },
+        .fortnight => null,
+    };
+
+    const screen = &history.cards[0];
+    screen.value.duration(now.screen_s);
+    if (before) |earlier| {
+        change(&screen.note, now.screen_s, earlier.screen_s, "", "from the week before");
+    } else {
+        screen.note.set("over {d} {s} with screen time", .{ now.days, if (now.days == 1) "day" else "days" });
+    }
+
+    const focused = &history.cards[1];
+    focused.value.duration(now.focus_s);
+    const share: u32 = if (now.screen_s == 0) 0 else @intFromFloat(@round(@as(f32, @floatFromInt(now.focus_s)) * 100 / @as(f32, @floatFromInt(now.screen_s))));
+    if (before) |earlier| {
+        var share_text: Label(24) = .{};
+        share_text.set("{d}% of screen time", .{share});
+        change(&focused.note, now.focus_s, earlier.focus_s, "", share_text.slice());
+    } else {
+        focused.note.set("{d}% of screen time", .{share});
+    }
+
+    const limit_s = limitSeconds(option);
+    const over_card = &history.cards[2];
+    if (limit_s == 0) {
+        over_card.value.set("\u{2013}", .{});
+        over_card.note.set("No daily limit", .{});
+    } else {
+        var days_over: u32 = 0;
+        var worst: ?usize = null;
+        for (shown, 0..) |entry, index| {
+            if (entry.screen_s <= limit_s) continue;
+            days_over += 1;
+            if (worst == null or entry.screen_s > shown[worst.?].screen_s) worst = index;
+        }
+        over_card.value.set("{d} {s}", .{ days_over, if (days_over == 1) "day" else "days" });
+        if (worst) |index| {
+            var by: Label(12) = .{};
+            by.duration(shown[index].screen_s - limit_s);
+            const weekday = weekday_long[(history.weekday + 7 * 3 - (count - 1 - index)) % 7];
+            over_card.note.set("of {d} \u{00b7} {s}{s}, by {s}", .{ count, if (days_over > 1) "most on " else "", weekday, by.slice() });
+        } else {
+            over_card.note.set("of {d}", .{count});
+        }
+    }
+
+    const breaks_card = &history.cards[3];
+    var breaks: u32 = 0;
+    var screen_s: u64 = 0;
+    for (shown) |entry| {
+        breaks += entry.breaks;
+        screen_s += entry.screen_s;
+    }
+    if (screen_s == 0) {
+        breaks_card.value.set("0", .{});
+        breaks_card.note.set("No screen time yet", .{});
+    } else {
+        const hours = @as(f32, @floatFromInt(screen_s)) / std.time.s_per_hour;
+        breaks_card.value.set("{d:.1} an hour", .{@as(f32, @floatFromInt(breaks)) / hours});
+        // Whole hours, so the note keeps to one line.
+        var screen_text: Label(12) = .{};
+        if (screen_s >= std.time.s_per_hour) {
+            screen_text.set("{d}h", .{(screen_s + std.time.s_per_hour / 2) / std.time.s_per_hour});
+        } else {
+            screen_text.duration(screen_s);
+        }
+        breaks_card.note.set("{d} {s} in {s} of screen time", .{ breaks, if (breaks == 1) "break" else "breaks", screen_text.slice() });
+    }
+
+    var names: [history_days * wellbeing.storage.max_top_apps]wellbeing.storage.AppUsage = undefined;
+    var name_count: usize = 0;
+    for (0..count) |index| {
+        const back: u32 = @intCast(count - 1 - index);
+        if (day < back) continue;
+        const rec = record(data, day - back);
+        for (rec.top_apps) |app| {
+            if (app.seconds == 0) continue;
+            const slot = for (names[0..name_count]) |*known| {
+                if (std.mem.eql(u8, known.getName(), app.getName())) break known;
+            } else blk: {
+                names[name_count] = .{ .name = app.name };
+                name_count += 1;
+                break :blk &names[name_count - 1];
+            };
+            slot.seconds +|= app.seconds;
+        }
+    }
+    computePrograms(&history.programs, &history.program_count, names[0..name_count]);
+}
+
+const Average = struct { screen_s: u32 = 0, focus_s: u32 = 0, days: u32 = 0 };
+
+fn average(days: []const DaySummary) Average {
+    var screen: u64 = 0;
+    var focused: u64 = 0;
+    var used: u32 = 0;
+    for (days) |day| {
+        if (day.screen_s == 0) continue;
+        screen += day.screen_s;
+        focused += day.focus_s;
+        used += 1;
+    }
+    if (used == 0) return .{};
+    return .{ .screen_s = @intCast(screen / used), .focus_s = @intCast(focused / used), .days = used };
+}
+
+/// "↓ 34m from the week before", or "↑ 12m · 34% of screen time".
+fn change(note: *Label(40), now: u32, earlier: u32, comptime prefix: []const u8, tail: []const u8) void {
+    var amount: Label(12) = .{};
+    amount.duration(if (now > earlier) now - earlier else earlier - now);
+    const arrow = if (now > earlier) "\u{2191}" else if (now < earlier) "\u{2193}" else "=";
+    const separator = if (std.mem.startsWith(u8, tail, "from")) " " else " \u{00b7} ";
+    note.set(prefix ++ "{s} {s}{s}{s}", .{ arrow, amount.slice(), separator, tail });
 }
 
 /// A day's record from the file, or an empty one when none was kept.
@@ -762,8 +1146,13 @@ fn record(data: *const wellbeing.storage.PersistentData, day: u32) wellbeing.sto
 
 pub fn computeToday(today: *Today, data: *const wellbeing.storage.PersistentData, option: *const wellbeing.Option, day: u32) void {
     const now = record(data, day);
-    const limit_s: u32 = if (option.screen_time.daily_limit_ms) |ms| @intCast(@min(ms / std.time.ms_per_s, std.math.maxInt(u32))) else 0;
+    const limit_s = limitSeconds(option);
     today.limit_s = limit_s;
+    if (limit_s != 0) {
+        var length: Label(12) = .{};
+        length.duration(limit_s);
+        today.limit_label.set("{s} limit", .{length.slice()});
+    }
 
     const screen = &today.cards[0];
     screen.value.duration(now.active_screen_s);
@@ -809,12 +1198,12 @@ pub fn computeToday(today: *Today, data: *const wellbeing.storage.PersistentData
         const offset: u32 = @intCast(week_days - 1 - index);
         const past = day -| offset;
         const rec = if (day >= offset) record(data, past) else wellbeing.storage.DayRecord{};
-        entry.* = .{ .screen_s = rec.active_screen_s, .focus_s = rec.focus_s };
+        entry.* = .of(rec);
     }
     // Day 0 of the epoch was a Thursday.
     today.weekday = @intCast((day + 4) % 7);
 
-    computePrograms(today, &now);
+    computePrograms(&today.programs, &today.program_count, &now.top_apps);
 }
 
 /// "next eye break in 12m": the eyesight reminder, else the movement
@@ -847,48 +1236,47 @@ fn breakNote(note: *Label(40), data: *const wellbeing.storage.PersistentData, op
     note.set("Reminders are off", .{});
 }
 
-/// The day's programs by time, largest first: four by name, the rest as
-/// one row.
-fn computePrograms(today: *Today, day: *const wellbeing.storage.DayRecord) void {
-    var order: [wellbeing.storage.max_top_apps]u8 = undefined;
+/// Programs by time, largest first: four by name, the rest as one row.
+fn computePrograms(programs: *[program_rows]Program, program_count: *u8, apps: []const wellbeing.storage.AppUsage) void {
+    var order: [history_days * wellbeing.storage.max_top_apps]u8 = undefined;
     var count: usize = 0;
     var total: u64 = 0;
-    for (day.top_apps, 0..) |app, index| {
+    for (apps, 0..) |app, index| {
         if (app.seconds == 0 or app.getName().len == 0) continue;
         order[count] = @intCast(index);
         count += 1;
         total += app.seconds;
     }
     const Less = struct {
-        fn less(apps: *const [wellbeing.storage.max_top_apps]wellbeing.storage.AppUsage, a: u8, b: u8) bool {
-            return apps[a].seconds > apps[b].seconds;
+        fn less(list: []const wellbeing.storage.AppUsage, a: u8, b: u8) bool {
+            return list[a].seconds > list[b].seconds;
         }
     };
-    std.mem.sort(u8, order[0..count], &day.top_apps, Less.less);
+    std.mem.sort(u8, order[0..count], apps, Less.less);
 
     var rows: u8 = 0;
     var rest: u64 = 0;
     for (order[0..count], 0..) |index, rank| {
-        const app = day.top_apps[index];
+        const app = apps[index];
         if (rank < program_names) {
-            const row = &today.programs[rows];
+            const row = &programs[rows];
             row.name.set("{s}", .{app.getName()});
             row.seconds = app.seconds;
             rows += 1;
         } else rest += app.seconds;
     }
     if (rest > 0) {
-        const row = &today.programs[rows];
+        const row = &programs[rows];
         row.name.set("Other", .{});
-        row.seconds = @intCast(rest);
+        row.seconds = @intCast(@min(rest, std.math.maxInt(u32)));
         rows += 1;
     }
-    for (today.programs[0..rows]) |*row| {
+    for (programs[0..rows]) |*row| {
         row.time.duration(row.seconds);
         const percent = if (total == 0) 0 else (@as(u64, row.seconds) * 100 + total / 2) / total;
         row.share.set("{d}%", .{percent});
     }
-    today.program_count = rows;
+    program_count.* = rows;
 }
 
 /// As the terminal shows the timer: an idle timer shows a full task, a

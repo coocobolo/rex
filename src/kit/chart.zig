@@ -15,7 +15,7 @@ const tree_zig = @import("tree.zig");
 const Tree = tree_zig.Tree;
 const Id = tree_zig.Id;
 
-/// Thickness of a progress bar.
+/// Thickness of a progress bar unless the caller gives one.
 pub const thickness = 8;
 /// Height of the share strip, and the room each segment leaves after it.
 pub const strip_height = 12;
@@ -50,6 +50,8 @@ pub const Part = struct {
 pub const Day = struct {
     /// On the column, so a tooltip can anchor to it later.
     id: Id = .none,
+    /// Behind the column: a hovered or selected day.
+    slot: Color = .transparent,
     total: f32,
     /// Drawn inside `total`, from the baseline, and clamped to it.
     part: f32,
@@ -79,10 +81,11 @@ pub fn donutNodes(count: usize) usize {
 }
 
 /// A track and the fraction of it that `fraction` fills. Values outside
-/// 0..1 are clamped.
-pub fn progress(tree: *Tree, theme: *const Theme, mark: ProgressMark, fraction: f32, fill: Color) tree_zig.Error!void {
+/// 0..1 are clamped. `bar_height` is the bar's thickness; a ring keeps its
+/// own.
+pub fn progress(tree: *Tree, theme: *const Theme, mark: ProgressMark, fraction: f32, fill: Color, bar_height: f32) tree_zig.Error!void {
     switch (mark) {
-        .bar => try fractionBar(tree, theme.muted, fill, fraction),
+        .bar => try fractionBar(tree, theme.muted, fill, fraction, bar_height),
         .ring => try ringChart(tree, theme, fraction, fill),
     }
 }
@@ -106,10 +109,10 @@ pub fn days(tree: *Tree, theme: *const Theme, mark: DayMark, items: []const Day,
     }
 }
 
-fn fractionBar(tree: *Tree, track: Color, fill: Color, fraction: f32) tree_zig.Error!void {
+fn fractionBar(tree: *Tree, track: Color, fill: Color, fraction: f32, height: f32) tree_zig.Error!void {
     const bar = try tree.open(.{
         .width = .fill,
-        .height = .{ .fixed = thickness },
+        .height = .{ .fixed = height },
         .fill = track,
         .radius = Theme.radius_sm,
     });
@@ -146,6 +149,8 @@ fn shareStrip(tree: *Tree, parts: []const Part) tree_zig.Error!void {
 
 /// Radius of a day's bar and of the part inside it.
 const day_radius = 6;
+/// Room around the bar inside its column, where the slot shows.
+pub const slot_pad = 2;
 
 fn dayBars(tree: *Tree, theme: *const Theme, items: []const Day, limit: ?f32) tree_zig.Error!void {
     var scale: f32 = if (limit) |lim| finite(lim) else 0;
@@ -168,7 +173,10 @@ fn dayColumn(tree: *Tree, theme: *const Theme, day: Day, limit: ?f32, scale: f32
         .id = day.id,
         .width = .fill,
         .height = .fill,
+        .padding = .all(slot_pad),
         .main = .end,
+        .fill = day.slot,
+        .radius = day_radius + slot_pad,
     });
     const total = finite(day.total);
     const bar = try tree.open(.{
@@ -186,7 +194,9 @@ fn dayColumn(tree: *Tree, theme: *const Theme, day: Day, limit: ?f32, scale: f32
     });
     tree.close(bar);
     if (limit) |lim| {
-        const overlay = try tree.open(.{ .overlay = true, .width = .fill, .height = .fill, .main = .end });
+        // An overlay covers the padding box; its own padding puts the line
+        // on the bars' scale.
+        const overlay = try tree.open(.{ .overlay = true, .width = .fill, .height = .fill, .padding = .all(slot_pad), .main = .end });
         _ = try tree.leaf(.{ .width = .fill, .height = .{ .fixed = 1 }, .fill = theme.border });
         _ = try tree.leaf(.{ .width = .fill, .height = .{ .fraction = if (scale == 0) 0 else finite(lim) / scale } });
         tree.close(overlay);
