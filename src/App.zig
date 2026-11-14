@@ -198,6 +198,9 @@ needs_redraw: bool = true,
 renderer_dirty: bool = false,
 quit_confirmed: bool = false,
 skip_next_char: bool = false,
+dialog_kind: DialogKind = .none,
+clipboard_session: ClipboardSession = .{},
+pending_clipboard: PendingClipboard = .none,
 
 // Blink state
 blink_on: bool = true,
@@ -1575,6 +1578,9 @@ pub fn reloadConfig(self: *App) void {
     } else if (!self.config.window.banner.enabled or configBanner(&loaded) == null) {
         self.pending_banner = null;
     }
+    if (self.config.clipboard.osc52_write != .ask) self.clipboard_session.allow_write = false;
+    if (self.config.clipboard.osc52_read != .ask) self.clipboard_session.allow_read = false;
+    self.reconcilePendingClipboard();
     self.renderer.background.option.alpha = self.config.window.background.alpha;
     self.renderer.setModalBlur(self.config.window.modal.blur, self.config.window.modal.blur_radius);
     self.driver.setTheme(resolved_theme);
@@ -2027,9 +2033,15 @@ pub fn requestQuit(self: *App) void {
         self.confirmQuit();
         return;
     };
-    if (!ask or self.quitDialogActive()) {
+    if (!ask or self.dialog_kind == .quit) {
         self.confirmQuit();
         return;
+    }
+    if (self.dialog_kind == .clipboard_ask) {
+        // Window close takes precedence over an open clipboard prompt.
+        _ = kit.dialogInput(.dismiss);
+        self.dialog_kind = .none;
+        denyPendingClipboard(&self.pending_clipboard, &self.driver);
     }
     self.window.setWindowShouldClose(false);
     // The body names the program that closing would end, and says
@@ -2043,7 +2055,7 @@ pub fn requestQuit(self: *App) void {
     };
     const program = if (running) self.foregroundProgram(&name_buf) else null;
     var body_buf: [alert_dialog.body_capacity]u8 = undefined;
-    _ = kit.openDialog(.{
+    if (kit.openDialog(.{
         .media = alertDialogMedia(self.config.window.alert_dialog.icon).codepoint(icons.none),
         .title = "Close this window?",
         .body = quitDialogBodyFor(running, program, &body_buf),
@@ -2054,7 +2066,9 @@ pub fn requestQuit(self: *App) void {
         },
         // Leave null so live-reloaded `modal.backdrop_opacity` updates open dialogs.
         .scrim_alpha = null,
-    });
+    })) {
+        self.dialog_kind = .quit;
+    }
     self.needs_redraw = true;
 }
 
@@ -2086,19 +2100,65 @@ fn foregroundProgram(self: *const App, buf: []u8) ?[]const u8 {
     return name;
 }
 
-/// Applies an outcome of the kit's dialog, which only the quit prompt
-/// opens: choosing "Close window" closes the window.
+/// Which surface currently owns `KitOverlay.dialog`.
+const DialogKind = enum(u8) {
+    none,
+    quit,
+    clipboard_ask,
+};
+
+/// Applies an outcome of the kit's dialog across quit and clipboard prompts.
 fn applyDialogOutcome(self: *App, outcome: alert_dialog.Outcome) void {
+    if (outcome == .quiet) return;
+    self.needs_redraw = true;
+    const prev_kind = self.dialog_kind;
     switch (outcome) {
-        .quiet => {},
-        .redraw, .closed => {
-            self.needs_redraw = true;
+        .quiet => unreachable,
+        .redraw => if (self.dialogTakesInput()) return,
+        .closed => {},
+        .chosen => {},
+    }
+    self.dialog_kind = .none;
+    switch (prev_kind) {
+        .none => {},
+        .quit => switch (outcome) {
+            .chosen => |action| {
+                if (action == quit_close) {
+                    self.confirmQuit();
+                    return;
+                }
+                self.maybeOpenClipboardDialog();
+            },
+            .redraw, .closed => self.maybeOpenClipboardDialog(),
+            .quiet => unreachable,
         },
-        .chosen => |action| if (action == quit_close) self.confirmQuit(),
+        .clipboard_ask => {
+            switch (outcome) {
+                .chosen => |action| {
+                    if (action == clipboard_allow_always) {
+                        self.clipboard_session.grant(self.pending_clipboard);
+                    }
+                    if (action == clipboard_allow_once or action == clipboard_allow_always) {
+                        allowPendingClipboard(
+                            self.allocator,
+                            &self.pending_clipboard,
+                            self.clipboard_buf,
+                            &self.window,
+                            &self.driver,
+                        );
+                    } else {
+                        denyPendingClipboard(&self.pending_clipboard, &self.driver);
+                    }
+                },
+                .redraw, .closed => denyPendingClipboard(&self.pending_clipboard, &self.driver),
+                .quiet => unreachable,
+            }
+            self.handleClipboard();
+        },
     }
 }
 
-fn quitDialogActive(self: *const App) bool {
+fn dialogTakesInput(self: *const App) bool {
     const kit = self.kit orelse return false;
     return kit.dialogTakesInput();
 }
@@ -2126,6 +2186,7 @@ fn unlockLockScreen(self: *App) void {
     self.wellbeing_state.skipFocus(self.wallMs());
     self.ringBell();
     self.syncWellbeingKit(false);
+    self.maybeOpenClipboardDialog();
     self.needs_redraw = true;
 }
 
@@ -2135,8 +2196,8 @@ fn unlockLockScreen(self: *App) void {
 fn routeKeyToUi(self: *App, maybe_key: ?rex.input.Key, mods: rex.input.Modifiers) bool {
     const k = maybe_key orelse return false;
 
-    if (self.quitDialogActive()) {
-        self.handleQuitModalKey(k, mods);
+    if (self.dialogTakesInput()) {
+        self.handleDialogKey(k, mods);
         return true;
     }
 
@@ -2179,20 +2240,33 @@ fn handleLockScreenKey(self: *App, k: rex.input.Key, mods: rex.input.Modifiers) 
     }
 }
 
-fn handleQuitModalKey(self: *App, k: rex.input.Key, mods: rex.input.Modifiers) void {
+fn handleDialogKey(self: *App, k: rex.input.Key, mods: rex.input.Modifiers) void {
     const kit = self.kit orelse {
-        self.confirmQuit();
+        if (self.dialog_kind == .quit) self.confirmQuit();
         return;
     };
-    // Y, Q, N and Backspace are this prompt's own shortcuts.
-    const event: ?alert_dialog.Event = switch (k) {
-        .tab => .{ .focus = if (mods.shift) .previous else .next },
-        .left, .up => .{ .focus = .previous },
-        .right, .down => .{ .focus = .next },
-        .enter, .kp_enter, .space => .activate,
-        .y, .q => .{ .take = quit_close },
-        .escape, .n, .backspace => .dismiss,
-        else => null,
+    const event: ?alert_dialog.Event = switch (self.dialog_kind) {
+        .none => null,
+        .quit => switch (k) {
+            .tab => .{ .focus = if (mods.shift) .previous else .next },
+            .left, .up => .{ .focus = .previous },
+            .right, .down => .{ .focus = .next },
+            .enter, .kp_enter, .space => .activate,
+            // Y, Q, N and Backspace are the quit prompt's own shortcuts.
+            .y, .q => .{ .take = quit_close },
+            .escape, .n, .backspace => .dismiss,
+            else => null,
+        },
+        // Do not bind bare letter keys to allow in clipboard prompts: an async
+        // OSC 52 can open while the user is typing.
+        .clipboard_ask => switch (k) {
+            .tab => .{ .focus = if (mods.shift) .previous else .next },
+            .left, .up => .{ .focus = .previous },
+            .right, .down => .{ .focus = .next },
+            .enter, .kp_enter, .space => .activate,
+            .escape => .dismiss,
+            else => null,
+        },
     };
     if (event) |ev| self.applyDialogOutcome(kit.dialogInput(ev));
 }
@@ -2204,7 +2278,7 @@ const charCb: c.GLFWcharfun = struct {
             app.skip_next_char = false;
             return;
         }
-        if (app.quitDialogActive() or app.wellbeing_state.input_locked) return;
+        if (app.dialogTakesInput() or app.wellbeing_state.input_locked) return;
         app.wellbeing_state.recordActivity();
         app.selection = .empty;
         app.needs_redraw = true;
@@ -2287,23 +2361,137 @@ fn mouseCellPos(self: *App, xpos: f32, ypos: f32) struct { u16, u16 } {
     return .{ col, row };
 }
 
+/// Per-window OSC 52 permissions granted via "Always Allow".
+const ClipboardSession = packed struct(u8) {
+    allow_write: bool = false,
+    allow_read: bool = false,
+    _pad: u6 = 0,
+
+    fn grant(self: *ClipboardSession, pending: PendingClipboard) void {
+        switch (pending) {
+            .none => {},
+            .write => self.allow_write = true,
+            .read => self.allow_read = true,
+        }
+    }
+};
+
+/// An OSC 52 request awaiting user confirmation under `ask`.
+/// For `.write`, the decoded payload sits in `App.clipboard_buf[0..len]`
+/// until resolved, so `handleClipboard` leaves the next terminal request
+/// untouched until this one completes.
+const PendingClipboard = union(enum) {
+    none,
+    write: struct {
+        targets: rex.terminal.term.Clipboard.Targets,
+        len: u32,
+    },
+    read: struct {
+        targets: rex.terminal.term.Clipboard.Targets,
+        control_format: rex.terminal.term.ControlFormat,
+    },
+};
+
+const clipboard_actions = [_]alert_dialog.Action{
+    .{ .label = "Deny", .role = .dismiss, .key_cap = "Esc" },
+    .{ .label = "Allow Once", .variant = .primary },
+    .{ .label = "Always Allow" },
+};
+const clipboard_deny = 0;
+const clipboard_allow_once = 1;
+const clipboard_allow_always = 2;
+
 /// What App does with an OSC 52 request (ADR 0006).
 const ClipboardAction = union(enum) {
     ignore,
     /// Set these selections to the write's data.
     set: rex.terminal.term.Clipboard.Targets,
+    /// Prompt before setting these selections.
+    ask_write: rex.terminal.term.Clipboard.Targets,
     /// Reply with the content of the first of these selections that has
     /// text: CLIPBOARD, then PRIMARY.
     reply_selection: rex.terminal.term.Clipboard.Targets,
+    /// Prompt before reading these selections.
+    ask_read: rex.terminal.term.Clipboard.Targets,
     /// Reply with no data, so a waiting program (Neovim waits up to 10 s)
     /// doesn't hang on a refused read.
     reply_empty,
 };
 
+fn effectiveClipboardPolicy(policy: Config.Clipboard, session: ClipboardSession) Config.Clipboard {
+    return .{
+        .osc52_write = if (policy.osc52_write == .ask and session.allow_write) .allow else policy.osc52_write,
+        .osc52_read = if (policy.osc52_read == .ask and session.allow_read) .allow else policy.osc52_read,
+    };
+}
+
 fn clipboardAction(policy: Config.Clipboard, request: rex.driver.ClipboardRequest) ClipboardAction {
     return switch (request) {
-        .write => |w| if (policy.osc52_write == .allow) .{ .set = w.targets } else .ignore,
-        .read => |r| if (policy.osc52_read == .allow) .{ .reply_selection = r.targets } else .reply_empty,
+        .write => |w| switch (policy.osc52_write) {
+            .allow => .{ .set = w.targets },
+            .ask => .{ .ask_write = w.targets },
+            .deny => .ignore,
+        },
+        .read => |r| switch (policy.osc52_read) {
+            .allow => .{ .reply_selection = r.targets },
+            .ask => .{ .ask_read = r.targets },
+            .deny => .reply_empty,
+        },
+    };
+}
+
+fn clipboardAskBodyFor(pending: PendingClipboard, program: ?[]const u8, buf: []u8) []const u8 {
+    switch (pending) {
+        .none => return "",
+        .read => {
+            if (program) |name| {
+                return std.fmt.bufPrint(buf, "{s} is asking to read your clipboard via OSC 52.", .{name}) catch
+                    "A program is asking to read your clipboard via OSC 52.";
+            }
+            return "A program in this terminal is asking to read your clipboard via OSC 52.";
+        },
+        .write => |w| {
+            if (w.len == 0) {
+                if (program) |name| {
+                    return std.fmt.bufPrint(buf, "{s} is asking to clear your clipboard via OSC 52.", .{name}) catch
+                        "A program is asking to clear your clipboard via OSC 52.";
+                }
+                return "A program in this terminal is asking to clear your clipboard via OSC 52.";
+            }
+            const unit = if (w.len == 1) "byte" else "bytes";
+            if (program) |name| {
+                return std.fmt.bufPrint(buf, "{s} is asking to copy {d} {s} to your clipboard via OSC 52.", .{ name, w.len, unit }) catch
+                    "A program is asking to write to your clipboard via OSC 52.";
+            }
+            return std.fmt.bufPrint(buf, "A program in this terminal is asking to copy {d} {s} to your clipboard via OSC 52.", .{ w.len, unit }) catch
+                "A program in this terminal is asking to write to your clipboard via OSC 52.";
+        },
+    }
+}
+
+fn clipboardAskDialogRequest(
+    pending: PendingClipboard,
+    icon: @import("config/overlay.zig").AlertDialog.Icon,
+    program: ?[]const u8,
+    body_buf: []u8,
+) alert_dialog.Request {
+    const title = switch (pending) {
+        .read => "Allow clipboard read?",
+        .write, .none => "Allow clipboard write?",
+    };
+    const fallback_icon: u21 = switch (pending) {
+        .read => icons.alert_triangle,
+        .write, .none => icons.info,
+    };
+    return .{
+        .media = alertDialogMedia(icon).codepoint(fallback_icon),
+        .title = title,
+        .body = clipboardAskBodyFor(pending, program, body_buf),
+        .actions = &clipboard_actions,
+        // Always focus Deny so stray terminal input cannot accidentally
+        // grant clipboard access if an OSC 52 arrives while typing.
+        .focus = clipboard_deny,
+        .scrim_alpha = null,
     };
 }
 
@@ -2332,12 +2520,163 @@ fn writeReadReply(dest: []u8, format: rex.terminal.term.ControlFormat, selection
 
 /// Applies or answers the pending OSC 52 request.
 fn handleClipboard(self: *App) void {
+    if (self.pending_clipboard != .none) return;
     const request = self.driver.takeClipboard(self.clipboard_buf[0..terminal_option.max_clipboard_bytes]) orelse return;
-    serveClipboard(self.allocator, self.config.clipboard, request, &self.window, &self.driver, self.clipboard_buf);
+    const policy = effectiveClipboardPolicy(self.config.clipboard, self.clipboard_session);
+    switch (clipboardAction(policy, request)) {
+        .ignore => log.debug("OSC 52: ignored {t}", .{request}),
+        .set => |targets| applyClipboardWrite(targets, request.write.data, &self.window, self.clipboard_buf),
+        .reply_selection => |targets| applyClipboardRead(self.allocator, targets, request.read.control_format, &self.window, &self.driver),
+        .reply_empty => {
+            const read = request.read;
+            sendEmptyReply(&self.driver, read.control_format, if (read.targets.clipboard) 'c' else 'p');
+        },
+        .ask_write => |targets| {
+            // Reject NUL-containing writes before prompting.
+            if (std.mem.indexOfScalar(u8, request.write.data, 0) != null) {
+                log.warn("OSC 52: ignored a {d}-byte write that contains a NUL byte", .{request.write.data.len});
+                return;
+            }
+            self.pending_clipboard = .{
+                .write = .{ .targets = targets, .len = @intCast(request.write.data.len) },
+            };
+            self.maybeOpenClipboardDialog();
+        },
+        .ask_read => |targets| {
+            self.pending_clipboard = .{
+                .read = .{ .targets = targets, .control_format = request.read.control_format },
+            };
+            self.maybeOpenClipboardDialog();
+        },
+    }
 }
 
-/// Applies or answers one OSC 52 request (ADR 0006). A write's data lives in
-/// `buf`, which has room for the NUL GLFW needs. Main thread only.
+fn maybeOpenClipboardDialog(self: *App) void {
+    if (self.pending_clipboard == .none) return;
+    if (self.dialog_kind != .none or self.wellbeing_state.input_locked or !self.window_focused) return;
+    const kit = self.kit orelse {
+        denyPendingClipboard(&self.pending_clipboard, &self.driver);
+        return;
+    };
+    var name_buf: [32]u8 = undefined;
+    const program = self.foregroundProgram(&name_buf);
+    var body_buf: [alert_dialog.body_capacity]u8 = undefined;
+    const req = clipboardAskDialogRequest(
+        self.pending_clipboard,
+        self.config.window.alert_dialog.icon,
+        program,
+        &body_buf,
+    );
+    if (kit.openDialog(req)) {
+        self.dialog_kind = .clipboard_ask;
+        self.needs_redraw = true;
+    }
+}
+
+fn allowPendingClipboard(
+    gpa: std.mem.Allocator,
+    pending: *PendingClipboard,
+    buf: *[terminal_option.max_clipboard_bytes + 1]u8,
+    window: *Window,
+    driver: *Driver,
+) void {
+    const req = pending.*;
+    pending.* = .none;
+    switch (req) {
+        .none => {},
+        .write => |w| applyClipboardWrite(w.targets, buf[0..w.len], window, buf),
+        .read => |r| applyClipboardRead(gpa, r.targets, r.control_format, window, driver),
+    }
+}
+
+fn denyPendingClipboard(pending: *PendingClipboard, driver: *Driver) void {
+    const req = pending.*;
+    pending.* = .none;
+    switch (req) {
+        .none => {},
+        .write => log.debug("OSC 52: user denied write", .{}),
+        .read => |r| sendEmptyReply(driver, r.control_format, if (r.targets.clipboard) 'c' else 'p'),
+    }
+}
+
+fn reconcilePendingClipboard(self: *App) void {
+    if (self.pending_clipboard == .none) return;
+    const eff = effectiveClipboardPolicy(self.config.clipboard, self.clipboard_session);
+    const direction_policy = switch (self.pending_clipboard) {
+        .none => return,
+        .write => eff.osc52_write,
+        .read => eff.osc52_read,
+    };
+    switch (direction_policy) {
+        .ask => {},
+        .allow => {
+            if (self.dialog_kind == .clipboard_ask) {
+                if (self.kit) |kit| _ = kit.dialogInput(.dismiss);
+                self.dialog_kind = .none;
+            }
+            allowPendingClipboard(self.allocator, &self.pending_clipboard, self.clipboard_buf, &self.window, &self.driver);
+            self.needs_redraw = true;
+            self.handleClipboard();
+        },
+        .deny => {
+            if (self.dialog_kind == .clipboard_ask) {
+                if (self.kit) |kit| _ = kit.dialogInput(.dismiss);
+                self.dialog_kind = .none;
+            }
+            denyPendingClipboard(&self.pending_clipboard, &self.driver);
+            self.needs_redraw = true;
+            self.handleClipboard();
+        },
+    }
+}
+
+fn applyClipboardWrite(
+    targets: rex.terminal.term.Clipboard.Targets,
+    data: []const u8,
+    window: *Window,
+    buf: *[terminal_option.max_clipboard_bytes + 1]u8,
+) void {
+    // GLFW takes a NUL-terminated string: refuse rather than cut.
+    if (std.mem.indexOfScalar(u8, data, 0) != null) {
+        log.warn("OSC 52: ignored a {d}-byte write that contains a NUL byte", .{data.len});
+        return;
+    }
+    buf[data.len] = 0;
+    const text = buf[0..data.len :0];
+    if (targets.clipboard) window.setClipboard(text);
+    if (targets.primary) _ = window.setPrimarySelection(text);
+}
+
+fn applyClipboardRead(
+    gpa: std.mem.Allocator,
+    targets: rex.terminal.term.Clipboard.Targets,
+    format: rex.terminal.term.ControlFormat,
+    window: *Window,
+    driver: *Driver,
+) void {
+    var selection: u8 = 'c';
+    var text: ?[:0]const u8 = null;
+    if (targets.clipboard) text = window.getClipboard();
+    if (text == null and targets.primary) {
+        selection = 'p';
+        text = window.getPrimarySelection();
+    }
+    const content = text orelse "";
+    if (content.len > terminal_option.max_clipboard_bytes) {
+        log.warn("OSC 52: the selection ({d} bytes) is over the {d}-byte limit; sent an empty reply", .{ content.len, terminal_option.max_clipboard_bytes });
+        return sendEmptyReply(driver, format, selection);
+    }
+    const reply = gpa.alloc(u8, readReplyLen(format, content.len)) catch {
+        log.err("OSC 52: out of memory for a {d}-byte reply; sent an empty reply", .{content.len});
+        return sendEmptyReply(driver, format, selection);
+    };
+    defer gpa.free(reply);
+    driver.sendReply(writeReadReply(reply, format, selection, content)) catch |err|
+        log.err("OSC 52: cannot send the reply: {}", .{err});
+}
+
+/// Applies or answers one OSC 52 request synchronously (ADR 0006). A write's
+/// data lives in `buf`, which has room for the NUL GLFW needs. Main thread only.
 fn serveClipboard(
     gpa: std.mem.Allocator,
     policy: Config.Clipboard,
@@ -2347,42 +2686,10 @@ fn serveClipboard(
     buf: *[terminal_option.max_clipboard_bytes + 1]u8,
 ) void {
     switch (clipboardAction(policy, request)) {
-        .ignore => log.debug("OSC 52: ignored {t}", .{request}),
-        .set => |targets| {
-            const data = request.write.data;
-            // GLFW takes a NUL-terminated string: refuse rather than cut.
-            if (std.mem.indexOfScalar(u8, data, 0) != null) {
-                log.warn("OSC 52: ignored a {d}-byte write that contains a NUL byte", .{data.len});
-                return;
-            }
-            buf[data.len] = 0;
-            const text = buf[0..data.len :0];
-            if (targets.clipboard) window.setClipboard(text);
-            if (targets.primary) _ = window.setPrimarySelection(text);
-        },
-        .reply_selection => |targets| {
-            const format = request.read.control_format;
-            var selection: u8 = 'c';
-            var text: ?[:0]const u8 = null;
-            if (targets.clipboard) text = window.getClipboard();
-            if (text == null and targets.primary) {
-                selection = 'p';
-                text = window.getPrimarySelection();
-            }
-            const content = text orelse "";
-            if (content.len > terminal_option.max_clipboard_bytes) {
-                log.warn("OSC 52: the selection ({d} bytes) is over the {d}-byte limit; sent an empty reply", .{ content.len, terminal_option.max_clipboard_bytes });
-                return sendEmptyReply(driver, format, selection);
-            }
-            const reply = gpa.alloc(u8, readReplyLen(format, content.len)) catch {
-                log.err("OSC 52: out of memory for a {d}-byte reply; sent an empty reply", .{content.len});
-                return sendEmptyReply(driver, format, selection);
-            };
-            defer gpa.free(reply);
-            driver.sendReply(writeReadReply(reply, format, selection, content)) catch |err|
-                log.err("OSC 52: cannot send the reply: {}", .{err});
-        },
-        .reply_empty => {
+        .ignore, .ask_write => log.debug("OSC 52: ignored {t}", .{request}),
+        .set => |targets| applyClipboardWrite(targets, request.write.data, window, buf),
+        .reply_selection => |targets| applyClipboardRead(gpa, targets, request.read.control_format, window, driver),
+        .reply_empty, .ask_read => {
             const read = request.read;
             sendEmptyReply(driver, read.control_format, if (read.targets.clipboard) 'c' else 'p');
         },
@@ -2854,7 +3161,10 @@ const windowFocusCb: c.GLFWwindowfocusfun = struct {
         const is_focused = (focused != 0);
         app.window_focused = is_focused;
         app.wellbeing_state.windowFocusChanged(is_focused);
-        if (is_focused) app.applyPendingBanner();
+        if (is_focused) {
+            app.applyPendingBanner();
+            app.maybeOpenClipboardDialog();
+        }
         const modes = app.driver.getModes();
         if (!modes.focus_events) return;
         app.driver.sendInput(.{ .focus = is_focused }) catch |err| {
@@ -3116,13 +3426,141 @@ test "clipboardAction: writes and reads follow the policy" {
     const read: rex.driver.ClipboardRequest = .{ .read = .{ .targets = .{ .clipboard = true }, .control_format = .s7c1t } };
     const allow_all: Config.Clipboard = .{ .osc52_write = .allow, .osc52_read = .allow };
     const deny_all: Config.Clipboard = .{ .osc52_write = .deny, .osc52_read = .deny };
+    const ask_all: Config.Clipboard = .{ .osc52_write = .ask, .osc52_read = .ask };
     try std.testing.expectEqual(ClipboardAction{ .set = .{ .clipboard = true } }, clipboardAction(allow_all, write));
     try std.testing.expectEqual(ClipboardAction{ .set = .{ .primary = true } }, clipboardAction(allow_all, primary));
     try std.testing.expectEqual(ClipboardAction{ .set = .{ .clipboard = true, .primary = true } }, clipboardAction(allow_all, both));
     try std.testing.expectEqual(ClipboardAction.ignore, clipboardAction(deny_all, write));
+    try std.testing.expectEqual(ClipboardAction{ .ask_write = .{ .clipboard = true } }, clipboardAction(ask_all, write));
     try std.testing.expectEqual(ClipboardAction{ .reply_selection = .{ .clipboard = true } }, clipboardAction(allow_all, read));
     try std.testing.expectEqual(ClipboardAction.reply_empty, clipboardAction(deny_all, read));
     try std.testing.expectEqual(ClipboardAction.reply_empty, clipboardAction(.{}, read)); // the default
+    try std.testing.expectEqual(ClipboardAction{ .ask_read = .{ .clipboard = true } }, clipboardAction(ask_all, read));
+
+    // Per-window session permission promotes `.ask` -> `.allow` per direction,
+    // without overriding explicit `.deny`.
+    const session_read: ClipboardSession = .{ .allow_read = true };
+    try std.testing.expectEqual(
+        Config.Clipboard{ .osc52_write = .ask, .osc52_read = .allow },
+        effectiveClipboardPolicy(ask_all, session_read),
+    );
+    try std.testing.expectEqual(
+        Config.Clipboard{ .osc52_write = .deny, .osc52_read = .deny },
+        effectiveClipboardPolicy(deny_all, .{ .allow_write = true, .allow_read = true }),
+    );
+}
+
+test "clipboard ask dialog: copy, focus safety, and icons" {
+    const testing = std.testing;
+    var buf: [alert_dialog.body_capacity]u8 = undefined;
+
+    const read_req: PendingClipboard = .{ .read = .{ .targets = .{ .clipboard = true }, .control_format = .s7c1t } };
+    try testing.expectEqualStrings(
+        "nvim is asking to read your clipboard via OSC 52.",
+        clipboardAskBodyFor(read_req, "nvim", &buf),
+    );
+    try testing.expectEqualStrings(
+        "A program in this terminal is asking to read your clipboard via OSC 52.",
+        clipboardAskBodyFor(read_req, null, &buf),
+    );
+
+    const clear_req: PendingClipboard = .{ .write = .{ .targets = .{ .clipboard = true }, .len = 0 } };
+    try testing.expectEqualStrings(
+        "tmux is asking to clear your clipboard via OSC 52.",
+        clipboardAskBodyFor(clear_req, "tmux", &buf),
+    );
+
+    const write_one: PendingClipboard = .{ .write = .{ .targets = .{ .clipboard = true }, .len = 1 } };
+    try testing.expectEqualStrings(
+        "A program in this terminal is asking to copy 1 byte to your clipboard via OSC 52.",
+        clipboardAskBodyFor(write_one, null, &buf),
+    );
+
+    const req = clipboardAskDialogRequest(read_req, .warning, "nvim", &buf);
+    try testing.expectEqualStrings("Allow clipboard read?", req.title);
+    try testing.expectEqual(icons.alert_triangle, req.media);
+    try testing.expectEqual(@as(u8, clipboard_deny), req.focus);
+    try testing.expectEqual(@as(usize, 3), req.actions.len);
+}
+
+test "OSC 52 ask: Deny replies empty while Allow Once and Always Allow answer or set clipboard" {
+    const testing = std.testing;
+    var rig = try ClipboardRig.init();
+    defer rig.deinit();
+    if (c.glfwGetPlatform() != c.GLFW_PLATFORM_X11) return error.SkipZigTest;
+    const kit = try KitOverlay.create(testing.allocator, .{
+        .regular = "assets/fonts/Inter-Regular.ttf",
+        .medium = "assets/fonts/Inter-Medium.ttf",
+        .semibold = "assets/fonts/Inter-SemiBold.ttf",
+    }, 1);
+    defer kit.destroy(testing.allocator);
+
+    rig.window.setClipboard("secret");
+    var body_buf: [alert_dialog.body_capacity]u8 = undefined;
+    var out: [64]u8 = undefined;
+
+    // 1. Read under ask -> Deny / Esc returns empty reply immediately.
+    const read_1 = try rig.program("\x1b]52;c;?\x07");
+    var pending: PendingClipboard = .{
+        .read = .{ .targets = read_1.read.targets, .control_format = read_1.read.control_format },
+    };
+    try testing.expect(kit.openDialog(clipboardAskDialogRequest(pending, .warning, null, &body_buf)));
+    try testing.expectEqual(@as(u8, clipboard_deny), kit.dialog.focus);
+    try testing.expectEqual(alert_dialog.Outcome.redraw, kit.dialogInput(.dismiss));
+    try testing.expect(!kit.dialogTakesInput());
+    denyPendingClipboard(&pending, &rig.driver);
+    try testing.expectEqual(PendingClipboard.none, pending);
+    try testing.expectEqualStrings("\x1b]52;c;\x1b\\", try rig.reply(&out, "\x1b]52;c;\x1b\\".len));
+
+    // Finish closing the fading dialog before opening the next one cleanly.
+    _ = kit.tick(500);
+
+    // 2. Read under ask -> Allow Once replies with clipboard content without granting session.
+    var session: ClipboardSession = .{};
+    const read_2 = try rig.program("\x1b]52;c;?\x07");
+    pending = .{ .read = .{ .targets = read_2.read.targets, .control_format = read_2.read.control_format } };
+    try testing.expect(kit.openDialog(clipboardAskDialogRequest(pending, .warning, "nvim", &body_buf)));
+    try testing.expectEqual(
+        alert_dialog.Outcome{ .chosen = clipboard_allow_once },
+        kit.dialogInput(.{ .take = clipboard_allow_once }),
+    );
+    allowPendingClipboard(testing.allocator, &pending, rig.buf, &rig.window, &rig.driver);
+    try testing.expect(!session.allow_read);
+    const want_reply = "\x1b]52;c;c2VjcmV0\x1b\\"; // base64("secret")
+    try testing.expectEqualStrings(want_reply, try rig.reply(&out, want_reply.len));
+
+    // 3. Read under ask -> Always Allow grants session permission for future reads.
+    const read_3 = try rig.program("\x1b]52;c;?\x07");
+    pending = .{ .read = .{ .targets = read_3.read.targets, .control_format = read_3.read.control_format } };
+    try testing.expect(kit.openDialog(clipboardAskDialogRequest(pending, .warning, "nvim", &body_buf)));
+    try testing.expectEqual(
+        alert_dialog.Outcome{ .chosen = clipboard_allow_always },
+        kit.dialogInput(.{ .take = clipboard_allow_always }),
+    );
+    session.grant(pending);
+    allowPendingClipboard(testing.allocator, &pending, rig.buf, &rig.window, &rig.driver);
+    try testing.expect(session.allow_read);
+    try testing.expect(!session.allow_write);
+    try testing.expectEqualStrings(want_reply, try rig.reply(&out, want_reply.len));
+
+    // 4. Write under ask -> Deny keeps clipboard; Allow Once writes staged payload.
+    const write_deny = try rig.program("\x1b]52;c;bm9wZQ==\x07"); // "nope"
+    pending = .{ .write = .{ .targets = write_deny.write.targets, .len = @intCast(write_deny.write.data.len) } };
+    try testing.expect(kit.openDialog(clipboardAskDialogRequest(pending, .info, null, &body_buf)));
+    try testing.expectEqual(alert_dialog.Outcome.redraw, kit.dialogInput(.dismiss));
+    denyPendingClipboard(&pending, &rig.driver);
+    try testing.expectEqualStrings("secret", rig.window.getClipboard().?);
+
+    _ = kit.tick(500);
+    const write_ok = try rig.program("\x1b]52;c;b2s=\x07"); // "ok"
+    pending = .{ .write = .{ .targets = write_ok.write.targets, .len = @intCast(write_ok.write.data.len) } };
+    try testing.expect(kit.openDialog(clipboardAskDialogRequest(pending, .info, null, &body_buf)));
+    try testing.expectEqual(
+        alert_dialog.Outcome{ .chosen = clipboard_allow_once },
+        kit.dialogInput(.{ .take = clipboard_allow_once }),
+    );
+    allowPendingClipboard(testing.allocator, &pending, rig.buf, &rig.window, &rig.driver);
+    try testing.expectEqualStrings("ok", rig.window.getClipboard().?);
 }
 
 test "writeReadReply: exact bytes in 7-bit and 8-bit form, empty and not" {

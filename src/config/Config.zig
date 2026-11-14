@@ -85,13 +85,13 @@ pub const Colors = struct {
 
 /// What programs may do with the clipboard through OSC 52 (ADR 0006).
 pub const Clipboard = struct {
-    /// Whether an OSC 52 write replaces the clipboard.
+    /// Whether an OSC 52 write replaces the clipboard, or prompts first.
     osc52_write: Policy = .allow,
-    /// Whether an OSC 52 read gets the clipboard's content; refused reads
-    /// get an empty reply.
+    /// Whether an OSC 52 read gets the clipboard's content, is refused
+    /// with an empty reply, or prompts first.
     osc52_read: Policy = .deny,
 
-    pub const Policy = enum { allow, deny };
+    pub const Policy = enum { allow, deny, ask };
 };
 
 /// The window and the UI drawn in it.
