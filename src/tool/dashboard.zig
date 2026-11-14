@@ -519,6 +519,7 @@ pub fn update(state: *State, event: host.Event) bool {
             break :blk std.meta.eql(target, state.hover) and act(state, target);
         },
         .key => |press| key(state, press),
+        .char => false,
         .scroll => |wheel| blk: {
             state.scroll = std.math.clamp(state.scroll + wheel.dy, 0, wheel.max);
             break :blk false;

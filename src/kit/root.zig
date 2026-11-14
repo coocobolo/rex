@@ -24,6 +24,7 @@ pub const tooltip = @import("tooltip.zig");
 pub const switch_control = @import("switch.zig");
 pub const checkbox = @import("checkbox.zig");
 pub const select = @import("select.zig");
+pub const input = @import("input.zig");
 
 test {
     _ = @import("kit_test.zig");
@@ -39,6 +40,7 @@ test {
     _ = @import("switch_test.zig");
     _ = @import("checkbox_test.zig");
     _ = @import("select_test.zig");
+    _ = @import("input_test.zig");
     _ = Theme;
     _ = motion;
     _ = focus;

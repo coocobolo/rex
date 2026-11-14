@@ -66,6 +66,8 @@ pub const Event = union(enum) {
     /// The left button was let go, wherever the pointer is.
     release,
     key: KeyPress,
+    /// A printable Unicode codepoint typed on the keyboard.
+    char: u21,
     /// The wheel turned: `dy` logical pixels down (negative: up). `max` is
     /// how far the view's scroll region could move up when last laid out
     /// (`Tree.scroll_max`), so the tool can keep its offset in 0..max.
@@ -77,6 +79,26 @@ pub const scroll_step = 48;
 
 /// What a tool's `init` receives. Everything borrowed lives until the
 /// tool's `deinit` returns.
+/// Main-thread clipboard access decoupled from `Window` so tool state can
+/// be unit-tested without a GLFW window.
+pub const Clipboard = struct {
+    ctx: ?*anyopaque = null,
+    getFn: ?*const fn (ctx: *anyopaque) ?[:0]const u8 = null,
+    setFn: ?*const fn (ctx: *anyopaque, text: [:0]const u8) void = null,
+
+    pub fn get(self: Clipboard) ?[:0]const u8 {
+        const ctx = self.ctx orelse return null;
+        const f = self.getFn orelse return null;
+        return f(ctx);
+    }
+
+    pub fn set(self: Clipboard, text: [:0]const u8) void {
+        const ctx = self.ctx orelse return;
+        const f = self.setFn orelse return;
+        f(ctx, text);
+    }
+};
+
 pub const Context = struct {
     gpa: Allocator,
     io: std.Io,
@@ -86,6 +108,8 @@ pub const Context = struct {
     state_dir: []const u8,
     /// Ends the loop's current sleep; safe from any thread.
     wake_loop: *const fn () void,
+    /// Window clipboard access (main thread only).
+    clipboard: Clipboard = .{},
 };
 
 pub const KeyPress = struct {
@@ -218,6 +242,11 @@ fn Host(comptime Tool: type) type {
                 .config = &self.loaded.config,
                 .state_dir = self.directories.state,
                 .wake_loop = Window.glfwPostEmptyEvent,
+                .clipboard = .{
+                    .ctx = &self.window,
+                    .getFn = clipboardGet,
+                    .setFn = clipboardSet,
+                },
             }) else .empty;
 
             self.window.setWindowUserPointer(self);
@@ -227,6 +256,7 @@ fn Host(comptime Tool: type) type {
             self.window.setCursorEnterCallback(onEnter);
             self.window.setMouseButtonCallback(onMouse);
             self.window.setKeyCallback(onKey);
+            self.window.setCharCallback(onChar);
             self.window.setScrollCallback(onScroll);
             return self;
         }
@@ -383,10 +413,26 @@ fn Host(comptime Tool: type) type {
             self.send(.{ .scroll = .{ .dy = scrollDelta(y), .max = self.tree.scroll_max } });
         }
 
+        fn clipboardGet(ptr: *anyopaque) ?[:0]const u8 {
+            const win: *Window = @ptrCast(@alignCast(ptr));
+            return win.getClipboard();
+        }
+
+        fn clipboardSet(ptr: *anyopaque, text: [:0]const u8) void {
+            const win: *Window = @ptrCast(@alignCast(ptr));
+            win.setClipboard(text);
+        }
+
         fn onKey(window: ?*c.GLFWwindow, code: c_int, _: c_int, action: c_int, mods: c_int) callconv(.c) void {
             if (action == c.GLFW_RELEASE) return;
             const key = glfw_key.key(code) orelse return;
             fromWindow(window).send(.{ .key = .{ .key = key, .mods = glfw_key.modifiers(mods) } });
+        }
+
+        fn onChar(window: ?*c.GLFWwindow, codepoint: c_uint) callconv(.c) void {
+            const cp = std.math.cast(u21, codepoint) orelse return;
+            if (!std.unicode.utf8ValidCodepoint(cp)) return;
+            fromWindow(window).send(.{ .char = cp });
         }
     };
 }

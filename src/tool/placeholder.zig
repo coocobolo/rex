@@ -138,6 +138,7 @@ pub fn update(state: *State, event: host.Event) bool {
             };
         },
         .scroll => {},
+        .char => {},
         .key => |press| switch (state.dropdown) {
             .open => |highlight| switch (press.key) {
                 .up => state.dropdown = .{ .open = highlight -| 1 },
