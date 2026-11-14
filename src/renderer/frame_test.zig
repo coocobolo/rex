@@ -10,8 +10,8 @@ const test_option = @import("../term/test_fixtures.zig").test_option;
 const Term = term.term.Terminal(test_option);
 
 test "cellColors: SGR 7 and DECSCNM each swap, together they cancel" {
-    var t = try Term.create(testing.allocator);
-    defer t.destroy(testing.allocator);
+    var t = try Term.init(testing.allocator);
+    defer t.deinit(testing.allocator);
 
     t.feed("\x1b]10;#111111\x07\x1b]11;#222222\x07A\x1b[7mB");
     const screen = t.active();
@@ -26,8 +26,8 @@ test "cellColors: SGR 7 and DECSCNM each swap, together they cancel" {
 }
 
 test "cursorColor: without OSC 12 the cursor is the default foreground" {
-    var t = try Term.create(testing.allocator);
-    defer t.destroy(testing.allocator);
+    var t = try Term.init(testing.allocator);
+    defer t.deinit(testing.allocator);
 
     t.feed("\x1b]10;#111111\x07\x1b[31m");
     try testing.expectEqual([3]u8{ 0x11, 0x11, 0x11 }, Frame.cursorColor(&t.palette, null));
@@ -109,8 +109,8 @@ test "appendRun: merges adjacent matching cells, splits on any difference" {
 }
 
 test "build: SGR text produces merged decoration runs" {
-    var t = try Term.create(testing.allocator);
-    defer t.destroy(testing.allocator);
+    var t = try Term.init(testing.allocator);
+    defer t.deinit(testing.allocator);
 
     // "ab" underlined, a plain space, then "cd" struck through.
     t.feed("\x1b[4mab\x1b[0m \x1b[9mcd\x1b[0m");
@@ -142,8 +142,8 @@ test "alphaByte: rounds and clamps an opacity to a color byte" {
 }
 
 test "decorationInstance: SGR 53 reaches the shader's overline bit on narrow, wide and last column cells" {
-    var t = try Term.create(testing.allocator);
-    defer t.destroy(testing.allocator);
+    var t = try Term.init(testing.allocator);
+    defer t.deinit(testing.allocator);
 
     const cols = t.active().active_cols;
     var buf: [64]u8 = undefined;
@@ -238,8 +238,8 @@ test "spliceSpan: a count trade inside the span keeps the tail" {
 }
 
 test "build: SGR 58 reaches the underline through the cell's style" {
-    var t = try Term.create(testing.allocator);
-    defer t.destroy(testing.allocator);
+    var t = try Term.init(testing.allocator);
+    defer t.deinit(testing.allocator);
 
     t.feed("\x1b[4;58:2::200:100:50mA\x1b[59mB");
     const screen = t.active();

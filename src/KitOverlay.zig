@@ -67,8 +67,8 @@ pub const CreateError = Allocator.Error || @import("freetype/root.zig").FtError 
 pub fn create(gpa: Allocator, files: KitFont.Files, scale: f32) CreateError!*KitOverlay {
     const self = try gpa.create(KitOverlay);
     errdefer gpa.destroy(self);
-    var font = try KitFont.create(files, .{ .scale = scale });
-    errdefer font.destroy();
+    var font = try KitFont.init(files, .{ .scale = scale });
+    errdefer font.deinit();
     self.* = .{
         .font = font,
         .painter = try KitPainter.init(),
@@ -80,7 +80,7 @@ pub fn create(gpa: Allocator, files: KitFont.Files, scale: f32) CreateError!*Kit
 
 pub fn destroy(self: *KitOverlay, gpa: Allocator) void {
     self.painter.deinit();
-    self.font.destroy();
+    self.font.deinit();
     gpa.destroy(self);
 }
 

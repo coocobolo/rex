@@ -46,11 +46,11 @@ const primary_ring_rows = std.math.ceilPowerOfTwoAssert(usize, test_max_rows + t
 
 // helpers
 fn altScreen(alloc: std.mem.Allocator) !AltScreen {
-    return .create(alloc);
+    return .init(alloc);
 }
 
 fn primaryScreen(alloc: std.mem.Allocator) !PrimaryScreen {
-    return .create(alloc);
+    return .init(alloc);
 }
 
 test "Screen: ring_rows comptime constant" {
@@ -61,7 +61,7 @@ test "Screen: ring_rows comptime constant" {
 test "Screen: init - cells zeroed" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     try testing.expectEqualDeep(
         &([_]Cell{.{}} ** (alt_ring_rows * test_max_cols)),
@@ -72,7 +72,7 @@ test "Screen: init - cells zeroed" {
 test "Screen: init - default dimentions" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     try testing.expectEqual(test_max_rows, s.active_rows);
     try testing.expectEqual(test_max_cols, s.active_cols);
@@ -81,7 +81,7 @@ test "Screen: init - default dimentions" {
 test "Screen: init - scroll region defaults" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     try testing.expectEqual(0, s.scroll_top);
     try testing.expectEqual(23, s.scroll_bottom); // max_rows - 1
@@ -90,7 +90,7 @@ test "Screen: init - scroll region defaults" {
 test "Screen: init - cursor at origin" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     try testing.expectEqual(0, s.cursor.row);
     try testing.expectEqual(0, s.cursor.col);
@@ -99,7 +99,7 @@ test "Screen: init - cursor at origin" {
 test "Screen: init - saved_cursor sentinel" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     try testing.expectEqual(0, s.saved_cursor.row);
 }
@@ -107,7 +107,7 @@ test "Screen: init - saved_cursor sentinel" {
 test "Screen: init - generation starts at zero" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     try testing.expectEqual(0, s.generation);
 }
@@ -115,7 +115,7 @@ test "Screen: init - generation starts at zero" {
 test "Screen: init - tab stops at multiples of tab_width" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     // set at 8 (only multiple of 8 < 12)
     try testing.expect(s.tab_stops.isSet(8));
@@ -151,7 +151,7 @@ test "Screen: u32 fields present when max_scrollback > 0" {
 test "Screen: primary screen scrollback fields start at zero" {
     const alloc = testing.allocator;
     var s = try primaryScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     try testing.expectEqual(0, s.scrollback_used);
     try testing.expectEqual(0, s.viewport_offset);
@@ -161,7 +161,7 @@ test "Screen: primary screen scrollback fields start at zero" {
 test "Screen: cell count matches ring_rows * max_cols" {
     const alloc = testing.allocator;
     var s = try primaryScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     try testing.expectEqual(primary_ring_rows * test_max_cols, s.cells.len);
 }
@@ -169,7 +169,7 @@ test "Screen: cell count matches ring_rows * max_cols" {
 test "Screen: cells are 64-byte aligned" {
     const alloc = testing.allocator;
     var s = try primaryScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     try testing.expect(std.mem.isAligned(@intFromPtr(s.cells.ptr), 64));
 }
@@ -179,7 +179,7 @@ test "viewRow: alternate screen falls back to physRow" {
 
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.scroll_offset = 7;
     // 7..23 ... 0..6
@@ -193,7 +193,7 @@ test "viewRow: viewport_offset == 0 equals physRow" {
 
     const alloc = testing.allocator;
     var s = try primaryScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.scroll_offset = 10;
     s.viewport_offset = 0;
@@ -206,7 +206,7 @@ test "viewRow: viewport_offset == 0 equals physRow" {
 test "viewRow: underflow prevention viewport_offset > scroll_offset" {
     const alloc = testing.allocator;
     var s = try primaryScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     // without + ring_rows: 2 - 5 would underflow (usize)
     // with + ring_rows: (2 + 32 - 5) % 32 = 29
@@ -222,7 +222,7 @@ test "viewRow: underflow prevention viewport_offset > scroll_offset" {
 test "viewRow: wrap-around when scroll_offset is near ring_rows" {
     const alloc = testing.allocator;
     var s = try primaryScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     const ring = primary_ring_rows;
     s.scroll_offset = @intCast(ring - 4);
@@ -237,7 +237,7 @@ test "viewRow: wrap-around when scroll_offset is near ring_rows" {
 test "viewRow: wrap-around with viewport_offset" {
     const alloc = testing.allocator;
     var s = try primaryScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     const ring = primary_ring_rows;
     s.scroll_offset = @intCast(ring - 4);
@@ -255,7 +255,7 @@ test "viewRow: max viewport_offset (fully scrolled back)" {
 
     const alloc = testing.allocator;
     var s = try primaryScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.scroll_offset = 50;
     s.scrollback_used = 50; // 50 lines of history available
@@ -274,7 +274,7 @@ test "viewRow: scroll_offset = 0, viewport_offset = 0, all rows" {
     // ring buffer at origin, no scrollback
     const alloc = testing.allocator;
     var s = try primaryScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.scroll_offset = 0;
     s.viewport_offset = 0;
@@ -287,7 +287,7 @@ test "viewRow: scroll_offset = 0, viewport_offset = 0, all rows" {
 test "row: length equals active_cols" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     for (0..test_max_cols) |r| {
         try testing.expectEqual(s.active_cols, s.row(r).len);
@@ -297,7 +297,7 @@ test "row: length equals active_cols" {
 test "rowMut: length equals max_cols (full row)" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     for (0..test_max_rows) |r| {
         try testing.expectEqual(test_max_cols, s.rowMut(r).len);
@@ -307,7 +307,7 @@ test "rowMut: length equals max_cols (full row)" {
 test "row: all cells default after init" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     for (0..test_max_rows) |r| {
         for (s.row(r)) |cell| {
@@ -319,7 +319,7 @@ test "row: all cells default after init" {
 test "rowMut: write is visible via row and getCell" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     const c: Cell = .{ .codepoint = 'Z', .kind = .narrow };
     s.rowMut(3)[5] = c;
@@ -331,7 +331,7 @@ test "rowMut: write is visible via row and getCell" {
 test "rowMut: memset entire row leaves other rows untouched" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     const c: Cell = .{ .codepoint = ' ', .kind = .narrow };
     @memset(s.rowMut(2), c);
@@ -347,7 +347,7 @@ test "rowMut: memset entire row leaves other rows untouched" {
 test "setCell: in-bounds write succeeds" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     const c: Cell = .{ .codepoint = 'A', .kind = .narrow };
     s.setCell(0, 0, c);
@@ -357,7 +357,7 @@ test "setCell: in-bounds write succeeds" {
 test "setCell: out-of-bounds row silently ignored" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.setCell(s.active_rows, 0, .{ .codepoint = 'X', .kind = .narrow }); // == active_rows
     s.setCell(s.active_rows + 1, 0, .{ .codepoint = 'X', .kind = .narrow }); // > active_rows
@@ -368,7 +368,7 @@ test "setCell: out-of-bounds row silently ignored" {
 test "setCell: out-of-bounds col silently ignored" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.setCell(0, s.active_cols, .{ .codepoint = 'X', .kind = .narrow }); // == active_cols
     s.setCell(0, s.active_cols + 1, .{ .codepoint = 'X', .kind = .narrow }); // > active_cols
@@ -378,7 +378,7 @@ test "setCell: out-of-bounds col silently ignored" {
 test "setCell: both out-of-bounds silently ignored" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     // Must not crash
     s.setCell(s.active_rows, s.active_cols, .{ .codepoint = 'X', .kind = .narrow });
@@ -387,7 +387,7 @@ test "setCell: both out-of-bounds silently ignored" {
 test "setActive: widening restores a wide right half parked past one column" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.setActive(2, 1);
     s.cursor.row = 0;
@@ -403,7 +403,7 @@ test "setActive: widening restores a wide right half parked past one column" {
 test "setCell: insert mode off, normal overwrite" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     const a: Cell = .{ .codepoint = 'A', .kind = .narrow };
     fillRow(&s, 0, a);
@@ -420,7 +420,7 @@ test "setCell: insert mode off, normal overwrite" {
 test "setCell: insert mode on, shifts cells right, last cell dropped" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     const a: Cell = .{ .codepoint = 'A', .kind = .narrow };
     fillRow(&s, 0, a);
@@ -442,7 +442,7 @@ test "setCell: insert mode on, shifts cells right, last cell dropped" {
 test "setCell: insert mode at last col, no shift" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     const a: Cell = .{ .codepoint = 'A', .kind = .narrow };
     fillRow(&s, 0, a);
@@ -458,7 +458,7 @@ test "setCell: insert mode at last col, no shift" {
 test "setCell: insert mode does not affect other rows" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     const a: Cell = .{ .codepoint = 'A', .kind = .narrow };
     fillScreen(&s, a);
@@ -476,7 +476,7 @@ test "setCell: insert mode does not affect other rows" {
 test "setCell/getCell: roundtrip at corners and center" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     const positions = [_][2]usize{
         .{ 0, 0 },
@@ -496,7 +496,7 @@ test "setCell/getCell: roundtrip at corners and center" {
 test "getCell: remaps correctly after scroll_offset advances" {
     const alloc = testing.allocator;
     var s = try primaryScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     // Write marker to logical row 0 at
     // scroll_offset=0, physical row 0
@@ -516,7 +516,7 @@ test "getCell: remaps correctly after scroll_offset advances" {
 test "displayRow: viewport_offset=0 matches row" {
     const alloc = testing.allocator;
     var s = try primaryScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.scroll_offset = 5;
     s.viewport_offset = 0;
@@ -529,7 +529,7 @@ test "displayRow: viewport_offset=0 matches row" {
 test "displayRow: viewport_offset > 0 shows earlier physical rows" {
     const alloc = testing.allocator;
     var s = try primaryScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     // Write marker at physical row 0 (scroll_offset=0, logical row 0)
     const marker: Cell = .{ .codepoint = 'V', .kind = .narrow };
@@ -549,7 +549,7 @@ test "displayRow: viewport_offset > 0 shows earlier physical rows" {
 test "displayRow: length equals active_cols" {
     const alloc = testing.allocator;
     var s = try primaryScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.scroll_offset = 2;
     s.viewport_offset = 1;
@@ -563,7 +563,7 @@ test "displayRow: alternate screen (max_scrollback=0) equals row" {
     // comptime fallback: viewRow is physRow when max_scrollback == 0
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     const c: Cell = .{ .codepoint = 'T', .kind = .narrow };
     s.setCell(5, 3, c);
@@ -576,7 +576,7 @@ test "displayRow: alternate screen (max_scrollback=0) equals row" {
 test "displayLineAttr: default is .normal" {
     const alloc = testing.allocator;
     var s = try primaryScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     for (0..s.active_rows) |r| {
         try testing.expectEqual(LineAttr.normal, s.displayLineAttr(r));
@@ -586,7 +586,7 @@ test "displayLineAttr: default is .normal" {
 test "displayLineAttr: reflects setLineAttr" {
     const alloc = testing.allocator;
     var s = try primaryScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.row = 2;
     s.setLineAttr(.double_width);
@@ -604,7 +604,7 @@ test "displayLineAttr: reflects setLineAttr" {
 test "displayLineAttr: accounts for viewport_offset (scrollback)" {
     const alloc = testing.allocator;
     var s = try primaryScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     // Write a line to push content into scrollback
     s.cursor.row = 0;
@@ -622,7 +622,7 @@ test "displayLineAttr: accounts for viewport_offset (scrollback)" {
 test "displayLineAttr: after eraseDisplay ED 2, all rows are .normal" {
     const alloc = testing.allocator;
     var s = try primaryScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     for (0..s.active_rows) |r| {
         s.cursor.row = @intCast(r);
@@ -638,7 +638,7 @@ test "displayLineAttr: after eraseDisplay ED 2, all rows are .normal" {
 test "bump: generation starts at zero" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     try testing.expectEqual(0, s.generation);
 }
@@ -646,7 +646,7 @@ test "bump: generation starts at zero" {
 test "bump: increments generation by one" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.bump();
     try testing.expectEqual(1, s.generation);
@@ -659,7 +659,7 @@ test "bump: wraps on overflow (wrapping addition)" {
     // +%= means wrapping add — generation must not panic at u32 max.
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.generation = std.math.maxInt(u32);
     s.bump();
@@ -671,7 +671,7 @@ test "bump: renderer detects change via != comparison" {
     // Verify that after a wrap the comparison still fires.
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     var last: u32 = s.generation;
     s.bump();
@@ -687,7 +687,7 @@ test "bump: renderer detects change via != comparison" {
 test "effectiveTop: origin mode off returns 0 regardless of scroll_top" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.origin = false;
     s.scroll_top = 5;
@@ -698,7 +698,7 @@ test "effectiveTop: origin mode off returns 0 regardless of scroll_top" {
 test "effectiveTop: origin mode off, scroll_top=0 returns 0" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.origin = false;
     s.scroll_top = 0;
@@ -709,7 +709,7 @@ test "effectiveTop: origin mode off, scroll_top=0 returns 0" {
 test "effectiveTop: origin mode on returns scroll_top" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.origin = true;
     s.scroll_top = 5;
@@ -720,7 +720,7 @@ test "effectiveTop: origin mode on returns scroll_top" {
 test "effectiveTop: origin mode on, scroll_top=0 returns 0" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.origin = true;
     s.scroll_top = 0;
@@ -731,7 +731,7 @@ test "effectiveTop: origin mode on, scroll_top=0 returns 0" {
 test "effectiveTop: origin mode on, scroll_top at max boundary" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.origin = true;
     s.scroll_top = test_max_rows - 1;
@@ -742,7 +742,7 @@ test "effectiveTop: origin mode on, scroll_top at max boundary" {
 test "effectiveTop: toggling origin mode changes result" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.scroll_top = 4;
 
@@ -764,7 +764,7 @@ fn blankCell(s: anytype) Cell {
 test "scrollUp: full-screen n=1, row 1 moves to row 0" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     const marker: Cell = .{ .codepoint = 'A', .kind = .narrow };
     s.setCell(1, 0, marker);
@@ -777,7 +777,7 @@ test "scrollUp: full-screen n=1, row 1 moves to row 0" {
 test "scrollUp: full-screen n=1, new bottom row is blank" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     const row = s.active_rows - 1;
     s.setCell(row, 0, .{ .codepoint = 'X', .kind = .narrow });
@@ -789,7 +789,7 @@ test "scrollUp: full-screen n=1, new bottom row is blank" {
 test "scrollUp: full-screen n=1, scroll_offset advances by 1" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     const before = s.scroll_offset;
     s.scrollUp(1);
@@ -799,7 +799,7 @@ test "scrollUp: full-screen n=1, scroll_offset advances by 1" {
 test "scrollUp: full-screen n=3, bulk shift" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     const m3: Cell = .{ .codepoint = '3', .kind = .narrow };
     const m4: Cell = .{ .codepoint = '4', .kind = .narrow };
@@ -822,7 +822,7 @@ test "scrollUp: full-screen n=3, bulk shift" {
 test "scrollUp: full-screen n > active_rows, clamped; all rows cleared" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     for (0..s.active_rows) |r| {
         s.setCell(r, 0, .{ .codepoint = @intCast(r + 'A'), .kind = .narrow });
@@ -838,7 +838,7 @@ test "scrollUp: full-screen n > active_rows, clamped; all rows cleared" {
 test "scrollUp: full-screen, blank cell inherits cursor bg" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     // Set a non-default cursor background
     s.cursor.attr.colors.bg = Style.encode(.{ .indexed = 3 });
@@ -852,7 +852,7 @@ test "scrollUp: full-screen, blank cell inherits cursor bg" {
 test "scrollUp: full-screen, bumps generation" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     const gen = s.generation;
     s.scrollUp(1);
@@ -862,7 +862,7 @@ test "scrollUp: full-screen, bumps generation" {
 test "scrollUp: scrollback_used increments on each full-screen scroll" {
     const alloc = testing.allocator;
     var s = try primaryScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     try testing.expectEqual(0, s.scrollback_used);
     s.scrollUp(1);
@@ -874,7 +874,7 @@ test "scrollUp: scrollback_used increments on each full-screen scroll" {
 test "scrollUp: scrollback_used capped at max_scrollback" {
     const alloc = testing.allocator;
     var s = try primaryScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     for (0..test_max_scrollback + 10) |_| s.scrollUp(1);
 
@@ -884,7 +884,7 @@ test "scrollUp: scrollback_used capped at max_scrollback" {
 test "scrollUp: scrolled-off row is readable via displayRow after scrollback" {
     const alloc = testing.allocator;
     var s = try primaryScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     // Write a marker on the current top row
     const marker: Cell = .{ .codepoint = 'H', .kind = .narrow };
@@ -901,7 +901,7 @@ test "scrollUp: scrolled-off row is readable via displayRow after scrollback" {
 test "scrollUp: partial region n=1, row inside region shifts up" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.scroll_top = 2;
     s.scroll_bottom = 5;
@@ -919,7 +919,7 @@ test "scrollUp: partial region n=1, row inside region shifts up" {
 test "scrollUp: partial region n=2, bulk copy" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.scroll_top = 1;
     s.scroll_bottom = 6;
@@ -942,7 +942,7 @@ test "scrollUp: partial region n=2, bulk copy" {
 test "scrollUp: partial region, rows outside region unaffected" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.scroll_top = 2;
     s.scroll_bottom = 5;
@@ -961,7 +961,7 @@ test "scrollUp: partial region, rows outside region unaffected" {
 test "scrollUp: partial region, scroll_offset unchanged" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.scroll_top = 2;
     s.scroll_bottom = 5;
@@ -975,7 +975,7 @@ test "scrollUp: partial region, scroll_offset unchanged" {
 test "scrollUp: partial region n > region_height, all region rows cleared" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.scroll_top = 2;
     s.scroll_bottom = 5; // region height = 4
@@ -992,7 +992,7 @@ test "scrollUp: partial region n > region_height, all region rows cleared" {
 test "scrollUp: partial region, bumps generation" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.scroll_top = 2;
     s.scroll_bottom = 5;
@@ -1006,7 +1006,7 @@ test "scrollUp: partial region, bumps generation" {
 test "scrollUp: scroll_top >= scroll_bottom, early return; no change" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.scroll_top = 3;
     s.scroll_bottom = 3; // equal; early return
@@ -1026,7 +1026,7 @@ test "scrollUp: scroll_top >= scroll_bottom, early return; no change" {
 test "scrollUp: partial region, line_attrs shift correctly" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     // Set a double-width attr on logical row 2
     s.cursor.row = 2;
@@ -1046,7 +1046,7 @@ test "scrollUp: partial region, line_attrs shift correctly" {
 test "scrollUp: full screen, new bottom row line_attr is normal" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     // Set a double-width attr on the last row
     s.cursor.row = @intCast(s.active_rows - 1);
@@ -1064,7 +1064,7 @@ test "scrollUp: full screen, new bottom row line_attr is normal" {
 test "scrollDown: n=1 shifts rows down, top row cleared" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     // Mark row 0 and row 1
     const a: Cell = .{ .codepoint = 'A', .kind = .narrow };
@@ -1085,7 +1085,7 @@ test "scrollDown: n=1 shifts rows down, top row cleared" {
 test "scrollDown: n=3 bulk shift" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     for (0..test_max_rows) |r| {
         s.setCell(r, 0, .{ .codepoint = @intCast('0' + r), .kind = .narrow });
@@ -1105,7 +1105,7 @@ test "scrollDown: n=3 bulk shift" {
 test "scrollDown: n > region_height clears entire region" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     for (0..test_max_rows) |r| {
         s.setCell(r, 0, .{ .codepoint = 'X', .kind = .narrow });
@@ -1120,7 +1120,7 @@ test "scrollDown: n > region_height clears entire region" {
 test "scrollDown: partial region, rows outside unaffected" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.scroll_top = 2;
     s.scroll_bottom = 5;
@@ -1153,7 +1153,7 @@ test "scrollDown: partial region, rows outside unaffected" {
 test "scrollDown: scroll_top >= scroll_bottom, early return" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.scroll_top = 4;
     s.scroll_bottom = 4;
@@ -1171,7 +1171,7 @@ test "scrollDown: scroll_top >= scroll_bottom, early return" {
 test "scrollDown: generation bumped" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     const gen = s.generation;
     s.scrollDown(1);
@@ -1181,7 +1181,7 @@ test "scrollDown: generation bumped" {
 test "scrollDown: line_attrs shift correctly" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.row = 1;
     s.setLineAttr(.double_top);
@@ -1205,7 +1205,7 @@ fn fillScreen(s: anytype, cell: Cell) void {
 test "eraseDisplay: (0) cursor at (0,0) erases entire screen" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     const marker: Cell = .{ .codepoint = 'X', .kind = .narrow };
     fillScreen(&s, marker);
@@ -1223,7 +1223,7 @@ test "eraseDisplay: (0) cursor at (0,0) erases entire screen" {
 test "eraseDisplay: (0) erases from cursor col to end of row, and all rows below" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     const marker: Cell = .{ .codepoint = 'X', .kind = .narrow };
     fillScreen(&s, marker);
@@ -1252,7 +1252,7 @@ test "eraseDisplay: (0) erases from cursor col to end of row, and all rows below
 test "eraseDisplay: (0) cursor at last row last col erases only that cell" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     const marker: Cell = .{ .codepoint = 'X', .kind = .narrow };
     fillScreen(&s, marker);
@@ -1277,7 +1277,7 @@ test "eraseDisplay: (0) cursor at last row last col erases only that cell" {
 test "eraseDisplay: (0) resets line_attrs only for rows below cursor" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     // Mark every row double-width.
     for (0..s.active_rows) |r| {
@@ -1305,7 +1305,7 @@ test "eraseDisplay: (0) resets line_attrs only for rows below cursor" {
 test "eraseDisplay: (1) cursor at (0,0) erases only that cell" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     const marker: Cell = .{ .codepoint = 'X', .kind = .narrow };
     fillScreen(&s, marker);
@@ -1327,7 +1327,7 @@ test "eraseDisplay: (1) cursor at (0,0) erases only that cell" {
 test "eraseDisplay: (1) erases rows above and cursor row up to cursor col (inclusive)" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     const marker: Cell = .{ .codepoint = 'X', .kind = .narrow };
     fillScreen(&s, marker);
@@ -1356,7 +1356,7 @@ test "eraseDisplay: (1) erases rows above and cursor row up to cursor col (inclu
 test "eraseDisplay: (1) resets line_attrs only for rows above cursors" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     for (0..s.active_rows) |r| {
         s.cursor.row = @intCast(r);
@@ -1383,7 +1383,7 @@ test "eraseDisplay: (1) resets line_attrs only for rows above cursors" {
 test "eraseDisplay: (2) erases entire active area" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     const marker: Cell = .{ .codepoint = 'X', .kind = .narrow };
     fillScreen(&s, marker);
@@ -1401,7 +1401,7 @@ test "eraseDisplay: (2) erases entire active area" {
 test "eraseDisplay: (2) cursor position unchanged" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.row = 5;
     s.cursor.col = 10;
@@ -1414,7 +1414,7 @@ test "eraseDisplay: (2) cursor position unchanged" {
 test "eraseDisplay: (2) resets all line_attrs to normal" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     // Set double-width on several rows.
     for (0..s.active_rows) |r| {
@@ -1440,7 +1440,7 @@ test "eraseDisplay: (2) resets all line_attrs to normal" {
 test "eraseDisplay: (3) primary screen resets scrollback_used and viewport_offset" {
     const alloc = testing.allocator;
     var s = try primaryScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.scrollback_used = 5;
     s.viewport_offset = 3;
@@ -1454,7 +1454,7 @@ test "eraseDisplay: (3) primary screen resets scrollback_used and viewport_offse
 test "eraseDisplay: (3) primary screen active area untouched" {
     const alloc = testing.allocator;
     var s = try primaryScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     const marker: Cell = .{ .codepoint = 'X', .kind = .narrow };
     fillScreen(&s, marker);
@@ -1473,7 +1473,7 @@ test "eraseDisplay: (3) alternate screen is a no-op (comptime guard)" {
     // This test just verifies it compiles and doesn't crash.
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     const marker: Cell = .{ .codepoint = 'X', .kind = .narrow };
     fillScreen(&s, marker);
@@ -1495,7 +1495,7 @@ test "eraseDisplay: (3) does not touch line_attrs" {
     // This test just verifies it compiles and doesn't crash.
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     for (0..s.active_rows) |r| {
         s.cursor.row = @intCast(r);
@@ -1515,7 +1515,7 @@ test "eraseDisplay: generation bumped for modes 0, 1, 2, 3" {
 
     for ([_]u16{ 0, 1, 2, 3 }) |mode| {
         var s = try altScreen(alloc);
-        defer s.destroy(alloc);
+        defer s.deinit(alloc);
 
         const gen = s.generation;
         s.eraseDisplay(mode);
@@ -1526,7 +1526,7 @@ test "eraseDisplay: generation bumped for modes 0, 1, 2, 3" {
 test "eraseDisplay: unknown mode returns early, generation NOT bumped" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     const marker: Cell = .{ .codepoint = 'X', .kind = .narrow };
     fillScreen(&s, marker);
@@ -1548,7 +1548,7 @@ test "eraseDisplay: modes 0, 1, 2 clear wrap_pending" {
 
     for ([_]u16{ 0, 1, 2 }) |mode| {
         var s = try altScreen(alloc);
-        defer s.destroy(alloc);
+        defer s.deinit(alloc);
 
         s.cursor.row = 5;
         s.cursor.col = 10;
@@ -1563,7 +1563,7 @@ test "eraseDisplay: modes 0, 1, 2 clear wrap_pending" {
 test "eraseDisplay: modes 3 does NOT clear wrap_pending" {
     const alloc = testing.allocator;
     var s = try primaryScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.wrap_pending = true;
     s.eraseDisplay(3);
@@ -1579,7 +1579,7 @@ fn fillRow(s: anytype, r: usize, cell: Cell) void {
 test "eraseLine: (0) cursor to end of line, before cursor untouched" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     const marker: Cell = .{ .codepoint = 'X', .kind = .narrow };
     fillRow(&s, 3, marker);
@@ -1599,7 +1599,7 @@ test "eraseLine: (0) cursor to end of line, before cursor untouched" {
 test "eraseLine: (0) cursor at col 0 erases entire line" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     fillRow(&s, 0, .{ .codepoint = 'X', .kind = .narrow });
     s.cursor.row = 0;
@@ -1613,7 +1613,7 @@ test "eraseLine: (0) cursor at col 0 erases entire line" {
 test "eraseLine: (0) keeps line_attr (partial erase)" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.row = 5;
     s.setLineAttr(.double_width);
@@ -1627,7 +1627,7 @@ test "eraseLine: (0) keeps line_attr (partial erase)" {
 test "eraseLine: (1) start of line to cursor inclusive, after cursor untouched" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     const marker: Cell = .{ .codepoint = 'Y', .kind = .narrow };
     fillRow(&s, 2, marker);
@@ -1647,7 +1647,7 @@ test "eraseLine: (1) start of line to cursor inclusive, after cursor untouched" 
 test "eraseLine: (1) keeps line_attr (partial erase)" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.row = 2;
     s.setLineAttr(.double_top);
@@ -1661,7 +1661,7 @@ test "eraseLine: (1) keeps line_attr (partial erase)" {
 test "eraseLine: (2) entire line erased" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     fillRow(&s, 5, .{ .codepoint = 'Z', .kind = .narrow });
     s.cursor.row = 5;
@@ -1675,7 +1675,7 @@ test "eraseLine: (2) entire line erased" {
 test "eraseLine: (2) resets line_attr for current row" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.row = 3;
     s.setLineAttr(.double_bottom);
@@ -1689,7 +1689,7 @@ test "eraseLine: (2) resets line_attr for current row" {
 test "eraseLine: (2) does NOT affect other rows" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
     // Mark all rows double-width.
     for (0..s.active_rows) |r| {
         s.cursor.row = @intCast(r);
@@ -1709,7 +1709,7 @@ test "eraseLine: (2) does NOT affect other rows" {
 test "eraseLine: other rows are untouched" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     const marker: Cell = .{ .codepoint = 'R', .kind = .narrow };
     fillScreen(&s, marker);
@@ -1729,7 +1729,7 @@ test "eraseLine: other rows are untouched" {
 test "eraseLine: cursor position unchanged after erase" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.row = 6;
     s.cursor.col = 11;
@@ -1744,7 +1744,7 @@ test "eraseLine: generation bumped for modes 0, 1, 2" {
 
     for ([_]u16{ 0, 1, 2 }) |mode| {
         var s = try altScreen(alloc);
-        defer s.destroy(alloc);
+        defer s.deinit(alloc);
 
         const gen = s.generation;
         s.eraseLine(mode);
@@ -1755,7 +1755,7 @@ test "eraseLine: generation bumped for modes 0, 1, 2" {
 test "eraseLine: unknown mode returns early, generation NOT bumped" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     const marker: Cell = .{ .codepoint = 'X', .kind = .narrow };
     fillScreen(&s, marker);
@@ -1775,7 +1775,7 @@ test "eraseLine: (0, 1, 2) clear wrap_pending" {
 
     for ([_]u16{ 0, 1, 2 }) |mode| {
         var s = try altScreen(alloc);
-        defer s.destroy(alloc);
+        defer s.deinit(alloc);
 
         s.cursor.wrap_pending = true;
         s.eraseLine(mode);
@@ -1789,7 +1789,7 @@ test "resetTabStops: default tab stops at multiples of tab_width" {
 
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     var i: usize = test_tab_width;
     while (i < test_max_cols) : (i += test_tab_width) {
@@ -1800,7 +1800,7 @@ test "resetTabStops: default tab stops at multiples of tab_width" {
 test "resetTabStops: coluumn 0 is not a default tab stop" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     try testing.expect(!s.tab_stops.isSet(0));
 }
@@ -1808,7 +1808,7 @@ test "resetTabStops: coluumn 0 is not a default tab stop" {
 test "resetTabStops: only mutlples of tab_width are set" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     for (0..test_max_cols) |i| {
         const expected = i != 0 and i % test_tab_width == 0;
@@ -1819,7 +1819,7 @@ test "resetTabStops: only mutlples of tab_width are set" {
 test "resetTabStops: restores default after clearing all stops" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.tab_stops = .empty;
     s.resetTabStops();
@@ -1840,7 +1840,7 @@ test "resetTabStops: restores default after clearing all stops" {
 test "resetTabStops: restores default after setting custom stops" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.tab_stops = .empty;
     s.tab_stops.set(3);
@@ -1861,7 +1861,7 @@ test "resetTabStops: restores default after setting custom stops" {
 test "setActive: basic resize within bounds" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.setActive(8, 10);
 
@@ -1872,7 +1872,7 @@ test "setActive: basic resize within bounds" {
 test "setActive: clamps to max_rows and max_cols" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.setActive(999, 999);
 
@@ -1883,7 +1883,7 @@ test "setActive: clamps to max_rows and max_cols" {
 test "setActive: scroll region reset to full active area" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.scroll_top = 3;
     s.scroll_bottom = 7;
@@ -1896,7 +1896,7 @@ test "setActive: scroll region reset to full active area" {
 test "setActive: cursor row clamped to new active_rows - 1" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.row = 10;
     s.setActive(8, 10); // clamped to 7
@@ -1907,7 +1907,7 @@ test "setActive: cursor row clamped to new active_rows - 1" {
 test "setActive: cursor col clamped to new active_colss - 1" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.col = 12;
     s.setActive(8, 10); // clamped to 8
@@ -1918,7 +1918,7 @@ test "setActive: cursor col clamped to new active_colss - 1" {
 test "setActive: cursor in bounds, position unchanged" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.col = 7;
     s.cursor.row = 5;
@@ -1931,7 +1931,7 @@ test "setActive: cursor in bounds, position unchanged" {
 test "setActive: wrap_pending cleared when cursor not at last col" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     // After setActive(8, 12):
     // active_cols = 12
@@ -1946,7 +1946,7 @@ test "setActive: wrap_pending cleared when cursor not at last col" {
 test "setActive: wrap_pending preseved when cursor at last col" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     // After setActive(8, 12):
     // active_cols = 12
@@ -1962,7 +1962,7 @@ test "setActive: wrap_pending preseved when cursor at last col" {
 test "setActive: wrap_pending preserved after cursor clamped to last col" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     // cursor.col = 20 > 11
     // clamped to 11 (last col) => wrap_pending kept
@@ -1977,7 +1977,7 @@ test "setActive: wrap_pending preserved after cursor clamped to last col" {
 test "setActive: generation bumped" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     const gen = s.generation;
     s.setActive(8, 12);
@@ -1987,7 +1987,7 @@ test "setActive: generation bumped" {
 test "setActive: zero rows, generation still bumped, scroll region NOT reset" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.scroll_top = 3;
     s.scroll_bottom = 7;
@@ -2005,7 +2005,7 @@ test "setActive: zero rows, generation still bumped, scroll region NOT reset" {
 test "setActive: zero cols, generation still bumped, early return" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     const gen = s.generation;
     s.setActive(8, 0);
@@ -2017,7 +2017,7 @@ test "setActive: zero cols, generation still bumped, early return" {
 test "setActive: newly exposed rows when growing have .normal line_attr" {
     const alloc = testing.allocator;
     var s = try primaryScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     // Shrink to 6 rows first
     s.setActive(6, s.active_cols);
@@ -2046,7 +2046,7 @@ test "setActive: newly exposed rows when growing have .normal line_attr" {
 test "setActive: shrinking does not corrupt line_attrs of remaining rows" {
     const alloc = testing.allocator;
     var s = try primaryScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     // Mark rows 0..3 with distinct attrs
     s.cursor.row = 0;
@@ -2068,7 +2068,7 @@ test "setActive: shrinking does not corrupt line_attrs of remaining rows" {
 test "setActive: growing cols only does not affect line_attrs" {
     const alloc = testing.allocator;
     var s = try primaryScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.row = 3;
     s.setLineAttr(.double_width);
@@ -2083,7 +2083,7 @@ test "setActive: growing cols only does not affect line_attrs" {
 test "setActive: height shrink pushes top rows to scrollback and preserves cursor line" {
     const alloc = testing.allocator;
     var s = try primaryScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.setActive(10, 20);
 
@@ -2114,7 +2114,7 @@ test "setActive: height shrink pushes top rows to scrollback and preserves curso
 test "setActive: height grow pulls lines from scrollback without blank gaps" {
     const alloc = testing.allocator;
     var s = try primaryScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.setActive(10, 20);
 
@@ -2146,7 +2146,7 @@ test "setActive: height grow pulls lines from scrollback without blank gaps" {
 test "setActive: repeated zoom in and out cycles preserve content and cursor" {
     const alloc = testing.allocator;
     var s = try primaryScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.setActive(12, 20);
 
@@ -2189,7 +2189,7 @@ test "setActive: repeated zoom in and out cycles preserve content and cursor" {
 test "liveRows: the scrollback oldest first, then the active rows, at the active width" {
     const alloc = testing.allocator;
     var s = try primaryScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     // Rows A to E on a 3-row screen: A and B scroll into the scrollback.
     s.setActive(3, 5);
@@ -2213,7 +2213,7 @@ test "reflowBuffer after hardReset: no live cell keeps a style from before the r
     // from before the reset emptied the style table. They must stay dead.
     const alloc = testing.allocator;
     var s = try primaryScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.setActive(6, 20);
     s.cursor.attr.colors.fg = Style.encode(Color.fromRgb(255, 0, 0));
@@ -2243,7 +2243,7 @@ test "reflowBuffer after hardReset: no live cell keeps a style from before the r
 test "reflowBuffer: widening columns unwraps soft-wrapped line and shifts cursor" {
     const alloc = testing.allocator;
     var s = try primaryScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.setActive(8, 10);
 
@@ -2275,7 +2275,7 @@ test "reflowBuffer: widening columns unwraps soft-wrapped line and shifts cursor
 test "reflowBuffer: narrowing columns wraps line and updates cursor position" {
     const alloc = testing.allocator;
     var s = try primaryScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.setActive(8, 20);
 
@@ -2305,7 +2305,7 @@ test "reflowBuffer: narrowing columns wraps line and updates cursor position" {
 test "reflowBuffer: wide character at margin wraps with spacer cell" {
     const alloc = testing.allocator;
     var s = try primaryScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.setActive(8, 10);
 
@@ -2338,7 +2338,7 @@ test "reflowBuffer: wide character at margin wraps with spacer cell" {
 test "reflowBuffer: a cursor on the right half of a wide character that ends a row stays on it" {
     const alloc = testing.allocator;
     var s = try primaryScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.setActive(6, 6);
 
@@ -2368,7 +2368,7 @@ test "reflowBuffer: a cursor on the right half of a wide character that ends a r
 test "reflowBuffer: hard break lines are never joined" {
     const alloc = testing.allocator;
     var s = try primaryScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.setActive(8, 10);
 
@@ -2394,7 +2394,7 @@ test "reflowBuffer: hard break lines are never joined" {
 test "reflowBuffer: narrowing pushes overflow lines into scrollback" {
     const alloc = testing.allocator;
     var s = try primaryScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.setActive(4, 10);
 
@@ -2419,7 +2419,7 @@ test "reflowBuffer: narrowing pushes overflow lines into scrollback" {
 test "reflowBuffer: pre-existing scrollback history is reflowed and preserved" {
     const alloc = testing.allocator;
     var s = try primaryScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.setActive(4, 10);
 
@@ -2468,7 +2468,7 @@ test "reflowBuffer: pre-existing scrollback history is reflowed and preserved" {
 test "reflowBuffer: multi-row soft wrap (3 rows) unwraps cleanly into wide screen" {
     const alloc = testing.allocator;
     var s = try primaryScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.setActive(6, 6);
 
@@ -2505,7 +2505,7 @@ test "reflowBuffer: multi-row soft wrap (3 rows) unwraps cleanly into wide scree
 test "reflowBuffer: saved cursor is tracked across line wrap and unwrap" {
     const alloc = testing.allocator;
     var s = try primaryScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.setActive(6, 10);
 
@@ -2539,7 +2539,7 @@ test "reflowBuffer: saved cursor is tracked across line wrap and unwrap" {
 test "reflowBuffer: consecutive hard break empty lines are preserved" {
     const alloc = testing.allocator;
     var s = try primaryScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.setActive(6, 10);
 
@@ -2570,7 +2570,7 @@ test "reflowBuffer: consecutive hard break empty lines are preserved" {
 test "scrollViewportBack: increase viewport_offset by lines" {
     const alloc = testing.allocator;
     var s = try primaryScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.scrollback_used = 8;
     s.viewport_offset = 0;
@@ -2582,7 +2582,7 @@ test "scrollViewportBack: increase viewport_offset by lines" {
 test "scrollViewportBack: capped at scrollback_used" {
     const alloc = testing.allocator;
     var s = try primaryScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.scrollback_used = 5;
     s.viewport_offset = 0;
@@ -2594,7 +2594,7 @@ test "scrollViewportBack: capped at scrollback_used" {
 test "scrollViewportBack: partial clamp (offset + lines > scrollback_used)" {
     const alloc = testing.allocator;
     var s = try primaryScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.scrollback_used = 8;
     s.viewport_offset = 6;
@@ -2607,7 +2607,7 @@ test "scrollViewportBack: partial clamp (offset + lines > scrollback_used)" {
 test "scrollViewportBack: no-op when already at scrollback_used (no bump)" {
     const alloc = testing.allocator;
     var s = try primaryScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.scrollback_used = 8;
     s.viewport_offset = 8;
@@ -2622,7 +2622,7 @@ test "scrollViewportBack: no-op when already at scrollback_used (no bump)" {
 test "scrollViewportBack: lines=0 is always a no-op (no bump)" {
     const alloc = testing.allocator;
     var s = try primaryScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.scrollback_used = 8;
     s.viewport_offset = 3;
@@ -2637,7 +2637,7 @@ test "scrollViewportBack: lines=0 is always a no-op (no bump)" {
 test "scrollViewportBack: generation bumped when offset changes" {
     const alloc = testing.allocator;
     var s = try primaryScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.scrollback_used = 8;
     s.viewport_offset = 0;
@@ -2652,7 +2652,7 @@ test "scrollViewportBack: generation bumped when offset changes" {
 test "scrollViewportBack: no scrollback_used means no-op (scrollback_used=0)" {
     const alloc = testing.allocator;
     var s = try primaryScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.scrollback_used = 0;
     s.viewport_offset = 0;
@@ -2668,7 +2668,7 @@ test "scrollViewportBack: no scrollback_used means no-op (scrollback_used=0)" {
 test "scrollViewportForward: decreases viewport_offset by lines" {
     const alloc = testing.allocator;
     var s = try primaryScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.scrollback_used = 8;
     s.viewport_offset = 6;
@@ -2681,7 +2681,7 @@ test "scrollViewportForward: decreases viewport_offset by lines" {
 test "scrollViewportForward: saturates at 0 (no underflow)" {
     const alloc = testing.allocator;
     var s = try primaryScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.scrollback_used = 8;
     s.viewport_offset = 2;
@@ -2694,7 +2694,7 @@ test "scrollViewportForward: saturates at 0 (no underflow)" {
 test "scrollViewportForward: no-op when already at live view (no bump)" {
     const alloc = testing.allocator;
     var s = try primaryScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.scrollback_used = 8;
     s.viewport_offset = 2;
@@ -2707,7 +2707,7 @@ test "scrollViewportForward: no-op when already at live view (no bump)" {
 test "scrollViewportForward: lines=0 is always a no-op (no bump)" {
     const alloc = testing.allocator;
     var s = try primaryScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.viewport_offset = 4;
     const gen = s.generation;
@@ -2721,7 +2721,7 @@ test "scrollViewportForward: lines=0 is always a no-op (no bump)" {
 test "scrollViewportForward: generation bumped when offset changes" {
     const alloc = testing.allocator;
     var s = try primaryScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.viewport_offset = 5;
     const gen = s.generation;
@@ -2734,7 +2734,7 @@ test "scrollViewportForward: generation bumped when offset changes" {
 test "scrollViewportForward: exact step to live view" {
     const alloc = testing.allocator;
     var s = try primaryScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.viewport_offset = 4;
 
@@ -2746,7 +2746,7 @@ test "scrollViewportForward: exact step to live view" {
 test "viewportReset: resets viewport_offset to 0" {
     const alloc = testing.allocator;
     var s = try primaryScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.viewport_offset = 6;
     _ = s.viewportReset();
@@ -2756,7 +2756,7 @@ test "viewportReset: resets viewport_offset to 0" {
 test "viewportReset: generation bumped when offset was non-zero" {
     const alloc = testing.allocator;
     var s = try primaryScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.viewport_offset = 6;
     const gen = s.generation;
@@ -2768,7 +2768,7 @@ test "viewportReset: generation bumped when offset was non-zero" {
 test "viewportReset: no-op when already at live view (no bump)" {
     const alloc = testing.allocator;
     var s = try primaryScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.viewport_offset = 0;
     const gen = s.generation;
@@ -2781,7 +2781,7 @@ test "viewportReset: no-op when already at live view (no bump)" {
 test "viewportReset: scrollback_used unchanged" {
     const alloc = testing.allocator;
     var s = try primaryScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.scrollback_used = 8;
     s.viewport_offset = 5;
@@ -2797,7 +2797,7 @@ test "viewportReset: scrollback_used unchanged" {
 test "viewport round-trip: back then forward returns to live view" {
     const alloc = testing.allocator;
     var s = try primaryScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.scrollback_used = 8;
     s.viewport_offset = 0;
@@ -2812,7 +2812,7 @@ test "viewport round-trip: back then forward returns to live view" {
 test "viewport round-trip: back then reset" {
     const alloc = testing.allocator;
     var s = try primaryScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.scrollback_used = 8;
     s.scrollViewportBack(8);
@@ -2825,7 +2825,7 @@ test "viewport round-trip: back then reset" {
 test "scrollUp: anchors viewport_offset when viewing scrollback" {
     const alloc = testing.allocator;
     var s = try primaryScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.setActive(4, 10);
     // Write distinct characters into row 0
@@ -2862,7 +2862,7 @@ test "scrollUp: anchors viewport_offset when viewing scrollback" {
 test "scrollUp: does not change viewport_offset when at live view" {
     const alloc = testing.allocator;
     var s = try primaryScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.setActive(4, 10);
     s.scrollUp(2);
@@ -2872,7 +2872,7 @@ test "scrollUp: does not change viewport_offset when at live view" {
 test "cursorPos: basic absolute move" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursorPos(5, 10);
     try testing.expectEqual(5, s.cursor.row);
@@ -2882,7 +2882,7 @@ test "cursorPos: basic absolute move" {
 test "cursorPos: clamps row to active_rows-1" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursorPos(999, 0);
     try testing.expectEqual(test_max_rows - 1, s.cursor.row);
@@ -2891,7 +2891,7 @@ test "cursorPos: clamps row to active_rows-1" {
 test "cursorPos: clamps col to active_cols-1" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursorPos(0, 999);
     try testing.expectEqual(test_max_cols - 1, s.cursor.col);
@@ -2900,7 +2900,7 @@ test "cursorPos: clamps col to active_cols-1" {
 test "cursorPos: clears wrap_pending" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.wrap_pending = true;
     s.cursorPos(6, 9);
@@ -2911,7 +2911,7 @@ test "cursorPos: clears wrap_pending" {
 test "cursorPos: origin mode, row relative to scroll_top" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.scroll_top = 3;
     s.scroll_bottom = 8;
@@ -2929,7 +2929,7 @@ test "cursorPos: origin mode, row relative to scroll_top" {
 test "cursorPos: origin mode, row clamped to scroll_bottom" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.scroll_top = 2;
     s.scroll_bottom = 5;
@@ -2942,7 +2942,7 @@ test "cursorPos: origin mode, row clamped to scroll_bottom" {
 test "cursorCol: moves to column" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.row = 5;
     s.cursorCol(10);
@@ -2953,7 +2953,7 @@ test "cursorCol: moves to column" {
 test "cursorCol: clamps to active_cols-1" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursorCol(666);
     try testing.expectEqual(test_max_cols - 1, s.cursor.col);
@@ -2962,7 +2962,7 @@ test "cursorCol: clamps to active_cols-1" {
 test "cursorCol: clears wrap_pending" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.wrap_pending = true;
     s.cursorCol(5);
@@ -2972,7 +2972,7 @@ test "cursorCol: clears wrap_pending" {
 test "cursorUp: basic move" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.row = 6;
     s.cursorUp(3);
@@ -2982,7 +2982,7 @@ test "cursorUp: basic move" {
 test "cursorUp: stops at scroll_top when inside scroll region" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.scroll_top = 3;
     s.scroll_bottom = 8;
@@ -2996,7 +2996,7 @@ test "cursorUp: stops at scroll_top when inside scroll region" {
 test "cursorUp: stops at row 0 when outside scroll region (above)" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.scroll_top = 4;
     s.scroll_bottom = 8;
@@ -3010,7 +3010,7 @@ test "cursorUp: stops at row 0 when outside scroll region (above)" {
 test "cursorUp: clears wrap_pending" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.row = 5;
     s.cursor.wrap_pending = true;
@@ -3023,7 +3023,7 @@ test "cursorUp: clears wrap_pending" {
 test "cursorDown: basic move" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.row = 3;
     s.cursorDown(4);
@@ -3034,7 +3034,7 @@ test "cursorDown: basic move" {
 test "cursorDown: stops at scroll_bottom when inside scroll region" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.scroll_top = 2;
     s.scroll_bottom = 6;
@@ -3047,7 +3047,7 @@ test "cursorDown: stops at scroll_bottom when inside scroll region" {
 test "cursorDown: stops at active_rows-1 when outside scroll region (below)" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.scroll_top = 2;
     s.scroll_bottom = 6;
@@ -3060,7 +3060,7 @@ test "cursorDown: stops at active_rows-1 when outside scroll region (below)" {
 test "cursorDown: clears wrap_pending" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.row = 3;
     s.cursor.wrap_pending = true;
@@ -3072,7 +3072,7 @@ test "cursorDown: clears wrap_pending" {
 test "cursorRight: basic move" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.col = 5;
     s.cursorRight(4);
@@ -3082,7 +3082,7 @@ test "cursorRight: basic move" {
 test "cursorRight: clamps to active_cols-1" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.col = 20;
     s.cursorRight(999);
@@ -3092,7 +3092,7 @@ test "cursorRight: clamps to active_cols-1" {
 test "cursorRight: clears wrap_pending" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.wrap_pending = true;
     s.cursorRight(1);
@@ -3102,7 +3102,7 @@ test "cursorRight: clears wrap_pending" {
 test "cursorLeft: basic move" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.col = 8;
     s.cursorLeft(3);
@@ -3112,7 +3112,7 @@ test "cursorLeft: basic move" {
 test "cursorLeft: clamps to 0" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.col = 3;
     s.cursorLeft(999);
@@ -3122,7 +3122,7 @@ test "cursorLeft: clamps to 0" {
 test "cursorLeft: n=0 treated as n=1" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.col = 5;
     s.cursorLeft(0);
@@ -3132,7 +3132,7 @@ test "cursorLeft: n=0 treated as n=1" {
 test "cursorLeft: clears wrap_pending" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.col = 5;
     s.cursor.wrap_pending = true;
@@ -3143,7 +3143,7 @@ test "cursorLeft: clears wrap_pending" {
 test "cursorBack: marks row dirty" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.row = 3;
     s.cursor.col = 5;
@@ -3155,7 +3155,7 @@ test "cursorBack: marks row dirty" {
 test "writeChar: basic write, cursor advances" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     const c: Cell = .{ .codepoint = 'A', .kind = .narrow };
     s.writeChar(c);
@@ -3169,7 +3169,7 @@ test "writeChar: basic write, cursor advances" {
 test "writeChar: write at last column sets wrap_pending, cursor stays" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.col = s.active_cols - 1;
     const c: Cell = .{ .codepoint = 'Z', .kind = .narrow };
@@ -3184,7 +3184,7 @@ test "writeChar: write at last column sets wrap_pending, cursor stays" {
 test "writeChar: wrap_pending triggers wrap to next row col 0" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.row = 3;
     s.cursor.col = s.active_cols - 1;
@@ -3202,7 +3202,7 @@ test "writeChar: wrap_pending triggers wrap to next row col 0" {
 test "writeChar: wrap_pending at last row triggers scrollUp" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     // marker row 0 so we can very it scrolled off
     const marker: Cell = .{ .codepoint = 'M', .kind = .narrow };
@@ -3229,7 +3229,7 @@ test "writeChar: wrap_pending at last row triggers scrollUp" {
 test "writeChar: marks the cursor row dirty, generation bump is deferred" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     const c: Cell = .{ .codepoint = 'A', .kind = .narrow };
     const gen = s.generation;
@@ -3243,7 +3243,7 @@ test "writeChar: marks the cursor row dirty, generation bump is deferred" {
 test "writeChar: wide char cell and continuation placeholder" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     const cp: u21 = 0x4E2D;
     const c: Cell = .{ .codepoint = cp, .kind = .wide_left };
@@ -3265,7 +3265,7 @@ test "writeChar: wide char cell and continuation placeholder" {
 test "writeChar: wide char at second-to-last column sets wrap_pending" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     // Place wide char so its right half lands exactly at active_cols-1
     const cp = 0x4E2D;
@@ -3283,7 +3283,7 @@ test "writeChar: wide char at second-to-last column sets wrap_pending" {
 test "writeChar: wide char at last column fills blank, wraps, writes at col 0" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     const cp: u21 = 0x4E2D;
     const c: Cell = .{ .codepoint = cp, .kind = .wide_left };
@@ -3309,7 +3309,7 @@ test "writeChar: wide char at last column fills blank, wraps, writes at col 0" {
 test "writeChar: wide char at last column of last row scrolls" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     const cp: u21 = 0x4E2D;
     const c: Cell = .{ .codepoint = cp, .kind = .wide_left };
@@ -3330,7 +3330,7 @@ test "writeChar: wide char at last column of last row scrolls" {
 test "writeChar: overwrite left half of wide char erases right half" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     // Place a wide char at col 2
     const cp: u21 = 0x4E2D;
@@ -3351,7 +3351,7 @@ test "writeChar: overwrite left half of wide char erases right half" {
 test "writeChar: overwrite continuation cell erases left half" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     // Place a wide char at col 2 (continuation at col 3)
     const cp: u21 = 0x4E2D;
@@ -3372,7 +3372,7 @@ test "writeChar: overwrite continuation cell erases left half" {
 test "writeChar: insert mode shifts cells right" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     // Pre-fill using writeChar — consistent with rowMut internals,
     // and respects active_cols automatically.
@@ -3396,7 +3396,7 @@ test "writeChar: insert mode shifts cells right" {
 test "writeChar: insert mode with wide char shifts by 2" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     for ("ABCD", 0..) |ch, i| {
         s.setCell(0, i, .{ .codepoint = @intCast(ch), .kind = .narrow });
@@ -3414,7 +3414,7 @@ test "writeChar: insert mode with wide char shifts by 2" {
 test "writeChar: wrap_pending at scroll_bottom scrolls only the region" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     // Set a partial scroll region: rows 2..4
     s.scroll_top = 2;
@@ -3451,7 +3451,7 @@ test "writeChar: wrap_pending at scroll_bottom scrolls only the region" {
 test "writeChar: written row is marked dirty" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.row = 3;
     s.cursor.col = 0;
@@ -3464,7 +3464,7 @@ test "writeChar: combining character joins previous cell's cluster" {
     // e (U+0065) + combining acute (U+0301) → cluster { e, U+0301 }, not NFC é
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.writeChar(.{ .codepoint = 'e', .kind = .narrow });
     s.putChar(0x0301); // combining acute
@@ -3476,7 +3476,7 @@ test "writeChar: combining character joins previous cell's cluster" {
 test "writeChar: combining at col 0 silently dropped" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     // cursor at col 0, no previous cell
     s.putChar(0x0301);
@@ -3488,7 +3488,7 @@ test "writeChar: combining at col 0 silently dropped" {
 test "writeChar: combining with wrap_pending joins last column cell" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     // Fill to last column to trigger wrap_pending
     for (0..s.active_cols) |_| {
@@ -3508,7 +3508,7 @@ test "writeChar: combining with wrap_pending joins last column cell" {
 test "writeChar: combining over continuation cell joins the wide char" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     // Write a wide char at col 0 — col 1 is a continuation placeholder (width=0)
     s.writeChar(.{ .codepoint = '中', .kind = .wide_left });
@@ -3532,7 +3532,7 @@ fn expectClusterAt(s: anytype, r: usize, c: usize, want: []const u21) !void {
 test "dirty_rows: init state is empty" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     for (0..s.active_rows) |r| {
         try testing.expect(!s.dirty_rows.isSet(r));
@@ -3542,7 +3542,7 @@ test "dirty_rows: init state is empty" {
 test "dirty_rows: setCell mark only that row dirty" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     const x: Cell = .{ .codepoint = 'X', .kind = .narrow };
     s.setCell(3, 5, x);
@@ -3554,7 +3554,7 @@ test "dirty_rows: setCell mark only that row dirty" {
 test "dirty_rows: rowMut set marks to dirty_rows" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     _ = s.rowMut(7);
 
@@ -3565,7 +3565,7 @@ test "dirty_rows: rowMut set marks to dirty_rows" {
 test "dirty_rows: scrollUp partial marks only region rows dirty" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.scroll_top = 2;
     s.scroll_bottom = 6;
@@ -3582,7 +3582,7 @@ test "dirty_rows: scrollUp partial marks only region rows dirty" {
 test "dirty_rows: scrollDown partial marks only region rows dirty" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.scroll_top = 3;
     s.scroll_bottom = 8;
@@ -3598,7 +3598,7 @@ test "dirty_rows: scrollDown partial marks only region rows dirty" {
 test "dirty_rows: eraseDisplay mode 2 marks all rows dirty" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.dirty_rows = .empty;
     s.eraseDisplay(2);
@@ -3609,7 +3609,7 @@ test "dirty_rows: eraseDisplay mode 2 marks all rows dirty" {
 test "dirty_rows: eraseLine marks only cursor row dirty" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.row = 5;
     s.dirty_rows = .empty;
@@ -3623,7 +3623,7 @@ test "dirty_rows: eraseLine marks only cursor row dirty" {
 test "dirty_rows: setActive marks all rows dirty" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.dirty_rows = .empty;
     s.setActive(8, 16);
@@ -3634,7 +3634,7 @@ test "dirty_rows: setActive marks all rows dirty" {
 test "dirty_rows: scrollViewportBack marks all rows dirty" {
     const alloc = testing.allocator;
     var s = try primaryScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.scrollback_used = 4;
     s.dirty_rows = .empty;
@@ -3646,7 +3646,7 @@ test "dirty_rows: scrollViewportBack marks all rows dirty" {
 test "dirty_rows: scrollViewportBack no-op does NOT mark dirty" {
     const alloc = testing.allocator;
     var s = try primaryScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.scrollback_used = 4;
     s.viewport_offset = 4; // already at ceiling
@@ -3659,7 +3659,7 @@ test "dirty_rows: scrollViewportBack no-op does NOT mark dirty" {
 test "dirty_rows: viewportReset marks all rows dirty" {
     const alloc = testing.allocator;
     var s = try primaryScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.viewport_offset = 3;
     s.dirty_rows = .empty;
@@ -3671,7 +3671,7 @@ test "dirty_rows: viewportReset marks all rows dirty" {
 test "dirty_rows: viewportReset no-op does NOT mark dirty" {
     const alloc = testing.allocator;
     var s = try primaryScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.viewport_offset = 0;
     s.dirty_rows = .empty;
@@ -3683,7 +3683,7 @@ test "dirty_rows: viewportReset no-op does NOT mark dirty" {
 test "dirty_rows: renderer can clear all dirty bits" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.setCell(2, 0, .{ .codepoint = 'X', .kind = .narrow });
     s.setCell(7, 0, .{ .codepoint = 'Y', .kind = .narrow });
@@ -3701,7 +3701,7 @@ test "dirty_rows: renderer can clear all dirty bits" {
 test "reverseIndex: cursor not at scroll_top, moves up" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.row = 5;
     s.reverseIndex();
@@ -3714,7 +3714,7 @@ test "reverseIndex: cursor at row 0 (not scroll_top), clamps to 0" {
 
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.scroll_top = 3;
     s.cursor.row = 1; // above scroll_top, no DECOM
@@ -3725,7 +3725,7 @@ test "reverseIndex: cursor at row 0 (not scroll_top), clamps to 0" {
 test "reverseIndex: cursor at row 0 above scroll_top, already at 0, stay 0" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.scroll_top = 3;
     s.cursor.row = 0;
@@ -3736,7 +3736,7 @@ test "reverseIndex: cursor at row 0 above scroll_top, already at 0, stay 0" {
 test "reverseIndex: cursor at scroll_top (full screen), scrolls region down" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     // Fill rows with distinct markers
     for (0..s.active_rows) |r| {
@@ -3763,7 +3763,7 @@ test "reverseIndex: cursor at scroll_top (full screen), scrolls region down" {
 test "reverseIndex: clears wrap_pending" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.row = 5;
     s.cursor.wrap_pending = true;
@@ -3774,7 +3774,7 @@ test "reverseIndex: clears wrap_pending" {
 test "reverseIndex: clears wrap_pending even when scrolling" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.row = 0; // at scroll_top
     s.cursor.wrap_pending = true;
@@ -3785,7 +3785,7 @@ test "reverseIndex: clears wrap_pending even when scrolling" {
 test "reverseIndex: generation bumped (cursor move)" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.row = 5;
     const gen = s.generation;
@@ -3796,7 +3796,7 @@ test "reverseIndex: generation bumped (cursor move)" {
 test "reverseIndex: generation bumped (scroll path)" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.row = 0;
     const gen = s.generation;
@@ -3807,7 +3807,7 @@ test "reverseIndex: generation bumped (scroll path)" {
 test "reverseIndex: dirty_rows set (cursor move)" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.dirty_rows = .empty;
     s.cursor.row = 5;
@@ -3824,7 +3824,7 @@ test "reverseIndex: dirty_rows set (cursor move)" {
 test "reverseIndex: dirty_rows = full (scroll path)" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.dirty_rows = .empty;
     s.cursor.row = 0; // at scroll_top, triggers scrollDown
@@ -3837,7 +3837,7 @@ test "reverseIndex: dirty_rows = full (scroll path)" {
 test "reverseIndex: not at scroll top, cursor moves up, line_attrs unchanged" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.row = 3;
     s.setLineAttr(.double_width);
@@ -3854,7 +3854,7 @@ test "reverseIndex: not at scroll top, cursor moves up, line_attrs unchanged" {
 test "reverseIndex: at scroll top, new blank row inserted at top has .normal line_attr" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     // Set double-width on every row so we can detect which one gets reset
     for (0..s.active_rows) |r| {
@@ -3872,7 +3872,7 @@ test "reverseIndex: at scroll top, new blank row inserted at top has .normal lin
 test "reverseIndex: at scroll_top, existing rows shift down, their line_attrs shift too" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     // Row 0 = double_top, row 1 = double_bottom, rest = normal
     s.cursor.row = 0;
@@ -3897,7 +3897,7 @@ test "reverseIndex: at scroll_top, existing rows shift down, their line_attrs sh
 test "reverseIndex: at scroll_top, cursor stays at scroll_top" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.scroll_top = 2;
     s.scroll_bottom = 8;
@@ -3912,7 +3912,7 @@ test "reverseIndex: at scroll_top, cursor stays at scroll_top" {
 test "index: cursor not at scroll_bottom, moves down" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.row = 5;
     s.index();
@@ -3923,7 +3923,7 @@ test "index: cursor not at scroll_bottom, moves down" {
 test "index: cursor at scroll_bottom (full screen), scrolls up" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     // Fill rows with distinct markers
     for (0..s.active_rows) |r| {
@@ -3950,7 +3950,7 @@ test "index: cursor at scroll_bottom (full screen), scrolls up" {
 test "index: cursor at scroll_bottom (partial region), only region scrolls" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.scroll_top = 2;
     s.scroll_bottom = 6;
@@ -3984,7 +3984,7 @@ test "index: cursor at scroll_bottom (partial region), only region scrolls" {
 test "index: cursor below scroll_bottom, moves down clamped" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.scroll_top = 2;
     s.scroll_bottom = 6;
@@ -3998,7 +3998,7 @@ test "index: cursor below scroll_bottom, moves down clamped" {
 test "index: cursor at last row (below scroll_bottom), clamped to active_rows-1" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.scroll_top = 2;
     s.scroll_bottom = 6;
@@ -4012,7 +4012,7 @@ test "index: cursor at last row (below scroll_bottom), clamped to active_rows-1"
 test "index: clears wrap_pending (cursor move path)" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.row = 3;
     s.cursor.wrap_pending = true;
@@ -4024,7 +4024,7 @@ test "index: clears wrap_pending (cursor move path)" {
 test "index: generation bumped (cursor move path)" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.row = 3;
     const gen = s.generation;
@@ -4036,7 +4036,7 @@ test "index: generation bumped (cursor move path)" {
 test "index: generation bumped (scroll path)" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.row = s.scroll_bottom;
     const gen = s.generation;
@@ -4048,7 +4048,7 @@ test "index: generation bumped (scroll path)" {
 test "index: dirty_rows set (cursor move path)" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.dirty_rows = .empty;
     s.cursor.row = 5;
@@ -4061,7 +4061,7 @@ test "index: dirty_rows set (cursor move path)" {
 test "index: dirty_rows = full (scroll path, full screen)" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.dirty_rows = .empty;
     s.cursor.row = s.scroll_bottom;
@@ -4074,7 +4074,7 @@ test "index: dirty_rows = full (scroll path, full screen)" {
 test "index: scrollback_used increments on primary screen (full screen scroll)" {
     const alloc = testing.allocator;
     var s = try primaryScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     try testing.expectEqual(0, s.scrollback_used);
     s.cursor.row = s.scroll_bottom;
@@ -4086,7 +4086,7 @@ test "index: scrollback_used increments on primary screen (full screen scroll)" 
 test "index: scrollback_used capped at max_scrollback" {
     const alloc = testing.allocator;
     var s = try primaryScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.scrollback_used = test_max_scrollback;
     s.cursor.row = s.scroll_bottom;
@@ -4098,7 +4098,7 @@ test "index: scrollback_used capped at max_scrollback" {
 test "saveCursor/restoreCursor: basic position roundtrip" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.row = 5;
     s.cursor.col = 10;
@@ -4115,7 +4115,7 @@ test "saveCursor/restoreCursor: basic position roundtrip" {
 test "saveCursor/restoreCursor: attrs restored" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.attr.flags.bold = true;
     s.cursor.attr.colors.fg = Style.encode(Color.fromRgb(255, 0, 0));
@@ -4132,7 +4132,7 @@ test "saveCursor/restoreCursor: attrs restored" {
 test "saveCursor/restoreCursor: modes origin restored" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.origin = true;
     s.saveCursor();
@@ -4146,7 +4146,7 @@ test "saveCursor/restoreCursor: modes origin restored" {
 test "saveCursor/restoreCursor: charset state restored" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.charset.g0 = .dec_special;
     s.shiftOut();
@@ -4162,7 +4162,7 @@ test "saveCursor/restoreCursor: charset state restored" {
 test "saveCursor/restoreCursor: wrap_pending cleared on restore" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.row = 3;
     s.cursor.col = 5;
@@ -4178,7 +4178,7 @@ test "saveCursor/restoreCursor: wrap_pending cleared on restore" {
 test "saveCursor/restoreCursor: clamps row after resize" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.row = 10;
     s.cursor.col = 20;
@@ -4197,7 +4197,7 @@ test "saveCursor/restoreCursor: clamps row after resize" {
 test "saveCursor/restoreCursor: clamps col after resize" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.col = 20;
     s.saveCursor();
@@ -4212,7 +4212,7 @@ test "saveCursor/restoreCursor: clamps col after resize" {
 test "saveCursor/restoreCursor: restore without prior save uses default cursor" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.row = 7;
     s.cursor.col = 15;
@@ -4230,7 +4230,7 @@ test "saveCursor/restoreCursor: restore without prior save uses default cursor" 
 test "saveCursor: does NOT bump generation" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     const gen = s.generation;
     s.saveCursor();
@@ -4240,7 +4240,7 @@ test "saveCursor: does NOT bump generation" {
 test "restoreCursor: bumps generation" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     const gen = s.generation;
     s.restoreCursor();
@@ -4250,7 +4250,7 @@ test "restoreCursor: bumps generation" {
 test "saveCursor/restoreCursor: dirty_rows marks old and new cursor rows" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.row = 3;
     s.saveCursor();
@@ -4266,7 +4266,7 @@ test "saveCursor/restoreCursor: dirty_rows marks old and new cursor rows" {
 test "saveCursor/restoreCursor: multiple cycles" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.row = 2;
     s.cursor.col = 4;
@@ -4288,7 +4288,7 @@ test "saveCursor/restoreCursor: multiple cycles" {
 test "insertChars: shifts cells right, fills blanks at cursor" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     const a: Cell = .{ .codepoint = 'A', .kind = .narrow };
     const b: Cell = .{ .codepoint = 'B', .kind = .narrow };
@@ -4312,7 +4312,7 @@ test "insertChars: shifts cells right, fills blanks at cursor" {
 test "insertChars: overflow discards cells past active_cols" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     const x: Cell = .{ .codepoint = 'X', .kind = .narrow };
     for (0..s.active_cols) |c| s.setCell(0, c, x);
@@ -4331,7 +4331,7 @@ test "insertChars: overflow discards cells past active_cols" {
 test "insertChars: n >= remaining cols clears to end of line" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     const x: Cell = .{ .codepoint = 'X', .kind = .narrow };
     for (0..s.active_cols) |c| s.setCell(0, c, x);
@@ -4350,7 +4350,7 @@ test "insertChars: n >= remaining cols clears to end of line" {
 test "insertChars: other rows unaffected" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     const x: Cell = .{ .codepoint = 'X', .kind = .narrow };
     fillScreen(&s, x);
@@ -4367,7 +4367,7 @@ test "insertChars: other rows unaffected" {
 test "insertChars: clears wrap_pending and bumps generation" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.row = 0;
     s.cursor.col = 0;
@@ -4383,7 +4383,7 @@ test "insertChars: clears wrap_pending and bumps generation" {
 test "insertChars: dirty_rows marks cursor row" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.dirty_rows = .empty;
     s.cursor.row = 5;
@@ -4398,7 +4398,7 @@ test "insertChars: dirty_rows marks cursor row" {
 test "insertLines: line_attrs shift down with rows" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     // Mark rows 2, 3, 4 with distinct line attrs.
     s.cursor.row = 2;
@@ -4425,7 +4425,7 @@ test "insertLines: line_attrs shift down with rows" {
 test "insertLines: inserted rows reset to normal" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     // Mark every row double_width.
     for (0..s.active_rows) |row| {
@@ -4447,7 +4447,7 @@ test "insertLines: inserted rows reset to normal" {
 test "insertLines: partial scroll region does not affect rows outside region" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.scroll_top = 2;
     s.scroll_bottom = 5;
@@ -4470,7 +4470,7 @@ test "insertLines: partial scroll region does not affect rows outside region" {
 test "insertLines: n >= region_height clears all line_attrs in region" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.scroll_top = 2;
     s.scroll_bottom = 4;
@@ -4490,7 +4490,7 @@ test "insertLines: n >= region_height clears all line_attrs in region" {
 test "deleteChars: shift cells leftt, fills blanks at end" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     const a: Cell = .{ .codepoint = 'A', .kind = .narrow };
     const b: Cell = .{ .codepoint = 'B', .kind = .narrow };
@@ -4512,7 +4512,7 @@ test "deleteChars: shift cells leftt, fills blanks at end" {
 test "deleteChars: n >= remaining cols clears to end of line" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     const x: Cell = .{ .codepoint = 'X', .kind = .narrow };
     for (0..s.active_cols) |c| s.setCell(0, c, x);
@@ -4529,7 +4529,7 @@ test "deleteChars: n >= remaining cols clears to end of line" {
 test "deleteChars: clears wrap_pending and bumps generation" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.row = 0;
     s.cursor.col = 0;
@@ -4545,7 +4545,7 @@ test "deleteChars: clears wrap_pending and bumps generation" {
 test "insertLines: inserts blank lines at cursor row, shifts down" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     // Fill rows with distinct markers
     for (0..s.active_rows) |r| {
@@ -4575,7 +4575,7 @@ test "insertLines: inserts blank lines at cursor row, shifts down" {
 test "insertLines: cursor outside scroll region is no-op" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.scroll_top = 3;
     s.scroll_bottom = 8;
@@ -4593,7 +4593,7 @@ test "insertLines: cursor outside scroll region is no-op" {
 test "insertLines: n >= region height clears entire region" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     const x: Cell = .{ .codepoint = 'X', .kind = .narrow };
     fillScreen(&s, x);
@@ -4608,7 +4608,7 @@ test "insertLines: n >= region height clears entire region" {
 test "insertLines: cursor col reset to 0, wrap_pending cleared" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.row = 2;
     s.cursor.col = 10;
@@ -4623,7 +4623,7 @@ test "insertLines: cursor col reset to 0, wrap_pending cleared" {
 test "insertLines: dirty_rows cursor row to scroll_bottom" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.dirty_rows = .empty;
     s.cursor.row = 3;
@@ -4637,7 +4637,7 @@ test "insertLines: dirty_rows cursor row to scroll_bottom" {
 test "insertLines: partial scroll region respected" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.scroll_top = 2;
     s.scroll_bottom = 6;
@@ -4665,7 +4665,7 @@ test "insertLines: partial scroll region respected" {
 test "deleteLines: deletes lines at cursor row, shifts up" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     for (0..s.active_rows) |r| {
         const cell: Cell = .{ .codepoint = @intCast('A' + r), .kind = .narrow };
@@ -4689,7 +4689,7 @@ test "deleteLines: deletes lines at cursor row, shifts up" {
 test "deleteLines: cursor outside scroll region is no-op" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.scroll_top = 3;
     s.scroll_bottom = 8;
@@ -4708,7 +4708,7 @@ test "deleteLines: cursor outside scroll region is no-op" {
 test "deleteLines: n >= region height clears entire region" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     const x: Cell = .{ .codepoint = 'X', .kind = .narrow };
     fillScreen(&s, x);
@@ -4724,7 +4724,7 @@ test "deleteLines: n >= region height clears entire region" {
 test "deleteLines: cursor col reset to 0, wrap_pending cleared" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.row = 2;
     s.cursor.col = 10;
@@ -4739,7 +4739,7 @@ test "deleteLines: cursor col reset to 0, wrap_pending cleared" {
 test "deleteLines: dirty_rows covers cursor row to scroll_bottom" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.dirty_rows = .empty;
     s.cursor.row = 4;
@@ -4752,7 +4752,7 @@ test "deleteLines: dirty_rows covers cursor row to scroll_bottom" {
 test "deleteLines: partial scroll region respected" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.scroll_top = 2;
     s.scroll_bottom = 6;
@@ -4780,7 +4780,7 @@ test "deleteLines: partial scroll region respected" {
 test "deleteLines: line_attrs shift up with rows" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     // Mark rows 2, 3, 4 with distinct line attrs.
     s.cursor.row = 2;
@@ -4805,7 +4805,7 @@ test "deleteLines: line_attrs shift up with rows" {
 test "deleteLines: vacated rows reset to normal" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     // Mark every row double_width.
     for (0..s.active_rows) |row| {
@@ -4829,7 +4829,7 @@ test "deleteLines: vacated rows reset to normal" {
 test "deleteLines: partial scroll region does not affect rows outside region" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     // Set scroll region to rows 2..5.
     s.scroll_top = 2;
@@ -4854,7 +4854,7 @@ test "deleteLines: partial scroll region does not affect rows outside region" {
 test "deleteLines: n >= region_height clears all line_attrs in region" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.scroll_top = 2;
     s.scroll_bottom = 4;
@@ -4874,7 +4874,7 @@ test "deleteLines: n >= region_height clears all line_attrs in region" {
 test "tabForward: moves to next tab stop" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     // Default tab stops at 8, 16 (tab_width=8, max_cols=12)
     s.cursor.col = 0;
@@ -4885,7 +4885,7 @@ test "tabForward: moves to next tab stop" {
 test "tabForward: n=2 moves to second tab stop, stops at last column" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     // Default tab stops at 8, 16 (tab_width=8, max_cols=12)
     s.cursor.col = 0;
@@ -4896,7 +4896,7 @@ test "tabForward: n=2 moves to second tab stop, stops at last column" {
 test "tabForward: no tab stop ahead, stops at last column" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     // Clear all tab stops so there's nothing to the right
     s.clearTabStop(3);
@@ -4908,7 +4908,7 @@ test "tabForward: no tab stop ahead, stops at last column" {
 test "tabForward: clears wrap_pending" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.col = 0;
     s.cursor.wrap_pending = true;
@@ -4919,7 +4919,7 @@ test "tabForward: clears wrap_pending" {
 test "tabForward: bumps generation" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     const gen = s.generation;
     s.tabForward(1);
@@ -4929,7 +4929,7 @@ test "tabForward: bumps generation" {
 test "tabForward: marks cursor row dirty" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.row = 3;
     s.dirty_rows = .empty;
@@ -4940,7 +4940,7 @@ test "tabForward: marks cursor row dirty" {
 test "tabForward: large n clamps at last column" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.col = 0;
     s.tabForward(999);
@@ -4950,7 +4950,7 @@ test "tabForward: large n clamps at last column" {
 test "tabForward: custom tab stop is respected" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     // Clear all stops, set one at column 5
     s.clearTabStop(3);
@@ -4965,7 +4965,7 @@ test "tabForward: custom tab stop is respected" {
 test "setTabStop: sets bit at cursor column" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.clearTabStop(3); // clear all first
     s.cursor.col = 5;
@@ -4976,7 +4976,7 @@ test "setTabStop: sets bit at cursor column" {
 test "setTabStop: does NOT bump generation" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     const gen = s.generation;
     s.cursor.col = 5;
@@ -4987,7 +4987,7 @@ test "setTabStop: does NOT bump generation" {
 test "setTabStop: idempotent (setting already-set stop is safe)" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.col = 8; // default tab stop
     s.setTabStop(); // already set — should not panic
@@ -4997,7 +4997,7 @@ test "setTabStop: idempotent (setting already-set stop is safe)" {
 test "clearTabStop mode 0: clears stop at cursor column" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.col = 8; // default tab stop
     try testing.expect(s.tab_stops.isSet(8));
@@ -5008,7 +5008,7 @@ test "clearTabStop mode 0: clears stop at cursor column" {
 test "clearTabStop mode 0: other stops unaffected" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.col = 11;
     s.clearTabStop(0);
@@ -5019,7 +5019,7 @@ test "clearTabStop mode 0: other stops unaffected" {
 test "clearTabStop mode 3: clears all stops" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.clearTabStop(3);
     // No bits should be set
@@ -5029,7 +5029,7 @@ test "clearTabStop mode 3: clears all stops" {
 test "clearTabStop mode 3: tabForward goes to last column after clear" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.clearTabStop(3);
     s.cursor.col = 0;
@@ -5040,7 +5040,7 @@ test "clearTabStop mode 3: tabForward goes to last column after clear" {
 test "clearTabStop unknown mode: no-op" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     const before = s.tab_stops;
     s.clearTabStop(99);
@@ -5051,7 +5051,7 @@ test "clearTabStop unknown mode: no-op" {
 test "clearTabStop: does NOT bump generation" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     const gen = s.generation;
     s.clearTabStop(0);
@@ -5062,7 +5062,7 @@ test "clearTabStop: does NOT bump generation" {
 test "tab round-trip: clear all, set custom, tabForward uses them" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.clearTabStop(3);
     // Set stops at 3, 7, 15
@@ -5094,7 +5094,7 @@ test "tab round-trip: clear all, set custom, tabForward uses them" {
 test "resetTabStops restores defaults after clearTabStop 3" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.clearTabStop(3);
     try testing.expectEqual(0, s.tab_stops.count());
@@ -5109,7 +5109,7 @@ test "resetTabStops restores defaults after clearTabStop 3" {
 test "tabBackward: basic one step from tab stop" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.col = 16;
     s.tabBackward(1);
@@ -5120,7 +5120,7 @@ test "tabBackward: basic one step from tab stop" {
 test "tabBackward: two steps from col 16" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     // col 16 → col 8 → col 0 (no tab stop between 0 and 7)
     s.cursor.col = 16;
@@ -5132,7 +5132,7 @@ test "tabBackward: two steps from col 16" {
 test "tabBackward: cursor between tab stops moves to nearest left stop" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     // col 12 is between stop 8 and stop 16; nearest left is 8
     s.cursor.col = 12;
@@ -5144,7 +5144,7 @@ test "tabBackward: cursor between tab stops moves to nearest left stop" {
 test "tabBackward: cursor at col 0 stays at col 0" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.col = 0;
     s.tabBackward(1);
@@ -5155,7 +5155,7 @@ test "tabBackward: cursor at col 0 stays at col 0" {
 test "tabBackward: n=0 treated as 1" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.col = 16;
     s.tabBackward(0); // 0 → treated as 1
@@ -5166,7 +5166,7 @@ test "tabBackward: n=0 treated as 1" {
 test "tabBackward: n larger than available tab stops clamps to col 0" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     // Only 2 tab stops (8, 16) to the left of col 23.
     // n=10 exhausts them and lands at col 0.
@@ -5179,7 +5179,7 @@ test "tabBackward: n larger than available tab stops clamps to col 0" {
 test "tabBackward: wrap_pending is cleared" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.col = 16;
     s.cursor.wrap_pending = true;
@@ -5191,7 +5191,7 @@ test "tabBackward: wrap_pending is cleared" {
 test "tabBackward: generation is bumped" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     const gen = s.generation;
     s.cursor.col = 16;
@@ -5203,7 +5203,7 @@ test "tabBackward: generation is bumped" {
 test "tabBackward: dirty_rows set for cursor row" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.row = 3;
     s.cursor.col = 16;
@@ -5216,7 +5216,7 @@ test "tabBackward: dirty_rows set for cursor row" {
 test "tabBackward: custom tab stop is respected" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     // Add a custom stop at col 5; cursor at col 10 should land on 8 (not 5),
     // because 8 is the nearest stop to the left of 10.
@@ -5232,7 +5232,7 @@ test "tabBackward: custom tab stop is respected" {
 test "tabBackward: custom tab stop at col 5, two steps from col 10" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     // Stops: 5, 8, 16. From col 10: step 1 → 8, step 2 → 5.
     s.cursor.col = 5;
@@ -5247,7 +5247,7 @@ test "tabBackward: custom tab stop at col 5, two steps from col 10" {
 test "tabBackward: cursor row unchanged" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.row = 5;
     s.cursor.col = 16;
@@ -5260,7 +5260,7 @@ test "tabBackward: cursor row unchanged" {
 test "shiftOut: sets gl = 1" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.shiftOut();
     try testing.expectEqual(@as(u2, 1), s.cursor.charset.gl);
@@ -5269,7 +5269,7 @@ test "shiftOut: sets gl = 1" {
 test "shiftIn: sets gl = 0" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.shiftIn();
     try testing.expectEqual(@as(u2, 0), s.cursor.charset.gl);
@@ -5278,7 +5278,7 @@ test "shiftIn: sets gl = 0" {
 test "shiftOut: does not consume single_shift" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.singleShift2();
     s.shiftOut();
@@ -5290,7 +5290,7 @@ test "shiftOut: does not consume single_shift" {
 test "singleShift2: sets single_shift = 2" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.singleShift2();
     try testing.expectEqual(@as(u3, 2), s.cursor.charset.ss);
@@ -5299,7 +5299,7 @@ test "singleShift2: sets single_shift = 2" {
 test "singleShift3: sets single_shift = 3" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.singleShift3();
     try testing.expectEqual(@as(u3, 3), s.cursor.charset.ss);
@@ -5308,7 +5308,7 @@ test "singleShift3: sets single_shift = 3" {
 test "singleShift2: does not change gl" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.shiftOut(); // gl = 1
     s.singleShift2();
@@ -5318,7 +5318,7 @@ test "singleShift2: does not change gl" {
 test "singleShift2: consumed after one putChar" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     // G2 = DEC Special Graphics; SS2 uses G2 for one char
     s.designateCharset(2, .dec_special);
@@ -5334,7 +5334,7 @@ test "singleShift2: consumed after one putChar" {
 test "putChar: a non-GL codepoint leaves a single shift pending" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.designateCharset(2, .dec_special);
     s.singleShift2();
@@ -5348,7 +5348,7 @@ test "putChar: a non-GL codepoint leaves a single shift pending" {
 test "singleShift3: consumed after one putChar" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     // G3 = DEC Special Graphics; SS3 uses G3 for one char
     s.designateCharset(3, .dec_special);
@@ -5364,7 +5364,7 @@ test "singleShift3: consumed after one putChar" {
 test "designateCharset: G0 = dec_special" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.designateCharset(0, .dec_special);
     try testing.expectEqual(Set.dec_special, s.cursor.charset.slot(0));
@@ -5373,7 +5373,7 @@ test "designateCharset: G0 = dec_special" {
 test "designateCharset: G1 = ascii" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.designateCharset(1, .dec_special);
     s.designateCharset(1, .ascii); // overwrite
@@ -5383,7 +5383,7 @@ test "designateCharset: G1 = ascii" {
 test "designateCharset: does not change gl or gr" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     const gl_before = s.cursor.charset.gl;
     const gr_before = s.cursor.charset.gr;
@@ -5395,7 +5395,7 @@ test "designateCharset: does not change gl or gr" {
 test "putChar: G0 = dec_special, 'j' to '┘'" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.designateCharset(0, .dec_special);
     // GL = G0 by default, so putChar uses dec_special immediately
@@ -5406,7 +5406,7 @@ test "putChar: G0 = dec_special, 'j' to '┘'" {
 test "putChar: shiftOut activates G1 (dec_special), shiftIn restores G0 (ascii)" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.designateCharset(1, .dec_special);
 
@@ -5422,7 +5422,7 @@ test "putChar: shiftOut activates G1 (dec_special), shiftIn restores G0 (ascii)"
 test "putChar: singleShift2 applies to one char only, then GL resumes" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.designateCharset(2, .dec_special); // G2 = dec_special
     // GL = G0 (ascii); 'j' would normally stay 'j'
@@ -5438,7 +5438,7 @@ test "putChar: singleShift2 applies to one char only, then GL resumes" {
 test "putChar: charset state saved and restored with cursor" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.designateCharset(1, .dec_special);
     s.shiftOut(); // GL = G1
@@ -5455,7 +5455,7 @@ test "putChar: charset state saved and restored with cursor" {
 test "putChar: ASCII write advance cursor" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.putChar('A');
 
@@ -5468,7 +5468,7 @@ test "putChar: ASCII write advance cursor" {
 test "putChar: cursor attribute is applied to written cell" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     // Set a non-default attribute on the cursor.
     s.cursor.attr.flags.bold = true;
@@ -5482,7 +5482,7 @@ test "putChar: cursor attribute is applied to written cell" {
 test "putChar: marks the cursor row dirty, generation bump is deferred" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     const gen = s.generation;
     s.putChar('A');
@@ -5495,7 +5495,7 @@ test "putChar: marks the cursor row dirty, generation bump is deferred" {
 test "putChar: widths follow the Unicode table, not emoji guesses" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     // Text-presentation pictographs are East_Asian_Width=N: one cell.
     s.putChar(0x2194); // ↔
@@ -5522,7 +5522,7 @@ test "putChar: widths follow the Unicode table, not emoji guesses" {
 test "putChar: wide char gets width 2 and continuation placeholder" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.putChar('中'); // CJK, wcwidth = 2
 
@@ -5540,7 +5540,7 @@ test "putChar: wide char gets width 2 and continuation placeholder" {
 test "putChar: narrow Unicode char gets width 1" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.putChar('é'); // U+00E9, w.kind = .narrow
 
@@ -5552,7 +5552,7 @@ test "putChar: narrow Unicode char gets width 1" {
 test "putChar: wide char at last column wraps and writes at col 0 of next row" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.col = s.active_cols - 1;
     s.putChar('中');
@@ -5569,7 +5569,7 @@ test "putChar: wide char at last column wraps and writes at col 0 of next row" {
 test "putChar: write at last column sets wrap_pending" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.col = s.active_cols - 1;
     s.putChar('Z');
@@ -5582,7 +5582,7 @@ test "putChar: write at last column sets wrap_pending" {
 test "putChar: wrap_pending triggers wrap to next row" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.row = 2;
     s.cursor.col = s.active_cols - 1;
@@ -5599,7 +5599,7 @@ test "putChar: wrap_pending triggers wrap to next row" {
 test "putChar: default charset passes codepoint through unchanged" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     // With the default (ASCII) charset, no translation occurs.
     s.putChar('j');
@@ -5609,7 +5609,7 @@ test "putChar: default charset passes codepoint through unchanged" {
 test "putChar: DEC special graphics on G0 translates codepoint" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     // Designate DEC Special Graphics to G0; GL already points to G0 (gl=0).
     s.designateCharset(0, .dec_special);
@@ -5622,7 +5622,7 @@ test "putChar: DEC special graphics on G0 translates codepoint" {
 test "putChar: DEC special graphics — codepoint outside 0x60..0x7E passes through" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.designateCharset(0, .dec_special);
 
@@ -5634,7 +5634,7 @@ test "putChar: DEC special graphics — codepoint outside 0x60..0x7E passes thro
 test "putChar: GL=G1 (shiftOut) uses G1 charset" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.designateCharset(0, .ascii);
     s.designateCharset(1, .dec_special);
@@ -5647,7 +5647,7 @@ test "putChar: GL=G1 (shiftOut) uses G1 charset" {
 test "putChar: GL=G0 (shiftIn) restores ASCII after G1 was active" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.designateCharset(0, .ascii);
     s.designateCharset(1, .dec_special);
@@ -5666,7 +5666,7 @@ test "putChar: GL=G0 (shiftIn) restores ASCII after G1 was active" {
 test "putChar: SS2 applies G2 for one char then reverts to GL" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.designateCharset(0, .ascii);
     s.designateCharset(2, .dec_special);
@@ -5687,7 +5687,7 @@ test "putChar: SS2 applies G2 for one char then reverts to GL" {
 test "putChar: SS3 applies G3 for one char then reverts to GL" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.designateCharset(0, .ascii);
     s.designateCharset(3, .dec_special);
@@ -5710,7 +5710,7 @@ test "putChar: SS3 applies G3 for one char then reverts to GL" {
 test "putChar: single_shift=no_shift means no override (sentinel check)" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.designateCharset(0, .ascii);
     s.designateCharset(2, .dec_special);
@@ -5727,7 +5727,7 @@ test "putChar: single_shift=no_shift means no override (sentinel check)" {
 test "putChar: UK charset translates '#' to '£' only with uk_pound" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.designateCharset(0, .uk);
     s.shiftIn();
@@ -5742,7 +5742,7 @@ test "putChar: UK charset translates '#' to '£' only with uk_pound" {
 test "putChar: cell inherits cursor.attr" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.attr.flags.bold = true;
     s.putChar('A');
@@ -5755,7 +5755,7 @@ test "putChar: cell inherits cursor.attr" {
 test "setScrollRegion: basic set, 1-based params converted to 0-based" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.setScrollRegion(3, 10); // 1-based: rows 3-10
 
@@ -5766,7 +5766,7 @@ test "setScrollRegion: basic set, 1-based params converted to 0-based" {
 test "setScrollRegion: default param (0, 0), full active area" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     // Narrow the region first, then reset via defaults.
     s.setScrollRegion(3, 8);
@@ -5779,7 +5779,7 @@ test "setScrollRegion: default param (0, 0), full active area" {
 test "setScrollRegion: default top only (0, 8)" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.setScrollRegion(0, 8);
 
@@ -5790,7 +5790,7 @@ test "setScrollRegion: default top only (0, 8)" {
 test "setScrollRegion: default bottom only (3, 0)" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.setScrollRegion(3, 0);
 
@@ -5801,7 +5801,7 @@ test "setScrollRegion: default bottom only (3, 0)" {
 test "setScrollRegion: cursor moved to (0, 0) in normal mode" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.row = 5;
     s.cursor.col = 10;
@@ -5814,7 +5814,7 @@ test "setScrollRegion: cursor moved to (0, 0) in normal mode" {
 test "setScrollRegion: cursor moved to (scroll_top, 0) in origin mode" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.row = 5;
     s.cursor.col = 10;
@@ -5828,7 +5828,7 @@ test "setScrollRegion: cursor moved to (scroll_top, 0) in origin mode" {
 test "setScrollRegion: wrap_pending cleared" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.wrap_pending = true;
     s.setScrollRegion(2, 8);
@@ -5839,7 +5839,7 @@ test "setScrollRegion: wrap_pending cleared" {
 test "setScrollRegion: generation bumped on valid set" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     const gen = s.generation;
     s.setScrollRegion(2, 8);
@@ -5850,7 +5850,7 @@ test "setScrollRegion: generation bumped on valid set" {
 test "setScrollRegion: dirty_rows set for cursor home row (normal mode)" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.dirty_rows = .empty;
     s.setScrollRegion(3, 9);
@@ -5861,7 +5861,7 @@ test "setScrollRegion: dirty_rows set for cursor home row (normal mode)" {
 test "setScrollRegion: top == bottom | no-op" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.setScrollRegion(3, 8); // valid first
     const top = s.scroll_top;
@@ -5878,7 +5878,7 @@ test "setScrollRegion: top == bottom | no-op" {
 test "setScrollRegion: top > bottom | no-op" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     const top = s.scroll_top;
     const bot = s.scroll_bottom;
@@ -5894,7 +5894,7 @@ test "setScrollRegion: top > bottom | no-op" {
 test "setScrollRegion: bottom > active_rows | no-op" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     const top = s.scroll_top;
     const bot = s.scroll_bottom;
@@ -5910,7 +5910,7 @@ test "setScrollRegion: bottom > active_rows | no-op" {
 test "setScrollRegion: bottom == active_rows | valid (boundary)" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     // bottom = active_rows (1-based) is the last valid row.
     s.setScrollRegion(1, test_max_rows);
@@ -5922,7 +5922,7 @@ test "setScrollRegion: bottom == active_rows | valid (boundary)" {
 test "setScrollRegion: minimum valid region (two adjacent rows)" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.setScrollRegion(5, 6); // rows 5 and 6 (1-based)
 
@@ -5933,7 +5933,7 @@ test "setScrollRegion: minimum valid region (two adjacent rows)" {
 test "setScrollRegion: scrollUp respects new region" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     // Fill all rows with distinct markers.
     for (0..s.active_rows) |r| {
@@ -5958,7 +5958,7 @@ test "setScrollRegion: scrollUp respects new region" {
 test "setScrollRegion: cursor home after set does not affect cell content" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     const marker: Cell = .{ .codepoint = 'X', .kind = .narrow };
     fillScreen(&s, marker);
@@ -5973,7 +5973,7 @@ test "setScrollRegion: cursor home after set does not affect cell content" {
 test "eraseChars: erases one character at cursor" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     const marker: Cell = .{ .codepoint = 'X', .kind = .narrow };
     fillRow(&s, 0, marker);
@@ -5992,7 +5992,7 @@ test "eraseChars: erases one character at cursor" {
 test "eraseChars: erase multiple characters" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     const marker: Cell = .{ .codepoint = 'A', .kind = .narrow };
     fillRow(&s, 0, marker);
@@ -6012,7 +6012,7 @@ test "eraseChars: erase multiple characters" {
 test "eraseChars: n=0 treated as n=1" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     const marker: Cell = .{ .codepoint = 'A', .kind = .narrow };
     fillRow(&s, 0, marker);
@@ -6032,7 +6032,7 @@ test "eraseChars: n=0 treated as n=1" {
 test "eraseChars: clamped to end-of-line" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     const marker: Cell = .{ .codepoint = 'A', .kind = .narrow };
     fillRow(&s, 0, marker);
@@ -6052,7 +6052,7 @@ test "eraseChars: clamped to end-of-line" {
 test "eraseChars: cursor does NOT move" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.row = 2;
     s.cursor.col = 7;
@@ -6065,7 +6065,7 @@ test "eraseChars: cursor does NOT move" {
 test "eraseChars: wrap_pending is preserved" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.row = 0;
     s.cursor.col = @intCast(s.active_cols - 1);
@@ -6079,7 +6079,7 @@ test "eraseChars: wrap_pending is preserved" {
 test "eraseChars: chars to the right are NOT shifted" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     // Write distinct chars: A B C D E at cols 0–4
     for (0..5) |c| {
@@ -6104,7 +6104,7 @@ test "eraseChars: chars to the right are NOT shifted" {
 test "eraseChars: uses cursor background color" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.attr.colors.bg = Style.encode(.{ .rgb = .{ .r = 0, .g = 0, .b = 0 } });
     s.internPen();
@@ -6123,7 +6123,7 @@ test "eraseChars: uses cursor background color" {
 test "eraseChars: generation bumped" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     const gen = s.generation;
     s.cursor.row = 0;
@@ -6136,7 +6136,7 @@ test "eraseChars: generation bumped" {
 test "eraseChars: dirty_rows set for cursor row" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.dirty_rows = .empty;
     s.cursor.row = 5;
@@ -6152,7 +6152,7 @@ test "eraseChars: dirty_rows set for cursor row" {
 test "eraseChars: only cursor row is dirtied" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.dirty_rows = .empty;
     s.cursor.row = 3;
@@ -6166,7 +6166,7 @@ test "eraseChars: only cursor row is dirtied" {
 test "softReset: scroll region reset to full active area" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.scroll_top = 3;
     s.scroll_bottom = 8;
@@ -6178,7 +6178,7 @@ test "softReset: scroll region reset to full active area" {
 test "softReset: cursor attributes cleared" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.attr.flags.bold = true;
     s.cursor.attr.flags.strikethrough = true;
@@ -6194,7 +6194,7 @@ test "softReset: cursor attributes cleared" {
 test "softReset: charset reset to default" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.designateCharset(1, .dec_special);
     s.shiftOut(); // GL = G1
@@ -6207,7 +6207,7 @@ test "softReset: charset reset to default" {
 test "softReset: insert mode cleared" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.mode.insert = true;
     s.softReset();
@@ -6218,7 +6218,7 @@ test "softReset: insert mode cleared" {
 test "softReset: origin mode cleared" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.origin = true;
     s.softReset();
@@ -6229,7 +6229,7 @@ test "softReset: origin mode cleared" {
 test "softReset: wrap pending cleared" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.wrap_pending = true;
     s.softReset();
@@ -6240,7 +6240,7 @@ test "softReset: wrap pending cleared" {
 test "softReset: saved cursor reset" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.row = 5;
     s.cursor.col = 10;
@@ -6255,7 +6255,7 @@ test "softReset: saved cursor reset" {
 test "softReset: cursor position does NOT changed" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.row = 5;
     s.cursor.col = 10;
@@ -6270,7 +6270,7 @@ test "softReset: cursor position does NOT changed" {
 test "softReset: cell content preserved" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     const marker: Cell = .{ .codepoint = 'X', .kind = .narrow };
     fillScreen(&s, marker);
@@ -6289,7 +6289,7 @@ test "softReset: cell content preserved" {
 test "softReset: tab stops preserved" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.setTabStop(); // set a custom stop at current col (0)
     s.softReset();
@@ -6303,7 +6303,7 @@ test "softReset: tab stops preserved" {
 test "softReset: dirty_rows = full" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.dirty_rows = .empty;
     s.softReset();
@@ -6314,7 +6314,7 @@ test "softReset: dirty_rows = full" {
 test "softReset: generation bump" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     const gen = s.generation;
     s.softReset();
@@ -6325,7 +6325,7 @@ test "softReset: generation bump" {
 test "softReset: line_attrs survive" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     // Set double-width on several rows
     s.cursor.row = 0;
@@ -6347,7 +6347,7 @@ test "softReset: line_attrs survive" {
 test "softReset: auto_wrap back on (xterm startup value)" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.mode.auto_wrap = false;
     s.softReset();
@@ -6357,7 +6357,7 @@ test "softReset: auto_wrap back on (xterm startup value)" {
 test "softReset: cursor_visible reset to true" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.mode.cursor_visibility = false;
     s.softReset();
@@ -6367,7 +6367,7 @@ test "softReset: cursor_visible reset to true" {
 test "softReset: reverse_video survives" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.mode.reverse_video = true;
     s.softReset();
@@ -6377,7 +6377,7 @@ test "softReset: reverse_video survives" {
 test "softReset: reverse_wrap off (xterm startup value)" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.mode.reverse_wrap = true;
     s.softReset();
@@ -6387,7 +6387,7 @@ test "softReset: reverse_wrap off (xterm startup value)" {
 test "hardReset: all cells cleared to blank" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     fillScreen(&s, .{ .codepoint = 'X', .kind = .narrow });
     s.hardReset();
@@ -6402,7 +6402,7 @@ test "hardReset: all cells cleared to blank" {
 test "hardReset: cursor homed to (0,0)" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.row = 7;
     s.cursor.col = 15;
@@ -6415,7 +6415,7 @@ test "hardReset: cursor homed to (0,0)" {
 test "hardReset: cursor state fully reset" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.attr.flags.bold = true;
     s.cursor.attr.flags.reverse = true;
@@ -6434,7 +6434,7 @@ test "hardReset: cursor state fully reset" {
 test "hardReset: scroll region reset to full active area" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.scroll_top = 2;
     s.scroll_bottom = 9;
@@ -6448,7 +6448,7 @@ test "hardReset: scroll region reset to full active area" {
 test "hardReset: tab stops reset to defaults" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.tab_stops = .empty;
     s.hardReset();
@@ -6461,7 +6461,7 @@ test "hardReset: tab stops reset to defaults" {
 test "hardReset: ring buffer head reset" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     // simulate some scrolling to advance scroll_offset.
     s.scrollUp(3);
@@ -6473,7 +6473,7 @@ test "hardReset: ring buffer head reset" {
 test "hardReset: insert mode reset" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.mode.insert = true;
     s.hardReset();
@@ -6484,7 +6484,7 @@ test "hardReset: insert mode reset" {
 test "hardReset: dirty_rows = full" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.dirty_rows = .empty;
     s.hardReset();
@@ -6495,7 +6495,7 @@ test "hardReset: dirty_rows = full" {
 test "hardReset: generation bumped" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     const gen = s.generation;
     s.hardReset();
@@ -6506,7 +6506,7 @@ test "hardReset: generation bumped" {
 test "hardReset: primary screen clears scrollback" {
     const alloc = testing.allocator;
     var s = try primaryScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     // Scroll some lines into history.
     s.scrollUp(4);
@@ -6519,7 +6519,7 @@ test "hardReset: primary screen clears scrollback" {
 test "hardReset: primary screen scroll_offset reset" {
     const alloc = testing.allocator;
     var s = try primaryScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.scrollUp(5);
     s.hardReset();
@@ -6530,7 +6530,7 @@ test "hardReset: primary screen scroll_offset reset" {
 test "hardReset: scroll_offset reset" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.scrollUp(3);
     s.hardReset();
@@ -6541,7 +6541,7 @@ test "hardReset: scroll_offset reset" {
 test "hardReset: resets all line_attrs to normal" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.row = 0;
     s.setLineAttr(.double_width);
@@ -6560,7 +6560,7 @@ test "hardReset: resets all line_attrs to normal" {
 test "hardReset: clears cell content and line_attrs together" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.row = 1;
     s.cursor.col = 0;
@@ -6576,7 +6576,7 @@ test "hardReset: clears cell content and line_attrs together" {
 test "hardReset: ring buffer rows beyond active_rows are also cleared" {
     const alloc = testing.allocator;
     var s = try primaryScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     // Only meaningful when ring_rows > active_rows
     if (comptime primary_ring_rows > test_max_rows) {
@@ -6597,7 +6597,7 @@ test "hardReset: ring buffer rows beyond active_rows are also cleared" {
 test "hardReset: saved_cursor reset to defaults" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.row = 5;
     s.cursor.col = 10;
@@ -6612,7 +6612,7 @@ test "hardReset: saved_cursor reset to defaults" {
 test "hardReset: modes reset to defaults (non-false defaults)" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.mode.auto_wrap = false;
     s.mode.cursor_visibility = false;
@@ -6630,7 +6630,7 @@ test "hardReset: modes reset to defaults (non-false defaults)" {
 test "setLineAttr: sets .double_width on cursor row" {
     const alloc = testing.allocator;
     var s = try primaryScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.row = 0;
     s.setLineAttr(.double_width);
@@ -6641,7 +6641,7 @@ test "setLineAttr: sets .double_width on cursor row" {
 test "setLineAttr: sets .double_top on non-zero row" {
     const alloc = testing.allocator;
     var s = try primaryScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.row = 3;
     s.setLineAttr(.double_top);
@@ -6652,7 +6652,7 @@ test "setLineAttr: sets .double_top on non-zero row" {
 test "setLineAttr: sets .double_bottom" {
     const alloc = testing.allocator;
     var s = try primaryScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.row = 5;
     s.setLineAttr(.double_bottom);
@@ -6663,7 +6663,7 @@ test "setLineAttr: sets .double_bottom" {
 test "setLineAttr: overwrite resets to .normal" {
     const alloc = testing.allocator;
     var s = try primaryScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.row = 2;
     s.setLineAttr(.double_width);
@@ -6675,7 +6675,7 @@ test "setLineAttr: overwrite resets to .normal" {
 test "setLineAttr: marks cursor row dirty" {
     const alloc = testing.allocator;
     var s = try primaryScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.dirty_rows = .initEmpty();
     s.cursor.row = 4;
@@ -6687,7 +6687,7 @@ test "setLineAttr: marks cursor row dirty" {
 test "setLineAttr: does not dirty other rows" {
     const alloc = testing.allocator;
     var s = try primaryScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.dirty_rows = .initEmpty();
     s.cursor.row = 4;
@@ -6703,7 +6703,7 @@ test "setLineAttr: does not dirty other rows" {
 test "setLineAttr: does not affect other rows' line_attrs" {
     const alloc = testing.allocator;
     var s = try primaryScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.row = 2;
     s.setLineAttr(.double_width);
@@ -6718,7 +6718,7 @@ test "setLineAttr: does not affect other rows' line_attrs" {
 test "setLineAttr: displayLineAttr reflects the change" {
     const alloc = testing.allocator;
     var s = try primaryScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     s.cursor.row = 1;
     s.setLineAttr(.double_top);
@@ -6729,7 +6729,7 @@ test "setLineAttr: displayLineAttr reflects the change" {
 test "setLineAttr: default is .normal before any call" {
     const alloc = testing.allocator;
     var s = try primaryScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     for (0..s.active_rows) |r| {
         try testing.expectEqual(LineAttr.normal, s.line_attrs[s.physRow(r)]);
@@ -6739,7 +6739,7 @@ test "setLineAttr: default is .normal before any call" {
 test "internGrapheme: equal sequence on hash hit reuses the id" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     try s.putGrapheme(&.{ 'a', 0x0301 }, .narrow);
     try s.putGrapheme(&.{ 'a', 0x0301 }, .narrow);
@@ -6750,7 +6750,7 @@ test "internGrapheme: equal sequence on hash hit reuses the id" {
 test "internGrapheme: hash collision does not alias another cluster" {
     const alloc = testing.allocator;
     var s = try altScreen(alloc);
-    defer s.destroy(alloc);
+    defer s.deinit(alloc);
 
     try s.putGrapheme(&.{ 'a', 0x0301 }, .narrow);
     const id_a = s.cellAt(0, 0).codepoint;

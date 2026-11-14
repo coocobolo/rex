@@ -278,7 +278,7 @@ pub fn Screen(comptime option: Option) type {
         line_attrs: [ring_rows]LineAttr = std.mem.zeroes([ring_rows]LineAttr),
 
         /// Colors of this screen's cells, the pen's `id` and `blank_id`
-        /// (ADR 0005). Owned; 288 KiB allocated by `create`.
+        /// (ADR 0005). Owned; 288 KiB allocated by `init`.
         styles: Style.Table,
 
         // FIXME not a screen state
@@ -333,7 +333,7 @@ pub fn Screen(comptime option: Option) type {
         // FIXME
         // For max_scrollback = 10_000 and max_cols = 500:
         // So, `10_500 rows × 500 cols × @sizeOf(Cell) bytes = ?`
-        pub fn create(gpa: std.mem.Allocator) !Self {
+        pub fn init(gpa: std.mem.Allocator) !Self {
             const cells = try gpa.alignedAlloc(Cell, .@"64", ring_rows * max_cols);
             @memset(cells, Cell{});
             errdefer gpa.free(cells);
@@ -367,7 +367,7 @@ pub fn Screen(comptime option: Option) type {
             };
         }
 
-        pub fn destroy(self: *Self, allocator: std.mem.Allocator) void {
+        pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
             allocator.free(self.cells);
             if (comptime is_scrollback_used) allocator.free(self.scratch_cells);
             allocator.free(self.row_map);

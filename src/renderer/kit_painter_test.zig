@@ -314,10 +314,10 @@ fn render(scene: Scene, variant: Theme.Variant, background: Color, scale: f32, k
     try testGlContext();
     const gpa = testing.allocator;
 
-    var atlas = try Atlas.create(gpa, .{ .width = 1024, .height = 1024 });
-    defer atlas.destroy();
-    var font = try KitFont.create(inter, .{ .scale = scale, .kerning = kerning });
-    defer font.destroy();
+    var atlas = try Atlas.init(gpa, .{ .width = 1024, .height = 1024 });
+    defer atlas.deinit();
+    var font = try KitFont.init(inter, .{ .scale = scale, .kerning = kerning });
+    defer font.deinit();
     var painter = try KitPainter.init();
     defer painter.deinit();
 
@@ -655,10 +655,10 @@ test "KitPainter: the specimen sheet draws every component in both themes" {
 
 test "KitPainter: more instances than fit is an error" {
     try testGlContext();
-    var atlas = try Atlas.create(testing.allocator, .{ .width = 512, .height = 512 });
-    defer atlas.destroy();
-    var font = try KitFont.create(inter, .{});
-    defer font.destroy();
+    var atlas = try Atlas.init(testing.allocator, .{ .width = 512, .height = 512 });
+    defer atlas.deinit();
+    var font = try KitFont.init(inter, .{});
+    defer font.deinit();
     var painter = try KitPainter.init();
     defer painter.deinit();
 

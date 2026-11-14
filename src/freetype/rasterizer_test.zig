@@ -8,8 +8,8 @@ const Rasterizer = @import("Rasterizer.zig");
 const test_font = @import("test_fixtures.zig").test_font;
 
 test "rasterizer: cell metrics are set after create" {
-    var r = try Rasterizer.create(alloc, test_font);
-    defer r.destroy(alloc);
+    var r = try Rasterizer.init(alloc, test_font);
+    defer r.deinit(alloc);
 
     try testing.expect(r.cell_width > 0);
     try testing.expect(r.cell_height > 0);
@@ -17,8 +17,8 @@ test "rasterizer: cell metrics are set after create" {
 }
 
 test "rasterizer: visible glyph has non-zero bitmap" {
-    var r = try Rasterizer.create(alloc, test_font);
-    defer r.destroy(alloc);
+    var r = try Rasterizer.init(alloc, test_font);
+    defer r.deinit(alloc);
 
     const g = try r.rasterize(alloc, 'A', .regular, .single);
 
@@ -29,8 +29,8 @@ test "rasterizer: visible glyph has non-zero bitmap" {
 }
 
 test "rasterizer: space returns zero-size bitmap with non-zero advance" {
-    var r = try Rasterizer.create(alloc, test_font);
-    defer r.destroy(alloc);
+    var r = try Rasterizer.init(alloc, test_font);
+    defer r.deinit(alloc);
 
     const g = try r.rasterize(alloc, 0x20, .regular, .single);
     try testing.expectEqual(0, g.width);
@@ -39,8 +39,8 @@ test "rasterizer: space returns zero-size bitmap with non-zero advance" {
 }
 
 test "rasterizer: bold and regular produce different bitmaps" {
-    var r = try Rasterizer.create(alloc, test_font);
-    defer r.destroy(alloc);
+    var r = try Rasterizer.init(alloc, test_font);
+    defer r.deinit(alloc);
 
     const regular = try r.rasterize(alloc, 'A', .regular, .single);
     const bold = try r.rasterize(alloc, 'A', .bold, .single);
@@ -50,8 +50,8 @@ test "rasterizer: bold and regular produce different bitmaps" {
 }
 
 test "rasterizer: color glyph is scaled to its span" {
-    var r = try Rasterizer.create(alloc, test_font);
-    defer r.destroy(alloc);
+    var r = try Rasterizer.init(alloc, test_font);
+    defer r.deinit(alloc);
 
     const single = try r.rasterize(alloc, 0x1F600, .emoji, .single);
     try testing.expectEqual(.color, single.kind);
@@ -79,8 +79,8 @@ test "Line.fit: rounds to whole pixels and keeps the line inside the cell" {
 }
 
 test "rasterizer: line metrics come from the font and fit the cell" {
-    var r = try Rasterizer.create(alloc, test_font);
-    defer r.destroy(alloc);
+    var r = try Rasterizer.init(alloc, test_font);
+    defer r.deinit(alloc);
 
     const m = r.metrics;
     const height: f32 = @floatFromInt(m.cell_height);
@@ -103,8 +103,8 @@ test "rasterizer: line metrics come from the font and fit the cell" {
 test "rasterizer: underline thickness scales with the font size" {
     var big_font = test_font;
     big_font.height = 64;
-    var r = try Rasterizer.create(alloc, big_font);
-    defer r.destroy(alloc);
+    var r = try Rasterizer.init(alloc, big_font);
+    defer r.deinit(alloc);
     // NotoSansMono has a 50 unit underline on a 1000 unit em, about
     // 3 px at 64 px; the old sign bug always fell back to 1 px.
     try testing.expect(r.metrics.underline_thickness > 1);
@@ -114,8 +114,8 @@ test "rasterizer: no emoji font configured" {
     var config = test_font;
     config.faces.emoji = null;
 
-    var r = try Rasterizer.create(alloc, config);
-    defer r.destroy(alloc);
+    var r = try Rasterizer.init(alloc, config);
+    defer r.deinit(alloc);
 
     // Not in any configured face: the lookup must skip the missing emoji
     // face and end at the regular face's .notdef.

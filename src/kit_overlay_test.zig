@@ -31,14 +31,14 @@ const Fixture = struct {
 
     fn init(scale: f32) !Fixture {
         try testGlContext();
-        var atlas = try Atlas.create(testing.allocator, .{ .width = 512, .height = 512 });
-        errdefer atlas.destroy();
+        var atlas = try Atlas.init(testing.allocator, .{ .width = 512, .height = 512 });
+        errdefer atlas.deinit();
         return .{ .atlas = atlas, .kit = try KitOverlay.create(testing.allocator, inter, scale) };
     }
 
     fn deinit(self: *Fixture) void {
         self.kit.destroy(testing.allocator);
-        self.atlas.destroy();
+        self.atlas.deinit();
     }
 
     /// A frame of an 800 by 600 window (logical pixels).

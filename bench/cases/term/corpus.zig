@@ -74,13 +74,13 @@ fn feedPass(t: *Term, bytes: []const u8, plan: ?[]const u32) void {
 fn createTerm(gpa: Allocator) !*Term {
     const t = try gpa.create(Term);
     errdefer gpa.destroy(t);
-    t.* = try Term.create(gpa);
+    t.* = try Term.init(gpa);
     t.resize(rows, cols);
     return t;
 }
 
 fn destroyTerm(gpa: Allocator, t: *Term) void {
-    t.destroy(gpa);
+    t.deinit(gpa);
     gpa.destroy(t);
 }
 

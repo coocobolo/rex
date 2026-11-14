@@ -63,7 +63,7 @@ pub const Options = struct {
     kerning: Kerning = .pairs,
 };
 
-/// Owned: closed by `destroy`, with every face.
+/// Owned: closed by `deinit`, with every face.
 library: c.FT_Library,
 /// Indexed by `text.Style`.
 faces: [style_count]c.FT_Face,
@@ -109,7 +109,7 @@ fn pairIndex(left: u21, right: u21) ?usize {
 }
 
 /// Opens a face for every text style.
-pub fn create(files: Files, options: Options) ft.FtError!KitFont {
+pub fn init(files: Files, options: Options) ft.FtError!KitFont {
     var self: KitFont = .{
         .library = try ft.initFreeType(),
         .faces = undefined,
@@ -146,7 +146,7 @@ pub fn create(files: Files, options: Options) ft.FtError!KitFont {
     return self;
 }
 
-pub fn destroy(self: *KitFont) void {
+pub fn deinit(self: *KitFont) void {
     ft.doneFreeType(self.library) catch |err| log.err("closing FreeType: {t}", .{err});
     self.* = undefined;
 }

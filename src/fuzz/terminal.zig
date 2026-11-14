@@ -53,10 +53,10 @@ fn runOn(comptime option: term.Option, src: *Source) !void {
     const Terminal = term.Terminal(option);
     const gpa = testing.allocator;
 
-    var t: Terminal = try .create(gpa);
-    defer t.destroy(gpa);
-    var twin: Terminal = try .create(gpa);
-    defer twin.destroy(gpa);
+    var t: Terminal = try .init(gpa);
+    defer t.deinit(gpa);
+    var twin: Terminal = try .init(gpa);
+    defer twin.deinit(gpa);
 
     // What `t` was given, for the report when the twin disagrees.
     var log: Log = .{};

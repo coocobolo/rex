@@ -171,9 +171,9 @@ fn initFace(gpa: Allocator, lib: c.FT_Library, face: Config.Face, height: u32) !
     return ft_face;
 }
 
-/// Creates a Rasterizer and initializes FreeType faces for all font styles.
+/// Initializes a Rasterizer and opens FreeType faces for all font styles.
 /// Also configures pixel sizes and computes shared font metrics.
-pub fn create(gpa: Allocator, config: Config) !Rasterizer {
+pub fn init(gpa: Allocator, config: Config) !Rasterizer {
     var self: Rasterizer = .empty;
 
     self.scratch = try .initCapacity(gpa, 256);
@@ -276,7 +276,7 @@ pub fn create(gpa: Allocator, config: Config) !Rasterizer {
 }
 
 /// Frees all FreeType resources held by the Rasterizer.
-pub fn destroy(self: *Rasterizer, gpa: Allocator) void {
+pub fn deinit(self: *Rasterizer, gpa: Allocator) void {
     ft.doneFace(self.face.regular) catch {};
     ft.doneFace(self.face.italic) catch {};
     ft.doneFace(self.face.bold) catch {};

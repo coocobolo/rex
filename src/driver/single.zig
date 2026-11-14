@@ -59,8 +59,8 @@ pub fn Driver(comptime option: Option) type {
         /// Creates the terminal with `options`. The driver owns `pty` from
         /// here on and closes it in `deinit`.
         pub fn init(allocator: Allocator, io: std.Io, pty: Pty, options: root.Options) !Self {
-            var terminal = try TerminalType.create(allocator);
-            errdefer terminal.destroy(allocator);
+            var terminal = try TerminalType.init(allocator);
+            errdefer terminal.deinit(allocator);
 
             terminal.setTheme(options.theme);
             terminal.setTermName(options.term_name);
@@ -85,7 +85,7 @@ pub fn Driver(comptime option: Option) type {
             if (dropped > 0) log.warn("closing with {d} bytes never written to the pty", .{dropped});
             self.outbound.deinit(self.allocator);
             self.frame_snapshot.deinit(self.allocator);
-            self.terminal.destroy(self.allocator);
+            self.terminal.deinit(self.allocator);
             self.pty.close(self.io);
         }
 

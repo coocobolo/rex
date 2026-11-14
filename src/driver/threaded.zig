@@ -192,11 +192,11 @@ pub fn Driver(comptime option: Option) type {
 
         /// Background worker thread routine.
         fn workerThreadMain(self: *Self, options: root.Options) void {
-            var terminal = TerminalType.create(self.allocator) catch |err| {
+            var terminal = TerminalType.init(self.allocator) catch |err| {
                 log.err("worker: failed to create terminal: {}", .{err});
                 return;
             };
-            defer terminal.destroy(self.allocator);
+            defer terminal.deinit(self.allocator);
 
             {
                 self.terminal_mutex.lockUncancelable(self.io);

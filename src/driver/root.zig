@@ -352,8 +352,8 @@ test "driver: extractSelectionText omits newline on soft-wrapped rows" {
         .max_scrollback = 10,
     };
 
-    var t = try term.Terminal(opt).create(testing.allocator);
-    defer t.destroy(testing.allocator);
+    var t = try term.Terminal(opt).init(testing.allocator);
+    defer t.deinit(testing.allocator);
 
     // "HELLO" soft-wraps into "WORLD", followed by hard newline and "DONE"
     t.feed("HELLOWORLDDONE");

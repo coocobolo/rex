@@ -67,8 +67,8 @@ test "GL context: core profile at the required version" {
 test "upload: gray glyph returns valid metric" {
     try testGlContext();
 
-    var atlas = try Atlas.create(alloc, .{});
-    defer atlas.destroy();
+    var atlas = try Atlas.init(alloc, .{});
+    defer atlas.deinit();
 
     var buf: [8 * 16]u8 = undefined;
     const glyph = fakeGrayGlyph(&buf, 8, 16);
@@ -88,8 +88,8 @@ test "upload: gray glyph returns valid metric" {
 test "upload: color glyph goes into color atlas" {
     try testGlContext();
 
-    var atlas = try Atlas.create(alloc, .{});
-    defer atlas.destroy();
+    var atlas = try Atlas.init(alloc, .{});
+    defer atlas.deinit();
 
     var buf: [32 * 32 * 4]u8 = undefined;
     const glyph = fakeColorGlyph(&buf, 32, 32);
@@ -122,8 +122,8 @@ test "invalidate: clears both textures to zero, partial tiles included" {
     // tiles are partial.
     const width = 100;
     const height = 70;
-    var atlas = try Atlas.create(alloc, .{ .width = width, .height = height });
-    defer atlas.destroy();
+    var atlas = try Atlas.init(alloc, .{ .width = width, .height = height });
+    defer atlas.deinit();
 
     var gray_glyph: [8 * 16]u8 = undefined;
     _ = try atlas.upload(fakeGrayGlyph(&gray_glyph, 8, 16));
@@ -150,8 +150,8 @@ test "invalidate: clears both textures to zero, partial tiles included" {
 test "invalidate: restores the clear color and framebuffer binding" {
     try testGlContext();
 
-    var atlas = try Atlas.create(alloc, .{ .width = 32, .height = 32 });
-    defer atlas.destroy();
+    var atlas = try Atlas.init(alloc, .{ .width = 32, .height = 32 });
+    defer atlas.deinit();
 
     const color: [4]f32 = .{ 0.25, 0.5, 0.75, 1.0 };
     gl.clearColor(color[0], color[1], color[2], color[3]);
@@ -170,8 +170,8 @@ test "invalidate: restores the clear color and framebuffer binding" {
 test "upload: zero-size glyph (space) returns zero metrics without GL Upload" {
     try testGlContext();
 
-    var atlas = try Atlas.create(alloc, .{});
-    defer atlas.destroy();
+    var atlas = try Atlas.init(alloc, .{});
+    defer atlas.deinit();
 
     const glyph: Rasterizer.Glyph = .{
         .bitmap = undefined, // must not be accessed
@@ -198,8 +198,8 @@ test "upload: zero-size glyph (space) returns zero metrics without GL Upload" {
 test "upload: gray and color packing states are independent" {
     try testGlContext();
 
-    var atlas = try Atlas.create(alloc, .{});
-    defer atlas.destroy();
+    var atlas = try Atlas.init(alloc, .{});
+    defer atlas.deinit();
 
     var gbuf: [8 * 16]u8 = undefined;
     var cbuf: [32 * 32 * 4]u8 = undefined;
@@ -218,8 +218,8 @@ test "upload: gray and color packing states are independent" {
 test "upload: a pitch shorter than a row returns InvalidPitch" {
     try testGlContext();
 
-    var atlas = try Atlas.create(alloc, .{});
-    defer atlas.destroy();
+    var atlas = try Atlas.init(alloc, .{});
+    defer atlas.deinit();
 
     var buf: [8 * 16 * 4]u8 = undefined;
     var gray = fakeGrayGlyph(&buf, 8, 16);
@@ -238,8 +238,8 @@ test "upload: a pitch shorter than a row returns InvalidPitch" {
 test "upload: glyph wider than atlas returns GlyphTooWide" {
     try testGlContext();
 
-    var atlas = try Atlas.create(alloc, .{});
-    defer atlas.destroy();
+    var atlas = try Atlas.init(alloc, .{});
+    defer atlas.deinit();
 
     // width > atlas width
     const glyph: Rasterizer.Glyph = .{
@@ -260,11 +260,11 @@ test "upload: glyph wider than atlas returns GlyphTooWide" {
 }
 
 fn testCreateAndPreRasterize() !void {
-    var rasterizer = try Rasterizer.create(alloc, test_font);
-    defer rasterizer.destroy(alloc);
+    var rasterizer = try Rasterizer.init(alloc, test_font);
+    defer rasterizer.deinit(alloc);
 
-    var atlas = try Atlas.create(alloc, .{});
-    defer atlas.destroy();
+    var atlas = try Atlas.init(alloc, .{});
+    defer atlas.deinit();
 
     atlas.preRasterize(alloc, &rasterizer, .{ .start = 0x20, .end = 0x7F });
 
@@ -276,11 +276,11 @@ fn testCreateAndPreRasterize() !void {
 }
 
 fn testCacheHit() !void {
-    var rasterizer = try Rasterizer.create(alloc, test_font);
-    defer rasterizer.destroy(alloc);
+    var rasterizer = try Rasterizer.init(alloc, test_font);
+    defer rasterizer.deinit(alloc);
 
-    var atlas = try Atlas.create(alloc, .{});
-    defer atlas.destroy();
+    var atlas = try Atlas.init(alloc, .{});
+    defer atlas.deinit();
 
     const m1 = try atlas.get(alloc, &rasterizer, 'A', .regular, .single);
     const m2 = try atlas.get(alloc, &rasterizer, 'A', .regular, .single);
@@ -291,11 +291,11 @@ fn testCacheHit() !void {
 }
 
 fn testBoldVsRegular() !void {
-    var rasterizer = try Rasterizer.create(alloc, test_font);
-    defer rasterizer.destroy(alloc);
+    var rasterizer = try Rasterizer.init(alloc, test_font);
+    defer rasterizer.deinit(alloc);
 
-    var atlas = try Atlas.create(alloc, .{});
-    defer atlas.destroy();
+    var atlas = try Atlas.init(alloc, .{});
+    defer atlas.deinit();
 
     const m_reg = try atlas.get(alloc, &rasterizer, 'A', .regular, .single);
     const m_bold = try atlas.get(alloc, &rasterizer, 'A', .bold, .single);
@@ -303,11 +303,11 @@ fn testBoldVsRegular() !void {
 }
 
 fn testZeroSizeMetric() !void {
-    var rasterizer = try Rasterizer.create(alloc, test_font);
-    defer rasterizer.destroy(alloc);
+    var rasterizer = try Rasterizer.init(alloc, test_font);
+    defer rasterizer.deinit(alloc);
 
-    var atlas = try Atlas.create(alloc, .{});
-    defer atlas.destroy();
+    var atlas = try Atlas.init(alloc, .{});
+    defer atlas.deinit();
 
     const m1 = try atlas.get(alloc, &rasterizer, 0x20, .regular, .single);
     try testing.expectEqual(@as(u16, 0), m1.width);
@@ -319,10 +319,10 @@ fn testZeroSizeMetric() !void {
 }
 
 fn testGetSequenceCacheMiss() !void {
-    var rasterizer = try Rasterizer.create(alloc, test_font);
-    defer rasterizer.destroy(alloc);
-    var atlas = try Atlas.create(alloc, .{});
-    defer atlas.destroy();
+    var rasterizer = try Rasterizer.init(alloc, test_font);
+    defer rasterizer.deinit(alloc);
+    var atlas = try Atlas.init(alloc, .{});
+    defer atlas.deinit();
 
     // rasterizeSequence still falls back to cps[0], so a real ZWJ
     // sequence gives the base code point glyph.
@@ -336,10 +336,10 @@ fn testGetSequenceCacheMiss() !void {
 }
 
 fn testGetSequenceCacheHit() !void {
-    var rasterizer = try Rasterizer.create(alloc, test_font);
-    defer rasterizer.destroy(alloc);
-    var atlas = try Atlas.create(alloc, .{});
-    defer atlas.destroy();
+    var rasterizer = try Rasterizer.init(alloc, test_font);
+    defer rasterizer.deinit(alloc);
+    var atlas = try Atlas.init(alloc, .{});
+    defer atlas.deinit();
 
     const cps = [_]u21{ 0x1F468, 0x200D, 0x1F469 };
     const m1 = try atlas.getSequence(alloc, &rasterizer, &cps, .emoji, .double);
@@ -348,10 +348,10 @@ fn testGetSequenceCacheHit() !void {
 }
 
 fn testGetSequenceEmptyReturnsError() !void {
-    var rasterizer = try Rasterizer.create(alloc, test_font);
-    defer rasterizer.destroy(alloc);
-    var atlas = try Atlas.create(alloc, .{});
-    defer atlas.destroy();
+    var rasterizer = try Rasterizer.init(alloc, test_font);
+    defer rasterizer.deinit(alloc);
+    var atlas = try Atlas.init(alloc, .{});
+    defer atlas.deinit();
 
     const cps = [_]u21{};
     try testing.expectError(error.EmptySequence, atlas.getSequence(alloc, &rasterizer, &cps, .emoji, .double));
@@ -462,8 +462,8 @@ test "clampSize: keeps the size within 1 and the driver limit" {
 test "create: uses the configured size" {
     try testGlContext();
 
-    var atlas = try Atlas.create(alloc, .{ .width = 64, .height = 32 });
-    defer atlas.destroy();
+    var atlas = try Atlas.init(alloc, .{ .width = 64, .height = 32 });
+    defer atlas.deinit();
     try testing.expectEqual(64, atlas.width);
     try testing.expectEqual(32, atlas.height);
 

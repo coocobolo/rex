@@ -265,8 +265,8 @@ pub fn run(io: Io, gpa: Allocator, opts: Options, results: *std.ArrayList(Result
     // Heap, not stack: two screens with their ring metadata.
     const t = try gpa.create(Term);
     defer gpa.destroy(t);
-    t.* = try Term.create(gpa);
-    defer t.destroy(gpa);
+    t.* = try Term.init(gpa);
+    defer t.deinit(gpa);
 
     inline for (all_shapes) |shape| {
         try runCase(io, gpa, opts, results, t, shape);

@@ -229,7 +229,7 @@ fn Host(comptime Tool: type) type {
             const content_scale: f32 = if (scale > 0) scale else 1;
 
             var font = try openFont(gpa, io, argv0, content_scale);
-            errdefer font.destroy();
+            errdefer font.deinit();
 
             var painter: KitPainter = try .init();
             errdefer painter.deinit();
@@ -237,8 +237,8 @@ fn Host(comptime Tool: type) type {
             // A quarter of the terminal's 2048: UI text in five styles fits
             // with room even at 2x, and the textures take 5 MB instead of
             // 20 (measured: 15 MB less resident under Mesa's llvmpipe).
-            var atlas: Atlas = try .create(gpa, .{ .width = 1024, .height = 1024 });
-            errdefer atlas.destroy();
+            var atlas: Atlas = try .init(gpa, .{ .width = 1024, .height = 1024 });
+            errdefer atlas.deinit();
 
             const self = try gpa.create(Self);
             errdefer gpa.destroy(self);
@@ -300,8 +300,8 @@ fn Host(comptime Tool: type) type {
             gpa.free(self.home);
             self.directories.deinit(gpa);
             self.painter.deinit();
-            self.font.destroy();
-            self.atlas.destroy();
+            self.font.deinit();
+            self.atlas.deinit();
             self.window.deinit();
             self.lock.unlock(self.io);
             self.lock.close(self.io);
@@ -545,7 +545,7 @@ fn openFont(gpa: Allocator, io: std.Io, argv0: []const u8, scale: f32) !KitFont 
     const semibold = try std.fs.path.joinZ(gpa, &.{ dir, font_files.ui_semibold_name });
     defer gpa.free(semibold);
 
-    return .create(.{
+    return .init(.{
         .regular = regular,
         .medium = medium,
         .semibold = semibold,

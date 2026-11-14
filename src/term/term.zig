@@ -245,7 +245,7 @@ pub const Option = struct {
     name: []const u8 = "rex",
     version: []const u8 = "0.1.0",
     /// Most decoded bytes one OSC 52 write can hold; a larger write is
-    /// dropped whole (ADR 0006). Allocated once in `Terminal.create`.
+    /// dropped whole (ADR 0006). Allocated once in `Terminal.init`.
     max_clipboard_bytes: usize = 1 << 20,
 
     /// 4096 ring rows, a power of two.
@@ -624,12 +624,12 @@ fn parseTermcapName(request: []const u8) TermcapName {
 
 /// A terminal: feed it pty output, then read `active()` and `events`.
 ///
-/// It allocates only in `create` and does no I/O. It holds no pointers
+/// It allocates only in `init` and does no I/O. It holds no pointers
 /// into itself, so it can be moved. Both screens share one type, so the
 /// alternate screen carries scrollback it never uses.
 ///
-///   var t = try Terminal(opt).create(alloc);
-///   defer t.destroy(alloc);
+///   var t = try Terminal(opt).init(alloc);
+///   defer t.deinit(alloc);
 ///   t.feed(chunk);
 pub fn Terminal(comptime option: Option) type {
     return struct {
@@ -691,12 +691,12 @@ pub fn Terminal(comptime option: Option) type {
         pub const ColorTarget = DynamicColor;
 
         /// Allocates both screens and the clipboard buffer. Release with
-        /// `destroy`.
-        pub fn create(alloc: std.mem.Allocator) !Self {
-            var primary: ScreenType = try .create(alloc);
-            errdefer primary.destroy(alloc);
-            var alternate: ScreenType = try .create(alloc);
-            errdefer alternate.destroy(alloc);
+        /// `deinit`.
+        pub fn init(alloc: std.mem.Allocator) !Self {
+            var primary: ScreenType = try .init(alloc);
+            errdefer primary.deinit(alloc);
+            var alternate: ScreenType = try .init(alloc);
+            errdefer alternate.deinit(alloc);
 
             return .{
                 .primary = primary,
@@ -708,10 +708,10 @@ pub fn Terminal(comptime option: Option) type {
         }
 
         /// Frees both screens and the clipboard buffer. `alloc` must be the
-        /// one `create` used.
-        pub fn destroy(self: *Self, alloc: std.mem.Allocator) void {
-            self.primary.destroy(alloc);
-            self.alternate.destroy(alloc);
+        /// one `init` used.
+        pub fn deinit(self: *Self, alloc: std.mem.Allocator) void {
+            self.primary.deinit(alloc);
+            self.alternate.deinit(alloc);
             self.clipboard.deinit(alloc);
             self.* = undefined;
         }

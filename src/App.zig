@@ -531,11 +531,11 @@ pub fn init(
         font_pixels.height,
         active_config.font.size,
     });
-    var rasterizer: Rasterizer = try .create(gpa, font_pixels);
-    errdefer rasterizer.destroy(gpa);
+    var rasterizer: Rasterizer = try .init(gpa, font_pixels);
+    errdefer rasterizer.deinit(gpa);
 
-    var atlas: Atlas = try .create(gpa, .{});
-    errdefer atlas.destroy();
+    var atlas: Atlas = try .init(gpa, .{});
+    errdefer atlas.deinit();
 
     var frame_builder: FrameBuilderType = try .init(gpa, .{
         .dim_alpha = active_config.window.dim_alpha,
@@ -670,8 +670,8 @@ pub fn deinit(self: *App, gpa: std.mem.Allocator) void {
     if (self.kit) |kit| kit.destroy(gpa);
     self.renderer.deinit();
     self.frame_builder.deinit(gpa);
-    self.atlas.destroy();
-    self.rasterizer.destroy(gpa);
+    self.atlas.deinit();
+    self.rasterizer.deinit(gpa);
     self.window.deinit();
     self.driver.deinit();
     gpa.destroy(self.clipboard_buf);
@@ -1379,12 +1379,12 @@ fn rebuildFont(self: *App, size: u32, scale: f32) bool {
         .faces = self.config.font.faces,
         .height = Freetype.FontConfig.pixelSize(size, scale),
     };
-    // Create new rasterizer BEFORE destroying old one (avoid dangling ptr on failure)
-    const new_rasterizer = Rasterizer.create(self.allocator, font_config) catch |err| {
-        log.err("rebuildFont: rasterizer.create failed: {}", .{err});
+    // Initialize new rasterizer BEFORE deiniting old one (avoid dangling ptr on failure)
+    const new_rasterizer = Rasterizer.init(self.allocator, font_config) catch |err| {
+        log.err("rebuildFont: rasterizer.init failed: {}", .{err});
         return false;
     };
-    self.rasterizer.destroy(self.allocator);
+    self.rasterizer.deinit(self.allocator);
     self.rasterizer = new_rasterizer;
     self.renderer.setFontMetrics(self.rasterizer.metrics);
 

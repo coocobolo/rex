@@ -22,24 +22,24 @@ const Term = Terminal(test_option);
 const alloc = testing.allocator;
 
 test "Terminal: create and destroy ok" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
 }
 
 test "Terminal: basics" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
 
     try testing.expectEqual(&t.primary, t.active());
     try testing.expect(&t.primary != &t.alternate);
 }
 
 test "Terminal: moving by value keeps state and active screen" {
-    var a = try Term.create(alloc);
+    var a = try Term.init(alloc);
     a.feed("AB\x1b[?1049h" ++ "C");
 
     var b = a; // move; `a` must not be used again
-    defer b.destroy(alloc);
+    defer b.deinit(alloc);
 
     try testing.expectEqual(.alternate, b.active_buffer);
     try testing.expectEqual(&b.alternate, b.active());
@@ -53,8 +53,8 @@ test "Terminal: moving by value keeps state and active screen" {
 }
 
 test "resize: updates both screens" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
 
     t.resize(8, 16);
 
@@ -66,8 +66,8 @@ test "resize: updates both screens" {
 }
 
 test "resize: reflows primary screen on column change" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
 
     t.resize(6, 10);
 
@@ -88,8 +88,8 @@ test "resize: reflows primary screen on column change" {
 }
 
 test "resize: clamps to max dimensions" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
 
     t.resize(999, 999);
 
@@ -101,8 +101,8 @@ test "resize: clamps to max dimensions" {
 }
 
 test "setTitle/getTitle: round-trip" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
 
     t.setTitle("hello, from zig!");
     try testing.expectEqualStrings("hello, from zig!", t.getTitle());
@@ -112,8 +112,8 @@ test "setTitle/getTitle: round-trip" {
 }
 
 test "setTitle: empty string clears title" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
 
     t.setTitle("initial");
     t.setTitle("");
@@ -123,8 +123,8 @@ test "setTitle: empty string clears title" {
 }
 
 test "setTitle: truncates at max_title_len" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
 
     // Build a string longer than max_title_len.
     const long: [max_title_len + 32]u8 = [_]u8{'A'} ** (max_title_len + 32);
@@ -134,8 +134,8 @@ test "setTitle: truncates at max_title_len" {
 }
 
 test "setTitle: a character across the limit is dropped whole" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
 
     // 254 bytes of ASCII, then a 3-byte character that would end at 257.
     const head = "A" ** (max_title_len - 2);
@@ -148,8 +148,8 @@ test "setTitle: a character across the limit is dropped whole" {
 }
 
 test "setIconName: a 4-byte character across the limit is dropped whole" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
 
     const head = "n" ** (max_title_len - 1);
     t.feed("\x1b]1;" ++ head ++ "\u{1f600}" ++ "\x07");
@@ -157,8 +157,8 @@ test "setIconName: a 4-byte character across the limit is dropped whole" {
 }
 
 test "setAnswerback: a character across the limit is dropped whole" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
 
     const head = "x" ** (max_answerback_len - 1);
     t.setAnswerback(head ++ "\u{e9}");
@@ -166,16 +166,16 @@ test "setAnswerback: a character across the limit is dropped whole" {
 }
 
 test "setIconName/getIconName: round-trip" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
 
     t.setIconName("myterm");
     try testing.expectEqualStrings("myterm", t.getIconName());
 }
 
 test "Terminal: title and icon_name are independent" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
 
     t.setTitle("title");
     t.setIconName("icon");
@@ -185,8 +185,8 @@ test "Terminal: title and icon_name are independent" {
 }
 
 test "Terminal: default modes" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
 
     try testing.expect(t.mode.auto_repeat);
     try testing.expect(!t.mode.cursor_keys); // DECTCEM on by default
@@ -218,8 +218,8 @@ test "Response: a print that doesn't fit is dropped, not half-written" {
 }
 
 test "Terminal: 60x CPR in one feed does not panic" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
 
     t.feed("\x1b[6n" ** 60);
     const s = t.response.slice();
@@ -229,8 +229,8 @@ test "Terminal: 60x CPR in one feed does not panic" {
 }
 
 test "reply: one that doesn't fit whole is dropped, not half-written" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
 
     // Fill the queue with whole CPRs until a DA1 no longer fits.
     const cpr = "\x1b[1;1R";
@@ -246,8 +246,8 @@ test "reply: one that doesn't fit whole is dropped, not half-written" {
 }
 
 test "reply: takeDroppedReplies reports a flood once and resets" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
 
     // 300 CPR queries in one feed: their replies (6 bytes each) overflow
     // the queue, so the ones that don't fit are dropped whole.
@@ -266,8 +266,8 @@ test "reply: takeDroppedReplies reports a flood once and resets" {
 }
 
 test "reply: an answerback longer than the queue is dropped whole" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
 
     const long = [_]u8{'x'} ** (Response.capacity + 1);
     t.reply(.{ .answerback = &long });
@@ -276,8 +276,8 @@ test "reply: an answerback longer than the queue is dropped whole" {
 }
 
 test "reply: osc color queries follow the c1 format" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
 
     const rgb: Rgb = .{ .r = 0x12, .g = 0xab, .b = 0xff };
     t.reply(.{ .palette_color = .{ .index = 7, .rgb = rgb } });
@@ -289,16 +289,16 @@ test "reply: osc color queries follow the c1 format" {
 }
 
 test "reply: x10 mouse encodes each byte offset by 32" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
 
     t.reply(.{ .mouse_x10 = .{ .code = 1, .at = .{ .row = 4, .col = 9 } } });
     try testing.expectEqualStrings("\x1b[M\x21\x2a\x25", t.response.slice());
 }
 
 test "reply: x10 mouse past the encodable range is dropped" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
 
     const max = Reply.mouse_x10_max;
     t.reply(.{ .mouse_x10 = .{ .code = 0, .at = .{ .row = 0, .col = max + 1 } } });
@@ -311,8 +311,8 @@ test "reply: x10 mouse past the encodable range is dropped" {
 }
 
 test "reply: a mouse report queues after pending replies" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
 
     t.feed("\x1b[?1000h\x1b[?1006h\x1b[6n");
     t.sendMouse(2, 3, 0, 0, true);
@@ -320,8 +320,8 @@ test "reply: a mouse report queues after pending replies" {
 }
 
 test "mouse 1000: normal tracking reports press and release with modifiers" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
 
     t.feed("\x1b[?1000h");
     try testing.expectEqual(.normal, t.mode.mouse_tracking);
@@ -331,8 +331,8 @@ test "mouse 1000: normal tracking reports press and release with modifiers" {
 }
 
 test "mouse 1000: wheel is reported" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
 
     t.feed("\x1b[?1000h\x1b[?1006h");
     try testing.expect(t.mode.mouse_tracking.reportsWheel());
@@ -341,8 +341,8 @@ test "mouse 1000: wheel is reported" {
 }
 
 test "mouse 9: x10 tracking reports presses of buttons 0 to 2 only, without modifiers" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
 
     t.feed("\x1b[?9h");
     try testing.expectEqual(.x10, t.mode.mouse_tracking);
@@ -354,8 +354,8 @@ test "mouse 9: x10 tracking reports presses of buttons 0 to 2 only, without modi
 }
 
 test "mouse tracking: setting a mode replaces the current one" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
 
     t.feed("\x1b[?1000h\x1b[?1002h");
     try testing.expectEqual(.button_motion, t.mode.mouse_tracking);
@@ -366,8 +366,8 @@ test "mouse tracking: setting a mode replaces the current one" {
 }
 
 test "mouse tracking: resetting any mode turns tracking off, as xterm does" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
 
     t.feed("\x1b[?1002h\x1b[?1000l");
     try testing.expectEqual(.off, t.mode.mouse_tracking);
@@ -376,8 +376,8 @@ test "mouse tracking: resetting any mode turns tracking off, as xterm does" {
 }
 
 test "mouse tracking: modes 9, 1000, 1002 and 1003 report their state" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
 
     try testing.expectEqual(.reset, t.decModeReport(1000));
     t.feed("\x1b[?1002h");
@@ -388,8 +388,8 @@ test "mouse tracking: modes 9, 1000, 1002 and 1003 report their state" {
 }
 
 test "mouse 1002: a drag reports the held button plus 32" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
 
     t.feed("\x1b[?1002h\x1b[?1006h");
     t.sendMouseMotion(1, 1, null, 0);
@@ -404,8 +404,8 @@ test "mouse 1002: a drag reports the held button plus 32" {
 }
 
 test "mouse 1003: motion with no button held reports 3 plus 32" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
 
     t.feed("\x1b[?1003h");
     t.sendMouseMotion(0, 0, null, 0);
@@ -414,8 +414,8 @@ test "mouse 1003: motion with no button held reports 3 plus 32" {
 }
 
 test "mouse 1000: motion is not reported" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
 
     t.feed("\x1b[?1000h");
     t.sendMouseMotion(0, 0, .left, 0);
@@ -444,32 +444,32 @@ test "HeldButtons: a drag names the last button pressed, then the lowest held" {
 }
 
 test "mouse tracking: RIS turns it off" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
 
     t.feed("\x1b[?1003h\x1bc");
     try testing.expectEqual(.off, t.mode.mouse_tracking);
 }
 
 test "Terminal: feed printable ASCII" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
 
     // dispatch is not yet wired; verify the parser loop itself is stable.
     t.feed("hello, world\r\n");
 }
 
 test "Terminal: feed CSI sequence" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
 
     // CUP: ESC [ 1 ; 1 H
     t.feed("\x1b[1;1H");
 }
 
 test "print: single ASCII character written at cursor" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
 
     t.feed("A");
 
@@ -479,8 +479,8 @@ test "print: single ASCII character written at cursor" {
 }
 
 test "print: multiple ASCII characters advance cursor" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
 
     t.feed("hello");
 
@@ -493,8 +493,8 @@ test "print: multiple ASCII characters advance cursor" {
 }
 
 test "print: UTF-8 two-byte sequence decoded correctly" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
 
     // U+00E9 LATIN SMALL LETTER E WITH ACUTE, 2-byte UTF-8: 0xC3 0xA9
     t.feed("\xC3\xA9");
@@ -505,8 +505,8 @@ test "print: UTF-8 two-byte sequence decoded correctly" {
 }
 
 test "print: soft hyphen from UTF-8 takes one cell" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
 
     // U+00AD SOFT HYPHEN is Cf, but terminals print it (xterm, glibc).
     t.feed("a\xC2\xADb");
@@ -518,8 +518,8 @@ test "print: soft hyphen from UTF-8 takes one cell" {
 }
 
 test "print: wide CJK character occupies two columns" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
 
     // U+4E2D CJK UNIFIED IDEOGRAPH, 3-byte UTF-8: 0xE4 0xB8 0xAD
     t.feed("\xE4\xB8\xAD");
@@ -531,8 +531,8 @@ test "print: wide CJK character occupies two columns" {
 }
 
 test "print: auto-wrap sets wrap_pending at last column" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
 
     // Fill the first row exactly (active_cols = 24)
     t.feed("ABCDEFGHIJKLMNOPQRSTUVWX"); // 24 chars
@@ -544,8 +544,8 @@ test "print: auto-wrap sets wrap_pending at last column" {
 }
 
 test "print: auto-wrap triggers on next character" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
 
     // Fill row 0, then write one more character
     t.feed("ABCDEFGHIJKLMNOPQRSTUVWX"); // 24 chars; fills row 0
@@ -559,8 +559,8 @@ test "print: auto-wrap triggers on next character" {
 }
 
 test "print: generation bumped after each character" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
 
     const gen0 = t.active().generation;
     t.feed("A");
@@ -572,8 +572,8 @@ test "print: generation bumped after each character" {
 }
 
 test "print: dirty row marked after write" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
 
     t.feed("Z");
 
@@ -581,8 +581,8 @@ test "print: dirty row marked after write" {
 }
 
 test "print: writes to active screen, not inactive" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
 
     // primary is active by default
     t.feed("X");
@@ -593,8 +593,8 @@ test "print: writes to active screen, not inactive" {
 }
 
 test "softReset: active screen scroll region reset" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
 
     t.active().scroll_top = 3;
     t.active().scroll_bottom = 8;
@@ -605,8 +605,8 @@ test "softReset: active screen scroll region reset" {
 }
 
 test "softReset: active screen cursor attrs cleared" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
 
     t.active().cursor.attr.flags.bold = true;
     t.active().cursor.attr.colors.fg = Style.encode(.{ .indexed = 22 });
@@ -617,8 +617,8 @@ test "softReset: active screen cursor attrs cleared" {
 }
 
 test "softReset: active screen origin mode cleared" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
 
     t.active().cursor.origin = true;
     t.softReset();
@@ -627,8 +627,8 @@ test "softReset: active screen origin mode cleared" {
 }
 
 test "softReset: active screen modes reset" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
 
     t.active().mode.auto_wrap = false;
     t.active().mode.insert = true;
@@ -646,8 +646,8 @@ test "softReset: active screen modes reset" {
 }
 
 test "softReset: active screen non-targeted modes survive" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
 
     t.mode.column_132 = true;
     t.softReset();
@@ -657,8 +657,8 @@ test "softReset: active screen non-targeted modes survive" {
 }
 
 test "softReset: terminal modes reset" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
 
     t.mode.linefeed = true;
     t.mode.cursor_keys = true;
@@ -674,8 +674,8 @@ test "softReset: terminal modes reset" {
 }
 
 test "softReset: mouse modes survive" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
 
     t.mode.mouse_tracking = .button_motion;
     t.mode.mouse_sgr = true;
@@ -691,8 +691,8 @@ test "softReset: mouse modes survive" {
 }
 
 test "softReset: cell content survives" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
 
     t.active().cursor.row = 0;
     t.active().cursor.col = 0;
@@ -704,8 +704,8 @@ test "softReset: cell content survives" {
 }
 
 test "softReset: alternate screen not affected" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
 
     // Switch to alternate, set a mode, switch back, soft reset
     t.active_buffer = .alternate;
@@ -718,8 +718,8 @@ test "softReset: alternate screen not affected" {
 }
 
 test "hardReset: active screen returns to primary" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
 
     t.active_buffer = .alternate;
     try testing.expectEqual(t.active(), &t.alternate);
@@ -730,8 +730,8 @@ test "hardReset: active screen returns to primary" {
 }
 
 test "hardReset: both screens cells cleared" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
 
     t.primary.cursor.row = 0;
     t.primary.cursor.col = 0;
@@ -751,8 +751,8 @@ test "hardReset: both screens cells cleared" {
 }
 
 test "hardReset: terminal modes reset to defaults" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
 
     t.mode.linefeed = true;
     t.mode.cursor_keys = true;
@@ -769,8 +769,8 @@ test "hardReset: terminal modes reset to defaults" {
 }
 
 test "hardReset: title and icon name cleared" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
 
     t.setTitle("my terminal");
     t.setIconName("icon");
@@ -781,8 +781,8 @@ test "hardReset: title and icon name cleared" {
 }
 
 test "hardReset: events cleared" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
 
     t.events.set(.bell);
     t.response.append("foo");
@@ -793,8 +793,8 @@ test "hardReset: events cleared" {
 }
 
 test "hardReset: answerback preserved" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
 
     t.setAnswerback("xterm");
     t.hardReset();
@@ -803,8 +803,8 @@ test "hardReset: answerback preserved" {
 }
 
 test "Terminal: xtversion replies with 8-bit controls under s8c1t" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
 
     t.control_format = .s8c1t;
     t.xtversion();
@@ -813,8 +813,8 @@ test "Terminal: xtversion replies with 8-bit controls under s8c1t" {
 }
 
 test "Terminal: takeEvents and drainReplies" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
 
     t.events.set(.bell);
     t.events.set(.title);
@@ -834,8 +834,8 @@ test "Terminal: takeEvents and drainReplies" {
 }
 
 test "Terminal: snapshot live view, dirty rows and buffer switch" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
 
     var frame = try Term.FrameType.init(alloc);
     defer frame.deinit(alloc);
@@ -876,8 +876,8 @@ test "Terminal: snapshot live view, dirty rows and buffer switch" {
 }
 
 test "snapshot: resolving a wrap left pending by an earlier feed redraws the wrapped row" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
     var frame = try Term.FrameType.init(alloc);
     defer frame.deinit(alloc);
 
@@ -898,8 +898,8 @@ test "snapshot: resolving a wrap left pending by an earlier feed redraws the wra
 }
 
 test "snapshot: seq counts publishes, and dirty rows cover only the last one" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
     var frame = try Term.FrameType.init(alloc);
     defer frame.deinit(alloc);
 
@@ -923,8 +923,8 @@ test "snapshot: seq counts publishes, and dirty rows cover only the last one" {
 }
 
 test "print: utf-8 continuation bytes in the C1 range are text, not controls" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
 
     // U+2010 is E2 80 90 and U+2022 is E2 80 A2. Fed to the parser as raw
     // bytes, 0x90 would open a DCS that swallows the SGR after it.
@@ -940,8 +940,8 @@ test "print: utf-8 continuation bytes in the C1 range are text, not controls" {
 }
 
 test "invalid utf-8: sequence cut by ESC is one u+fffd, then ESC runs" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
 
     // F0 9F 98 is a valid 3-byte prefix; ESC [ 2 C moves right by two.
     t.feed("\xF0\x9F\x98\x1b[2CZ");
@@ -950,8 +950,8 @@ test "invalid utf-8: sequence cut by ESC is one u+fffd, then ESC runs" {
 }
 
 test "invalid utf-8: C3 41 prints u+fffd then A" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
 
     t.feed("\xC3");
     t.feed("A");
@@ -960,8 +960,8 @@ test "invalid utf-8: C3 41 prints u+fffd then A" {
 }
 
 test "invalid utf-8: truncated sequence at end() is u+fffd" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
 
     t.feed("\xE4\xB8");
     t.end();
@@ -975,8 +975,8 @@ fn expectCluster(t: *Term, row: usize, col: usize, want: []const u21) !void {
 }
 
 test "combining: e + U+0301 is one cell with the cluster" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
 
     t.feed("e\xCC\x81x");
     try expectCluster(&t, 0, 0, &.{ 'e', 0x301 });
@@ -984,8 +984,8 @@ test "combining: e + U+0301 is one cell with the cluster" {
 }
 
 test "combining: U+00E9 + U+0301 keeps both" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
 
     t.feed("\xC3\xA9\xCC\x81");
     try expectCluster(&t, 0, 0, &.{ 0xE9, 0x301 });
@@ -993,8 +993,8 @@ test "combining: U+00E9 + U+0301 keeps both" {
 }
 
 test "combining: mark at the last column with wrap pending" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
 
     t.feed("\x1b[1;24Ha");
     try testing.expect(t.active().cursor.wrap_pending);
@@ -1004,8 +1004,8 @@ test "combining: mark at the last column with wrap pending" {
 }
 
 test "combining: mark at column 0 is dropped" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
 
     t.feed("\xCC\x81");
     t.end();
@@ -1014,8 +1014,8 @@ test "combining: mark at column 0 is dropped" {
 }
 
 test "combining: mark on wide CJK attaches to the left half" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
 
     t.feed("\xE4\xB8\xAD\xCC\x81"); // U+4E2D U+0301
     try expectCluster(&t, 0, 0, &.{ 0x4E2D, 0x301 });
@@ -1031,8 +1031,8 @@ fn expectAllClustersResolve(t: *Term) !void {
 }
 
 test "grapheme intern: table stays bounded while scrolling" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
     const S = @TypeOf(t.active().*);
 
     const n = 3 * S.grapheme_compact_min;
@@ -1051,8 +1051,8 @@ test "grapheme intern: table stays bounded while scrolling" {
 }
 
 test "grapheme intern: ED 2 keeps clusters referenced by scrollback" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
 
     t.feed("e\xCC\x81");
     for (0..test_option.max_rows) |_| t.feed("\n");
@@ -1062,8 +1062,8 @@ test "grapheme intern: ED 2 keeps clusters referenced by scrollback" {
 }
 
 test "m2: ASCII after a cut UTF-8 sequence lands after the held cluster" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
 
     // U+00E9 is held as a pending cluster, then 0xCC starts a sequence
     // that 'A' cuts: é, U+FFFD, A in that order.
@@ -1076,8 +1076,8 @@ test "m2: ASCII after a cut UTF-8 sequence lands after the held cluster" {
 }
 
 test "m2: ASCII after a cut UTF-8 sequence, fed byte by byte" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
 
     for ("\xc3\xa9\xccA") |b| t.feed(&.{b});
     t.end();
@@ -1090,8 +1090,8 @@ test "m2: ASCII after a cut UTF-8 sequence, fed byte by byte" {
 test "setIconName: a name of max_title_len or more is kept, truncated" {
     // Found by the strings fuzz target: icon_name_len was a u8, so a
     // 256-byte name overflowed it.
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
 
     t.feed("\x1b]1;" ++ "n" ** (max_title_len + 10) ++ "\x07");
     try testing.expectEqual(max_title_len, t.getIconName().len);
@@ -1100,8 +1100,8 @@ test "setIconName: a name of max_title_len or more is kept, truncated" {
 test "resize: zero rows or columns keeps a one-cell grid" {
     // Found by the terminal fuzz target: with no rows, LF computed
     // `active_rows - 1` and underflowed.
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
 
     t.resize(0, 0);
     try testing.expectEqual(1, t.active().active_rows);
@@ -1119,8 +1119,8 @@ test "feed: ESC % @ applies to the rest of the same chunk" {
     // Found by the terminal fuzz target: the encoding was picked once
     // per feed, so the bytes after ESC % @ in that chunk were still
     // decoded as UTF-8.
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
 
     t.feed("\x1b%@\xe9");
     t.end();
@@ -1128,8 +1128,8 @@ test "feed: ESC % @ applies to the rest of the same chunk" {
 }
 
 test "feed: ESC % G applies to the rest of the same chunk" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
 
     t.feed("\x1b%@");
     t.feed("\x1b%G\xc3\xa9x");
@@ -1138,8 +1138,8 @@ test "feed: ESC % G applies to the rest of the same chunk" {
 }
 
 test "feed: S8C1T applies to the rest of the same Latin-1 chunk" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
 
     // Latin-1, VT220 with 7-bit controls: C1 bytes are ignored. After
     // S8C1T in the same chunk, 0x9B is CSI.
@@ -1164,8 +1164,8 @@ fn feedColored(t: *Term, buf: []u8, n: u32, row: u16) void {
 }
 
 test "styles: text keeps its color while 20,000 new colors stream past" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
     t.feed("\x1b[38;2;200;10;10m\x1b[48;2;1;2;3mA\x1b[0m");
     const before = cellStyle(&t, 0, 0);
     const id = t.active().row(0)[0].style;
@@ -1183,8 +1183,8 @@ test "styles: text keeps its color while 20,000 new colors stream past" {
 }
 
 test "styles: erased cells take the background only, not the foreground" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
     t.feed("\x1b[38;2;250;0;0m\x1b[48;2;0;0;250m\x1b[2J");
     const blank = cellStyle(&t, 3, 3);
     try testing.expectEqual(Style.default_key, blank.fg);
@@ -1193,8 +1193,8 @@ test "styles: erased cells take the background only, not the foreground" {
 }
 
 test "styles: SGR that only changes attributes keeps the pen's IDs" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
     t.feed("\x1b[38;2;1;2;3m");
     const pen = t.active().cursor.attr;
     t.feed("\x1b[1;3m");
@@ -1205,8 +1205,8 @@ test "styles: SGR that only changes attributes keeps the pen's IDs" {
 }
 
 test "styles: DECRC restores colors after the table was reset" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
     t.feed("\x1b[?1049h\x1b[38;2;9;8;7m\x1b7"); // alt screen, color, DECSC
     t.feed("\x1b[?1049l\x1b[?1049h"); // leave and re-enter: alt table reset
     t.feed("\x1b8"); // DECRC
@@ -1218,8 +1218,8 @@ test "styles: DECRC restores colors after the table was reset" {
 }
 
 test "styles: an alternate screen session leaves the primary's colors alone" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
     t.feed("\x1b[38;2;40;50;60mP\x1b[0m");
     const before = cellStyle(&t, 0, 0);
     t.feed("\x1b[?1049h");
@@ -1230,8 +1230,8 @@ test "styles: an alternate screen session leaves the primary's colors alone" {
 }
 
 test "styles: the frame resolves cells through its own copy of the table" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
     var frame = try Term.FrameType.init(alloc);
     defer frame.deinit(alloc);
     var other = try Term.FrameType.init(alloc);
@@ -1261,8 +1261,8 @@ test "styles: the frame resolves cells through its own copy of the table" {
 }
 
 test "styles: an indexed color keeps its color while truecolors stream past" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
     // xterm color 16 sat in palette slot 17, the first slot RGB colors took.
     t.feed("\x1b[38;5;16mI\x1b[0m");
     var buf: [64]u8 = undefined;
@@ -1276,8 +1276,8 @@ test "styles: an indexed color keeps its color while truecolors stream past" {
 test "styles: a full table gives new text the nearest style and changes no cell" {
     // 160 x 120 = 19,200 cells: more than the table holds, all on screen.
     const Big = Terminal(.{ .max_rows = 120, .max_cols = 160, .max_scrollback = 0 });
-    var t = try Big.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Big.init(alloc);
+    defer t.deinit(alloc);
     const cap = Style.Table.capacity;
     var buf: [48]u8 = undefined;
     // One distinct color per cell, row by row, until the table is full.
@@ -1304,8 +1304,8 @@ test "styles: a full table gives new text the nearest style and changes no cell"
 // #67: cell-editing bugs from the 2026-11-10 `term/` audit.
 
 test "ECH starting on the right half of a wide character erases its left half" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
 
     // A wide character in columns 0-1, then ECH 1 from column 1, its right half.
     t.feed("\u{4E2D}\x1b[1;2H\x1b[X");
@@ -1315,8 +1315,8 @@ test "ECH starting on the right half of a wide character erases its left half" {
 }
 
 test "growing the window keeps the scrollback view inside the history" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
 
     t.resize(6, 24);
     for (0..20) |_| t.feed("line\r\n");
@@ -1330,8 +1330,8 @@ test "growing the window keeps the scrollback view inside the history" {
 }
 
 test "RIS restores 7-bit C1 replies" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
 
     // S8C1T, then RIS, then a cursor position report.
     t.feed("\x1b G\x1bc\x1b[6n");
@@ -1347,8 +1347,8 @@ test "an East Asian Ambiguous Latin-1 letter is wide when ambiguous_width is wid
         break :blk o;
     };
     const WideTerm = Terminal(wide_option);
-    var t = try WideTerm.create(alloc);
-    defer t.destroy(alloc);
+    var t = try WideTerm.init(alloc);
+    defer t.deinit(alloc);
 
     // U+00D7 MULTIPLICATION SIGN is East Asian Width A.
     t.feed("\u{00D7}");
@@ -1372,23 +1372,23 @@ fn expectNoSplitWide(t: *Term, r: usize) !void {
 }
 
 test "DCH on the left half of a wide character leaves no right half" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
     t.feed("\u{4E2D}ab\x1b[1;1H\x1b[P");
     try expectNoSplitWide(&t, 0);
 }
 
 test "ICH pushing a wide character into the last column leaves no left half" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
     // Columns 21-22 of 24, then insert two blanks at column 0.
     t.feed("\x1b[1;22H\u{4E2D}\x1b[1;1H\x1b[2@");
     try expectNoSplitWide(&t, 0);
 }
 
 test "insert mode at column 0 keeps a shifted wide character whole" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
     // One row, cursor on the last column, insert mode on. The next
     // graphic wraps, scrolls, and is inserted at column 0 of a row that
     // still holds a wide character.
@@ -1400,8 +1400,8 @@ test "insert mode at column 0 keeps a shifted wide character whole" {
 }
 
 test "insert mode: a narrow character before a wide one shifts the pair whole" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
     t.resize(2, 6);
     t.feed("\xe4\xb8\xad\r\x1b[4hz"); // 中, back to column 0, insert z
     try expectNoSplitWide(&t, 0);
@@ -1410,8 +1410,8 @@ test "insert mode: a narrow character before a wide one shifts the pair whole" {
 }
 
 test "insert mode: a wide character before a narrow and a wide one keeps both" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
     t.resize(2, 8);
     t.feed("a\xe4\xb8\xad\r\x1b[4h\xe6\x96\x87"); // a中, back to column 0, insert 文
     try expectNoSplitWide(&t, 0);
@@ -1421,8 +1421,8 @@ test "insert mode: a wide character before a narrow and a wide one keeps both" {
 }
 
 test "a wide character wrapping onto a pair at columns 1 and 2 leaves no right half" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
     // Row 1 holds "a中"; a wide character at the last column of row 0
     // wraps onto row 1 without scrolling and covers "a" and the left
     // half of 中.
@@ -1434,43 +1434,43 @@ test "a wide character wrapping onto a pair at columns 1 and 2 leaves no right h
 }
 
 test "insert-mode printing pushes a wide character off the row whole" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
     t.feed("\x1b[1;22H\u{4E2D}\x1b[1;1H\x1b[4hab");
     try expectNoSplitWide(&t, 0);
 }
 
 test "EL 0 from the right half of a wide character erases its left half" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
     t.feed("\u{4E2D}\x1b[1;2H\x1b[K");
     try expectNoSplitWide(&t, 0);
 }
 
 test "EL 1 ending on the left half of a wide character erases its right half" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
     t.feed("a\u{4E2D}\x1b[1;2H\x1b[1K");
     try expectNoSplitWide(&t, 0);
 }
 
 test "ED 0 from the right half of a wide character erases its left half" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
     t.feed("\u{4E2D}\x1b[1;2H\x1b[J");
     try expectNoSplitWide(&t, 0);
 }
 
 test "ED 1 ending on the left half of a wide character erases its right half" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
     t.feed("a\u{4E2D}\x1b[1;2H\x1b[1J");
     try expectNoSplitWide(&t, 0);
 }
 
 test "the alternate screen shows no stale columns after a narrow-then-wide resize" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
     t.feed("\x1b[?1049h\x1b[1;21HX");
     t.resize(12, 10);
     t.resize(12, 24);
@@ -1478,8 +1478,8 @@ test "the alternate screen shows no stale columns after a narrow-then-wide resiz
 }
 
 test "resizing past the maximum width resizes both screens to the maximum" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
     t.feed("0123\u{4E00}4567");
     t.resize(12, 1);
     t.resize(12, test_option.max_cols + 1);
@@ -1501,8 +1501,8 @@ fn feedCluster(t: *Term, i: usize) void {
 }
 
 test "incremental snapshots keep finding new clusters after 256 others" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
     var frame = try Term.FrameType.init(alloc);
     defer frame.deinit(alloc);
 
@@ -1520,8 +1520,8 @@ test "incremental snapshots keep finding new clusters after 256 others" {
 }
 
 test "a full frame keeps the first 256 distinct clusters and reports the rest missing" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
     var frame = try Term.FrameType.init(alloc);
     defer frame.deinit(alloc);
 
@@ -1532,8 +1532,8 @@ test "a full frame keeps the first 256 distinct clusters and reports the rest mi
 }
 
 test "1047: entering keeps the alternate screen's content (xterm clears on leaving)" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
     t.feed("\x1b[?47hX\x1b[?47l"); // 47 never clears
     t.feed("\x1b[?1047h");
     try testing.expectEqual(&t.alternate, t.active());
@@ -1541,8 +1541,8 @@ test "1047: entering keeps the alternate screen's content (xterm clears on leavi
 }
 
 test "1047: leaving clears the alternate screen and keeps the primary" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
     t.feed("P\x1b[?1047hX\x1b[?1047l");
     try testing.expectEqual(&t.primary, t.active());
     try testing.expectEqual(@as(u21, 'P'), t.primary.cellAt(0, 0).codepoint);
@@ -1550,8 +1550,8 @@ test "1047: leaving clears the alternate screen and keeps the primary" {
 }
 
 test "1047: leaving keeps the alternate pen valid in its reset table" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
     t.feed("\x1b[?1047h\x1b[38;2;1;2;3mX\x1b[?1047l");
     t.feed("\x1b[?47hY"); // 47 keeps the alternate pen
     const attr = t.active().cursor.attr;
@@ -1560,47 +1560,47 @@ test "1047: leaving keeps the alternate pen valid in its reset table" {
 }
 
 test "1047: leaving from the primary screen clears nothing" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
     t.feed("\x1b[?47hX\x1b[?47l");
     t.feed("\x1b[?1047l");
     try testing.expectEqual(@as(u21, 'X'), t.alternate.cellAt(0, 0).codepoint);
 }
 
 test "1049: entering still clears the alternate screen" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
     t.feed("\x1b[?47hX\x1b[?47l");
     t.feed("\x1b[?1049h");
     try testing.expectEqualDeep(Cell{}, t.alternate.cellAt(0, 0));
 }
 
 test "palette: an OSC 4 color set on the alternate screen stays after leaving it" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
     t.feed("\x1b[?1049h\x1b]4;1;#010203\x07\x1b[?1049l");
     try testing.expectEqual(Rgb{ .r = 1, .g = 2, .b = 3 }, t.palette.getIndexed(1));
 }
 
 test "palette: OSC 10 and 11 set on the alternate screen stay after leaving it" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
     t.feed("\x1b[?1049h\x1b]10;#0a0b0c\x07\x1b]11;#0d0e0f\x07\x1b[?1049l");
     try testing.expectEqual(Rgb{ .r = 0x0a, .g = 0x0b, .b = 0x0c }, t.palette.get(.foreground));
     try testing.expectEqual(Rgb{ .r = 0x0d, .g = 0x0e, .b = 0x0f }, t.palette.get(.background));
 }
 
 test "palette: RIS drops OSC 4 overrides" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
     const red = t.palette.getIndexed(1);
     t.feed("\x1b]4;1;#010203\x07\x1bc");
     try testing.expectEqual(red, t.palette.getIndexed(1));
 }
 
 test "palette: an OSC 4 change alone reaches the next frame" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
     var frame = try Term.FrameType.init(alloc);
     defer frame.deinit(alloc);
     t.feed("A");
@@ -1618,8 +1618,8 @@ test "resize: a terminal without scrollback resizes the primary screen too" {
         .name = "test",
         .version = "0.0.1",
     });
-    var t = try NoScrollback.create(alloc);
-    defer t.destroy(alloc);
+    var t = try NoScrollback.init(alloc);
+    defer t.deinit(alloc);
 
     t.resize(6, 10);
     try testing.expectEqual(@as(u16, 6), t.primary.active_rows);
@@ -1628,8 +1628,8 @@ test "resize: a terminal without scrollback resizes the primary screen too" {
 }
 
 test "1049: entering keeps the cursor, pen, modes, shape, margins and tab stops (xterm)" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
     // Pen, DECTCEM off, DECAWM off, reverse wrap, underline cursor, region
     // rows 2-9, DECOM, a tab stop cleared, G0 = DEC graphics.
     t.feed("\x1b[38;2;9;8;7m\x1b[?25l\x1b[?7l\x1b[?45h\x1b[4 q\x1b[2;9r\x1b[?6h");
@@ -1658,8 +1658,8 @@ test "1049: entering keeps the cursor, pen, modes, shape, margins and tab stops 
 }
 
 test "47: modes changed on the alternate screen stay after leaving it (xterm)" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
     t.feed("\x1b[?47h\x1b[?25l\x1b[?7l\x1b[5;7H\x1b[?47l");
     const s = t.active();
     try testing.expectEqual(&t.primary, s);
@@ -1670,8 +1670,8 @@ test "47: modes changed on the alternate screen stay after leaving it (xterm)" {
 }
 
 test "1049: leaving restores the primary cursor from DECSC but keeps modes (xterm)" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
     t.feed("\x1b[3;4H\x1b[?1049h\x1b[10;10H\x1b[?7l\x1b[?1049l");
     const s = t.active();
     try testing.expectEqual(@as(u16, 2), s.cursor.row);
@@ -1680,8 +1680,8 @@ test "1049: leaving restores the primary cursor from DECSC but keeps modes (xter
 }
 
 test "1049: entering clears a pending wrap (xterm ClearScreen)" {
-    var t = try Term.create(alloc);
-    defer t.destroy(alloc);
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
     t.feed("A" ** test_option.max_cols);
     try testing.expect(t.active().cursor.wrap_pending);
     t.feed("\x1b[?1049h");

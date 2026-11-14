@@ -97,8 +97,8 @@ fn sequence(src: *Source, out: *std.ArrayList(u8), gpa: std.mem.Allocator) !Buil
 
 fn run(src: *Source) !void {
     const gpa = testing.allocator;
-    var t: Terminal = try .create(gpa);
-    defer t.destroy(gpa);
+    var t: Terminal = try .init(gpa);
+    defer t.deinit(gpa);
     var out: std.ArrayList(u8) = .empty;
     defer out.deinit(gpa);
 

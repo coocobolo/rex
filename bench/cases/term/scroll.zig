@@ -79,8 +79,8 @@ fn prepare(comptime S: type, s: *S, case: Case) void {
 fn checksum(comptime S: type, gpa: Allocator, case: Case) !u64 {
     const s = try gpa.create(S);
     defer gpa.destroy(s);
-    s.* = try .create(gpa);
-    defer s.destroy(gpa);
+    s.* = try .init(gpa);
+    defer s.deinit(gpa);
 
     prepare(S, s, case);
     var ctx: Context(S) = .{ .s = s, .direction = case.direction };
@@ -103,8 +103,8 @@ fn runScreen(
         if (!skip and support.allowed(opts.filter, "scroll", screen_name ++ "/" ++ case.name)) {
             const s = try gpa.create(S);
             defer gpa.destroy(s);
-            s.* = try .create(gpa);
-            defer s.destroy(gpa);
+            s.* = try .init(gpa);
+            defer s.deinit(gpa);
             prepare(S, s, case);
 
             // Size by the row a scroll blanks: the floor of its work.

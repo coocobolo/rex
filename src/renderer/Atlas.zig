@@ -151,7 +151,7 @@ pub const empty: Atlas = .{
 
 /// Creates both textures at the option's size, clamped to what the
 /// GL driver allows. Needs a current GL context.
-pub fn create(gpa: Allocator, option: Option) !Atlas {
+pub fn init(gpa: Allocator, option: Option) !Atlas {
     var self: Atlas = .empty;
     var max_size: gl.GLint = 0;
     gl.getIntegerv(gl.MAX_TEXTURE_SIZE, &max_size);
@@ -225,7 +225,7 @@ pub fn preRasterize(self: *Atlas, gpa: Allocator, rasterizer: *Rasterizer, range
 }
 
 /// Frees the caches and deletes both textures.
-pub fn destroy(self: *Atlas) void {
+pub fn deinit(self: *Atlas) void {
     self.glyph_cache.deinit();
     self.sequence_cache.deinit();
 

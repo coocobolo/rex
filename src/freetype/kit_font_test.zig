@@ -13,8 +13,8 @@ const inter: KitFont.Files = .{
 };
 
 test "KitFont: widths are in logical pixels and grow with the text" {
-    var font = try KitFont.create(inter, .{});
-    defer font.destroy();
+    var font = try KitFont.init(inter, .{});
+    defer font.deinit();
 
     try testing.expectEqual(0, font.width("", .sm, .proportional));
     const one = font.width("Copied", .sm, .proportional);
@@ -30,18 +30,18 @@ test "KitFont: widths are in logical pixels and grow with the text" {
 test "KitFont: the same text has nearly the same logical width at every scale" {
     var widths: [4]f32 = undefined;
     for ([_]f32{ 1, 1.25, 1.5, 2 }, &widths) |scale, *width| {
-        var font = try KitFont.create(inter, .{ .scale = scale });
-        defer font.destroy();
+        var font = try KitFont.init(inter, .{ .scale = scale });
+        defer font.deinit();
         width.* = font.width("Selection is on the clipboard.", .sm, .proportional);
     }
     for (widths[1..]) |width| try testing.expectApproxEqRel(widths[0], width, 0.01);
 }
 
 test "KitFont: pair kerning comes from GPOS and tightens AV" {
-    var kerned = try KitFont.create(inter, .{ .kerning = .pairs });
-    defer kerned.destroy();
-    var plain = try KitFont.create(inter, .{ .kerning = .off });
-    defer plain.destroy();
+    var kerned = try KitFont.init(inter, .{ .kerning = .pairs });
+    defer kerned.deinit();
+    var plain = try KitFont.init(inter, .{ .kerning = .off });
+    defer plain.deinit();
 
     try testing.expectEqual(0, plain.kern(.lg_semibold, 'A', 'V'));
     // At 18 px: A,V -1.359 px, T,o -1.406 px, n,n 0 (measured 2026-11-12).
@@ -56,8 +56,8 @@ test "KitFont: pair kerning comes from GPOS and tightens AV" {
 }
 
 test "KitFont: glyphs rasterize, and bad UTF-8 measures as replacement characters" {
-    var font = try KitFont.create(inter, .{ .scale = 1.25 });
-    defer font.destroy();
+    var font = try KitFont.init(inter, .{ .scale = 1.25 });
+    defer font.deinit();
 
     const glyph = try font.rasterize(.sm, 'A');
     try testing.expect(glyph.width > 0 and glyph.height > 0);
@@ -72,8 +72,8 @@ test "KitFont: glyphs rasterize, and bad UTF-8 measures as replacement character
 }
 
 test "KitFont: remembered kerning and advances follow the scale" {
-    var font = try KitFont.create(inter, .{});
-    defer font.destroy();
+    var font = try KitFont.init(inter, .{});
+    defer font.deinit();
 
     // Asked twice: the second answer comes from the table.
     const pair = font.kern(.lg_semibold, 'A', 'V');
@@ -93,12 +93,12 @@ test "KitFont: remembered kerning and advances follow the scale" {
 }
 
 test "KitFont: a code point the UI font lacks comes from the fallback face" {
-    var plain = try KitFont.create(inter, .{});
-    defer plain.destroy();
+    var plain = try KitFont.init(inter, .{});
+    defer plain.deinit();
     var files = inter;
     files.fallback = "assets/fonts/GoogleSansCode[wght].ttf";
-    var font = try KitFont.create(files, .{});
-    defer font.destroy();
+    var font = try KitFont.init(files, .{});
+    defer font.deinit();
 
     // U+2500, a box-drawing line: in Google Sans Code, not in Inter.
     const missing = try plain.rasterize(.sm, 0x2500);
@@ -117,8 +117,8 @@ test "KitFont: a code point the UI font lacks comes from the fallback face" {
 }
 
 test "KitFont: tabular ASCII digits share one cell" {
-    var font = try KitFont.create(inter, .{});
-    defer font.destroy();
+    var font = try KitFont.init(inter, .{});
+    defer font.deinit();
 
     // Inter SemiBold: "1" is narrower than "4" (866 vs 1,364 font units).
     const one = font.step(.xxxl_semibold, .tabular, null, '1');
@@ -133,8 +133,8 @@ test "KitFont: tabular ASCII digits share one cell" {
 }
 
 test "KitFont: tracking is one gap between glyphs" {
-    var font = try KitFont.create(inter, .{});
-    defer font.destroy();
+    var font = try KitFont.init(inter, .{});
+    defer font.deinit();
 
     const digit = font.width("1", .xxxl_semibold, .tabular);
     try testing.expectApproxEqAbs(digit * 2 - 2, font.width("11", .xxxl_semibold, .tabular), 0.01);
@@ -143,8 +143,8 @@ test "KitFont: tracking is one gap between glyphs" {
 }
 
 test "KitFont: a tabular digit keeps its logical width when the scale changes" {
-    var font = try KitFont.create(inter, .{});
-    defer font.destroy();
+    var font = try KitFont.init(inter, .{});
+    defer font.deinit();
 
     const at_one = font.width("1", .xl_semibold, .tabular);
     try font.setScale(2);
@@ -162,16 +162,16 @@ test "KitFont: the large semibold styles" {
     try testing.expectEqual(88, text.Style.xxxl_semibold.metrics().line_height);
     try testing.expectEqual(-2, text.Style.xxxl_semibold.metrics().tracking);
 
-    var font = try KitFont.create(inter, .{});
-    defer font.destroy();
+    var font = try KitFont.init(inter, .{});
+    defer font.deinit();
     try testing.expect(font.width("18:42", .xxxl_semibold, .proportional) > font.width("18:42", .xxl_semibold, .proportional));
     try testing.expect(font.width("18:42", .xxl_semibold, .proportional) > font.width("18:42", .xl_semibold, .proportional));
     try testing.expect(font.width("18:42", .xl_semibold, .proportional) > font.width("18:42", .lg_semibold, .proportional));
 }
 
 test "KitFont: timer digits sit inside the line box" {
-    var font = try KitFont.create(inter, .{});
-    defer font.destroy();
+    var font = try KitFont.init(inter, .{});
+    defer font.deinit();
     const samples = [_]struct { text.Style, u8 }{
         .{ .xxl_semibold, 64 },
         .{ .xxxl_semibold, 88 },
@@ -193,15 +193,15 @@ test "KitFont: its size" {
 }
 
 test "KitFont: is the kit's measurer" {
-    var font = try KitFont.create(inter, .{});
-    defer font.destroy();
+    var font = try KitFont.init(inter, .{});
+    defer font.deinit();
     const measurer = font.measurer();
     try testing.expectEqual(font.width("Close this window?", .lg_semibold, .proportional), measurer.width("Close this window?", .lg_semibold, .proportional));
 }
 
 test "KitFont: embedded icon subset matches lucide.ttf bitmaps" {
-    var font = try KitFont.create(inter, .{});
-    defer font.destroy();
+    var font = try KitFont.init(inter, .{});
+    defer font.deinit();
 
     const ref_lib = try ft.initFreeType();
     defer ft.doneFreeType(ref_lib) catch {};
