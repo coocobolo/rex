@@ -885,7 +885,11 @@ fn legend(tree: *Tree, theme: *const Theme, label: []const u8, color: Theme.Colo
 }
 
 fn screenFill(theme: *const Theme) Theme.Color {
-    return theme.chart[theme.chart.len - 1];
+    return theme.foreground.alpha(14);
+}
+
+fn focusFill(theme: *const Theme) Theme.Color {
+    return theme.chart[1];
 }
 
 /// What a day chart shows: the days, oldest first and the last one today,
@@ -913,7 +917,7 @@ fn daysCard(tree: *Tree, theme: *const Theme, options: DayChart) kit.tree.Error!
     _ = try tree.text(options.card_title, .{ .color = theme.foreground, .style = .sm_medium });
     _ = try tree.leaf(.{ .width = .fill });
     try legend(tree, theme, "Screen", screenFill(theme));
-    try legend(tree, theme, "Focus", theme.info);
+    try legend(tree, theme, "Focus", focusFill(theme));
     tree.close(head);
 
     var items: [history_days]chart.Day = undefined;
@@ -925,8 +929,8 @@ fn daysCard(tree: *Tree, theme: *const Theme, options: DayChart) kit.tree.Error!
             .slot = if (isHovered(options.hovered, index)) theme.muted else .transparent,
             .total = @floatFromInt(day.screen_s),
             .part = @floatFromInt(day.focus_s),
-            .fill = if (past_limit) theme.destructive.alpha(30) else screenFill(theme),
-            .part_fill = theme.info,
+            .fill = if (past_limit) theme.destructive.alpha(38) else screenFill(theme),
+            .part_fill = focusFill(theme),
         };
     }
     const area = try tree.open(.{ .width = .fill, .height = .fill });
@@ -1035,7 +1039,7 @@ fn dayTooltip(state: *const State, tree: *Tree, theme: *const Theme) kit.tree.Er
     const card = try tooltip.openAt(tree, theme, state.pointer_x, state.pointer_y);
     _ = try tree.text(state.tip.title.slice(), .{ .color = theme.foreground, .style = .xs });
     try tooltip.line(tree, theme, .{ .name = "Screen", .value = state.tip.screen.slice(), .swatch = screenFill(theme) });
-    try tooltip.line(tree, theme, .{ .name = "Focus", .value = state.tip.focus.slice(), .swatch = theme.info });
+    try tooltip.line(tree, theme, .{ .name = "Focus", .value = state.tip.focus.slice(), .swatch = focusFill(theme) });
     _ = try tree.text(state.tip.counts.slice(), .{ .color = theme.muted_foreground, .style = .xs });
     tooltip.close(tree, card);
 }
