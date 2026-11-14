@@ -864,7 +864,7 @@ test "settings: Overlays page groups toast, banner, modal, and alert dialog cont
 
 test "settings: Overlays preview buttons trigger, lay out, and dismiss in-window overlays" {
     const gpa = testing.allocator;
-    const cfg = config_defaults.default;
+    var cfg = config_defaults.default;
     var state = try settings.init(.{
         .gpa = gpa,
         .io = testing.io,
@@ -952,4 +952,25 @@ test "settings: Overlays preview buttons trigger, lay out, and dismiss in-window
         @as(std.meta.Tag(kit.dialog.Phase), .leaving),
         std.meta.activeTag(state.preview_dialog.phase),
     );
+
+    // Configured alert_dialog.icon controls the preview dialog's media icon (including none).
+    cfg.window.alert_dialog.icon = .info;
+    state.preview_dialog = .empty;
+    _ = settings.update(&state, .{ .pointer = .{ .id = dialog_btn_id } });
+    _ = settings.update(&state, .{ .press = dialog_btn_id });
+    try testing.expect(settings.update(&state, .release));
+    tree.reset();
+    try settings.view(&state, &tree, &kit.Theme.dark);
+    var saw_info_icon = false;
+    for (tree.items()) |node| {
+        if (node.content == .icon and node.content.icon.codepoint == kit.icons.info) saw_info_icon = true;
+    }
+    try testing.expect(saw_info_icon);
+
+    cfg.window.alert_dialog.icon = .none;
+    state.preview_dialog = .empty;
+    _ = settings.update(&state, .{ .pointer = .{ .id = dialog_btn_id } });
+    _ = settings.update(&state, .{ .press = dialog_btn_id });
+    try testing.expect(settings.update(&state, .release));
+    try testing.expectEqual(kit.alert_dialog.Media.none, state.preview_dialog.option.media);
 }

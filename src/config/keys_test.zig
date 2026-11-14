@@ -415,6 +415,7 @@ const enum_names = [_]struct { []const u8, []const []const u8 }{
     .{ "modal.position", &.{ "center", "top_center", "bottom_center" } },
     .{ "modal.on_outside_click", &.{ "close", "ignore" } },
     .{ "alert_dialog.default_focus", &.{ "confirm", "cancel" } },
+    .{ "alert_dialog.icon", &.{ "warning", "info", "error", "none" } },
     .{ "window.on_close", &.{ "ask", "ask_if_running", "close" } },
     .{ "ui.motion", &.{ "full", "none" } },
     .{ "ui.color_scheme", &.{ "auto", "dark", "light" } },
@@ -633,8 +634,10 @@ test "apply: [toast], [banner], [modal], and [alert_dialog] layout keys" {
 
     try applyText(&config, .alert_dialog, "width", "500");
     try applyText(&config, .alert_dialog, "default_focus", "cancel");
+    try applyText(&config, .alert_dialog, "icon", "error");
     try std.testing.expectEqual(@as(f32, 500), config.window.alert_dialog.width);
     try std.testing.expectEqual(overlay.AlertDialog.DefaultFocus.cancel, config.window.alert_dialog.default_focus);
+    try std.testing.expectEqual(overlay.AlertDialog.Icon.@"error", config.window.alert_dialog.icon);
 
     try std.testing.expectError(error.OutOfRange, applyText(&config, .toast, "width", "100"));
     try std.testing.expectError(error.OutOfRange, applyText(&config, .banner, "max_width", "100"));

@@ -440,4 +440,21 @@ test "dialog: option configures position, dimensions, and fallback scrim alpha" 
     var tree2 = fixture.tree();
     const scrim2 = (try alert_dialog.view(&overridden, &tree2, &Theme.dark)).?;
     try testing.expectEqual(@as(u8, 200), tree2.nodes[scrim2].box.fill.a);
+
+    // Live option.media can show, replace, or hide the dialog's icon.
+    overridden.option.media = .info;
+    tree2.reset();
+    _ = try alert_dialog.view(&overridden, &tree2, &Theme.dark);
+    var saw_info = false;
+    for (tree2.items()) |node| {
+        if (node.content == .icon and node.content.icon.codepoint == icons.info) saw_info = true;
+    }
+    try testing.expect(saw_info);
+
+    overridden.option.media = .none;
+    tree2.reset();
+    _ = try alert_dialog.view(&overridden, &tree2, &Theme.dark);
+    for (tree2.items()) |node| {
+        try testing.expect(node.content != .icon);
+    }
 }

@@ -71,9 +71,17 @@ pub const Modal = struct {
 pub const AlertDialog = struct {
     width: f32 = 420,
     default_focus: DefaultFocus = .confirm,
+    icon: Icon = .warning,
 
     pub const DefaultFocus = enum(u8) {
         confirm,
         cancel,
+    };
+
+    pub const Icon = enum(u8) {
+        warning,
+        info,
+        @"error",
+        none,
     };
 };

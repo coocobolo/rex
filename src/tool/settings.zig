@@ -577,6 +577,10 @@ fn overlayMeta(comptime section: keys.Section, comptime key_name: []const u8) Ke
         .label = "Default Focus",
         .description = "Which button receives initial keyboard focus in confirmation alert dialogs.",
     };
+    if (std.mem.eql(u8, key_name, "icon")) return .{
+        .label = "Dialog Icon",
+        .description = "Icon badge displayed above the title in confirmation alert dialogs.",
+    };
     @compileError("unmapped overlay key: " ++ @tagName(section) ++ "." ++ key_name);
 }
 
@@ -1142,6 +1146,15 @@ fn overlayAnchor(pos: overlay.Position) kit.tree.ScreenAnchor {
     };
 }
 
+fn alertDialogMedia(icon: overlay.AlertDialog.Icon) kit.alert_dialog.Media {
+    return switch (icon) {
+        .warning => .warning,
+        .info => .info,
+        .@"error" => .err,
+        .none => .none,
+    };
+}
+
 fn syncPreviewOptions(state: *State) void {
     const cfg = state.activeConfig();
     const win = cfg.window;
@@ -1181,6 +1194,7 @@ fn syncPreviewOptions(state: *State) void {
         .padding = win.modal.padding,
         .gap = win.modal.gap,
         .scrim_alpha = @intFromFloat(@round(std.math.clamp(win.modal.backdrop_opacity, 0.0, 1.0) * 255.0)),
+        .media = alertDialogMedia(win.alert_dialog.icon),
     };
 }
 
@@ -1230,7 +1244,7 @@ fn triggerPreviewDialog(state: *State) void {
         .confirm => 1,
     };
     _ = kit.alert_dialog.update(&state.preview_dialog, .{ .open = .{
-        .media = kit.icons.alert_triangle,
+        .media = alertDialogMedia(state.activeConfig().window.alert_dialog.icon).codepoint(kit.icons.none),
         .title = "Close this window?",
         .body = "Previewing [modal] & [alert_dialog] layout, separator, and focus.",
         .actions = &preview_dialog_actions,

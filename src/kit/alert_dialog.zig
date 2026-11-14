@@ -19,8 +19,9 @@ const assert = std.debug.assert;
 
 const Theme = @import("Theme.zig");
 const button = @import("button.zig");
-const focus = @import("focus.zig");
 const dialog = @import("dialog.zig");
+const focus = @import("focus.zig");
+const icons = @import("icons.zig");
 const motion = @import("motion.zig");
 const text = @import("text.zig");
 const tree_zig = @import("tree.zig");
@@ -32,6 +33,24 @@ const Index = tree_zig.Index;
 /// shrinks it.
 pub const width = 420;
 
+pub const Media = enum(u8) {
+    request,
+    warning,
+    info,
+    err,
+    none,
+
+    pub fn codepoint(self: Media, fallback: u21) u21 {
+        return switch (self) {
+            .request => fallback,
+            .warning => icons.alert_triangle,
+            .info => icons.info,
+            .err => icons.circle_x,
+            .none => icons.none,
+        };
+    }
+};
+
 pub const Option = struct {
     width: f32 = width,
     position: dialog.Position = .center,
@@ -39,6 +58,7 @@ pub const Option = struct {
     padding: u8 = dialog.padding,
     gap: u8 = dialog.gap,
     scrim_alpha: ?u8 = null,
+    media: Media = .request,
 };
 
 pub const actions_max = 3;
@@ -361,7 +381,8 @@ pub fn view(state: *const State, tree: *Tree, theme: *const Theme) tree_zig.Erro
         .gap = state.option.gap,
     });
     const header = try dialog.header(tree);
-    if (state.media != 0) {
+    const media = state.option.media.codepoint(state.media);
+    if (media != 0) {
         const destructive_media = hasDestructiveAction(state);
         const media_fill = if (destructive_media)
             theme.destructive.alpha(if (theme.isDark()) 20 else 10)
@@ -376,7 +397,7 @@ pub fn view(state: *const State, tree: *Tree, theme: *const Theme) tree_zig.Erro
             .fill = media_fill.fade(presence),
             .radius = Theme.radius_md,
         });
-        _ = try tree.icon(.{ .codepoint = state.media, .color = media_fg.fade(presence), .size = media_icon });
+        _ = try tree.icon(.{ .codepoint = media, .color = media_fg.fade(presence), .size = media_icon });
         tree.close(box);
     }
     try dialog.title(tree, theme, state.title(), presence);

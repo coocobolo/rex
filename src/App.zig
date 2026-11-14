@@ -2044,7 +2044,7 @@ pub fn requestQuit(self: *App) void {
     const program = if (running) self.foregroundProgram(&name_buf) else null;
     var body_buf: [alert_dialog.body_capacity]u8 = undefined;
     _ = kit.openDialog(.{
-        .media = icons.alert_triangle,
+        .media = alertDialogMedia(self.config.window.alert_dialog.icon).codepoint(icons.none),
         .title = "Close this window?",
         .body = quitDialogBodyFor(running, program, &body_buf),
         .actions = &quit_actions,
@@ -3574,7 +3574,17 @@ fn kitOverlayOptions(ui: Config.Ui, win: Config.Window) KitOverlay.Options {
             .padding = win.modal.padding,
             .gap = win.modal.gap,
             .scrim_alpha = win.modal.backdropAlpha(),
+            .media = alertDialogMedia(win.alert_dialog.icon),
         },
+    };
+}
+
+fn alertDialogMedia(icon: @import("config/overlay.zig").AlertDialog.Icon) alert_dialog.Media {
+    return switch (icon) {
+        .warning => .warning,
+        .info => .info,
+        .@"error" => .err,
+        .none => .none,
     };
 }
 

@@ -266,6 +266,7 @@ const tail_rows = [_]Key{
 
     .{ .section = .alert_dialog, .name = "width", .field = "window.alert_dialog.width", .bounds = .{ .min = 200, .max = 1200 } },
     .{ .section = .alert_dialog, .name = "default_focus", .field = "window.alert_dialog.default_focus" },
+    .{ .section = .alert_dialog, .name = "icon", .field = "window.alert_dialog.icon" },
 
     .{ .section = .wellbeing, .name = "enabled", .field = "wellbeing.enabled" },
     .{ .section = .@"wellbeing.screen_time", .name = "daily_limit", .field = "wellbeing.screen_time.daily_limit_ms", .kind = .duration, .bounds = at_least_one, .null_keyword = .none },
