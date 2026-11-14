@@ -19,6 +19,7 @@ const ft = @import("root.zig");
 const c = ft.c;
 const Rasterizer = @import("Rasterizer.zig");
 const text = @import("../kit/text.zig");
+const icon_font_bytes = @import("icons_font").bytes;
 
 const log = std.log.scoped(.kit_font);
 
@@ -41,8 +42,6 @@ pub const Files = struct {
     medium: [*:0]const u8,
     /// Weight 600.
     semibold: [*:0]const u8,
-    /// The icon font: the glyphs of `kit/icons.zig`.
-    icons: [*:0]const u8,
     /// The terminal's text face, for code points the UI font lacks (a
     /// title or a path can hold anything). Null for none. A file that
     /// cannot be opened is logged and treated as none.
@@ -131,7 +130,7 @@ pub fn create(files: Files, options: Options) ft.FtError!KitFont {
         const metrics = style.metrics();
         self.faces[@intFromEnum(style)] = try ft.initFace(self.library, files.of(metrics.weight), metrics.size);
     }
-    self.icon_face = try ft.initFace(self.library, files.icons, 16);
+    self.icon_face = try ft.initMemoryFace(self.library, icon_font_bytes, 16);
     if (files.fallback) |path| fallback: {
         var faces: [style_count]c.FT_Face = undefined;
         for (std.enums.values(text.Style)) |style| {

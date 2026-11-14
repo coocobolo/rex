@@ -111,6 +111,29 @@ pub fn build(b: *std.Build) !void {
     mod.linkLibrary(glfw_lib);
     mod.linkSystemLibrary("m", .{});
 
+    // Subset Lucide down to the glyphs listed in tools/gen/icons.txt and
+    // embed the tiny font directly so no runtime icon font file is needed.
+    const subset_icons_exe = b.addExecutable(.{
+        .name = "subset-icons",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/fonts/subset.zig"),
+            .target = b.graph.host,
+            .optimize = .ReleaseFast,
+        }),
+    });
+    const subset_icons_run = b.addRunArtifact(subset_icons_exe);
+    const subset_icons_ttf = subset_icons_run.addOutputFileArg("lucide-subset.ttf");
+    subset_icons_run.addFileArg(b.path("tools/gen/icons.txt"));
+    subset_icons_run.addFileArg(b.path("assets/fonts/lucide.ttf"));
+    const icon_font_files = b.addWriteFiles();
+    _ = icon_font_files.addCopyFile(subset_icons_ttf, "lucide-subset.ttf");
+    mod.addImport("icons_font", b.createModule(.{
+        .root_source_file = icon_font_files.add("root.zig",
+            \\pub const bytes = @embedFile("lucide-subset.ttf");
+            \\
+        ),
+    }));
+
     // Per-stage input latency tracing (src/driver/latency_trace.zig). Off,
     // the hooks compile to nothing.
     const trace_latency = b.option(
@@ -203,7 +226,6 @@ pub fn build(b: *std.Build) !void {
         "assets/fonts/Inter-Medium.ttf",
         "assets/fonts/Inter-SemiBold.ttf",
         "assets/fonts/OFL-Inter.txt",
-        "assets/fonts/lucide.ttf",
         "assets/fonts/LICENSE-Lucide.txt",
         "testdata/font/NotoColorEmoji.ttf",
         "testdata/font/OFL-NotoColorEmoji.txt",

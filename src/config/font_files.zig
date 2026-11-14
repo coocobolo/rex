@@ -14,8 +14,6 @@ pub const emoji_name = "NotoColorEmoji.ttf";
 pub const ui_regular_name = "Inter-Regular.ttf";
 pub const ui_medium_name = "Inter-Medium.ttf";
 pub const ui_semibold_name = "Inter-SemiBold.ttf";
-/// The UI kit's icon font.
-pub const ui_icons_name = "lucide.ttf";
 
 /// Directory of the installed faces for an executable at `exe_path`.
 /// `<prefix>/bin/rex` → `<prefix>/share/rex/fonts`.

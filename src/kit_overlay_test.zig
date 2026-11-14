@@ -21,7 +21,6 @@ const inter: @import("freetype/KitFont.zig").Files = .{
     .regular = "assets/fonts/Inter-Regular.ttf",
     .medium = "assets/fonts/Inter-Medium.ttf",
     .semibold = "assets/fonts/Inter-SemiBold.ttf",
-    .icons = "assets/fonts/lucide.ttf",
 };
 
 const dark: [3]u8 = .{ 0x10, 0x10, 0x14 };

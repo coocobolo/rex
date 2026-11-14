@@ -544,14 +544,11 @@ fn openFont(gpa: Allocator, io: std.Io, argv0: []const u8, scale: f32) !KitFont 
     defer gpa.free(medium);
     const semibold = try std.fs.path.joinZ(gpa, &.{ dir, font_files.ui_semibold_name });
     defer gpa.free(semibold);
-    const icons = try std.fs.path.joinZ(gpa, &.{ dir, font_files.ui_icons_name });
-    defer gpa.free(icons);
 
     return .create(.{
         .regular = regular,
         .medium = medium,
         .semibold = semibold,
-        .icons = icons,
     }, .{ .scale = scale });
 }
 

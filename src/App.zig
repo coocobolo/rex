@@ -1835,13 +1835,10 @@ fn createKitFrom(gpa: std.mem.Allocator, exe: []const u8, scale: f32, terminal_f
     defer gpa.free(medium);
     const semibold = try std.fs.path.joinZ(gpa, &.{ dir, names.ui_semibold_name });
     defer gpa.free(semibold);
-    const icons = try std.fs.path.joinZ(gpa, &.{ dir, names.ui_icons_name });
-    defer gpa.free(icons);
     return try KitOverlay.create(gpa, .{
         .regular = regular,
         .medium = medium,
         .semibold = semibold,
-        .icons = icons,
         // The face the terminal started with; a later `[font] file`
         // change does not reach the kit.
         .fallback = if (terminal_face[0] != 0) terminal_face else null,

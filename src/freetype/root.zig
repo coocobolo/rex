@@ -128,14 +128,30 @@ pub fn initFreeType() FtError!c.FT_Library {
     return lib;
 }
 
-/// Loads a FreeType face and selects the requested size.
+/// Loads a FreeType face from a file path and selects the requested size.
 ///
 /// Scalable fonts use FT_Set_Pixel_Sizes().
 /// Bitmap/color emoji fonts use the closest available fixed strike.
 pub fn initFace(ft_library: c.FT_Library, path: [*:0]const u8, pixel_height: u32) FtError!c.FT_Face {
     var face: c.FT_Face = undefined;
     try ftCheck(c.FT_New_Face(ft_library, path, 0, &face), "FT_New_Face");
+    errdefer _ = c.FT_Done_Face(face);
+    try selectFaceSize(face, pixel_height);
+    return face;
+}
 
+/// Loads a FreeType face from in-memory font bytes and selects the requested
+/// size. `bytes` must remain valid until the face or library is destroyed.
+pub fn initMemoryFace(ft_library: c.FT_Library, bytes: []const u8, pixel_height: u32) FtError!c.FT_Face {
+    var face: c.FT_Face = undefined;
+    const len = std.math.cast(c.FT_Long, bytes.len) orelse return error.InvalidArgument;
+    try ftCheck(c.FT_New_Memory_Face(ft_library, bytes.ptr, len, 0, &face), "FT_New_Memory_Face");
+    errdefer _ = c.FT_Done_Face(face);
+    try selectFaceSize(face, pixel_height);
+    return face;
+}
+
+fn selectFaceSize(face: c.FT_Face, pixel_height: u32) FtError!void {
     // Variable (MM/gvar) fonts are scalable outlines; never route them through
     // the bitmap-strike selection path even if the face also reports fixed sizes.
     if (face.*.num_fixed_sizes > 0 and !hasMM(face)) {
@@ -144,8 +160,6 @@ pub fn initFace(ft_library: c.FT_Library, path: [*:0]const u8, pixel_height: u32
     } else {
         try ftCheck(c.FT_Set_Pixel_Sizes(face, 0, pixel_height), "FT_Set_Pixel_Sizes");
     }
-
-    return face;
 }
 
 pub fn doneFreeType(ft_library: c.FT_Library) FtError!void {

@@ -2,13 +2,14 @@ const std = @import("std");
 const testing = std.testing;
 
 const KitFont = @import("KitFont.zig");
+const ft = @import("root.zig");
+const icons = @import("../kit/icons.zig");
 const text = @import("../kit/text.zig");
 
 const inter: KitFont.Files = .{
     .regular = "assets/fonts/Inter-Regular.ttf",
     .medium = "assets/fonts/Inter-Medium.ttf",
     .semibold = "assets/fonts/Inter-SemiBold.ttf",
-    .icons = "assets/fonts/lucide.ttf",
 };
 
 test "KitFont: widths are in logical pixels and grow with the text" {
@@ -196,4 +197,37 @@ test "KitFont: is the kit's measurer" {
     defer font.destroy();
     const measurer = font.measurer();
     try testing.expectEqual(font.width("Close this window?", .lg_semibold, .proportional), measurer.width("Close this window?", .lg_semibold, .proportional));
+}
+
+test "KitFont: embedded icon subset matches lucide.ttf bitmaps" {
+    var font = try KitFont.create(inter, .{});
+    defer font.destroy();
+
+    const ref_lib = try ft.initFreeType();
+    defer ft.doneFreeType(ref_lib) catch {};
+    const ref_face = try ft.initFace(ref_lib, "assets/fonts/lucide.ttf", 16);
+
+    inline for (@typeInfo(icons).@"struct".decls) |decl| {
+        const cp: u21 = @field(icons, decl.name);
+        if (cp == icons.none) continue;
+
+        const got = try font.rasterizeIcon(cp, 16);
+        try ft.ftCheck(ft.c.FT_Set_Char_Size(ref_face, 0, 16 * 64, 72, 72), "FT_Set_Char_Size");
+        try ft.loadChar(ref_face, cp, ft.c.FT_LOAD_RENDER | ft.c.FT_LOAD_NO_HINTING);
+        const slot = ref_face.*.glyph;
+        const bmp = slot.*.bitmap;
+
+        try testing.expectEqual(@as(u16, @intCast(slot.*.advance.x >> 6)), got.advance);
+        try testing.expectEqual(@as(i16, @intCast(slot.*.bitmap_left)), got.bearing_x);
+        try testing.expectEqual(@as(i16, @intCast(slot.*.bitmap_top)), got.bearing_y);
+        try testing.expectEqual(@as(u16, @intCast(bmp.width)), got.width);
+        try testing.expectEqual(@as(u16, @intCast(bmp.rows)), got.height);
+        const rows: usize = got.height;
+        const cols: usize = got.width;
+        for (0..rows) |r| {
+            const ref_row = bmp.buffer[r * @as(usize, @intCast(bmp.pitch)) ..][0..cols];
+            const got_row = got.bitmap[r * got.pitch ..][0..cols];
+            try testing.expectEqualSlices(u8, ref_row, got_row);
+        }
+    }
 }

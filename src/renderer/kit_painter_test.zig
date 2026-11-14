@@ -29,7 +29,6 @@ const inter: KitFont.Files = .{
     .regular = "assets/fonts/Inter-Regular.ttf",
     .medium = "assets/fonts/Inter-Medium.ttf",
     .semibold = "assets/fonts/Inter-SemiBold.ttf",
-    .icons = "assets/fonts/lucide.ttf",
 };
 
 /// Logical size of the test window.
