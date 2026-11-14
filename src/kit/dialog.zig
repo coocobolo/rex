@@ -124,6 +124,8 @@ pub const Options = struct {
     width: f32,
     /// `Phase.presence`.
     presence: f32,
+    /// Scrim opacity before `presence` scaling; null keeps `theme.scrim.a`.
+    scrim_alpha: ?u8 = null,
 };
 
 /// The two boxes `open` leaves open.
@@ -136,6 +138,10 @@ pub const node_max = 4;
 /// Starts a root, the scrim, and the card on it. What is written until
 /// `close` is the card's content, top to bottom.
 pub fn open(tree: *Tree, theme: *const Theme, options: Options) tree_zig.Error!Frame {
+    const scrim_base: Theme.Color = if (options.scrim_alpha) |alpha|
+        .{ .r = theme.scrim.r, .g = theme.scrim.g, .b = theme.scrim.b, .a = alpha }
+    else
+        theme.scrim;
     const scrim = try tree.open(.{
         .id = options.scrim_id,
         .width = .fill,
@@ -143,7 +149,7 @@ pub fn open(tree: *Tree, theme: *const Theme, options: Options) tree_zig.Error!F
         .padding = .all(margin),
         .main = .center,
         .cross = .center,
-        .fill = theme.scrim.fade(options.presence),
+        .fill = scrim_base.fade(options.presence),
     });
     const card = try tree.open(.{
         .id = options.card_id,

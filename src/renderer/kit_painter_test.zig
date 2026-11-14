@@ -20,7 +20,9 @@ const layout = @import("../kit/layout.zig");
 const memory = @import("../kit/memory.zig");
 const button = @import("../kit/button.zig");
 const kbd = @import("../kit/kbd.zig");
+const alert = @import("../kit/alert.zig");
 const alert_dialog = @import("../kit/alert_dialog.zig");
+const lock_screen = @import("../kit/lock_screen.zig");
 const toast_stack = @import("../kit/toast.zig");
 
 const inter: KitFont.Files = .{
@@ -50,6 +52,10 @@ const Scene = enum {
     toasts,
     /// Every shared component in every variant, size and state.
     specimen,
+    /// Persistent top-center alert banner (`kit/alert.zig`).
+    alert,
+    /// Wellbeing lock screen (`kit/lock_screen.zig`).
+    lock_screen,
     /// A clipping box with a larger box and a long text inside it.
     clip,
 };
@@ -62,6 +68,10 @@ const Marks = struct {
     dialog: tree_zig.Index = tree_zig.none,
     confirm: tree_zig.Index = tree_zig.none,
     cancel: tree_zig.Index = tree_zig.none,
+    alert_card: tree_zig.Index = tree_zig.none,
+    alert_close: tree_zig.Index = tree_zig.none,
+    lock_card: tree_zig.Index = tree_zig.none,
+    lock_unlock: tree_zig.Index = tree_zig.none,
     /// The clipping box of the `clip` scene.
     clip: tree_zig.Index = tree_zig.none,
 };
@@ -91,7 +101,15 @@ fn toast(tree: *Tree, theme: *const Theme, icon: Color, title: []const u8, descr
     }
 }
 
-fn build(tree: *Tree, scene: Scene, theme: *const Theme, toasts: *const toast_stack.State, dialog_state: *const alert_dialog.State) !Marks {
+fn build(
+    tree: *Tree,
+    scene: Scene,
+    theme: *const Theme,
+    toasts: *const toast_stack.State,
+    dialog_state: *const alert_dialog.State,
+    alert_state: *const alert.State,
+    lock_state: *const lock_screen.State,
+) !Marks {
     var marks: Marks = .{};
     switch (scene) {
         .overlay => {
@@ -125,6 +143,16 @@ fn build(tree: *Tree, scene: Scene, theme: *const Theme, toasts: *const toast_st
         },
         .toasts => _ = try toast_stack.view(toasts, tree, theme),
         .specimen => try specimen(tree, theme, &marks),
+        .alert => {
+            _ = try alert.view(alert_state, tree, theme) orelse unreachable;
+            marks.alert_card = nodeWithId(tree, alert.card_id);
+            marks.alert_close = nodeWithId(tree, alert.close_id) + 1;
+        },
+        .lock_screen => {
+            try lock_screen.view(lock_state, tree, theme);
+            marks.lock_card = nodeWithId(tree, lock_screen.card_id);
+            marks.lock_unlock = nodeWithId(tree, lock_screen.unlock_id) + 1;
+        },
         .clip => {
             const page = try tree.open(.{ .width = .fill, .height = .fill, .padding = .all(40) });
             marks.clip = try tree.open(.{
@@ -253,6 +281,10 @@ const Rendered = struct {
     toasts: toast_stack.State,
     /// The texts of the `dialog` scene live here.
     dialog: alert_dialog.State,
+    /// The texts of the `alert` scene live here.
+    alert: alert.State,
+    /// The texts of the `lock_screen` scene live here.
+    lock_screen: lock_screen.State,
 
     fn card(self: *const Rendered, serial: u32) tree_zig.Rect {
         for (self.tree_nodes[0..self.tree_len]) |node| {
@@ -295,6 +327,31 @@ fn render(scene: Scene, variant: Theme.Variant, background: Color, scale: f32, k
     var tree: Tree = .init(&result.tree_nodes, &lines);
     result.toasts = .empty;
     result.dialog = .empty;
+    result.alert = .empty;
+    result.lock_screen = .empty;
+    if (scene == .alert) {
+        _ = alert.update(&result.alert, .{ .show = .{
+            .kind = .err,
+            .title = "Config error on line 14",
+            .description = "Unknown key \"font.sizee\"; keeping previous config.",
+        } });
+        _ = alert.update(&result.alert, .{ .tick = Theme.duration });
+    }
+    if (scene == .lock_screen) {
+        _ = lock_screen.update(&result.lock_screen, .{ .sync = .{
+            .tone = .warning,
+            .title = "Break time",
+            .subtitle = "Focus cycle 2 of 4",
+            .prompt = "Look 20 feet away and rest your eyes.",
+            .remaining_s = 12,
+            .total_s = 20,
+            .steps_total = 4,
+            .steps_done = 2,
+            .scrim_alpha = 180,
+            .focus = true,
+        } });
+        _ = lock_screen.update(&result.lock_screen, .{ .tick = Theme.duration });
+    }
     if (scene == .dialog or scene == .dialog_cancel_focused or scene == .dialog_media) {
         _ = alert_dialog.update(&result.dialog, .{ .open = .{
             .media = if (scene == .dialog_media) icons.triangle_alert else 0,
@@ -322,7 +379,7 @@ fn render(scene: Scene, variant: Theme.Variant, background: Color, scale: f32, k
     }
     _ = toast_stack.update(&result.toasts, .{ .tick = Theme.duration / 2 });
 
-    result.marks = try build(&tree, scene, variant.theme(), &result.toasts, &result.dialog);
+    result.marks = try build(&tree, scene, variant.theme(), &result.toasts, &result.dialog, &result.alert, &result.lock_screen);
     try layout.layout(&tree, font.measurer(), view_width, view_height);
     if (scene == .toasts) {
         var table: memory.Table = .empty;
@@ -566,6 +623,8 @@ test "KitPainter: screenshots of the remaining variants" {
         .{ .toasts, .light, terminal_light, 1, .pairs, "toasts-light-100" },
         .{ .dialog_media, .dark, terminal_dark, 1, .pairs, "dialog-media-dark-100" },
         .{ .dialog_media, .light, terminal_light, 1, .pairs, "dialog-media-light-100" },
+        .{ .alert, .light, terminal_light, 1, .pairs, "alert-light-100" },
+        .{ .lock_screen, .light, terminal_light, 1, .pairs, "lock-screen-light-100" },
     };
     for (shots) |shot| {
         var rendered = try render(shot[0], shot[1], shot[2], shot[3], shot[4]);
@@ -613,4 +672,44 @@ test "KitPainter: more instances than fit is an error" {
     painter.begin();
     try testing.expectError(error.OutOfInstances, painter.paint(&tree, &font, &atlas));
     try testing.expectEqual(KitPainter.capacity, painter.len);
+}
+
+test "KitPainter: persistent alert banner renders top-center with close action" {
+    for ([_]f32{ 1, 1.5 }) |scale| {
+        var rendered = try render(.alert, .dark, terminal_dark, scale, .pairs);
+        defer rendered.frame.deinit();
+        const frame = &rendered.frame;
+        const theme = &Theme.dark;
+        var name_buffer: [48]u8 = undefined;
+        try frame.save(try std.fmt.bufPrint(&name_buffer, "alert-dark-{d}", .{@as(u32, @intFromFloat(scale * 100))}));
+
+        const card = rendered.rect(rendered.marks.alert_card);
+        try testing.expectApproxEqAbs(@as(f32, view_width) / 2, card.x + card.w / 2, 1.0);
+        try testing.expectEqual(@as(f32, alert.margin), card.y);
+        try testing.expectEqual(rgb(theme.popover), frame.at(card.x + 12, card.y + card.h / 2));
+        try testing.expectEqual(rgb(terminal_dark), frame.at(20, 20));
+        try testing.expect(frame.countNot(card, rgb(theme.popover)) > 200);
+        const close_btn = rendered.rect(rendered.marks.alert_close);
+        try testing.expect(frame.countNot(close_btn, rgb(theme.popover)) > 10);
+    }
+}
+
+test "KitPainter: lock screen renders dimmed scrim, progress bar and unlock button" {
+    for ([_]f32{ 1, 1.5 }) |scale| {
+        var rendered = try render(.lock_screen, .dark, terminal_dark, scale, .pairs);
+        defer rendered.frame.deinit();
+        const frame = &rendered.frame;
+        const theme = &Theme.dark;
+        var name_buffer: [48]u8 = undefined;
+        try frame.save(try std.fmt.bufPrint(&name_buffer, "lock-screen-dark-{d}", .{@as(u32, @intFromFloat(scale * 100))}));
+
+        const card = rendered.rect(rendered.marks.lock_card);
+        try testing.expectEqual(rgb(theme.popover), frame.at(card.x + 12, card.y + card.h / 2));
+        // Scrim darkens terminal behind the lock card.
+        const outside = frame.at(20, 20);
+        try testing.expect(outside[0] < terminal_dark.r);
+        try testing.expect(frame.countNot(card, rgb(theme.popover)) > 400);
+        const unlock = rendered.rect(rendered.marks.lock_unlock);
+        try testing.expect(frame.countNot(unlock, rgb(theme.popover)) > 100);
+    }
 }

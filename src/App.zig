@@ -2539,7 +2539,15 @@ const mouseButtonCb: c.GLFWmousebuttonfun = struct {
                     // A dialog button is taken when the pointer is let go
                     // on it.
                     if (kit.holdsPress()) {
-                        app.applyDialogOutcome(kit.release());
+                        switch (kit.release(app.mouse_x / app.content_scale, app.mouse_y / app.content_scale)) {
+                            .quiet => {},
+                            .redraw => app.needs_redraw = true,
+                            .dialog => |outcome| app.applyDialogOutcome(outcome),
+                            .lock_unlocked => {
+                                _ = app.wellbeing_state.skipFocus(std.Io.Clock.real.now(app.io).toSeconds());
+                                app.needs_redraw = true;
+                            },
+                        }
                         return;
                     }
                 }

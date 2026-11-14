@@ -8,8 +8,10 @@ const testing = std.testing;
 const Atlas = @import("renderer/Atlas.zig");
 const testGlContext = @import("renderer/Window.zig").testGlContext;
 const KitOverlay = @import("KitOverlay.zig");
+const alert = @import("kit/alert.zig");
 const alert_dialog = @import("kit/alert_dialog.zig");
 const dialog = @import("kit/dialog.zig");
+const lock_screen = @import("kit/lock_screen.zig");
 const toast = @import("kit/toast.zig");
 const Theme = @import("kit/Theme.zig");
 const motion = @import("kit/motion.zig");
@@ -318,12 +320,60 @@ test "KitOverlay: confirming a dialog closes it, the scrim does not" {
     try testing.expectEqual(dialog.Phase.open, kit.dialog.phase);
     // Moved off before letting go: nothing is taken.
     _ = kit.pointerMoved(card[0], card[1]);
-    try testing.expectEqual(alert_dialog.Outcome.quiet, kit.release());
+    try testing.expectEqual(KitOverlay.Release{ .dialog = .quiet }, kit.release(card[0], card[1]));
     try testing.expect(!kit.holdsPress());
     try testing.expectEqual(dialog.Phase.open, kit.dialog.phase);
     try testing.expectEqual(KitOverlay.Press.changed, kit.press(confirm[0], confirm[1]));
-    try testing.expectEqual(alert_dialog.Outcome{ .chosen = 1 }, kit.release());
+    try testing.expectEqual(KitOverlay.Release{ .dialog = .{ .chosen = 1 } }, kit.release(confirm[0], confirm[1]));
     try testing.expectEqual(dialog.Phase.closed, kit.dialog.phase);
+}
+
+test "KitOverlay: alert banner shares frame with toasts and closes on button release" {
+    var fixture: Fixture = try .init(1);
+    defer fixture.deinit();
+    const kit = fixture.kit;
+
+    try testing.expect(kit.showAlert(.{ .kind = .err, .title = "Bad config", .description = "Line 3" }));
+    try testing.expect(kit.push(.{ .title = "Saved", .duration_ms = 60_000 }));
+    _ = kit.tick(Theme.duration);
+    try testing.expect(fixture.frame());
+    try testing.expect(kit.alertShown());
+
+    const close = centerOf(kit, alert.close_id).?;
+    try testing.expectEqual(KitOverlay.Press.changed, kit.press(close[0], close[1]));
+    try testing.expect(kit.holdsPress());
+    try testing.expectEqual(KitOverlay.Release.redraw, kit.release(close[0], close[1]));
+    try testing.expect(!kit.alertShown());
+}
+
+test "KitOverlay: lock screen takes scrim priority and unlocks on release" {
+    var fixture: Fixture = try .init(1);
+    defer fixture.deinit();
+    const kit = fixture.kit;
+
+    try testing.expect(kit.syncLockScreen(.{
+        .title = "Break time",
+        .subtitle = "Focus cycle 1 of 4",
+        .prompt = "Look away.",
+        .remaining_s = 15,
+        .total_s = 20,
+        .steps_total = 4,
+        .steps_done = 1,
+    }));
+    _ = kit.tick(Theme.duration);
+    try testing.expect(kit.hasScrim());
+    try testing.expect(kit.lockScreenTakesInput());
+    try testing.expect(fixture.frame());
+
+    const unlock = centerOf(kit, lock_screen.unlock_id).?;
+    // First click outside button blurs the focused unlock button; second click stays taken.
+    try testing.expect(kit.lock_screen.focused);
+    try testing.expectEqual(KitOverlay.Press.changed, kit.press(8, 8));
+    try testing.expect(!kit.lock_screen.focused);
+    try testing.expectEqual(KitOverlay.Press.taken, kit.press(8, 8));
+    try testing.expectEqual(KitOverlay.Press.changed, kit.press(unlock[0], unlock[1]));
+    try testing.expect(kit.holdsPress());
+    try testing.expectEqual(KitOverlay.Release.lock_unlocked, kit.release(unlock[0], unlock[1]));
 }
 
 test "KitOverlay: the dialog covers the toast stack" {
@@ -349,8 +399,8 @@ test "KitOverlay: its size" {
     // Reported in the ticket. Nearly all of it is two tables: the font's
     // kerning pairs, and the painter's 2048 instances of 52 bytes with its
     // glyph position cache.
-    try testing.expectEqual(299280, @sizeOf(KitOverlay));
+    try testing.expectEqual(305600, @sizeOf(KitOverlay));
     try testing.expectEqual(131864, @sizeOf(@FieldType(KitOverlay, "painter")));
     try testing.expectEqual(152496, @sizeOf(@FieldType(KitOverlay, "font")));
-    try testing.expectEqual(2704, @sizeOf(@FieldType(KitOverlay, "nodes")));
+    try testing.expectEqual(3952, @sizeOf(@FieldType(KitOverlay, "nodes")));
 }

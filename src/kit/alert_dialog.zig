@@ -99,6 +99,8 @@ pub const State = struct {
     count: u8 = 0,
     /// Set by the owner, from the user's setting.
     motion: motion.Mode = .full,
+    /// Backdrop opacity (0-255), or null for the theme default.
+    scrim_alpha: ?u8 = null,
     /// The icon above the title, or 0 for none.
     media: u21 = 0,
     title_len: u8 = 0,
@@ -142,6 +144,8 @@ pub const Request = struct {
     actions: []const Action,
     /// The action that starts with the focus, or `no_action`.
     focus: u8 = no_action,
+    /// Backdrop opacity (0-255), or null for the theme default.
+    scrim_alpha: ?u8 = null,
 };
 
 /// Lines of wrapped text one view needs at most. A text yields one line
@@ -216,6 +220,7 @@ fn open(self: *State, request: Request) Outcome {
     self.focus = request.focus;
     self.hover = no_action;
     self.pressed = no_action;
+    self.scrim_alpha = request.scrim_alpha;
     self.media = request.media;
     self.title_len = put(request.title, &self.title_bytes);
     self.body_len = put(request.body, &self.body_bytes);
@@ -327,6 +332,7 @@ pub fn view(state: *const State, tree: *Tree, theme: *const Theme) tree_zig.Erro
         .card_id = card_id,
         .width = width,
         .presence = presence,
+        .scrim_alpha = state.scrim_alpha,
     });
     const header = try dialog.header(tree);
     if (state.media != 0) {

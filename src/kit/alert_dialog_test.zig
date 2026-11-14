@@ -388,5 +388,5 @@ test "dialog: long texts are cut between code points, and its size" {
 
     // Reported in the ticket: three buttons of 60 bytes and 256 of text.
     try testing.expectEqual(60, @sizeOf(@FieldType(State, "buttons")) / alert_dialog.actions_max);
-    try testing.expectEqual(452, @sizeOf(State));
+    try testing.expectEqual(456, @sizeOf(State));
 }
