@@ -81,7 +81,8 @@ test "foregroundGroup: the shell at its prompt, then a program it started" {
     try testing.expect(waitForForeground(pty.master, pty.pid, false));
 
     var comm: [32]u8 = undefined;
-    try testing.expectEqualStrings("sleep", foregroundComm(pty.master, &comm).?);
+    const fg_comm = waitForForegroundComm(pty.master, &comm, "sleep") orelse return error.TestUnexpectedResult;
+    try testing.expectEqualStrings("sleep", fg_comm);
     try testing.expectEqual(null, foregroundGroup(-1));
     try testing.expectEqual(null, foregroundComm(-1, &comm));
 }
@@ -96,6 +97,19 @@ fn waitForForeground(master: posix.fd_t, pid: posix.pid_t, is_pid: bool) bool {
         std.Io.sleep(testing.io, .fromMilliseconds(10), .awake) catch {};
     }
     return false;
+}
+
+/// Polls up to ~2 s until foregroundComm equals `want` (covering the
+/// fork -> tcsetpgrp -> execve window), or returns the last observed value.
+fn waitForForegroundComm(master: posix.fd_t, out: []u8, want: []const u8) ?[]const u8 {
+    var rounds: usize = 0;
+    while (rounds < 200) : (rounds += 1) {
+        if (foregroundComm(master, out)) |comm| {
+            if (std.mem.eql(u8, comm, want)) return comm;
+        }
+        std.Io.sleep(testing.io, .fromMilliseconds(10), .awake) catch {};
+    }
+    return foregroundComm(master, out);
 }
 
 test "Posix: the master is close-on-exec in the parent" {
