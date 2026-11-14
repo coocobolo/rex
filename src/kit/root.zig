@@ -21,6 +21,9 @@ pub const popup = @import("popup.zig");
 pub const tabs = @import("tabs.zig");
 pub const chart = @import("chart.zig");
 pub const tooltip = @import("tooltip.zig");
+pub const switch_control = @import("switch.zig");
+pub const checkbox = @import("checkbox.zig");
+pub const select = @import("select.zig");
 
 test {
     _ = @import("kit_test.zig");
@@ -33,6 +36,9 @@ test {
     _ = @import("tabs_test.zig");
     _ = @import("chart_test.zig");
     _ = @import("tooltip_test.zig");
+    _ = @import("switch_test.zig");
+    _ = @import("checkbox_test.zig");
+    _ = @import("select_test.zig");
     _ = Theme;
     _ = motion;
     _ = focus;
