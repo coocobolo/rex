@@ -25,7 +25,7 @@ fn applyText(config: *Config, section: keys.Section, name: []const u8, text: []c
 
 test "FieldType: resolves nested struct paths" {
     try std.testing.expect(keys.FieldType(Config, "window.dim_alpha") == f32);
-    try std.testing.expect(keys.FieldType(Config, "window.modal.default_focus") == overlay.Modal.DefaultFocus);
+    try std.testing.expect(keys.FieldType(Config, "window.alert_dialog.default_focus") == overlay.AlertDialog.DefaultFocus);
     try std.testing.expect(keys.FieldType(Config, "font.faces.regular") == [*:0]const u8);
     try std.testing.expect(keys.FieldType(Config, "wellbeing.screen_time.daily_limit_ms") == ?u64);
 }
@@ -102,12 +102,12 @@ test "apply: fractions are 0 to 1" {
 
 test "apply: enums are tag names exactly" {
     var config = testConfig();
-    try applyText(&config, .modal, "default_focus", "cancel");
-    try std.testing.expectEqual(.cancel, config.window.modal.default_focus);
+    try applyText(&config, .alert_dialog, "default_focus", "cancel");
+    try std.testing.expectEqual(.cancel, config.window.alert_dialog.default_focus);
     for ([_][]const u8{ "Cancel", "CONFIRM", "other", "" }) |text| {
-        try std.testing.expectError(error.InvalidValue, applyText(&config, .modal, "default_focus", text));
+        try std.testing.expectError(error.InvalidValue, applyText(&config, .alert_dialog, "default_focus", text));
     }
-    try std.testing.expectEqual(.cancel, config.window.modal.default_focus);
+    try std.testing.expectEqual(.cancel, config.window.alert_dialog.default_focus);
 }
 
 test "apply: durations need a unit and fit the field" {
@@ -377,7 +377,7 @@ test "writeExpected: describes each kind" {
         .{ .bell, "volume", "a number from 0 to 1" },
         .{ .toast, "duration", "a duration of at least 1ms, like 500ms, 30s, 25m or 1h" },
         .{ .@"wellbeing.screen_time", "daily_limit", "a duration of at least 1ms, like 500ms, 30s, 25m or 1h, or none" },
-        .{ .modal, "default_focus", "one of: confirm, cancel" },
+        .{ .alert_dialog, "default_focus", "one of: confirm, cancel" },
         .{ .font, "weight", "a whole number from 1 to 1000" },
         .{ .@"wellbeing.winddown", "start", "a time of day from 00:00 to 23:59, like 21:30" },
         .{ .shell, "program", "an absolute path to a program, ~/ allowed, or auto" },
@@ -409,14 +409,18 @@ test "availableOn: platform is Linux only, the rest everywhere" {
 /// decided.
 const enum_names = [_]struct { []const u8, []const []const u8 }{
     .{ "window.platform", &.{ "auto", "wayland", "x11" } },
-    .{ "modal.default_focus", &.{ "confirm", "cancel" } },
+    .{ "toast.position", &.{ "top_left", "top_center", "top_right", "bottom_left", "bottom_center", "bottom_right" } },
+    .{ "banner.placement", &.{ "floating", "docked" } },
+    .{ "banner.position", &.{ "top_left", "top_center", "top_right", "bottom_left", "bottom_center", "bottom_right" } },
+    .{ "modal.position", &.{ "center", "top_center", "bottom_center" } },
+    .{ "modal.on_outside_click", &.{ "close", "ignore" } },
+    .{ "alert_dialog.default_focus", &.{ "confirm", "cancel" } },
     .{ "window.on_close", &.{ "ask", "ask_if_running", "close" } },
     .{ "ui.motion", &.{ "full", "none" } },
     .{ "ui.color_scheme", &.{ "auto", "dark", "light" } },
     .{ "clipboard.osc52_write", &.{ "allow", "deny" } },
     .{ "clipboard.osc52_read", &.{ "allow", "deny" } },
     .{ "selection.border_style", &.{ "split", "unified", "underline", "left_bar" } },
-    .{ "modal.on_outside_click", &.{ "close", "ignore" } },
     .{ "wellbeing.screen_time.on_limit", &.{ "grayscale", "lock_input", "animation" } },
     .{ "wellbeing.focus.timer", &.{ "countdown", "countup" } },
     .{ "wellbeing.focus.on_phase_end", &.{ "wait", "start_next" } },
@@ -592,4 +596,49 @@ test "apply: [scrollbar] keys parse, validate bounds, and reset to defaults" {
 
     try applyText(&config, .scrollbar, "thumb_color", "default");
     try std.testing.expectEqual(Config.Scrollbar.default.thumb_color, config.scrollbar.thumb_color);
+}
+
+test "apply: [toast], [banner], [modal], and [alert_dialog] layout keys" {
+    var config = testConfig();
+    try applyText(&config, .toast, "position", "top_left");
+    try applyText(&config, .toast, "width", "400");
+    try applyText(&config, .toast, "margin", "12");
+    try applyText(&config, .toast, "padding", "10");
+    try applyText(&config, .toast, "gap", "8");
+    try std.testing.expectEqual(overlay.Position.top_left, config.window.toast.position);
+    try std.testing.expectEqual(@as(f32, 400), config.window.toast.width);
+    try std.testing.expectEqual(@as(u8, 12), config.window.toast.margin);
+    try std.testing.expectEqual(@as(u8, 10), config.window.toast.padding);
+    try std.testing.expectEqual(@as(u8, 8), config.window.toast.gap);
+
+    try applyText(&config, .banner, "placement", "docked");
+    try applyText(&config, .banner, "position", "bottom_center");
+    try applyText(&config, .banner, "max_width", "720");
+    try applyText(&config, .banner, "margin", "20");
+    try applyText(&config, .banner, "padding", "18");
+    try std.testing.expectEqual(overlay.Banner.Placement.docked, config.window.banner.placement);
+    try std.testing.expectEqual(overlay.Position.bottom_center, config.window.banner.position);
+    try std.testing.expectEqual(@as(f32, 720), config.window.banner.max_width);
+    try std.testing.expectEqual(@as(u8, 20), config.window.banner.margin);
+    try std.testing.expectEqual(@as(u8, 18), config.window.banner.padding);
+
+    try applyText(&config, .modal, "position", "top_center");
+    try applyText(&config, .modal, "margin", "24");
+    try applyText(&config, .modal, "padding", "32");
+    try applyText(&config, .modal, "gap", "20");
+    try std.testing.expectEqual(overlay.Modal.Position.top_center, config.window.modal.position);
+    try std.testing.expectEqual(@as(u8, 24), config.window.modal.margin);
+    try std.testing.expectEqual(@as(u8, 32), config.window.modal.padding);
+    try std.testing.expectEqual(@as(u8, 20), config.window.modal.gap);
+
+    try applyText(&config, .alert_dialog, "width", "500");
+    try applyText(&config, .alert_dialog, "default_focus", "cancel");
+    try std.testing.expectEqual(@as(f32, 500), config.window.alert_dialog.width);
+    try std.testing.expectEqual(overlay.AlertDialog.DefaultFocus.cancel, config.window.alert_dialog.default_focus);
+
+    try std.testing.expectError(error.OutOfRange, applyText(&config, .toast, "width", "100"));
+    try std.testing.expectError(error.OutOfRange, applyText(&config, .banner, "max_width", "100"));
+    try std.testing.expectError(error.OutOfRange, applyText(&config, .modal, "padding", "65"));
+    try std.testing.expectError(error.OutOfRange, applyText(&config, .alert_dialog, "width", "1201"));
+    try std.testing.expectError(error.InvalidValue, applyText(&config, .modal, "position", "top_left"));
 }

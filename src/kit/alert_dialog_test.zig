@@ -388,5 +388,50 @@ test "dialog: long texts are cut between code points, and its size" {
 
     // Reported in the ticket: three buttons of 60 bytes and 256 of text.
     try testing.expectEqual(60, @sizeOf(@FieldType(State, "buttons")) / alert_dialog.actions_max);
-    try testing.expectEqual(456, @sizeOf(State));
+    try testing.expectEqual(468, @sizeOf(State));
+}
+
+test "dialog: option configures position, dimensions, and fallback scrim alpha" {
+    var state: State = .{
+        .motion = .none,
+        .option = .{
+            .width = 360,
+            .position = .top_center,
+            .margin = 30,
+            .padding = 18,
+            .gap = 12,
+            .scrim_alpha = 64,
+        },
+    };
+    _ = update(&state, .{ .open = sample() });
+
+    var fixture: Fixture = .{};
+    var tree = fixture.tree();
+    const scrim = (try alert_dialog.view(&state, &tree, &Theme.dark)).?;
+    try layout(&tree, measurer, 1000, 600);
+
+    const scrim_node = tree.nodes[scrim];
+    const card = tree.nodes[scrim + 1];
+    try testing.expectEqual(@as(u8, 64), scrim_node.box.fill.a);
+    try testing.expectEqual(@as(f32, 360), card.rect.w);
+    try testing.expectEqual(@as(f32, 30), card.rect.y);
+    try testing.expectEqual(tree_zig.Edges.all(18), card.box.padding);
+    try testing.expectEqual(@as(u16, 12), card.box.gap);
+
+    // Explicit per-request scrim_alpha overrides the live option fallback.
+    state.option.scrim_alpha = 180;
+    tree.reset();
+    const scrim1 = (try alert_dialog.view(&state, &tree, &Theme.dark)).?;
+    try testing.expectEqual(@as(u8, 180), tree.nodes[scrim1].box.fill.a);
+
+    var overridden: State = .{
+        .motion = .none,
+        .option = .{ .scrim_alpha = 64 },
+    };
+    var req = sample();
+    req.scrim_alpha = 200;
+    _ = update(&overridden, .{ .open = req });
+    var tree2 = fixture.tree();
+    const scrim2 = (try alert_dialog.view(&overridden, &tree2, &Theme.dark)).?;
+    try testing.expectEqual(@as(u8, 200), tree2.nodes[scrim2].box.fill.a);
 }

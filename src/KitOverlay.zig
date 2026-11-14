@@ -84,13 +84,27 @@ pub fn destroy(self: *KitOverlay, gpa: Allocator) void {
     gpa.destroy(self);
 }
 
-/// Applies the user's `[ui]` settings, from the next frame on.
-pub fn configure(self: *KitOverlay, ui: Ui) void {
-    self.toasts.motion = ui.motion;
-    self.alert.motion = ui.motion;
-    self.dialog.motion = ui.motion;
-    self.lock_screen.motion = ui.motion;
-    self.color_scheme = ui.color_scheme;
+pub const Options = struct {
+    ui: Ui = .{},
+    banner: alert_mod.Option = .{},
+    toast: toast.Option = .{},
+    dialog: alert_dialog.Option = .{},
+};
+
+/// Applies the user's `[ui]` and overlay settings, from the next frame on.
+pub fn configure(self: *KitOverlay, options: Options) void {
+    self.toasts.motion = options.ui.motion;
+    self.alert.motion = options.ui.motion;
+    self.dialog.motion = options.ui.motion;
+    self.lock_screen.motion = options.ui.motion;
+    self.color_scheme = options.ui.color_scheme;
+
+    if (self.toasts.option.position != options.toast.position) {
+        self.table = .empty;
+    }
+    self.alert.option = options.banner;
+    self.toasts.option = options.toast;
+    self.dialog.option = options.dialog;
 }
 
 /// Shows or updates the persistent alert banner. Returns whether a redraw is due.

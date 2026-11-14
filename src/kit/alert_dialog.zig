@@ -32,6 +32,15 @@ const Index = tree_zig.Index;
 /// shrinks it.
 pub const width = 420;
 
+pub const Option = struct {
+    width: f32 = width,
+    position: dialog.Position = .center,
+    margin: u8 = dialog.margin,
+    padding: u8 = dialog.padding,
+    gap: u8 = dialog.gap,
+    scrim_alpha: ?u8 = null,
+};
+
 pub const actions_max = 3;
 pub const title_capacity = 96;
 pub const body_capacity = 160;
@@ -101,6 +110,7 @@ pub const State = struct {
     motion: motion.Mode = .full,
     /// Backdrop opacity (0-255), or null for the theme default.
     scrim_alpha: ?u8 = null,
+    option: Option = .{},
     /// The icon above the title, or 0 for none.
     media: u21 = 0,
     title_len: u8 = 0,
@@ -330,9 +340,13 @@ pub fn view(state: *const State, tree: *Tree, theme: *const Theme) tree_zig.Erro
     const frame = try dialog.open(tree, theme, .{
         .scrim_id = scrim_id,
         .card_id = card_id,
-        .width = width,
+        .width = state.option.width,
         .presence = presence,
-        .scrim_alpha = state.scrim_alpha,
+        .scrim_alpha = state.scrim_alpha orelse state.option.scrim_alpha,
+        .position = state.option.position,
+        .margin = state.option.margin,
+        .padding = state.option.padding,
+        .gap = state.option.gap,
     });
     const header = try dialog.header(tree);
     if (state.media != 0) {

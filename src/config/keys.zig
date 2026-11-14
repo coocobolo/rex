@@ -33,6 +33,7 @@ pub const Section = enum {
     banner,
     modal,
     @"modal.blur",
+    alert_dialog,
     wellbeing,
     @"wellbeing.screen_time",
     @"wellbeing.focus",
@@ -241,14 +242,30 @@ const tail_rows = [_]Key{
 
     .{ .section = .toast, .name = "enabled", .field = "window.toast.enabled" },
     .{ .section = .toast, .name = "duration", .field = "window.toast.duration_ms", .kind = .duration, .bounds = at_least_one },
+    .{ .section = .toast, .name = "position", .field = "window.toast.position" },
+    .{ .section = .toast, .name = "width", .field = "window.toast.width", .bounds = .{ .min = 160, .max = 800 } },
+    .{ .section = .toast, .name = "margin", .field = "window.toast.margin", .bounds = .{ .min = 0, .max = 128 } },
+    .{ .section = .toast, .name = "padding", .field = "window.toast.padding", .bounds = .{ .min = 0, .max = 64 } },
+    .{ .section = .toast, .name = "gap", .field = "window.toast.gap", .bounds = .{ .min = 0, .max = 64 } },
 
     .{ .section = .banner, .name = "enabled", .field = "window.banner.enabled" },
+    .{ .section = .banner, .name = "placement", .field = "window.banner.placement" },
+    .{ .section = .banner, .name = "position", .field = "window.banner.position" },
+    .{ .section = .banner, .name = "max_width", .field = "window.banner.max_width", .bounds = .{ .min = 200, .max = 1600 } },
+    .{ .section = .banner, .name = "margin", .field = "window.banner.margin", .bounds = .{ .min = 0, .max = 128 } },
+    .{ .section = .banner, .name = "padding", .field = "window.banner.padding", .bounds = .{ .min = 0, .max = 64 } },
 
     .{ .section = .modal, .name = "backdrop_opacity", .field = "window.modal.backdrop_opacity", .kind = .fraction },
     .{ .section = .modal, .name = "on_outside_click", .field = "window.modal.on_outside_click" },
-    .{ .section = .modal, .name = "default_focus", .field = "window.modal.default_focus" },
+    .{ .section = .modal, .name = "position", .field = "window.modal.position" },
+    .{ .section = .modal, .name = "margin", .field = "window.modal.margin", .bounds = .{ .min = 0, .max = 128 } },
+    .{ .section = .modal, .name = "padding", .field = "window.modal.padding", .bounds = .{ .min = 0, .max = 64 } },
+    .{ .section = .modal, .name = "gap", .field = "window.modal.gap", .bounds = .{ .min = 0, .max = 64 } },
     .{ .section = .@"modal.blur", .name = "enabled", .field = "window.modal.blur" },
     .{ .section = .@"modal.blur", .name = "radius", .field = "window.modal.blur_radius" },
+
+    .{ .section = .alert_dialog, .name = "width", .field = "window.alert_dialog.width", .bounds = .{ .min = 200, .max = 1200 } },
+    .{ .section = .alert_dialog, .name = "default_focus", .field = "window.alert_dialog.default_focus" },
 
     .{ .section = .wellbeing, .name = "enabled", .field = "wellbeing.enabled" },
     .{ .section = .@"wellbeing.screen_time", .name = "daily_limit", .field = "wellbeing.screen_time.daily_limit_ms", .kind = .duration, .bounds = at_least_one, .null_keyword = .none },
@@ -340,6 +357,7 @@ pub const Retired = struct {
 /// real keys when implemented; the others belong to removed features (#47).
 pub const retired = [_]Retired{
     .{ .section = .window, .name = "background_blur", .fate = .{ .removed = "not implemented yet" } },
+    .{ .section = .modal, .name = "default_focus", .fate = .{ .renamed = "alert_dialog.default_focus" } },
     .{ .section = .wellbeing, .name = "eyesight_interval", .fate = .{ .renamed = "wellbeing.eyesight.interval" } },
     .{ .section = .wellbeing, .name = "movement_interval", .fate = .{ .renamed = "wellbeing.movement.interval" } },
     .{ .section = .wellbeing, .name = "hydration_interval", .fate = .{ .removed = "hydration and posture reminders were removed" } },

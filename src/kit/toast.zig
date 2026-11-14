@@ -45,6 +45,16 @@ const glide_ms = 40;
 /// The title's line, which the icon and the close button center on.
 const line_height = text.Style.sm_medium.metrics().line_height;
 
+pub const Position = tree_zig.ScreenAnchor;
+
+pub const Option = struct {
+    width: f32 = width,
+    position: Position = .bottom_right,
+    margin: u8 = margin,
+    padding: u8 = padding,
+    gap: u8 = gap,
+};
+
 pub const Kind = enum(u8) {
     default,
     success,
@@ -125,6 +135,7 @@ pub const State = struct {
     pointer: Pointer = .away,
     /// Set by the owner, from the user's setting.
     motion: motion_zig.Mode = .full,
+    option: Option = .{},
 
     pub const empty: State = .{};
 
@@ -345,18 +356,18 @@ pub fn view(state: *const State, tree: *Tree, theme: *const Theme) tree_zig.Erro
     const stack = try tree.open(.{
         .width = .fill,
         .height = .fill,
-        .padding = .all(margin),
-        .gap = gap,
-        .main = .end,
-        .cross = .end,
+        .padding = .all(state.option.margin),
+        .gap = state.option.gap,
+        .main = state.option.position.mainAlign(),
+        .cross = state.option.position.crossAlign(),
     });
     for (entries) |*entry| {
         const presence = entry.presence(state.motion);
         const card = try tree.open(.{
             .id = cardId(entry.serial),
             .axis = .row,
-            .width = .{ .fixed = width },
-            .padding = .all(padding),
+            .width = .{ .fixed = state.option.width },
+            .padding = .all(state.option.padding),
             .gap = 10,
             .fill = theme.popover.fade(presence),
             .border = theme.border.fade(presence),
@@ -412,7 +423,8 @@ pub fn place(state: *const State, tree: *Tree, stack: ?Index, table: *memory.Tab
         };
         try table.set(node.box.id, drawn);
         if (drawn != target) motion = .moving;
-        tree.translate(card, 0, drawn - target + (1 - entry.presence(state.motion)) * rise);
+        const rise_offset: f32 = if (state.option.position.isTop()) -rise else rise;
+        tree.translate(card, 0, drawn - target + (1 - entry.presence(state.motion)) * rise_offset);
         card = node.end;
     }
     return motion;

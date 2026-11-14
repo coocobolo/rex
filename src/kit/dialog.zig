@@ -135,6 +135,20 @@ pub const Phase = union(enum) {
     }
 };
 
+pub const Position = enum(u8) {
+    center,
+    top_center,
+    bottom_center,
+
+    fn mainAlign(self: Position) tree_zig.Align {
+        return switch (self) {
+            .center => .center,
+            .top_center => .start,
+            .bottom_center => .end,
+        };
+    }
+};
+
 pub const Options = struct {
     /// On the scrim: a click here is beside the card.
     scrim_id: Id,
@@ -146,6 +160,10 @@ pub const Options = struct {
     presence: f32,
     /// Scrim opacity before `presence` scaling; null keeps `theme.scrim.a`.
     scrim_alpha: ?u8 = null,
+    position: Position = .center,
+    margin: u8 = margin,
+    padding: u8 = padding,
+    gap: u8 = gap,
 };
 
 /// The two boxes `open` leaves open.
@@ -166,16 +184,16 @@ pub fn open(tree: *Tree, theme: *const Theme, options: Options) tree_zig.Error!F
         .id = options.scrim_id,
         .width = .fill,
         .height = .fill,
-        .padding = .all(margin),
-        .main = .center,
+        .padding = .all(options.margin),
+        .main = options.position.mainAlign(),
         .cross = .center,
         .fill = scrim_base.fade(options.presence),
     });
     const card = try tree.open(.{
         .id = options.card_id,
         .width = .{ .at_most = options.width },
-        .padding = .all(padding),
-        .gap = gap,
+        .padding = .all(options.padding),
+        .gap = options.gap,
         .fill = theme.popover.fade(options.presence),
         .border = theme.border.fade(options.presence),
         .border_width = Theme.border_width,

@@ -82,6 +82,38 @@ pub const Axis = enum(u1) { row, column };
 /// Where children sit along an axis when there is room to spare.
 pub const Align = enum(u2) { start, center, end };
 
+/// Window corner or edge anchor shared by overlay surfaces.
+pub const ScreenAnchor = enum(u8) {
+    top_left,
+    top_center,
+    top_right,
+    bottom_left,
+    bottom_center,
+    bottom_right,
+
+    /// Vertical alignment along a full-viewport column root.
+    pub fn mainAlign(self: ScreenAnchor) Align {
+        return if (self.isTop()) .start else .end;
+    }
+
+    /// Horizontal alignment across a full-viewport column root.
+    pub fn crossAlign(self: ScreenAnchor) Align {
+        return switch (self) {
+            .top_left, .bottom_left => .start,
+            .top_center, .bottom_center => .center,
+            .top_right, .bottom_right => .end,
+        };
+    }
+
+    /// Whether the anchor attaches to the top edge of the viewport.
+    pub fn isTop(self: ScreenAnchor) bool {
+        return switch (self) {
+            .top_left, .top_center, .top_right => true,
+            .bottom_left, .bottom_center, .bottom_right => false,
+        };
+    }
+};
+
 /// What a box does with descendants that reach outside its rectangle.
 pub const Overflow = enum(u1) {
     /// Draws them and lets them be hit anywhere.

@@ -152,6 +152,17 @@ test "apply: retired, duplicate and missing values" {
     try std.testing.expectEqual(3, a.tree.tokenLocation(a.result.set_by[keys.lookup(.window, "width").?].?).line);
 }
 
+test "apply: retired modal.default_focus reports rename to alert_dialog.default_focus" {
+    var a = try Applied.init(
+        \\[modal]
+        \\default_focus = cancel
+    );
+    defer a.deinit();
+    try a.expectErrors(&.{
+        .{ .retired_key, 1, "'default_focus' was renamed to 'alert_dialog.default_focus'" },
+    });
+}
+
 test "apply: font sizes are bounded to 1 to 1000" {
     var a = try Applied.init(
         \\[font]
@@ -174,7 +185,7 @@ test "apply: invalid, out of range and not applicable values keep the old value"
         \\step_lines = 0
         \\[toast]
         \\duration = 5
-        \\[modal]
+        \\[alert_dialog]
         \\default_focus = "confirm"
     );
     defer a.deinit();
@@ -182,7 +193,7 @@ test "apply: invalid, out of range and not applicable values keep the old value"
         .{ .invalid_value, 1, "invalid value 'loud' for bell.volume, expected a number from 0 to 1" },
         .{ .value_out_of_range, 3, "scroll.step_lines = 0 is out of range, expected a whole number of at least 1" },
         .{ .invalid_value, 5, "invalid value '5' for toast.duration, expected a duration of at least 1ms, like 500ms, 30s, 25m or 1h" },
-        .{ .invalid_value, 7, "invalid value '\"confirm\"' for modal.default_focus, expected one of: confirm, cancel" },
+        .{ .invalid_value, 7, "invalid value '\"confirm\"' for alert_dialog.default_focus, expected one of: confirm, cancel" },
     });
     try std.testing.expectEqual(defaults.window.bell.volume, a.config.window.bell.volume);
     try std.testing.expectEqual(defaults.scroll.lines, a.config.scroll.lines);

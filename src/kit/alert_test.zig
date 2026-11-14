@@ -111,3 +111,55 @@ test "alert: with motion none transitions are instant" {
     try testing.expectEqual(null, state.wakeMs());
     try testing.expect(!state.isShown());
 }
+
+test "alert: docked banner fills width with square corners" {
+    var state: alert.State = .{
+        .motion = .none,
+        .option = .{
+            .placement = .docked,
+            .position = .bottom_center,
+            .margin = 20,
+            .padding = 10,
+        },
+    };
+    _ = alert.update(&state, .{ .show = .{ .kind = .warn, .title = "Docked" } });
+
+    var nodes: [alert.node_max]tree_zig.Node = undefined;
+    var lines: [alert.line_max]text.Line = undefined;
+    var tree: Tree = .init(&nodes, &lines);
+    const root = (try alert.view(&state, &tree, &Theme.dark)).?;
+    try layout(&tree, measurer, 800, 600);
+    alert.place(&state, &tree, root);
+
+    const card = tree.find(alert.card_id).?;
+    try testing.expectEqual(@as(f32, 0), card.rect.x);
+    try testing.expectEqual(@as(f32, 800), card.rect.w);
+    try testing.expectApproxEqAbs(@as(f32, 600), card.rect.y + card.rect.h, 0.5);
+    try testing.expectEqual(@as(f32, 0), card.box.radius);
+    try testing.expectEqual(tree_zig.Edges.all(10), card.box.padding);
+}
+
+test "alert: bottom_right placement anchors at bottom right and slides upward" {
+    var state: alert.State = .{
+        .option = .{
+            .placement = .floating,
+            .position = .bottom_right,
+            .margin = 24,
+        },
+    };
+    _ = alert.update(&state, .{ .show = .{ .kind = .info, .title = "Note" } });
+    _ = alert.update(&state, .{ .tick = Theme.duration / 2 });
+
+    var nodes: [alert.node_max]tree_zig.Node = undefined;
+    var lines: [alert.line_max]text.Line = undefined;
+    var tree: Tree = .init(&nodes, &lines);
+    const root = (try alert.view(&state, &tree, &Theme.dark)).?;
+    try layout(&tree, measurer, 800, 600);
+    const before = tree.find(alert.card_id).?.rect;
+    try testing.expectApproxEqAbs(@as(f32, 800 - 24), before.x + before.w, 0.5);
+    try testing.expectApproxEqAbs(@as(f32, 600 - 24), before.y + before.h, 0.5);
+
+    alert.place(&state, &tree, root);
+    const after = tree.find(alert.card_id).?.rect;
+    try testing.expect(after.y > before.y);
+}

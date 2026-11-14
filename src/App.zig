@@ -618,7 +618,7 @@ pub fn init(
     const kit = createKit(gpa, io, argv0, content_scale, active_config.font.faces.regular);
     errdefer if (kit) |k| k.destroy(gpa);
     if (kit) |k| {
-        k.configure(active_config.ui);
+        k.configure(kitOverlayOptions(active_config.ui, active_config.window));
         if (active_config.window.banner.enabled) {
             if (startup_banner) |*b| _ = k.showAlert(b.request());
         }
@@ -1435,14 +1435,15 @@ pub fn reloadConfig(self: *App) void {
 
     // A running session keeps its config when a file has errors (decision
     // P4); a config with only warnings applies, and the banner shows the
-    // first warning. Without either, the banner goes.
-    if (configBanner(&loaded)) |*banner| {
-        const req = banner.request();
-        self.showAlert(req.kind, req.title, req.description);
-    } else if (self.kit) |kit| {
-        if (kit.dismissAlert()) self.needs_redraw = true;
+    // first warning after `self.config` is swapped so changes to `[banner]`
+    // take effect immediately.
+    if (loaded.firstError() != null) {
+        if (configBanner(&loaded)) |*banner| {
+            const req = banner.request();
+            self.showAlert(req.kind, req.title, req.description);
+        }
+        return;
     }
-    if (loaded.firstError() != null) return;
     useBuiltinFonts(self.io, loaded.arena.allocator(), &loaded, self.argv0) catch |err| switch (err) {
         error.OutOfMemory => {
             self.showAlert(.err, "Config error", "Out of memory");
@@ -1488,9 +1489,14 @@ pub fn reloadConfig(self: *App) void {
     self.renderer.setScrollbarOption(rendererScrollbarOption(self.config.scrollbar));
     self.updateScrollbarHover();
     if (self.kit) |kit| {
-        kit.configure(self.config.ui);
+        kit.configure(kitOverlayOptions(self.config.ui, self.config.window));
         if (!self.config.window.banner.enabled) {
             if (kit.dismissAlert()) self.needs_redraw = true;
+        } else if (configBanner(&loaded)) |*banner| {
+            const req = banner.request();
+            self.showAlert(req.kind, req.title, req.description);
+        } else if (kit.dismissAlert()) {
+            self.needs_redraw = true;
         }
     }
     self.renderer.background.option.alpha = self.config.window.background.alpha;
@@ -1965,11 +1971,12 @@ pub fn requestQuit(self: *App) void {
         .title = "Close this window?",
         .body = quitDialogBodyFor(running, program, &body_buf),
         .actions = &quit_actions,
-        .focus = switch (self.config.window.modal.default_focus) {
+        .focus = switch (self.config.window.alert_dialog.default_focus) {
             .confirm => quit_close,
             .cancel => quit_cancel,
         },
-        .scrim_alpha = self.config.window.modal.backdropAlpha(),
+        // Leave null so live-reloaded `modal.backdrop_opacity` updates open dialogs.
+        .scrim_alpha = null,
     });
     self.needs_redraw = true;
 }
@@ -3458,6 +3465,52 @@ fn rendererScrollbarOption(sb: Config.Scrollbar) renderer_mod.Scrollbar.Option {
     return out;
 }
 
+fn kitOverlayOptions(ui: Config.Ui, win: Config.Window) KitOverlay.Options {
+    return .{
+        .ui = ui,
+        .banner = .{
+            .max_width = win.banner.max_width,
+            .placement = switch (win.banner.placement) {
+                .floating => .floating,
+                .docked => .docked,
+            },
+            .position = overlayAnchor(win.banner.position),
+            .margin = win.banner.margin,
+            .padding = win.banner.padding,
+        },
+        .toast = .{
+            .width = win.toast.width,
+            .position = overlayAnchor(win.toast.position),
+            .margin = win.toast.margin,
+            .padding = win.toast.padding,
+            .gap = win.toast.gap,
+        },
+        .dialog = .{
+            .width = win.alert_dialog.width,
+            .position = switch (win.modal.position) {
+                .center => .center,
+                .top_center => .top_center,
+                .bottom_center => .bottom_center,
+            },
+            .margin = win.modal.margin,
+            .padding = win.modal.padding,
+            .gap = win.modal.gap,
+            .scrim_alpha = win.modal.backdropAlpha(),
+        },
+    };
+}
+
+fn overlayAnchor(pos: @import("config/overlay.zig").Position) @import("kit/tree.zig").ScreenAnchor {
+    return switch (pos) {
+        .top_left => .top_left,
+        .top_center => .top_center,
+        .top_right => .top_right,
+        .bottom_left => .bottom_left,
+        .bottom_center => .bottom_center,
+        .bottom_right => .bottom_right,
+    };
+}
+
 fn normalizedRgba(rgb: rex.color.Rgb, alpha: f32) [4]f32 {
     return .{
         @as(f32, @floatFromInt(rgb.r)) / 255.0,
@@ -3538,4 +3591,45 @@ test "normalizedRgba: scales 0..255 Rgb channels into 0..1 GL floats" {
     try testing.expectApproxEqAbs(@as(f32, 30.0 / 255.0), rgba[1], 1e-6);
     try testing.expectApproxEqAbs(@as(f32, 46.0 / 255.0), rgba[2], 1e-6);
     try testing.expectApproxEqAbs(@as(f32, 0.85), rgba[3], 1e-6);
+}
+
+test "kitOverlayOptions: maps overlay config sections onto KitOverlay options" {
+    const testing = std.testing;
+    var win: Config.Window = .default;
+    win.banner.placement = .docked;
+    win.banner.position = .bottom_left;
+    win.banner.max_width = 700;
+    win.banner.margin = 12;
+    win.banner.padding = 18;
+    win.toast.position = .top_center;
+    win.toast.width = 410;
+    win.toast.margin = 20;
+    win.toast.padding = 12;
+    win.toast.gap = 8;
+    win.modal.position = .top_center;
+    win.modal.margin = 28;
+    win.modal.padding = 18;
+    win.modal.gap = 10;
+    win.modal.backdrop_opacity = 0.5;
+    win.alert_dialog.width = 512;
+
+    const opts = kitOverlayOptions(.{}, win);
+    try testing.expectEqual(kit_alert.Placement.docked, opts.banner.placement);
+    try testing.expectEqual(kit_alert.Position.bottom_left, opts.banner.position);
+    try testing.expectApproxEqAbs(@as(f32, 700), opts.banner.max_width, 1e-6);
+    try testing.expectEqual(@as(u8, 12), opts.banner.margin);
+    try testing.expectEqual(@as(u8, 18), opts.banner.padding);
+
+    try testing.expectEqual(kit_toast.Position.top_center, opts.toast.position);
+    try testing.expectApproxEqAbs(@as(f32, 410), opts.toast.width, 1e-6);
+    try testing.expectEqual(@as(u8, 20), opts.toast.margin);
+    try testing.expectEqual(@as(u8, 12), opts.toast.padding);
+    try testing.expectEqual(@as(u8, 8), opts.toast.gap);
+
+    try testing.expectEqual(@import("kit/dialog.zig").Position.top_center, opts.dialog.position);
+    try testing.expectApproxEqAbs(@as(f32, 512), opts.dialog.width, 1e-6);
+    try testing.expectEqual(@as(u8, 28), opts.dialog.margin);
+    try testing.expectEqual(@as(u8, 18), opts.dialog.padding);
+    try testing.expectEqual(@as(u8, 10), opts.dialog.gap);
+    try testing.expectEqual(@as(?u8, 128), opts.dialog.scrim_alpha);
 }

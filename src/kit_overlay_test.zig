@@ -398,8 +398,41 @@ test "KitOverlay: its size" {
     // Reported in the ticket. Nearly all of it is two tables: the font's
     // kerning pairs, and the painter's 2048 instances of 52 bytes with its
     // glyph position cache.
-    try testing.expectEqual(305600, @sizeOf(KitOverlay));
+    try testing.expectEqual(305632, @sizeOf(KitOverlay));
     try testing.expectEqual(131864, @sizeOf(@FieldType(KitOverlay, "painter")));
     try testing.expectEqual(152496, @sizeOf(@FieldType(KitOverlay, "font")));
     try testing.expectEqual(3952, @sizeOf(@FieldType(KitOverlay, "nodes")));
+}
+
+test "KitOverlay: configure applies surface options and resets toast glide table on position change" {
+    var fixture: Fixture = try .init(1);
+    defer fixture.deinit();
+    const kit = fixture.kit;
+
+    kit.configure(.{
+        .banner = .{ .placement = .docked, .position = .bottom_center, .margin = 10, .padding = 12, .max_width = 640 },
+        .toast = .{ .width = 300, .position = .bottom_right, .margin = 16, .padding = 14, .gap = 10 },
+        .dialog = .{ .width = 480, .position = .top_center, .margin = 20, .padding = 22, .gap = 14, .scrim_alpha = 90 },
+    });
+    try testing.expectEqual(alert.Placement.docked, kit.alert.option.placement);
+    try testing.expectEqual(alert.Position.bottom_center, kit.alert.option.position);
+    try testing.expectEqual(@as(f32, 300), kit.toasts.option.width);
+    try testing.expectEqual(dialog.Position.top_center, kit.dialog.option.position);
+    try testing.expectEqual(@as(?u8, 90), kit.dialog.option.scrim_alpha);
+
+    try testing.expect(kit.push(.{ .title = "Anchored", .duration_ms = 5000 }));
+    _ = kit.tick(Theme.duration);
+    try testing.expect(fixture.frame());
+    try testing.expect(kit.table.len > 0);
+
+    // Same toast position keeps glide memory intact; switching position clears it.
+    kit.configure(.{
+        .toast = .{ .width = 320, .position = .bottom_right },
+    });
+    try testing.expect(kit.table.len > 0);
+
+    kit.configure(.{
+        .toast = .{ .width = 320, .position = .top_left },
+    });
+    try testing.expectEqual(@as(usize, 0), kit.table.len);
 }

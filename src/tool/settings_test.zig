@@ -788,3 +788,76 @@ test "settings: scrollbar controls appear under Window & Shell and edit config" 
     _ = settings.update(&state, .{ .key = .{ .key = .enter } });
     try testing.expectEqual(@import("../color/Rgb.zig"){ .r = 0x33, .g = 0x66, .b = 0x99 }, state.activeConfig().scrollbar.thumb_color);
 }
+
+test "settings: Overlays page groups toast, banner, modal, and alert dialog controls" {
+    const gpa = testing.allocator;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const dir_path = try std.fs.path.join(gpa, &.{ ".zig-cache", "tmp", &tmp.sub_path });
+    defer gpa.free(dir_path);
+    const cfg_path = try std.fs.path.join(gpa, &.{ dir_path, "config" });
+    defer gpa.free(cfg_path);
+
+    const cfg = config_defaults.default;
+    var state = try settings.init(.{
+        .gpa = gpa,
+        .io = testing.io,
+        .config = &cfg,
+        .state_dir = dir_path,
+        .config_path = cfg_path,
+        .home_dir = dir_path,
+        .wake_loop = struct {
+            fn wake() void {}
+        }.wake,
+    });
+    defer settings.deinit(&state);
+
+    state.frame.current = @intFromEnum(settings.Page.overlays);
+    _ = settings.update(&state, .{ .size = .{ .width = 960, .height = 720 } });
+
+    var nodes: [settings.node_max]kit.tree.Node = undefined;
+    var lines: [settings.line_max]kit.text.Line = undefined;
+    var tree = kit.tree.Tree.init(&nodes, &lines);
+    try settings.view(&state, &tree, &kit.Theme.dark);
+    try kit.layout.layout(&tree, measurer, 960, 720);
+
+    var toast_pos: ?usize = null;
+    var banner_pos: ?usize = null;
+    var modal_pos: ?usize = null;
+    var alert_dialog_pos: ?usize = null;
+    var default_focus_pos: ?usize = null;
+    var default_focus_count: usize = 0;
+    for (tree.nodes[0..tree.len], 0..) |node, i| {
+        if (node.content != .text) continue;
+        const txt = node.content.text.bytes;
+        if (std.mem.eql(u8, txt, "Toast") and toast_pos == null) toast_pos = i;
+        if (std.mem.eql(u8, txt, "Banner") and banner_pos == null) banner_pos = i;
+        if (std.mem.eql(u8, txt, "Modal") and modal_pos == null) modal_pos = i;
+        if (std.mem.eql(u8, txt, "Alert Dialog") and alert_dialog_pos == null) alert_dialog_pos = i;
+        if (std.mem.eql(u8, txt, "Default Focus")) {
+            default_focus_count += 1;
+            default_focus_pos = i;
+        }
+    }
+    try testing.expect(toast_pos.? < banner_pos.?);
+    try testing.expect(banner_pos.? < modal_pos.?);
+    try testing.expect(modal_pos.? < alert_dialog_pos.?);
+    try testing.expect(alert_dialog_pos.? < default_focus_pos.?);
+    try testing.expectEqual(@as(usize, 1), default_focus_count);
+
+    // Step toast width and toggle banner enabled through settings controls.
+    const width_idx = keyIndex(.toast, "width");
+    const inc_id = Id.of("settings.inc").item(width_idx);
+    _ = settings.update(&state, .{ .pointer = .{ .id = inc_id } });
+    _ = settings.update(&state, .{ .press = inc_id });
+    try testing.expect(settings.update(&state, .release));
+    try testing.expectEqual(@as(u16, 357), state.activeConfig().window.toast.width);
+
+    const banner_enabled_idx = keyIndex(.banner, "enabled");
+    const banner_switch_id = Id.of("settings.switch").item(banner_enabled_idx);
+    _ = settings.update(&state, .{ .pointer = .{ .id = banner_switch_id } });
+    _ = settings.update(&state, .{ .press = banner_switch_id });
+    try testing.expect(settings.update(&state, .release));
+    try testing.expect(!state.activeConfig().window.banner.enabled);
+}

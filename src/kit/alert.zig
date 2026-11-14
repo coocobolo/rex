@@ -32,6 +32,17 @@ pub const description_capacity = 256;
 pub const card_id = Id.of("alert.card");
 pub const close_id = Id.of("alert.close");
 
+pub const Placement = enum(u8) { floating, docked };
+pub const Position = tree_zig.ScreenAnchor;
+
+pub const Option = struct {
+    max_width: f32 = max_width,
+    placement: Placement = .floating,
+    position: Position = .top_center,
+    margin: u8 = margin,
+    padding: u8 = padding,
+};
+
 pub const Kind = enum(u8) {
     err,
     warn,
@@ -71,6 +82,7 @@ pub const State = struct {
     kind: Kind = .err,
     touch: button.State = .normal,
     motion: motion_zig.Mode = .full,
+    option: Option = .{},
     title_len: u8 = 0,
     description_len: u16 = 0,
     title_bytes: [title_capacity]u8 = undefined,
@@ -194,31 +206,31 @@ pub const line_max = title_capacity + 1 + description_capacity + 1;
 /// description + close button.
 pub const node_max = 7 + button.node_max;
 
-/// Writes the alert banner anchored at the top-center of the window, or
-/// returns null when closed.
+/// Writes the alert banner anchored per `state.option`, or returns null when closed.
 pub fn view(state: *const State, tree: *Tree, theme: *const Theme) tree_zig.Error!?Index {
     if (state.phase == .closed) return null;
     const presence = state.phase.presence(state.motion);
     const style = state.kind.accent(theme);
+    const docked = state.option.placement == .docked;
 
     const root = try tree.open(.{
         .width = .fill,
         .height = .fill,
-        .padding = .all(margin),
-        .main = .start,
-        .cross = .center,
+        .padding = if (docked) .zero else .all(state.option.margin),
+        .main = state.option.position.mainAlign(),
+        .cross = state.option.position.crossAlign(),
     });
     const card = try tree.open(.{
         .id = card_id,
         .axis = .row,
-        .width = .{ .at_most = max_width },
-        .padding = .all(padding),
+        .width = if (docked) .fill else .{ .at_most = state.option.max_width },
+        .padding = .all(state.option.padding),
         .gap = 12,
         .cross = .start,
         .fill = theme.popover.fade(presence),
         .border = style.border.fade(presence),
         .border_width = Theme.border_width,
-        .radius = Theme.radius,
+        .radius = if (docked) 0 else Theme.radius,
     });
     const icon_slot = try tree.open(.{
         .height = .{ .fixed = line_height },
@@ -268,5 +280,6 @@ pub fn place(state: *const State, tree: *Tree, root: ?Index) void {
     if (presence >= 1) return;
     const card: Index = start + 1;
     assert(tree.nodes[card].box.id == card_id);
-    tree.translate(card, 0, -(1 - presence) * drop);
+    const offset = (1 - presence) * drop;
+    tree.translate(card, 0, if (state.option.position.isTop()) -offset else offset);
 }

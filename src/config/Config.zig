@@ -123,8 +123,10 @@ pub const Window = struct {
     toast: overlay.Toast = .{},
     /// Configuration diagnostic notification banner options.
     banner: overlay.Banner = .{},
-    /// Modal dialog options including backdrop opacity, blur, and focus.
+    /// Modal dialog container options including backdrop opacity, blur, and layout.
     modal: overlay.Modal = .{},
+    /// Alert confirmation dialog options including width and initial focus.
+    alert_dialog: overlay.AlertDialog = .{},
     /// What closing the window does.
     on_close: OnClose = .ask_if_running,
 

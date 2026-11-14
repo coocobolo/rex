@@ -84,7 +84,7 @@ pub fn pageForSection(section: keys.Section) ?Page {
     return switch (section) {
         .root, .colors, .font, .ui => .appearance,
         .window, .bell, .scroll, .scrollbar, .selection, .clipboard, .shell => .window_shell,
-        .toast, .banner, .modal, .@"modal.blur" => .overlays,
+        .toast, .banner, .modal, .@"modal.blur", .alert_dialog => .overlays,
         .wellbeing, .@"wellbeing.screen_time", .@"wellbeing.privacy", .@"wellbeing.dashboard" => .wellbeing,
         .@"wellbeing.focus", .@"wellbeing.winddown" => .focus_winddown,
         .@"wellbeing.eyesight", .@"wellbeing.movement" => .reminders,
@@ -110,6 +110,7 @@ const section_titles = std.EnumArray(keys.Section, []const u8).init(.{
     .banner = "Banner",
     .modal = "Modal",
     .@"modal.blur" = "Modal Blur",
+    .alert_dialog = "Alert Dialog",
     .wellbeing = "General",
     .@"wellbeing.screen_time" = "Screen Time",
     .@"wellbeing.focus" = "Focus Timer",
@@ -276,7 +277,7 @@ fn keyMeta(comptime section: keys.Section, comptime key_name: []const u8) KeyMet
             .description = "Starting folder for new shells, or inherit from where Rex was launched.",
         } else @compileError("unmapped shell key: " ++ key_name),
 
-        .toast, .banner, .modal => overlayMeta(section, key_name),
+        .toast, .banner, .modal, .alert_dialog => overlayMeta(section, key_name),
 
         .@"modal.blur" => if (std.mem.eql(u8, key_name, "enabled")) .{
             .label = "Backdrop Blur",
@@ -482,11 +483,86 @@ fn overlayMeta(comptime section: keys.Section, comptime key_name: []const u8) Ke
         .description = if (section == .toast)
             "Show brief pop-up notifications inside the terminal."
         else
-            "Show status banners along the top of the terminal.",
+            "Show persistent status banners inside the terminal.",
     };
     if (std.mem.eql(u8, key_name, "duration")) return .{
         .label = "Display Duration",
         .description = "How long a toast remains visible before dismissing.",
+    };
+    if (std.mem.eql(u8, key_name, "placement")) return .{
+        .label = "Placement",
+        .description = "Display as a rounded floating card or a full-width docked bar.",
+    };
+    if (std.mem.eql(u8, key_name, "position")) return switch (section) {
+        .toast => .{
+            .label = "Position",
+            .description = "Corner or edge where toast notifications stack.",
+        },
+        .banner => .{
+            .label = "Position",
+            .description = "Window edge anchor where status banners appear.",
+        },
+        .modal => .{
+            .label = "Position",
+            .description = "Vertical placement of modal dialogs over the backdrop.",
+        },
+        else => @compileError("unexpected position section: " ++ @tagName(section)),
+    };
+    if (std.mem.eql(u8, key_name, "width")) return switch (section) {
+        .toast => .{
+            .label = "Card Width",
+            .description = "Width of toast notification cards in pixels.",
+        },
+        .alert_dialog => .{
+            .label = "Dialog Width",
+            .description = "Maximum width of confirmation alert dialogs in pixels.",
+        },
+        else => @compileError("unexpected width section: " ++ @tagName(section)),
+    };
+    if (std.mem.eql(u8, key_name, "max_width")) return .{
+        .label = "Maximum Width",
+        .description = "Maximum width of floating banners in pixels.",
+    };
+    if (std.mem.eql(u8, key_name, "margin")) return switch (section) {
+        .toast => .{
+            .label = "Edge Margin",
+            .description = "Distance between the toast stack and window edges in pixels.",
+        },
+        .banner => .{
+            .label = "Edge Margin",
+            .description = "Distance between floating banners and window edges in pixels.",
+        },
+        .modal => .{
+            .label = "Edge Margin",
+            .description = "Minimum distance between modal dialogs and window edges in pixels.",
+        },
+        else => @compileError("unexpected margin section: " ++ @tagName(section)),
+    };
+    if (std.mem.eql(u8, key_name, "padding")) return switch (section) {
+        .toast => .{
+            .label = "Inner Padding",
+            .description = "Space inside each toast card in pixels.",
+        },
+        .banner => .{
+            .label = "Inner Padding",
+            .description = "Space inside each status banner in pixels.",
+        },
+        .modal => .{
+            .label = "Inner Padding",
+            .description = "Space inside modal dialog cards in pixels.",
+        },
+        else => @compileError("unexpected padding section: " ++ @tagName(section)),
+    };
+    if (std.mem.eql(u8, key_name, "gap")) return switch (section) {
+        .toast => .{
+            .label = "Stack Gap",
+            .description = "Vertical spacing between stacked toast cards in pixels.",
+        },
+        .modal => .{
+            .label = "Section Gap",
+            .description = "Vertical spacing between header, body, and buttons in pixels.",
+        },
+        else => @compileError("unexpected gap section: " ++ @tagName(section)),
     };
     if (std.mem.eql(u8, key_name, "backdrop_opacity")) return .{
         .label = "Backdrop Opacity",
@@ -498,7 +574,7 @@ fn overlayMeta(comptime section: keys.Section, comptime key_name: []const u8) Ke
     };
     if (std.mem.eql(u8, key_name, "default_focus")) return .{
         .label = "Default Focus",
-        .description = "Which button receives initial keyboard focus in a modal dialog.",
+        .description = "Which button receives initial keyboard focus in confirmation alert dialogs.",
     };
     @compileError("unmapped overlay key: " ++ @tagName(section) ++ "." ++ key_name);
 }

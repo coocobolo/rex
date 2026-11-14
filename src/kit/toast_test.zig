@@ -316,6 +316,40 @@ test "sizes of the toast surface" {
     // 19 bytes of fields, 256 of text, 1 of padding.
     try testing.expectEqual(276, @sizeOf(toast.Entry));
     try testing.expectEqual(4, @alignOf(toast.Entry));
-    try testing.expectEqual(2216, @sizeOf(State));
+    try testing.expectEqual(2224, @sizeOf(State));
     try testing.expectEqual(132, @sizeOf(memory.Table));
+}
+
+test "toast view: top_left option anchors at top left, uses custom geometry, and slides downward" {
+    var fixture: Fixture = .{};
+    var tree = fixture.tree();
+    var state: State = .{
+        .option = .{
+            .width = 280,
+            .position = .top_left,
+            .margin = 12,
+            .padding = 8,
+            .gap = 6,
+        },
+    };
+    _ = push(&state, "First");
+    _ = update(&state, .{ .tick = Theme.duration });
+    _ = push(&state, "Second");
+    const older = state.entries[0].serial;
+    const newer = state.entries[1].serial;
+
+    // Entering newest card starts 16 px above its resting place (slides downward on top_*).
+    _ = try fixture.frame(&tree, &state, 0);
+    const older_rect = cardRect(&tree, older).?;
+    const newer_enter = cardRect(&tree, newer).?;
+    try testing.expectEqual(@as(f32, 12), older_rect.x);
+    try testing.expectEqual(@as(f32, 12), older_rect.y);
+    try testing.expectEqual(@as(f32, 280), older_rect.w);
+    try testing.expectEqual(@as(f32, 12 + older_rect.h + 6 - 16), newer_enter.y);
+
+    // Finish entering: rests cleanly with `gap = 6` below `older`.
+    _ = update(&state, .{ .tick = Theme.duration });
+    _ = try fixture.frame(&tree, &state, Theme.duration);
+    const newer_rest = cardRect(&tree, newer).?;
+    try testing.expectEqual(older_rect.y + older_rect.h + 6, newer_rest.y);
 }
