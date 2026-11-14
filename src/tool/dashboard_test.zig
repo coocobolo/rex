@@ -68,10 +68,11 @@ test "dashboard: an idle timer does not ask the host to wake" {
     var lines: [dashboard.line_max]kit.text.Line = undefined;
     var tree = kit.tree.Tree.init(&nodes, &lines);
     try dashboard.view(&state, &tree, &kit.Theme.dark);
-    try testing.expectEqualStrings("00:00", state.clock());
+    // A full task, as the terminal shows an idle timer.
+    try testing.expectEqualStrings("01:00", state.clock());
 }
 
-test "dashboard: a running timer asks for a one-second wake" {
+test "dashboard: a running timer wakes when the shown second changes" {
     var tmp: StateTmp = .init();
     defer tmp.deinit();
     const dir = try tmp.path();
@@ -79,7 +80,18 @@ test "dashboard: a running timer asks for a one-second wake" {
     var state = try openDashboard(&config, dir);
     defer dashboard.deinit(&state);
     state.wb.toggleFocus(1_000);
-    try testing.expectEqual(@as(?f64, 1), dashboard.wait(&state));
+
+    // Just started: a full minute shows until one second has passed.
+    dashboard.refreshAt(&state, 1_000);
+    try testing.expectEqualStrings("01:00", state.clock());
+    dashboard.refreshAt(&state, 1_999);
+    try testing.expectEqualStrings("01:00", state.clock());
+    dashboard.refreshAt(&state, 2_000);
+    try testing.expectEqualStrings("00:59", state.clock());
+
+    // 59.700 s left shows 01:00 for 700 ms more, not a full second.
+    try testing.expectApproxEqAbs(@as(f64, 0.701), dashboard.waitAt(&state, 1_300).?, 1e-9);
+    try testing.expectApproxEqAbs(@as(f64, 0.001), dashboard.waitAt(&state, 2_000).?, 1e-9);
 }
 
 test "dashboard: a pause is visible to a second window" {

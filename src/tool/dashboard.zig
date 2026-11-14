@@ -79,20 +79,30 @@ pub fn deinit(state: *State) void {
     state.wb.close(state.io);
 }
 
-/// One second while the timer is running, so the digits move. An idle
-/// window waits for the file watch, or polls once a second without one.
 pub fn wait(state: *const State) ?f64 {
-    if (state.wb.timer().run == .running) return 1;
+    return waitAt(state, wallMs(state.io));
+}
+
+/// While the timer runs, until the shown second changes, as the terminal
+/// ticks (`focus.State.msUntilTick`). An idle window waits for the file
+/// watch, or polls once a second without one.
+pub fn waitAt(state: *const State, now_ms: i64) ?f64 {
+    const shown = focus.State.view(state.wb.timer(), state.wb.option.focus, now_ms);
+    const tick_ms = shown.msUntilTick();
+    if (tick_ms != std.math.maxInt(u64)) {
+        return @as(f64, @floatFromInt(@min(tick_ms, std.time.ms_per_s))) / std.time.ms_per_s;
+    }
     if (state.watch) |watch| {
         if (watch.isAlive()) return null;
     }
     return 1;
 }
 
-/// Picks up another process's save. True when the shown time changed.
-/// A wake from the watch reads the file at once; any other wake (input,
-/// the one-second timeout) polls, at most once a second.
+/// Picks up another process's save. True when the timer or the shown time
+/// changed. A wake from the watch reads the file at once; any other wake
+/// (input, the timeout) polls, at most once a second.
 pub fn wake(state: *State) bool {
+    const timer_before = state.wb.timer();
     const before = state.clock();
     var previous: [16]u8 = undefined;
     const n = @min(before.len, previous.len);
@@ -103,6 +113,7 @@ pub fn wake(state: *State) bool {
         log.err("cannot read wellbeing state: {t}", .{err});
     };
     refresh(state);
+    if (!std.meta.eql(timer_before, state.wb.timer())) return true;
     return n != state.time_len or !std.mem.eql(u8, previous[0..n], state.clock());
 }
 
@@ -181,12 +192,19 @@ fn buttonState(state: *const State, id: Id) button.State {
 }
 
 fn refresh(state: *State) void {
-    const shown = focus.State.view(state.wb.timer(), state.wb.option.focus, wallMs(state.io));
-    state.time_len = formatTime(&state.time_buf, shown.remaining_ms);
+    refreshAt(state, wallMs(state.io));
+}
+
+/// As the terminal's dashboard shows it: an idle timer shows a full task,
+/// and a second still partly left counts as a whole one.
+pub fn refreshAt(state: *State, now_ms: i64) void {
+    const shown = focus.State.view(state.wb.timer(), state.wb.option.focus, now_ms);
+    const ms = if (shown.phase == .idle) shown.getDuration(.task) else shown.remaining_ms;
+    state.time_len = formatTime(&state.time_buf, ms);
 }
 
 fn formatTime(buf: *[16]u8, ms: u64) usize {
-    const total_s = ms / std.time.ms_per_s;
+    const total_s = std.math.divCeil(u64, ms, std.time.ms_per_s) catch unreachable; // divisor is a nonzero constant
     const minutes: u64 = (total_s / 60) % 60;
     const seconds: u64 = total_s % 60;
     const hours: u64 = total_s / 3600;
