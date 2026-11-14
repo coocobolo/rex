@@ -459,6 +459,7 @@ fn Host(comptime Tool: type) type {
             switch (action) {
                 c.GLFW_PRESS => {
                     self.drag_id = self.over;
+                    self.send(.{ .pointer = .{ .id = self.over, .x = self.pointer_x, .y = self.pointer_y } });
                     self.send(.{ .press = self.over });
                 },
                 c.GLFW_RELEASE => {

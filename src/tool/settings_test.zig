@@ -1041,3 +1041,79 @@ test "settings: holding stepper +/- auto-repeats after initial delay" {
     try testing.expectApproxEqAbs(@as(f32, 6.0), state.activeConfig().scrollbar.width, 1e-6);
     _ = settings.update(&state, .release);
 }
+
+test "settings: clicking select value label opens and switches directly between dropdowns" {
+    const gpa = testing.allocator;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const dir_path = try std.fs.path.join(gpa, &.{ ".zig-cache", "tmp", &tmp.sub_path });
+    defer gpa.free(dir_path);
+    const cfg_path = try std.fs.path.join(gpa, &.{ dir_path, "config" });
+    defer gpa.free(cfg_path);
+
+    const Helper = struct {
+        var tree: kit.tree.Tree = undefined;
+        fn getRect(_: *const anyopaque, id: Id) ?kit.tree.Rect {
+            return if (tree.find(id)) |n| n.rect else null;
+        }
+    };
+
+    const cfg = config_defaults.default;
+    var state = try settings.init(.{
+        .gpa = gpa,
+        .io = testing.io,
+        .config = &cfg,
+        .state_dir = dir_path,
+        .config_path = cfg_path,
+        .home_dir = dir_path,
+        .wake_loop = struct {
+            fn wake() void {}
+        }.wake,
+        .node_rect = .{
+            .ctx = undefined,
+            .getFn = Helper.getRect,
+        },
+    });
+    defer settings.deinit(&state);
+
+    state.frame.current = @intFromEnum(settings.Page.overlays);
+    _ = settings.update(&state, .{ .size = .{ .width = 360, .height = 2000 } });
+
+    var nodes: [settings.node_max]kit.tree.Node = undefined;
+    var lines: [settings.line_max]kit.text.Line = undefined;
+    Helper.tree = .init(&nodes, &lines);
+    try settings.view(&state, &Helper.tree, &kit.Theme.dark);
+    try kit.layout.layout(&Helper.tree, measurer, 360, 2000);
+
+    const pos_idx = keyIndex(.toast, "position");
+    const place_idx = keyIndex(.banner, "placement");
+    const pos_id = Id.of("settings.select").item(pos_idx);
+    const place_id = Id.of("settings.select").item(place_idx);
+
+    const pos_rect = Helper.tree.find(pos_id).?.rect;
+    const place_rect = Helper.tree.find(place_id).?.rect;
+    try testing.expect(place_rect.y + place_rect.h < 2000);
+    // Clicking the value text inside a compact select trigger hits the select.
+    try testing.expectEqual(pos_id, Helper.tree.hitTest(pos_rect.x + 18, pos_rect.y + pos_rect.h / 2));
+
+    // Open the first dropdown (Toast Position).
+    const hit_pos = Helper.tree.hitTest(pos_rect.x + 18, pos_rect.y + pos_rect.h / 2);
+    _ = settings.update(&state, .{ .pointer = .{ .id = hit_pos, .x = pos_rect.x + 18, .y = pos_rect.y + pos_rect.h / 2 } });
+    _ = settings.update(&state, .{ .press = hit_pos });
+    try testing.expect(settings.update(&state, .release));
+    try testing.expectEqual(pos_idx, state.open_select.?.key);
+
+    // Rebuild with popup open; clicking directly onto Banner Placement switches dropdowns in one click.
+    Helper.tree = .init(&nodes, &lines);
+    try settings.view(&state, &Helper.tree, &kit.Theme.dark);
+    try kit.layout.layout(&Helper.tree, measurer, 360, 2000);
+
+    const layer = Helper.tree.hitTest(place_rect.x + 18, place_rect.y + place_rect.h / 2);
+    try testing.expectEqual(Id.of("settings.layer"), layer);
+    _ = settings.update(&state, .{ .pointer = .{ .id = layer, .x = place_rect.x + 18, .y = place_rect.y + place_rect.h / 2 } });
+    try testing.expect(settings.update(&state, .{ .press = layer }));
+    try testing.expectEqual(place_idx, state.open_select.?.key);
+    _ = settings.update(&state, .release);
+    try testing.expectEqual(place_idx, state.open_select.?.key);
+}

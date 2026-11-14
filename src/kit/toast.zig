@@ -366,7 +366,7 @@ pub fn view(state: *const State, tree: *Tree, theme: *const Theme) tree_zig.Erro
         const card = try tree.open(.{
             .id = cardId(entry.serial),
             .axis = .row,
-            .width = .{ .fixed = state.option.width },
+            .width = .{ .at_most = state.option.width },
             .padding = .all(state.option.padding),
             .gap = 10,
             .fill = theme.popover.fade(presence),

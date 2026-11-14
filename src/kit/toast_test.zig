@@ -353,3 +353,25 @@ test "toast view: top_left option anchors at top left, uses custom geometry, and
     const newer_rest = cardRect(&tree, newer).?;
     try testing.expectEqual(older_rect.y + older_rect.h + 6, newer_rest.y);
 }
+
+test "toast view: shrinks to fit narrow windows inside margin" {
+    var fixture: Fixture = .{};
+    var tree = fixture.tree();
+    var state: State = .{ .motion = .none };
+    _ = update(&state, .{ .push = .{
+        .title = "Sample toast notification",
+        .description = "Positioned and timed from [toast].",
+        .kind = .info,
+        .duration_ms = 4000,
+    } });
+    const serial = state.entries[0].serial;
+
+    const stack = try toast.view(&state, &tree, &Theme.dark);
+    try layout(&tree, measurer, 360, 400);
+    _ = try toast.place(&state, &tree, stack, &fixture.table, 0);
+
+    const card = cardRect(&tree, serial).?;
+    try testing.expectEqual(@as(f32, toast.margin), card.x);
+    try testing.expectEqual(@as(f32, 360 - 2 * toast.margin), card.w);
+    try testing.expect(card.x + card.w <= 360 - toast.margin);
+}

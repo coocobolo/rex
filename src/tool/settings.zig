@@ -908,6 +908,7 @@ pub const State = struct {
     viewport_width: f32 = 960,
     viewport_height: f32 = 600,
     pointer_x: f32 = 0,
+    pointer_y: f32 = 0,
     hover: Target = .none,
     pressed: Target = .none,
     focused: Target = .none,
@@ -1416,6 +1417,7 @@ pub fn update(state: *State, event: host.Event) bool {
         },
         .pointer => |pointer| {
             state.pointer_x = pointer.x;
+            state.pointer_y = pointer.y;
             if (state.dragging_slider) |idx| {
                 return updateSliderFromPointer(state, idx, pointer.x);
             }
@@ -1501,10 +1503,19 @@ pub fn update(state: *State, event: host.Event) bool {
                 },
                 .none => {},
             }
-            if (state.open_select != null and id == layer_id) {
-                state.open_select = null;
-                state.pressed = .none;
-                return true;
+            if (state.open_select) |sel| {
+                if (id == layer_id) {
+                    if (selectUnderPoint(state, state.pointer_x, state.pointer_y)) |other_idx| {
+                        if (other_idx != sel.key) {
+                            state.open_select = null;
+                            state.pressed = .none;
+                            return activate(state, .{ .key_select = other_idx });
+                        }
+                    }
+                    state.open_select = null;
+                    state.pressed = .none;
+                    return true;
+                }
             }
             const target = over(state, id);
             if (target == .key_slider) {
@@ -2242,6 +2253,24 @@ fn over(state: *const State, id: Id) Target {
         }
     }
     return .none;
+}
+
+fn selectUnderPoint(state: *const State, x: f32, y: f32) ?u16 {
+    if (state.node_rect.get(scroll_area_id)) |area| {
+        if (!area.contains(x, y)) return null;
+    }
+    for (row_infos, 0..) |info, i| {
+        const idx: u16 = @intCast(i);
+        switch (info.kind) {
+            .select, .duration, .enum_set => {
+                if (state.node_rect.get(selectId(idx))) |rect| {
+                    if (rect.contains(x, y)) return idx;
+                }
+            },
+            else => {},
+        }
+    }
+    return null;
 }
 
 fn updateSliderFromPointer(state: *State, idx: u16, x: f32) bool {
