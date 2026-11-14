@@ -40,7 +40,6 @@ const popup_max_items: usize = 10;
 
 pub const Page = enum(u8) {
     appearance,
-    colors,
     window_shell,
     overlays,
     wellbeing,
@@ -51,7 +50,6 @@ pub const Page = enum(u8) {
 const groups = [_]sidebar.Group{
     .{ .label = "Terminal", .items = &.{
         .{ .label = "Appearance" },
-        .{ .label = "Colors" },
         .{ .label = "Window & Shell" },
         .{ .label = "Overlays" },
     } },
@@ -65,7 +63,6 @@ const page_count = sidebar.itemCount(&groups);
 
 const page_titles = [_][]const u8{
     "Appearance",
-    "Colors",
     "Window & Shell",
     "Overlays",
     "Screen Time & Privacy",
@@ -74,8 +71,7 @@ const page_titles = [_][]const u8{
 };
 
 const page_descriptions = [_][]const u8{
-    "Theme, UI motion, color scheme, and font configuration.",
-    "Custom color palette and theme overrides.",
+    "Theme, custom color palette, UI motion, color scheme, and font configuration.",
     "Window behavior, bell, scrolling, selection, clipboard, and shell.",
     "Toasts, banners, and modal dialogs.",
     "Wellbeing tracking, daily screen time limits, and dashboard charts.",
@@ -85,8 +81,7 @@ const page_descriptions = [_][]const u8{
 
 pub fn pageForSection(section: keys.Section) ?Page {
     return switch (section) {
-        .root, .font, .ui => .appearance,
-        .colors => .colors,
+        .root, .colors, .font, .ui => .appearance,
         .window, .bell, .scroll, .selection, .clipboard, .shell => .window_shell,
         .toast, .banner, .modal, .@"modal.blur" => .overlays,
         .wellbeing, .@"wellbeing.screen_time", .@"wellbeing.privacy", .@"wellbeing.dashboard" => .wellbeing,

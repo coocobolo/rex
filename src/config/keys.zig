@@ -184,7 +184,7 @@ const at_least_one: Bounds = .{ .min = 1 };
 /// driver and the display scale.
 const font_size: Bounds = .{ .min = 1, .max = 1000 };
 
-const base_table = [_]Key{
+const head_rows = [_]Key{
     .{ .section = .root, .name = "theme", .field = "theme", .kind = .theme },
 
     .{ .section = .colors, .name = "background", .field = "colors.background", .kind = .color, .null_keyword = .inherit },
@@ -192,6 +192,24 @@ const base_table = [_]Key{
     .{ .section = .colors, .name = "selection_background", .field = "colors.selection_background", .kind = .color, .null_keyword = .inherit },
     .{ .section = .colors, .name = "selection_foreground", .field = "colors.selection_foreground", .kind = .color, .null_keyword = .inherit },
     .{ .section = .colors, .name = "accent", .field = "colors.accent", .kind = .color, .null_keyword = .inherit },
+};
+
+const ansi_color_rows: [16]Key = blk: {
+    var rows: [16]Key = undefined;
+    for (0..16) |i| {
+        const name = std.fmt.comptimePrint("color{d}", .{i});
+        rows[i] = .{
+            .section = .colors,
+            .name = name,
+            .field = "colors." ++ name,
+            .kind = .color,
+            .null_keyword = .inherit,
+        };
+    }
+    break :blk rows;
+};
+
+const tail_rows = [_]Key{
 
     // One file per style; a style without one takes the next in
     // `Faces.face`'s order (naming doc §9, superseding F16 for fonts).
@@ -282,22 +300,7 @@ const base_table = [_]Key{
     .{ .section = .shell, .name = "working_directory", .field = "shell.working_directory", .kind = .directory_path, .null_keyword = .inherit, .reload = .restart },
 };
 
-const ansi_color_rows: [16]Key = blk: {
-    var rows: [16]Key = undefined;
-    for (0..16) |i| {
-        const name = std.fmt.comptimePrint("color{d}", .{i});
-        rows[i] = .{
-            .section = .colors,
-            .name = name,
-            .field = "colors." ++ name,
-            .kind = .color,
-            .null_keyword = .inherit,
-        };
-    }
-    break :blk rows;
-};
-
-pub const table: [base_table.len + ansi_color_rows.len]Key = base_table ++ ansi_color_rows;
+pub const table: [head_rows.len + ansi_color_rows.len + tail_rows.len]Key = head_rows ++ ansi_color_rows ++ tail_rows;
 
 /// A key that existed in a released version and is gone or renamed; Sema
 /// reports it instead of "unknown key".

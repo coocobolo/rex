@@ -397,7 +397,7 @@ test "settings: colors page edits, validates, and resets slot overrides" {
     });
     defer settings.deinit(&state);
 
-    state.frame.current = @intFromEnum(settings.Page.colors);
+    state.frame.current = @intFromEnum(settings.Page.appearance);
 
     const bg_idx = keyIndex(.colors, "background");
     const bg_input_id = Id.of("settings.input").item(bg_idx);
@@ -472,12 +472,13 @@ test "settings: ANSI palette collapsible hides color0..15 by default and updates
     });
     defer settings.deinit(&state);
 
-    state.frame.current = @intFromEnum(settings.Page.colors);
+    state.frame.current = @intFromEnum(settings.Page.appearance);
     _ = settings.update(&state, .{ .size = .{ .width = 960, .height = 720 } });
 
     const toggle_id = Id.of("settings.ansi_toggle");
     const c0_idx = keyIndex(.colors, "color0");
     const c0_input_id = Id.of("settings.input").item(c0_idx);
+    const font_file_idx = keyIndex(.font, "file");
 
     var nodes: [settings.node_max]kit.tree.Node = undefined;
     var lines: [settings.line_max]kit.text.Line = undefined;
@@ -489,13 +490,13 @@ test "settings: ANSI palette collapsible hides color0..15 by default and updates
         try testing.expect(tree.find(c0_input_id) == null);
     }
 
-    // Tab from accent lands on ansi_colors_toggle, then wraps back to sidebar when collapsed.
+    // Tab from accent lands on ansi_colors_toggle, then steps directly to Font when collapsed.
     const accent_idx = keyIndex(.colors, "accent");
     state.focused = .{ .key_input = accent_idx };
     try testing.expect(settings.update(&state, .{ .key = .{ .key = .tab } }));
     try testing.expectEqual(settings.Target.ansi_colors_toggle, state.focused);
     try testing.expect(settings.update(&state, .{ .key = .{ .key = .tab } }));
-    try testing.expectEqual(settings.Target.sidebar, state.focused);
+    try testing.expectEqual(settings.Target{ .key_input = font_file_idx }, state.focused);
 
     // Move back onto toggle and open via Enter; focus stays on the toggle and reveals color0.
     try testing.expect(settings.update(&state, .{ .key = .{ .key = .tab, .mods = .{ .shift = true } } }));
