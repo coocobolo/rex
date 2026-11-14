@@ -84,7 +84,7 @@ test "chart: the share strip cuts its width by each part's share" {
 }
 
 /// Day bars in a box 96 high, as a card gives them their height.
-fn dayChart(tree: *Tree, items: []const chart.Day, limit: ?f32) !void {
+fn dayChart(tree: *Tree, items: []const chart.Day, limit: ?chart.Limit) !void {
     const box = try tree.open(.{ .width = .fill, .height = .{ .fixed = 96 } });
     try chart.days(tree, &Theme.dark, .bar, items, limit);
     tree.close(box);
@@ -98,10 +98,11 @@ test "chart: day bars share a scale and the limit lines up" {
         .{ .total = 10, .part = 4, .fill = Theme.dark.muted, .part_fill = Theme.dark.primary },
         .{ .total = 20, .part = 30, .fill = Theme.dark.muted, .part_fill = Theme.dark.primary },
     };
-    try dayChart(&tree, &items, 10);
+    try dayChart(&tree, &items, .{ .value = 10, .label = "6h limit" });
     try testing.expectEqual(1 + chart.dayNodes(items.len), tree.len);
 
-    const first = 2;
+    const group = 1;
+    const first = 3;
     const second: usize = tree.nodes[first].end;
     try testing.expectEqual(@as(f32, 96), tree.nodes[first].rect.h);
     try testing.expectEqual(tree.nodes[first].rect.w, tree.nodes[second].rect.w);
@@ -119,13 +120,12 @@ test "chart: day bars share a scale and the limit lines up" {
     // A part larger than its total fills the bar and no more.
     try testing.expectApproxEqAbs(inner, findFill(&tree, second, Theme.dark.primary).?.rect.h, 0.01);
 
-    const line_a = findFill(&tree, first, Theme.dark.border).?;
-    const line_b = findFill(&tree, second, Theme.dark.border).?;
-    try testing.expectEqual(line_a.rect.y, line_b.rect.y);
-    try testing.expectEqual(@as(f32, 1), line_a.rect.h);
+    const line = findFill(&tree, group, Theme.dark.border).?;
+    try testing.expectEqual(tree.nodes[group].rect.w, line.rect.w);
+    try testing.expectEqual(@as(f32, 1), line.rect.h);
     // The hairline's bottom edge is at the limit: 10 of 20, half the bars'
     // height, so it meets the top of the first bar.
-    try testing.expectApproxEqAbs(bar_a.rect.y, line_a.rect.y + 1, 0.01);
+    try testing.expectApproxEqAbs(bar_a.rect.y, line.rect.y + 1, 0.01);
 }
 
 test "chart: an overlay covers its parent and does not grow it" {
@@ -201,7 +201,7 @@ test "chart: a missing limit draws no line" {
         .{ .total = 5, .part = 1, .fill = Theme.dark.muted, .part_fill = Theme.dark.primary },
     };
     try dayChart(&tree, &items, null);
-    try testing.expect(findFill(&tree, 2, Theme.dark.border) == null);
+    try testing.expect(findFill(&tree, 1, Theme.dark.border) == null);
 }
 
 fn findFill(tree: *const Tree, column: usize, color: Theme.Color) ?*const tree_zig.Node {

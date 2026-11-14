@@ -177,7 +177,7 @@ const week_nodes = daysNodes(week_days);
 /// text), the chart's column, the bars, and the label row with a box and
 /// text per day.
 fn daysNodes(comptime count: usize) usize {
-    return 4 + 3 * 3 + 1 + chart.dayNodes(count) + 1 + count * 2;
+    return 4 + 2 * 3 + 1 + chart.dayNodes(count) + 1 + count * 2;
 }
 /// The History page: like Today with cards of three nodes and no bar, two
 /// weeks of days, and the tooltip (card, column, three lines).
@@ -850,14 +850,6 @@ fn legend(tree: *Tree, theme: *const Theme, label: []const u8, color: Theme.Colo
     tree.close(item);
 }
 
-/// The limit's hairline and its length, beside the legend.
-fn limitLegend(tree: *Tree, theme: *const Theme, label: []const u8) kit.tree.Error!void {
-    const item = try tree.open(.{ .axis = .row, .gap = 6, .cross = .center });
-    _ = try tree.leaf(.{ .width = .{ .fixed = 12 }, .height = .{ .fixed = 1 }, .fill = theme.muted_foreground });
-    _ = try tree.text(label, .{ .color = theme.muted_foreground, .style = .xs });
-    tree.close(item);
-}
-
 fn screenFill(theme: *const Theme) Theme.Color {
     return theme.chart[theme.chart.len - 1];
 }
@@ -888,7 +880,6 @@ fn daysCard(tree: *Tree, theme: *const Theme, options: DayChart) kit.tree.Error!
     _ = try tree.leaf(.{ .width = .fill });
     try legend(tree, theme, "Screen", screenFill(theme));
     try legend(tree, theme, "Focus", theme.info);
-    if (options.limit_s != 0) try limitLegend(tree, theme, options.limit_label);
     tree.close(head);
 
     var items: [history_days]chart.Day = undefined;
@@ -905,7 +896,10 @@ fn daysCard(tree: *Tree, theme: *const Theme, options: DayChart) kit.tree.Error!
         };
     }
     const area = try tree.open(.{ .width = .fill, .height = .fill });
-    try chart.days(tree, theme, .bar, shown, if (options.limit_s == 0) null else @floatFromInt(options.limit_s));
+    try chart.days(tree, theme, .bar, shown, if (options.limit_s == 0) null else .{
+        .value = @floatFromInt(options.limit_s),
+        .label = options.limit_label,
+    });
     tree.close(area);
 
     const count = options.days.len;

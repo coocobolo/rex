@@ -29,7 +29,7 @@ const layout = @import("../kit/layout.zig");
 
 const log = std.log.scoped(.kit_painter);
 
-pub const Kind = enum(u32) { box = 0, glyph = 1, arc = 2 };
+pub const Kind = enum(u32) { box = 0, glyph = 1, arc = 2, dash = 3 };
 
 /// One box or glyph, as the shader reads it (`shaders/kit.vert`).
 pub const Instance = extern struct {
@@ -176,6 +176,19 @@ pub fn paint(self: *KitPainter, tree: *const Tree, font: *KitFont, atlas: *Atlas
         switch (node.content) {
             .box => {
                 const box = node.box;
+                if (box.dash > 0) {
+                    if (box.fill.a == 0) continue;
+                    const rect = layout.snap(node.rect, scale);
+                    const dash_px = @as(f32, @floatFromInt(box.dash)) * scale;
+                    try self.push(.{
+                        .rect = pixels(rect),
+                        .fill = box.fill,
+                        .params = .{ dash_px, dash_px },
+                        .kind = .dash,
+                        .clip = clip,
+                    });
+                    continue;
+                }
                 const stroke = if (box.border.a == 0) 0 else layout.strokePixels(box.border_width, scale);
                 if (box.fill.a == 0 and stroke == 0) continue;
                 const rect = layout.snap(node.rect, scale);

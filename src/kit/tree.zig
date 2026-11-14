@@ -142,6 +142,8 @@ pub const Box = struct {
     /// Drawn over the parent's padding box, and not counted in the
     /// parent's size. Several share one square, as the slices of a donut do.
     overlay: bool = false,
+    /// Dash and gap length in logical pixels for a horizontal rule; 0 is solid.
+    dash: u8 = 0,
 };
 
 pub const Text = struct {

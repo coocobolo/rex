@@ -5,8 +5,8 @@
 layout(location = 0) in vec4 a_rect;   // x, y, width, height in pixels
 layout(location = 1) in vec4 a_fill;   // box fill or glyph color, straight alpha
 layout(location = 2) in vec4 a_border; // box border color
-layout(location = 3) in vec2 a_params; // box: radius, border width; glyph: atlas x, y; arc: outer radius, thickness
-layout(location = 4) in uint a_kind;   // 0 = box, 1 = glyph, 2 = arc
+layout(location = 3) in vec2 a_params; // box: radius, border width; glyph: atlas x, y; arc: outer radius, thickness; dash: dash, gap
+layout(location = 4) in uint a_kind;   // 0 = box, 1 = glyph, 2 = arc, 3 = dash
 layout(location = 5) in ivec4 a_clip;  // left, top, right, bottom in pixels
 layout(location = 6) in vec2 a_arc;    // arc: start angle, clockwise sweep
 

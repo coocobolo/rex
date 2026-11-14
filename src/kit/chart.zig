@@ -69,11 +69,16 @@ pub fn shareNodes(count: usize) usize {
     return 1 + count * 2;
 }
 
-/// The row, then each day's column, its bar and the part inside it, and
-/// the limit's overlay, line and spacer.
+/// The group, the row, each day's column (column, bar, part), and the
+/// limit overlay (overlay, optional label box and text, hairline, spacer).
 pub fn dayNodes(count: usize) usize {
-    return 1 + count * 6;
+    return 7 + count * 3;
 }
+
+pub const Limit = struct {
+    value: f32,
+    label: []const u8 = "",
+};
 
 /// The square, then one arc per part.
 pub fn donutNodes(count: usize) usize {
@@ -101,9 +106,9 @@ pub fn share(tree: *Tree, theme: *const Theme, mark: ShareMark, parts: []const P
 }
 
 /// One column per day, as tall as the parent gives the row. `part` sits at
-/// the bottom of `total`. `limit` is the same unit as `total`; null draws
-/// no line. The line is a hairline in each column at the same height.
-pub fn days(tree: *Tree, theme: *const Theme, mark: DayMark, items: []const Day, limit: ?f32) tree_zig.Error!void {
+/// the bottom of `total`. `limit` is in the same unit as `total`; null
+/// draws no line. The line spans the chart at the limit's height.
+pub fn days(tree: *Tree, theme: *const Theme, mark: DayMark, items: []const Day, limit: ?Limit) tree_zig.Error!void {
     switch (mark) {
         .bar => try dayBars(tree, theme, items, limit),
     }
@@ -152,23 +157,45 @@ const day_radius = 6;
 /// Room around the bar inside its column, where the slot shows.
 pub const slot_pad = 2;
 
-fn dayBars(tree: *Tree, theme: *const Theme, items: []const Day, limit: ?f32) tree_zig.Error!void {
-    var scale: f32 = if (limit) |lim| finite(lim) else 0;
+fn dayBars(tree: *Tree, theme: *const Theme, items: []const Day, limit: ?Limit) tree_zig.Error!void {
+    var scale: f32 = if (limit) |lim| finite(lim.value) else 0;
     for (items) |day| scale = @max(scale, finite(day.total));
+    const group = try tree.open(.{
+        .width = .fill,
+        .height = .fill,
+    });
     const row = try tree.open(.{
         .axis = .row,
         .width = .fill,
         .height = .fill,
         .gap = Theme.space,
     });
-    for (items) |day| try dayColumn(tree, theme, day, limit, scale);
+    for (items) |day| try dayColumn(tree, day, scale);
     tree.close(row);
+    if (limit) |lim| {
+        const overlay = try tree.open(.{
+            .overlay = true,
+            .width = .fill,
+            .height = .fill,
+            .padding = .{ .top = slot_pad, .bottom = slot_pad },
+            .main = .end,
+            .cross = .end,
+        });
+        if (lim.label.len > 0) {
+            const label_box = try tree.open(.{ .padding = .{ .bottom = 4 } });
+            _ = try tree.text(lim.label, .{ .color = theme.muted_foreground, .style = .xs });
+            tree.close(label_box);
+        }
+        _ = try tree.leaf(.{ .width = .fill, .height = .{ .fixed = 1 }, .fill = theme.border, .dash = 3 });
+        _ = try tree.leaf(.{ .width = .fill, .height = .{ .fraction = if (scale == 0) 0 else finite(lim.value) / scale } });
+        tree.close(overlay);
+    }
+    tree.close(group);
 }
 
 /// A column the row's height. Its bar stands on the baseline at `total`
-/// of the scale, the part inside it at `part` of the bar. The limit is an
-/// overlay whose hairline sits on a spacer that tall.
-fn dayColumn(tree: *Tree, theme: *const Theme, day: Day, limit: ?f32, scale: f32) tree_zig.Error!void {
+/// of the scale, the part inside it at `part` of the bar.
+fn dayColumn(tree: *Tree, day: Day, scale: f32) tree_zig.Error!void {
     const column = try tree.open(.{
         .id = day.id,
         .width = .fill,
@@ -193,14 +220,6 @@ fn dayColumn(tree: *Tree, theme: *const Theme, day: Day, limit: ?f32, scale: f32
         .radius = day_radius,
     });
     tree.close(bar);
-    if (limit) |lim| {
-        // An overlay covers the padding box; its own padding puts the line
-        // on the bars' scale.
-        const overlay = try tree.open(.{ .overlay = true, .width = .fill, .height = .fill, .padding = .all(slot_pad), .main = .end });
-        _ = try tree.leaf(.{ .width = .fill, .height = .{ .fixed = 1 }, .fill = theme.border });
-        _ = try tree.leaf(.{ .width = .fill, .height = .{ .fraction = if (scale == 0) 0 else finite(lim) / scale } });
-        tree.close(overlay);
-    }
     tree.close(column);
 }
 

@@ -69,6 +69,16 @@ void main() {
     return;
   }
 
+  if (v_kind == 3u) {
+    if (abs(v_local.x) >= v_half.x || abs(v_local.y) >= v_half.y) discard;
+    float x = v_local.x + v_half.x;
+    float period = v_params.x + v_params.y;
+    if (period > 0.0 && mod(x, period) >= v_params.x) discard;
+    if (v_fill.a < 0.004) discard;
+    frag_color = v_fill;
+    return;
+  }
+
   float radius = min(v_params.x, min(v_half.x, v_half.y));
   float distance = roundedBox(v_local, v_half, radius);
   float shape = clamp(0.5 - distance, 0.0, 1.0);
