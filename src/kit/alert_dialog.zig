@@ -22,6 +22,7 @@ const button = @import("button.zig");
 const dialog = @import("dialog.zig");
 const focus = @import("focus.zig");
 const icons = @import("icons.zig");
+const kbd = @import("kbd.zig");
 const motion = @import("motion.zig");
 const text = @import("text.zig");
 const tree_zig = @import("tree.zig");
@@ -353,6 +354,26 @@ fn hasDestructiveAction(self: *const State) bool {
     return false;
 }
 
+fn estimateActionWidth(action: *const Button) f32 {
+    // Ring margin, horizontal face padding, generous glyph advance estimate,
+    // and optional key cap so narrow cards stack before labels wrap.
+    var w: f32 = @floatFromInt(2 * Theme.ring_width + 2 * button.Size.default.pad() + @as(u16, action.label_len) * 9);
+    if (action.key_cap_len > 0) {
+        w += @floatFromInt(button.gap + @max(@as(u16, kbd.width_min), @as(u16, action.key_cap_len) * 8 + 12));
+    }
+    return w;
+}
+
+fn shouldStackFooter(state: *const State) bool {
+    if (state.count <= 1) return false;
+    const inner_w: f32 = @max(0, state.option.width - @as(f32, @floatFromInt(2 * @as(u16, state.option.padding))));
+    var needed: f32 = @floatFromInt(@as(u16, state.count - 1) * button.gap);
+    for (state.buttons[0..state.count]) |*action| {
+        needed += estimateActionWidth(action);
+    }
+    return needed > inner_w;
+}
+
 /// Most nodes one view writes: the dialog's parts, the content wrapper, the
 /// media box and its icon, the title, the body, the separator and the buttons.
 pub const node_max = dialog.node_max + 6 + actions_max * button.node_max;
@@ -406,7 +427,11 @@ pub fn view(state: *const State, tree: *Tree, theme: *const Theme) tree_zig.Erro
     tree.close(body_box);
     try dialog.separator(tree, theme, presence);
     const footer_v: u8 = @max(12, @min(state.option.padding, state.option.gap));
-    const footer = try dialog.footerPadded(tree, .symmetric(state.option.padding, footer_v));
+    const stacked = shouldStackFooter(state);
+    const footer = if (stacked)
+        try dialog.footerColumn(tree, .symmetric(state.option.padding, footer_v))
+    else
+        try dialog.footerPadded(tree, .symmetric(state.option.padding, footer_v));
     for (state.buttons[0..state.count], 0..) |*action, index| {
         try button.view(tree, theme, .{
             .id = actionId(@intCast(index)),
@@ -415,6 +440,7 @@ pub fn view(state: *const State, tree: *Tree, theme: *const Theme) tree_zig.Erro
             .variant = action.variant,
             .state = if (state.hover != index) .normal else if (state.pressed == index) .pressed else .hovered,
             .focused = state.focus == index,
+            .fill_width = stacked,
             .presence = presence,
         });
     }

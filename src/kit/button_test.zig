@@ -171,3 +171,21 @@ test "kbd: a group is its caps in a row" {
     try testing.expectEqual(ctrl.y, p.y);
     try testing.expectEqual("Shift", tree.nodes[4].content.text.bytes);
 }
+
+test "button: fill width and wrapped label grow face height cleanly" {
+    var fixture: Fixture = .{};
+    var tree = fixture.tree();
+    try button.view(&tree, &Theme.dark, .{
+        .id = id,
+        .label = "Close terminal window",
+        .fill_width = true,
+    });
+    try layout(&tree, measurer, 120, 200);
+
+    const face = tree.nodes[1].rect;
+    const label = tree.nodes[2];
+    try testing.expectEqual(@as(f32, 120 - 2 * Theme.ring_width), face.w);
+    try testing.expect(label.content.text.line_count > 1);
+    try testing.expect(face.h > Theme.control);
+    try testing.expect(face.h >= label.rect.h + 12);
+}

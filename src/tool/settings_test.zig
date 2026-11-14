@@ -974,3 +974,70 @@ test "settings: Overlays preview buttons trigger, lay out, and dismiss in-window
     try testing.expect(settings.update(&state, .release));
     try testing.expectEqual(kit.alert_dialog.Media.none, state.preview_dialog.option.media);
 }
+
+test "settings: holding stepper +/- auto-repeats after initial delay" {
+    const gpa = testing.allocator;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const dir_path = try std.fs.path.join(gpa, &.{ ".zig-cache", "tmp", &tmp.sub_path });
+    defer gpa.free(dir_path);
+    const cfg_path = try std.fs.path.join(gpa, &.{ dir_path, "config" });
+    defer gpa.free(cfg_path);
+
+    const cfg = config_defaults.default;
+    var state = try settings.init(.{
+        .gpa = gpa,
+        .io = testing.io,
+        .config = &cfg,
+        .state_dir = dir_path,
+        .config_path = cfg_path,
+        .home_dir = dir_path,
+        .wake_loop = struct {
+            fn wake() void {}
+        }.wake,
+    });
+    defer settings.deinit(&state);
+
+    const width_idx = keyIndex(.scrollbar, "width");
+    const inc_id = Id.of("settings.inc").item(width_idx);
+    const dec_id = Id.of("settings.dec").item(width_idx);
+
+    _ = settings.update(&state, .{ .pointer = .{ .id = inc_id } });
+    _ = settings.update(&state, .{ .press = inc_id });
+    const initial_wait = settings.wait(&state).?;
+    try testing.expect(initial_wait > 0 and initial_wait <= 0.4);
+    try testing.expectApproxEqAbs(@as(f32, 5.0), state.activeConfig().scrollbar.width, 1e-6);
+
+    // After initial delay, wake steps once and arms shorter repeat cadence.
+    state.stepper_hold.holding.last_ms -= 350;
+    try testing.expect(settings.wake(&state));
+    try testing.expectApproxEqAbs(@as(f32, 6.0), state.activeConfig().scrollbar.width, 1e-6);
+    const repeat_wait = settings.wait(&state).?;
+    try testing.expect(repeat_wait > 0 and repeat_wait < initial_wait);
+
+    // Continued hold steps multiple times across elapsed repeat intervals.
+    state.stepper_hold.holding.last_ms -= 150;
+    try testing.expect(settings.wake(&state));
+    try testing.expectApproxEqAbs(@as(f32, 8.0), state.activeConfig().scrollbar.width, 1e-6);
+
+    // Moving pointer off the stepper pauses repeat until pointer returns.
+    _ = settings.update(&state, .{ .pointer = .{ .id = .none } });
+    try testing.expectEqual(@as(?f64, null), settings.wait(&state));
+    try testing.expect(!settings.wake(&state));
+    try testing.expectApproxEqAbs(@as(f32, 8.0), state.activeConfig().scrollbar.width, 1e-6);
+
+    // Releasing after auto-repeat ends the hold without an extra step.
+    _ = settings.update(&state, .{ .pointer = .{ .id = inc_id } });
+    try testing.expect(!settings.update(&state, .release));
+    try testing.expectApproxEqAbs(@as(f32, 8.0), state.activeConfig().scrollbar.width, 1e-6);
+    try testing.expectEqual(@as(?f64, null), settings.wait(&state));
+
+    // Holding '-' decrements repeatedly too.
+    _ = settings.update(&state, .{ .pointer = .{ .id = dec_id } });
+    _ = settings.update(&state, .{ .press = dec_id });
+    state.stepper_hold.holding.last_ms -= 425;
+    try testing.expect(settings.wake(&state));
+    try testing.expectApproxEqAbs(@as(f32, 6.0), state.activeConfig().scrollbar.width, 1e-6);
+    _ = settings.update(&state, .release);
+}

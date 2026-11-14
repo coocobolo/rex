@@ -880,6 +880,19 @@ const color_slot_index: [keys.table.len]?u8 = blk: {
     break :blk map;
 };
 
+const stepper_hold_delay_ms: u32 = 350;
+const stepper_repeat_ms: u32 = 75;
+
+const StepperHold = union(enum) {
+    idle,
+    holding: struct {
+        target: Target,
+        last_ms: i64,
+        until_step_ms: u32,
+        repeated: bool,
+    },
+};
+
 pub const State = struct {
     gpa: Allocator,
     io: std.Io,
@@ -916,6 +929,7 @@ pub const State = struct {
     preview_toast_motion: kit.toast.Motion = .settled,
     preview_last_ms: ?i64 = null,
     preview_glide_ms: u32 = 0,
+    stepper_hold: StepperHold = .idle,
 
     pub fn activeConfig(self: *const State) *const Config {
         if (self.loaded) |*l| return &l.config;
@@ -1253,6 +1267,19 @@ fn triggerPreviewDialog(state: *State) void {
     if (state.preview_last_ms == null) state.preview_last_ms = previewNowMs(state);
 }
 
+fn stepperHoldWakeMs(state: *const State) ?u32 {
+    return switch (state.stepper_hold) {
+        .idle => null,
+        .holding => |hold| if (state.preview_dialog.phase == .closed and
+            state.open_select == null and
+            std.meta.eql(state.pressed, hold.target) and
+            std.meta.eql(state.hover, hold.target))
+            hold.until_step_ms
+        else
+            null,
+    };
+}
+
 pub fn wait(state: *const State) ?f64 {
     var min_ms: ?u32 = null;
     if (state.preview_dialog.phase != .closed) {
@@ -1264,12 +1291,19 @@ pub fn wait(state: *const State) ?f64 {
         else
             state.preview_toast.wakeMs();
         min_ms = minOptMs(min_ms, toast_ms);
+        min_ms = minOptMs(min_ms, stepperHoldWakeMs(state));
     }
     const ms = min_ms orelse return null;
     return @as(f64, @floatFromInt(ms)) / std.time.ms_per_s;
 }
 
 pub fn wake(state: *State) bool {
+    var changed = wakePreview(state);
+    if (wakeStepperHold(state)) changed = true;
+    return changed;
+}
+
+fn wakePreview(state: *State) bool {
     if (!anyPreviewActive(state)) {
         state.preview_last_ms = null;
         state.preview_glide_ms = 0;
@@ -1301,6 +1335,42 @@ pub fn wake(state: *State) bool {
         state.preview_glide_ms = 0;
     }
     return changed;
+}
+
+fn wakeStepperHold(state: *State) bool {
+    switch (state.stepper_hold) {
+        .idle => return false,
+        .holding => |*hold| {
+            if (state.preview_dialog.phase != .closed or
+                state.open_select != null or
+                !std.meta.eql(state.pressed, hold.target) or
+                !std.meta.eql(state.hover, hold.target))
+            {
+                hold.last_ms = previewNowMs(state);
+                return false;
+            }
+            const now = previewNowMs(state);
+            const raw = now - hold.last_ms;
+            if (raw <= 0) return false;
+            hold.last_ms = now;
+            var elapsed: u32 = @intCast(@min(raw, std.math.maxInt(u32)));
+            var changed = false;
+            var steps: u32 = 0;
+            while (elapsed >= hold.until_step_ms and steps < 8) {
+                elapsed -= hold.until_step_ms;
+                hold.until_step_ms = stepper_repeat_ms;
+                hold.repeated = true;
+                steps += 1;
+                if (activate(state, hold.target)) changed = true;
+            }
+            if (elapsed < hold.until_step_ms) {
+                hold.until_step_ms -= elapsed;
+            } else {
+                hold.until_step_ms = stepper_repeat_ms;
+            }
+            return changed;
+        },
+    }
 }
 
 /// Applies enter/leave/glide motion to any active preview overlay after layout.
@@ -1367,6 +1437,14 @@ pub fn update(state: *State, event: host.Event) bool {
             const sb = state.frame.update(page_count, .{ .pointer = sidebar.hit(pointer.id, page_count) });
             const next_hover = over(state, pointer.id);
             const h_changed = !std.meta.eql(state.hover, next_hover);
+            switch (state.stepper_hold) {
+                .holding => |*hold| {
+                    if (std.meta.eql(next_hover, hold.target) and !std.meta.eql(state.hover, hold.target)) {
+                        hold.last_ms = previewNowMs(state);
+                    }
+                },
+                .idle => {},
+            }
             state.hover = next_hover;
             if (state.open_select) |*sel| {
                 if (next_hover == .select_choice) {
@@ -1380,6 +1458,7 @@ pub fn update(state: *State, event: host.Event) bool {
             return sb or h_changed or alert_changed;
         },
         .press => |id| {
+            state.stepper_hold = .idle;
             if (state.preview_dialog.phase != .closed) {
                 switch (kit.alert_dialog.hit(id) orelse .scrim) {
                     .action => |btn_idx| {
@@ -1438,6 +1517,17 @@ pub fn update(state: *State, event: host.Event) bool {
             }
             if (target != .none) {
                 state.pressed = target;
+                switch (target) {
+                    .stepper_dec, .stepper_inc => {
+                        state.stepper_hold = .{ .holding = .{
+                            .target = target,
+                            .last_ms = previewNowMs(state),
+                            .until_step_ms = stepper_hold_delay_ms,
+                            .repeated = false,
+                        } };
+                    },
+                    else => {},
+                }
                 return false;
             }
             const prev_page = state.frame.current;
@@ -1453,7 +1543,13 @@ pub fn update(state: *State, event: host.Event) bool {
             return sb;
         },
         .release => {
-            if (state.preview_dialog.pressed != kit.alert_dialog.no_action) {
+            const target = state.pressed;
+            const already_repeated = switch (state.stepper_hold) {
+                .holding => |hold| hold.repeated and std.meta.eql(hold.target, target),
+                .idle => false,
+            };
+            state.stepper_hold = .idle;
+            if (state.preview_dialog.phase != .closed) {
                 state.pressed = .none;
                 return kit.alert_dialog.update(&state.preview_dialog, .release) != .quiet;
             }
@@ -1468,9 +1564,8 @@ pub fn update(state: *State, event: host.Event) bool {
                 return true;
             }
             const sb = state.frame.update(page_count, .release);
-            const target = state.pressed;
             state.pressed = .none;
-            if (std.meta.eql(target, state.hover)) {
+            if (std.meta.eql(target, state.hover) and !already_repeated) {
                 if (activate(state, target)) return true;
             }
             return sb;

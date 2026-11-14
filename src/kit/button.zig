@@ -85,6 +85,8 @@ pub const Options = struct {
     state: State = .normal,
     /// Draws the focus ring.
     focused: bool = false,
+    /// Stretch the button to fill its parent's width (e.g., stacked dialog buttons).
+    fill_width: bool = false,
     /// The opacity of the surface it sits on, 0 to 1.
     presence: f32 = 1,
 };
@@ -172,6 +174,7 @@ pub fn view(tree: *Tree, theme: *const Theme, options: Options) tree_zig.Error!v
     // slot: a click on the ring is a click on the button.
     const slot = try tree.open(.{
         .id = options.id,
+        .width = if (options.fill_width and !square) .fill else .fit,
         .pointer = if (options.state == .disabled) .arrow else .hand,
         .padding = .all(Theme.ring_width),
         .border = ringBorder(theme, options).fade(presence),
@@ -180,9 +183,9 @@ pub fn view(tree: *Tree, theme: *const Theme, options: Options) tree_zig.Error!v
     });
     const face = try tree.open(.{
         .axis = .row,
-        .width = if (square) .{ .fixed = height } else .fit,
-        .height = .{ .fixed = height },
-        .padding = if (square) .zero else .symmetric(options.size.pad(), 0),
+        .width = if (square) .{ .fixed = height } else if (options.fill_width) .fill else .fit,
+        .height = if (square) .{ .fixed = height } else .{ .at_least = height },
+        .padding = if (square) .zero else .symmetric(options.size.pad(), 6),
         .gap = gap,
         .main = .center,
         .cross = .center,

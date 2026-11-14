@@ -262,11 +262,20 @@ pub fn footer(tree: *Tree) tree_zig.Error!Index {
 
 /// Starts the footer with explicit inner padding inside a zero-padded card.
 pub fn footerPadded(tree: *Tree, card_padding: tree_zig.Edges) tree_zig.Error!Index {
+    return footerBox(tree, card_padding, .row);
+}
+
+/// Starts a vertically stacked footer with full-width button slots for narrow cards.
+pub fn footerColumn(tree: *Tree, card_padding: tree_zig.Edges) tree_zig.Error!Index {
+    return footerBox(tree, card_padding, .column);
+}
+
+fn footerBox(tree: *Tree, card_padding: tree_zig.Edges, axis: tree_zig.Axis) tree_zig.Error!Index {
     return tree.open(.{
-        .axis = .row,
+        .axis = axis,
         .width = .fill,
         .padding = card_padding,
-        .main = .end,
+        .main = if (axis == .row) .end else .start,
         .cross = .center,
         .gap = button.gap,
     });

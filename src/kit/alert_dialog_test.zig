@@ -458,3 +458,39 @@ test "dialog: option configures position, dimensions, and fallback scrim alpha" 
         try testing.expect(node.content != .icon);
     }
 }
+
+test "dialog: narrow widths stack footer buttons instead of wrapping labels" {
+    const actions = [_]alert_dialog.Action{
+        .{ .label = "Cancel", .key_cap = "Esc", .role = .dismiss },
+        .{ .label = "Close window", .variant = .destructive },
+    };
+    var state: State = .{
+        .motion = .none,
+        .option = .{ .width = 240 },
+    };
+    _ = update(&state, .{ .open = .{
+        .media = icons.alert_triangle,
+        .title = "Close this window?",
+        .body = "Previewing narrow footer.",
+        .actions = &actions,
+    } });
+
+    var fixture: Fixture = .{};
+    var tree = fixture.tree();
+    const scrim = (try alert_dialog.view(&state, &tree, &Theme.dark)).?;
+    try layout(&tree, measurer, 1000, 600);
+
+    const card = tree.nodes[scrim + 1].rect;
+    try testing.expectEqual(@as(f32, 240), card.w);
+
+    const cancel_face = face(&tree, 0);
+    const close_face = face(&tree, 1);
+    // Stacked vertically rather than squeezed onto one row.
+    try testing.expect(close_face.rect.y >= cancel_face.rect.y + cancel_face.rect.h);
+    try testing.expectEqual(cancel_face.rect.w, close_face.rect.w);
+    try testing.expectEqual(@as(f32, 240 - 2 * state.option.padding - 2 * Theme.ring_width), close_face.rect.w);
+
+    const close_label = textByBytes(&tree, "Close window").?;
+    try testing.expectEqual(@as(u16, 1), close_label.content.text.line_count);
+    try testing.expectEqual(@as(f32, Theme.control), close_face.rect.h);
+}
