@@ -1128,7 +1128,7 @@ fn syncInputs(state: *State) Allocator.Error!void {
 
 const preview_dialog_actions = [_]kit.alert_dialog.Action{
     .{ .label = "Cancel", .role = .dismiss, .key_cap = "Esc" },
-    .{ .label = "Confirm", .variant = .primary },
+    .{ .label = "Close window", .variant = .destructive },
 };
 
 fn overlayAnchor(pos: overlay.Position) kit.tree.ScreenAnchor {
@@ -1230,9 +1230,9 @@ fn triggerPreviewDialog(state: *State) void {
         .confirm => 1,
     };
     _ = kit.alert_dialog.update(&state.preview_dialog, .{ .open = .{
-        .media = kit.icons.info,
-        .title = "Sample alert dialog",
-        .body = "Uses [modal] backdrop, position, spacing, and [alert_dialog] width & focus.",
+        .media = kit.icons.alert_triangle,
+        .title = "Close this window?",
+        .body = "Previewing [modal] & [alert_dialog] layout, separator, and focus.",
         .actions = &preview_dialog_actions,
         .focus = focus_idx,
     } });

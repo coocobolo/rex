@@ -200,6 +200,11 @@ pub fn variantFor(background: [3]u8) Variant {
     return if (relativeLuminance(background) < 0.179) .dark else .light;
 }
 
+/// Whether this theme uses dark surfaces, by WCAG relative luminance of `background`.
+pub fn isDark(self: *const Theme) bool {
+    return variantFor(.{ self.background.r, self.background.g, self.background.b }) == .dark;
+}
+
 /// WCAG 2.x relative luminance of an sRGB color, 0 (black) to 1 (white).
 /// https://www.w3.org/TR/WCAG21/#dfn-relative-luminance
 fn relativeLuminance(color: [3]u8) f32 {

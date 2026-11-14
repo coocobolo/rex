@@ -326,9 +326,16 @@ fn put(bytes: []const u8, dest: []u8) u8 {
     return @intCast(len);
 }
 
-/// Most nodes one view writes: the dialog's parts, the media box and its
-/// icon, the title, the body and the buttons.
-pub const node_max = dialog.node_max + 4 + actions_max * button.node_max;
+fn hasDestructiveAction(self: *const State) bool {
+    for (self.buttons[0..self.count]) |action| {
+        if (action.variant == .destructive) return true;
+    }
+    return false;
+}
+
+/// Most nodes one view writes: the dialog's parts, the content wrapper, the
+/// media box and its icon, the title, the body, the separator and the buttons.
+pub const node_max = dialog.node_max + 6 + actions_max * button.node_max;
 
 /// Writes the dialog as one root, the scrim, and returns it, or null when
 /// the dialog is closed and nothing was written. The texts point into
@@ -337,7 +344,7 @@ pub fn view(state: *const State, tree: *Tree, theme: *const Theme) tree_zig.Erro
     if (state.phase == .closed) return null;
     const presence = state.phase.presence(state.motion);
 
-    const frame = try dialog.open(tree, theme, .{
+    const frame = try dialog.openScrimCard(tree, theme, .{
         .scrim_id = scrim_id,
         .card_id = card_id,
         .width = state.option.width,
@@ -347,24 +354,38 @@ pub fn view(state: *const State, tree: *Tree, theme: *const Theme) tree_zig.Erro
         .margin = state.option.margin,
         .padding = state.option.padding,
         .gap = state.option.gap,
+    }, .zero, 0);
+    const body_box = try tree.open(.{
+        .width = .fill,
+        .padding = .all(state.option.padding),
+        .gap = state.option.gap,
     });
     const header = try dialog.header(tree);
     if (state.media != 0) {
+        const destructive_media = hasDestructiveAction(state);
+        const media_fill = if (destructive_media)
+            theme.destructive.alpha(if (theme.isDark()) 20 else 10)
+        else
+            theme.muted;
+        const media_fg = if (destructive_media) theme.destructive else theme.foreground;
         const box = try tree.open(.{
             .width = .{ .fixed = media_box },
             .height = .{ .fixed = media_box },
             .main = .center,
             .cross = .center,
-            .fill = theme.muted.fade(presence),
+            .fill = media_fill.fade(presence),
             .radius = Theme.radius_md,
         });
-        _ = try tree.icon(.{ .codepoint = state.media, .color = theme.foreground.fade(presence), .size = media_icon });
+        _ = try tree.icon(.{ .codepoint = state.media, .color = media_fg.fade(presence), .size = media_icon });
         tree.close(box);
     }
     try dialog.title(tree, theme, state.title(), presence);
     if (state.body_len > 0) try dialog.description(tree, theme, state.body(), presence);
     tree.close(header);
-    const footer = try dialog.footer(tree);
+    tree.close(body_box);
+    try dialog.separator(tree, theme, presence);
+    const footer_v: u8 = @max(12, @min(state.option.padding, state.option.gap));
+    const footer = try dialog.footerPadded(tree, .symmetric(state.option.padding, footer_v));
     for (state.buttons[0..state.count], 0..) |*action, index| {
         try button.view(tree, theme, .{
             .id = actionId(@intCast(index)),

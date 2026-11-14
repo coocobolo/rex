@@ -238,28 +238,30 @@ test "dialog: the card is centered, actions run left to right, the ring is on th
     try layout(&tree, measurer, 1000, 600);
     try testing.expectEqual(128, tree.nodes[scrim].box.fill.a);
 
-    // 24 + (28 + 8 + 20) + 16 + 42 + 24 = 162 high: padding, the header
-    // with its title and description, the gap, the footer, padding. The
-    // key cap sits inside the 36 px button. x = (1000 - 420) / 2,
-    // y = (600 - 162) / 2.
+    // Body box: 24 + (28 + 8 + 20) + 24 = 104, separator: 1, footer: 16 + 42 + 16 = 74 -> 179 high.
+    // x = (1000 - 420) / 2, y = (600 - 179) / 2.
     const card = &tree.nodes[scrim + 1];
     try testing.expectEqual(alert_dialog.card_id, card.box.id);
-    try testing.expectEqual(tree_zig.Rect{ .x = 290, .y = 219, .w = alert_dialog.width, .h = 162 }, card.rect);
+    try testing.expectEqual(tree_zig.Rect{ .x = 290, .y = 210.5, .w = alert_dialog.width, .h = 179 }, card.rect);
 
     const stay_button = face(&tree, stay);
     const close_button = face(&tree, close);
     try testing.expect(close_button.rect.x > stay_button.rect.x);
     try testing.expectEqual(Theme.control, close_button.rect.h);
-    try testing.expectEqual(Theme.dark.destructive, close_button.box.fill);
-    try testing.expectEqual(Theme.dark.ring, close_button.box.border);
+    try testing.expectEqual(Theme.dark.destructive.alpha(20), close_button.box.fill);
+    try testing.expectEqual(Theme.dark.destructive.alpha(40), close_button.box.border);
     try testing.expectEqual(Theme.Color.transparent, stay_button.box.fill);
     try testing.expectEqual(Theme.dark.input, stay_button.box.border);
 
     const esc = textByBytes(&tree, "Esc").?;
     try testing.expect(stay_button.rect.contains(esc.rect.x + 1, esc.rect.y + 1));
     try testing.expectEqual(Theme.dark.muted, tree.nodes[esc.parent].box.fill);
-    // Only the button that names a key has a cap: 6 + 5 + 3 nodes.
-    try testing.expectEqual(14, tree.len);
+    // Scrim, card, body_box, header, title, body, separator, footer, plus 5 + 3 button nodes = 16.
+    try testing.expectEqual(16, tree.len);
+    const sep = &tree.nodes[scrim + 6];
+    try testing.expectEqual(Theme.dark.border, sep.box.fill);
+    try testing.expectEqual(@as(f32, alert_dialog.width), sep.rect.w);
+    try testing.expectEqual(@as(f32, Theme.border_width), sep.rect.h);
 
     // The ring slot is the button's parent. The focus started on Close.
     try testing.expect(tree.nodes[close_button.parent].box.border.a > 0);
@@ -316,14 +318,15 @@ test "dialog: media is an icon in a box above the title" {
     const scrim = (try alert_dialog.view(&state, &tree, &Theme.dark)).?;
     try layout(&tree, measurer, 1000, 600);
 
-    // Scrim, card, header, then the box and its icon, then the title.
-    const box = tree.nodes[scrim + 3];
-    const icon = tree.nodes[scrim + 4];
-    const title = tree.nodes[scrim + 5];
-    try testing.expectEqual(Theme.dark.muted, box.box.fill);
+    // Scrim, card, body_box, header, then the box and its icon, then the title.
+    const box = tree.nodes[scrim + 4];
+    const icon = tree.nodes[scrim + 5];
+    const title = tree.nodes[scrim + 6];
+    try testing.expectEqual(Theme.dark.destructive.alpha(20), box.box.fill);
     try testing.expectEqual(alert_dialog.media_box, box.rect.w);
     try testing.expectEqual(alert_dialog.media_box, box.rect.h);
     try testing.expectEqual(icons.alert_triangle, icon.content.icon.codepoint);
+    try testing.expectEqual(Theme.dark.destructive, icon.content.icon.color);
     try testing.expectEqual(box.rect.x + (alert_dialog.media_box - alert_dialog.media_icon) / 2, icon.rect.x);
     try testing.expectEqual(box.rect.y + box.rect.h + dialog.header_gap, title.rect.y);
 
@@ -361,12 +364,12 @@ test "dialog: each variant has its look, and hover changes the fill" {
     var fixture: Fixture = .{};
     var tree = fixture.tree();
     _ = try alert_dialog.view(&state, &tree, theme);
-    try testing.expectEqual(theme.destructive, face(&tree, 0).box.fill);
+    try testing.expectEqual(theme.destructive.alpha(10), face(&tree, 0).box.fill);
     try testing.expectEqual(Theme.Color.transparent, face(&tree, 1).box.fill);
     try testing.expectEqual(theme.primary, face(&tree, 2).box.fill);
     try testing.expectEqual(theme.primary_foreground, textByBytes(&tree, "Save").?.content.text.color);
-    // Three buttons without key caps: 5 nodes before them (no body), 3 each.
-    try testing.expectEqual(14, tree.len);
+    // Three buttons without key caps: 7 nodes before them (no body), 3 each.
+    try testing.expectEqual(16, tree.len);
 
     _ = update(&state, .{ .pointer = 1 });
     tree.reset();
@@ -412,11 +415,14 @@ test "dialog: option configures position, dimensions, and fallback scrim alpha" 
 
     const scrim_node = tree.nodes[scrim];
     const card = tree.nodes[scrim + 1];
+    const body_box = tree.nodes[scrim + 2];
+    const footer_box = tree.nodes[scrim + 7];
     try testing.expectEqual(@as(u8, 64), scrim_node.box.fill.a);
     try testing.expectEqual(@as(f32, 360), card.rect.w);
     try testing.expectEqual(@as(f32, 30), card.rect.y);
-    try testing.expectEqual(tree_zig.Edges.all(18), card.box.padding);
-    try testing.expectEqual(@as(u16, 12), card.box.gap);
+    try testing.expectEqual(tree_zig.Edges.all(18), body_box.box.padding);
+    try testing.expectEqual(@as(u16, 12), body_box.box.gap);
+    try testing.expectEqual(tree_zig.Edges.symmetric(18, 12), footer_box.box.padding);
 
     // Explicit per-request scrim_alpha overrides the live option fallback.
     state.option.scrim_alpha = 180;

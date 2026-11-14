@@ -48,7 +48,7 @@ test "button: each variant has its fill, border and label color" {
         .{ .variant = .outline, .fill = .transparent, .border = theme.input, .label = theme.foreground },
         .{ .variant = .primary, .fill = theme.primary, .border = .transparent, .label = theme.primary_foreground },
         .{ .variant = .ghost, .fill = .transparent, .border = .transparent, .label = theme.ghost_foreground },
-        .{ .variant = .destructive, .fill = theme.destructive, .border = .transparent, .label = theme.destructive_foreground },
+        .{ .variant = .destructive, .fill = theme.destructive.alpha(20), .border = .transparent, .label = theme.destructive },
     };
     for (cases) |case| {
         var fixture: Fixture = .{};
@@ -68,7 +68,7 @@ test "button: hover and press change the fill" {
         .{ .variant = .outline, .hovered = theme.accent, .pressed = theme.accent },
         .{ .variant = .ghost, .hovered = theme.accent, .pressed = theme.accent },
         .{ .variant = .primary, .hovered = theme.primary.alpha(90), .pressed = theme.primary.alpha(80) },
-        .{ .variant = .destructive, .hovered = theme.destructive.alpha(90), .pressed = theme.destructive.alpha(80) },
+        .{ .variant = .destructive, .hovered = theme.destructive.alpha(20), .pressed = theme.destructive.alpha(30) },
     };
     for (cases) |case| {
         var fixture: Fixture = .{};

@@ -554,10 +554,11 @@ test "KitPainter: a dialog sits on a scrim that darkens the terminal behind it" 
     // Black at 50% over the terminal background, within rounding.
     const dimmed = frame.at(20, 20);
     try testing.expectApproxEqAbs(@as(f32, @floatFromInt(terminal_light.r)) / 2, @as(f32, @floatFromInt(dimmed[0])), 2);
-    // The confirm button is the destructive token, sampled in its padding.
+    // The confirm button uses a translucent destructive tint over the card, with destructive text ink.
     const confirm = rendered.rect(rendered.marks.confirm);
-    try testing.expectEqual(rgb(theme.destructive), frame.at(confirm.x + 6, confirm.y + confirm.h / 2));
-    try testing.expect(frame.countNot(confirm, rgb(theme.destructive)) > 100);
+    const pad = frame.at(confirm.x + 6, confirm.y + confirm.h / 2);
+    try testing.expect(pad[0] > pad[1] + 15 and pad[0] > pad[2] + 15);
+    try testing.expect(frame.countNot(confirm, pad) > 100);
 }
 
 test "KitPainter: the focus ring is a band around a button, not a fill behind it" {

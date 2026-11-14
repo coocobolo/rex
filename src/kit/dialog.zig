@@ -176,6 +176,18 @@ pub const node_max = 4;
 /// Starts a root, the scrim, and the card on it. What is written until
 /// `close` is the card's content, top to bottom.
 pub fn open(tree: *Tree, theme: *const Theme, options: Options) tree_zig.Error!Frame {
+    return openScrimCard(tree, theme, options, .all(options.padding), options.gap);
+}
+
+/// Opens the scrim and card with explicit card padding and child gap so a
+/// caller can place full-bleed dividers above a padded footer.
+pub fn openScrimCard(
+    tree: *Tree,
+    theme: *const Theme,
+    options: Options,
+    card_padding: tree_zig.Edges,
+    card_gap: u8,
+) tree_zig.Error!Frame {
     const scrim_base: Theme.Color = if (options.scrim_alpha) |alpha|
         .{ .r = theme.scrim.r, .g = theme.scrim.g, .b = theme.scrim.b, .a = alpha }
     else
@@ -192,14 +204,23 @@ pub fn open(tree: *Tree, theme: *const Theme, options: Options) tree_zig.Error!F
     const card = try tree.open(.{
         .id = options.card_id,
         .width = .{ .at_most = options.width },
-        .padding = .all(options.padding),
-        .gap = options.gap,
+        .padding = card_padding,
+        .gap = card_gap,
         .fill = theme.popover.fade(options.presence),
         .border = theme.border.fade(options.presence),
         .border_width = Theme.border_width,
         .radius = Theme.radius,
     });
     return .{ .scrim = scrim, .card = card };
+}
+
+/// Full-width 1 px horizontal divider for edge-to-edge card sections.
+pub fn separator(tree: *Tree, theme: *const Theme, presence: f32) tree_zig.Error!void {
+    _ = try tree.leaf(.{
+        .width = .fill,
+        .height = .{ .fixed = Theme.border_width },
+        .fill = theme.border.fade(presence),
+    });
 }
 
 pub fn close(tree: *Tree, frame: Frame) void {
@@ -236,9 +257,15 @@ pub fn description(tree: *Tree, theme: *const Theme, bytes: []const u8, presence
 /// convention the action the dialog is about comes last. End it with
 /// `Tree.close`.
 pub fn footer(tree: *Tree) tree_zig.Error!Index {
+    return footerPadded(tree, .zero);
+}
+
+/// Starts the footer with explicit inner padding inside a zero-padded card.
+pub fn footerPadded(tree: *Tree, card_padding: tree_zig.Edges) tree_zig.Error!Index {
     return tree.open(.{
         .axis = .row,
         .width = .fill,
+        .padding = card_padding,
         .main = .end,
         .cross = .center,
         .gap = button.gap,

@@ -24,6 +24,7 @@ const system = posix.system;
 const rex = @import("root.zig");
 const KitOverlay = @import("KitOverlay.zig");
 const alert_dialog = @import("kit/alert_dialog.zig");
+const icons = @import("kit/icons.zig");
 
 const unicode = rex.unicode;
 
@@ -2043,6 +2044,7 @@ pub fn requestQuit(self: *App) void {
     const program = if (running) self.foregroundProgram(&name_buf) else null;
     var body_buf: [alert_dialog.body_capacity]u8 = undefined;
     _ = kit.openDialog(.{
+        .media = icons.alert_triangle,
         .title = "Close this window?",
         .body = quitDialogBodyFor(running, program, &body_buf),
         .actions = &quit_actions,
@@ -2068,10 +2070,10 @@ const quit_close = 1;
 /// the shell is in the foreground, and `program` its name, when that could
 /// be read. The result is a literal or lies in `buf`.
 fn quitDialogBodyFor(running: bool, program: ?[]const u8, buf: []u8) []const u8 {
-    if (!running) return "Closing the window ends the shell.";
-    const name = program orelse return "A program is still running. Closing the window ends it.";
-    return std.fmt.bufPrint(buf, "A program is still running: {s}. Closing the window ends it.", .{name}) catch
-        "A program is still running. Closing the window ends it.";
+    if (!running) return "This will end the active shell session.";
+    const name = program orelse return "A program is still running. Closing this window will end it.";
+    return std.fmt.bufPrint(buf, "{s} is still running. Closing this window will end it.", .{name}) catch
+        "A program is still running. Closing this window will end it.";
 }
 
 /// The name of the program in the terminal's foreground, in `buf`, or
@@ -3362,10 +3364,10 @@ test "ScrollAccumulator: smooth line accumulation and direction reversal" {
 test "quit dialog copy: the running program, or the idle ask" {
     const testing = std.testing;
     var buf: [alert_dialog.body_capacity]u8 = undefined;
-    try testing.expectEqualStrings("Closing the window ends the shell.", quitDialogBodyFor(false, null, &buf));
-    try testing.expectEqualStrings("A program is still running. Closing the window ends it.", quitDialogBodyFor(true, null, &buf));
+    try testing.expectEqualStrings("This will end the active shell session.", quitDialogBodyFor(false, null, &buf));
+    try testing.expectEqualStrings("A program is still running. Closing this window will end it.", quitDialogBodyFor(true, null, &buf));
     try testing.expectEqualStrings(
-        "A program is still running: nvim. Closing the window ends it.",
+        "nvim is still running. Closing this window will end it.",
         quitDialogBodyFor(true, "nvim", &buf),
     );
 }

@@ -126,14 +126,30 @@ fn look(theme: *const Theme, options: Options) Look {
             .border = .transparent,
             .label = if (touched) theme.foreground else theme.ghost_foreground,
         },
-        .destructive => .{
-            .fill = theme.destructive.alpha(solid),
-            .border = .transparent,
-            .label = theme.destructive_foreground,
+        .destructive => blk: {
+            const base: u8 = if (theme.isDark()) 20 else 10;
+            const tint: u8 = switch (options.state) {
+                .normal, .disabled => base,
+                .hovered => base + 10,
+                .pressed => base + 20,
+            };
+            break :blk .{
+                .fill = theme.destructive.alpha(tint),
+                .border = if (options.focused) theme.destructive.alpha(40) else .transparent,
+                .label = theme.destructive,
+            };
         },
     };
-    if (options.focused) result.border = theme.ring;
+    if (options.focused and options.variant != .destructive) result.border = theme.ring;
     return result;
+}
+
+fn ringBorder(theme: *const Theme, options: Options) Color {
+    if (!options.focused) return .transparent;
+    if (options.variant == .destructive) {
+        return theme.destructive.alpha(if (theme.isDark()) 40 else 20);
+    }
+    return theme.ring.alpha(Theme.ring_opacity);
 }
 
 /// How much of its surface's opacity a disabled button keeps.
@@ -158,7 +174,7 @@ pub fn view(tree: *Tree, theme: *const Theme, options: Options) tree_zig.Error!v
         .id = options.id,
         .pointer = if (options.state == .disabled) .arrow else .hand,
         .padding = .all(Theme.ring_width),
-        .border = if (options.focused) theme.ring.alpha(Theme.ring_opacity).fade(presence) else .transparent,
+        .border = ringBorder(theme, options).fade(presence),
         .border_width = Theme.ring_width,
         .radius = Theme.radius_md + Theme.ring_width,
     });
