@@ -100,9 +100,9 @@ pub const Option = struct {
     min_thumb_height: f32 = 20.0,
     /// corner radius (px)
     radius: f32 = 4.0,
-    track_color: [4]f32 = .{ 0.05, 0.05, 0.05, 1.0 },
-    thumb_color: [4]f32 = .{ 0.7, 0.7, 0.7, 0.85 },
-    thumb_hover_color: [4]f32 = .{ 0.9, 0.9, 0.9, 0.95 },
+    track_color: [4]f32 = .{ 13.0 / 255.0, 13.0 / 255.0, 13.0 / 255.0, 1.0 },
+    thumb_color: [4]f32 = .{ 179.0 / 255.0, 179.0 / 255.0, 179.0 / 255.0, 0.85 },
+    thumb_hover_color: [4]f32 = .{ 230.0 / 255.0, 230.0 / 255.0, 230.0 / 255.0, 0.95 },
     /// Animation speed, as the fraction of the gap closed per ms.
     lerp_speed: f32 = 0.009,
     /// hide when at live view
@@ -140,7 +140,7 @@ pub fn init(option: Option) !Scrollbar {
 
     return .{
         .option = option,
-        .last_alpha = if (option.auto_hide) 0.0 else 1.0,
+        .last_alpha = if (option.auto_hide) option.auto_hide_alpha else 1.0,
         .last_width = option.width,
         .last_frame = .{ .height = 0, .width = 0 },
         .last_thumb_height_frac = 1.0,
@@ -156,20 +156,30 @@ pub fn deinit(self: *Scrollbar) void {
     self.* = undefined;
 }
 
+fn targetWidth(self: *const Scrollbar) f32 {
+    return if (self.hover) self.option.hover_width else self.option.width;
+}
+
+fn targetAlpha(self: *const Scrollbar) f32 {
+    return if (self.option.auto_hide and self.at_live_view)
+        self.option.auto_hide_alpha
+    else
+        1.0;
+}
+
+/// Replaces `option` on live config reload and snaps animation state to the
+/// new targets so changes appear on the next frame even when idle.
+pub fn setOption(self: *Scrollbar, option: Option) void {
+    self.option = option;
+    self.last_width = self.targetWidth();
+    self.last_alpha = self.targetAlpha();
+}
+
 /// Advances the width and fade animations by `dt_ms`. Returns true
 /// while they are still moving, so the caller should redraw.
 pub fn tick(self: *Scrollbar, dt_ms: u64) bool {
-    const target_width: f32 = if (self.hover)
-        self.option.hover_width
-    else
-        self.option.width;
-
-    // Fades to auto_hide_alpha at the live view, even when hovering.
-    const target_alpha: f32 =
-        if (self.option.auto_hide and self.at_live_view)
-            self.option.auto_hide_alpha
-        else
-            1.0;
+    const target_width = self.targetWidth();
+    const target_alpha = self.targetAlpha();
 
     // Lerp scaled by elapsed time: lerp_speed is a fraction per ms.
     const t = @min(1.0, @as(f32, @floatFromInt(dt_ms)) * self.option.lerp_speed);
@@ -212,7 +222,7 @@ pub fn upload(
 }
 
 pub fn draw(self: *const Scrollbar) void {
-    if (self.last_alpha < 0.01) return;
+    if (self.last_alpha < 0.01 or self.last_width <= 0.0 or self.last_frame.height <= 0.0) return;
     // No scrollback_used == 0 guard: FrameBuilder hides the scrollbar
     // then, so draw is not called.
 
@@ -250,8 +260,18 @@ pub fn draw(self: *const Scrollbar) void {
     self.shader.unbind();
 }
 
-pub inline fn setHover(self: *Scrollbar, v: bool) bool {
-    const changed = self.hover != v;
-    self.hover = v;
-    return changed;
+fn hitTestStrip(self: *const Scrollbar, frame_width: f32, mouse_x: f32, hit_width: f32) bool {
+    if (hit_width <= 0) return false;
+    return mouse_x >= frame_width - hit_width - self.option.gap;
+}
+
+/// Whether `mouse_x` (framebuffer pixels) falls inside the scrollbar's hover zone.
+pub fn containsHoverX(self: *const Scrollbar, frame_width: f32, mouse_x: f32) bool {
+    return self.hitTestStrip(frame_width, mouse_x, @max(self.option.width, self.option.hover_width));
+}
+
+/// Whether `mouse_x` (framebuffer pixels) falls inside the scrollbar's active click strip.
+pub fn containsClickX(self: *const Scrollbar, frame_width: f32, mouse_x: f32) bool {
+    const active = @max(self.last_width, self.targetWidth());
+    return self.hitTestStrip(frame_width, mouse_x, active);
 }

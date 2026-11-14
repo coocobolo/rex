@@ -121,6 +121,12 @@ pub fn Renderer(comptime option: TerminalOption) type {
             self.blur.invalidate();
         }
 
+        pub fn setScrollbarOption(self: *Self, opt: Scrollbar.Option) void {
+            if (std.meta.eql(self.scrollbar.option, opt)) return;
+            self.scrollbar.setOption(opt);
+            self.blur.invalidate();
+        }
+
         /// Takes the cell size and baseline from the font, and resolves
         /// the decoration lines from the font and the decoration option.
         /// Called at init and whenever the font size changes.

@@ -73,7 +73,7 @@ const page_titles = [_][]const u8{
 
 const page_descriptions = [_][]const u8{
     "Terminal color themes, light or dark interface, motion, and typography.",
-    "Window behavior, bell, scrolling, selection, clipboard, and shell.",
+    "Window behavior, bell, scrolling, scrollbar, selection, clipboard, and shell.",
     "Toasts, banners, and modal dialogs.",
     "Wellbeing tracking, daily screen time limits, and dashboard charts.",
     "Pomodoro focus intervals, alerts, and evening wind-down schedule.",
@@ -83,7 +83,7 @@ const page_descriptions = [_][]const u8{
 pub fn pageForSection(section: keys.Section) ?Page {
     return switch (section) {
         .root, .colors, .font, .ui => .appearance,
-        .window, .bell, .scroll, .selection, .clipboard, .shell => .window_shell,
+        .window, .bell, .scroll, .scrollbar, .selection, .clipboard, .shell => .window_shell,
         .toast, .banner, .modal, .@"modal.blur" => .overlays,
         .wellbeing, .@"wellbeing.screen_time", .@"wellbeing.privacy", .@"wellbeing.dashboard" => .wellbeing,
         .@"wellbeing.focus", .@"wellbeing.winddown" => .focus_winddown,
@@ -121,6 +121,7 @@ const section_titles = std.EnumArray(keys.Section, []const u8).init(.{
     .@"wellbeing.dashboard" = "Dashboard",
     .ui = "Interface",
     .scroll = "Scroll",
+    .scrollbar = "Scrollbar",
     .selection = "Selection",
     .clipboard = "Clipboard",
     .shell = "Shell",
@@ -224,6 +225,8 @@ fn keyMeta(comptime section: keys.Section, comptime key_name: []const u8) KeyMet
             .label = "Wheel Scroll Lines",
             .description = "Lines scrolled per mouse wheel notch.",
         } else @compileError("unmapped scroll key: " ++ key_name),
+
+        .scrollbar => scrollbarMeta(key_name),
 
         .selection => if (std.mem.eql(u8, key_name, "extra_word_characters")) .{
             .label = "Extra Word Characters",
@@ -415,6 +418,62 @@ fn colorMeta(comptime key_name: []const u8) KeyMeta {
         };
     }
     @compileError("unmapped colors key: " ++ key_name);
+}
+
+fn scrollbarMeta(comptime key_name: []const u8) KeyMeta {
+    if (std.mem.eql(u8, key_name, "width")) return .{
+        .label = "Bar Width",
+        .description = "Scrollbar thickness when idle in pixels (0 hides the bar).",
+    };
+    if (std.mem.eql(u8, key_name, "hover_width")) return .{
+        .label = "Hover Width",
+        .description = "Expanded scrollbar thickness when the pointer hovers over it.",
+    };
+    if (std.mem.eql(u8, key_name, "gap")) return .{
+        .label = "Edge Gap",
+        .description = "Space between the scrollbar and the right window edge in pixels.",
+    };
+    if (std.mem.eql(u8, key_name, "min_thumb_height")) return .{
+        .label = "Minimum Thumb Height",
+        .description = "Shortest height the draggable scrollbar thumb can shrink to in pixels.",
+    };
+    if (std.mem.eql(u8, key_name, "radius")) return .{
+        .label = "Corner Radius",
+        .description = "Roundness of the scrollbar track and thumb corners in pixels.",
+    };
+    if (std.mem.eql(u8, key_name, "auto_hide")) return .{
+        .label = "Auto-hide at Bottom",
+        .description = "Fade the scrollbar down when viewing the latest output.",
+    };
+    if (std.mem.eql(u8, key_name, "auto_hide_opacity")) return .{
+        .label = "Idle Opacity",
+        .description = "Opacity of the faded scrollbar while at the bottom (0.0–1.0).",
+    };
+    if (std.mem.eql(u8, key_name, "track_color")) return .{
+        .label = "Track Color",
+        .description = "Background color of the scrollbar track.",
+    };
+    if (std.mem.eql(u8, key_name, "track_opacity")) return .{
+        .label = "Track Opacity",
+        .description = "Opacity of the scrollbar track background (0.0–1.0).",
+    };
+    if (std.mem.eql(u8, key_name, "thumb_color")) return .{
+        .label = "Thumb Color",
+        .description = "Color of the draggable scrollbar thumb.",
+    };
+    if (std.mem.eql(u8, key_name, "thumb_opacity")) return .{
+        .label = "Thumb Opacity",
+        .description = "Opacity of the scrollbar thumb (0.0–1.0).",
+    };
+    if (std.mem.eql(u8, key_name, "thumb_hover_color")) return .{
+        .label = "Thumb Hover Color",
+        .description = "Color of the scrollbar thumb while hovered.",
+    };
+    if (std.mem.eql(u8, key_name, "thumb_hover_opacity")) return .{
+        .label = "Thumb Hover Opacity",
+        .description = "Opacity of the scrollbar thumb while hovered (0.0–1.0).",
+    };
+    @compileError("unmapped scrollbar key: " ++ key_name);
 }
 
 fn overlayMeta(comptime section: keys.Section, comptime key_name: []const u8) KeyMeta {

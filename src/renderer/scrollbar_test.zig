@@ -71,3 +71,39 @@ test "Fractions: viewportOffsetAt inverts top and clamps" {
     try testing.expectEqual(100, Fractions.viewportOffsetAt(-3.0, 100));
     try testing.expectEqual(0, Fractions.viewportOffsetAt(7.0, 100));
 }
+
+fn testScrollbar(opt: Scrollbar.Option) Scrollbar {
+    return .{
+        .shader = undefined,
+        .vao = 0,
+        .option = opt,
+        .last_frame = .{ .width = 1000, .height = 500 },
+        .last_thumb_top_frac = 1.0,
+        .last_thumb_height_frac = 0.5,
+        .last_width = opt.width,
+        .last_alpha = if (opt.auto_hide) opt.auto_hide_alpha else 1.0,
+    };
+}
+
+test "Scrollbar: containsHoverX and containsClickX guard zero-width and handle wide bars" {
+    var hidden = testScrollbar(.{ .width = 0, .hover_width = 0, .gap = 4 });
+    try testing.expect(!hidden.containsHoverX(1000, 999));
+    try testing.expect(!hidden.containsClickX(1000, 999));
+
+    // When normal width exceeds hover_width, both hover and click still hit the full bar.
+    var wide = testScrollbar(.{ .width = 12, .hover_width = 6, .gap = 2 });
+    try testing.expect(wide.containsHoverX(1000, 986));
+    try testing.expect(!wide.containsHoverX(1000, 985));
+    try testing.expect(wide.containsClickX(1000, 986));
+    try testing.expect(!wide.containsClickX(1000, 985));
+}
+
+test "Scrollbar: setOption snaps width and alpha to the new resting targets" {
+    var sb = testScrollbar(.{ .width = 5, .hover_width = 8, .auto_hide = true, .auto_hide_alpha = 0.25 });
+    sb.at_live_view = true;
+    sb.hover = true;
+    sb.setOption(.{ .width = 10, .hover_width = 14, .auto_hide = false, .auto_hide_alpha = 0.1 });
+    try testing.expectApproxEqAbs(@as(f32, 14.0), sb.last_width, 1e-6);
+    try testing.expectApproxEqAbs(@as(f32, 1.0), sb.last_alpha, 1e-6);
+    try testing.expect(!sb.tick(16));
+}

@@ -32,6 +32,7 @@ scroll: struct {
     /// Lines moved per mouse wheel step.
     wheel_lines: u32 = 3,
 } = .{},
+scrollbar: Scrollbar = .{},
 selection: Selection,
 clipboard: Clipboard = .{},
 /// Stores list of plain environment variable using "KEY=VALUE" format
@@ -167,6 +168,25 @@ pub const Selection = struct {
     blur_radius: u8 = 0,
 
     pub const default: Selection = .{ .classifier = .default };
+};
+
+/// How the terminal scrollbar looks and fades (`[scrollbar]`).
+pub const Scrollbar = struct {
+    width: f32 = 5.0,
+    hover_width: f32 = 8.0,
+    gap: f32 = 2.0,
+    min_thumb_height: f32 = 20.0,
+    radius: f32 = 4.0,
+    auto_hide_opacity: f32 = 0.25,
+    track_opacity: f32 = 1.0,
+    thumb_opacity: f32 = 0.85,
+    thumb_hover_opacity: f32 = 0.95,
+    track_color: Rgb = .{ .r = 0x0D, .g = 0x0D, .b = 0x0D },
+    thumb_color: Rgb = .{ .r = 0xB3, .g = 0xB3, .b = 0xB3 },
+    thumb_hover_color: Rgb = .{ .r = 0xE6, .g = 0xE6, .b = 0xE6 },
+    auto_hide: bool = true,
+
+    pub const default: Scrollbar = .{};
 };
 
 /// The terminal's identity for programs started in it; the rest of their

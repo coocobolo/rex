@@ -550,7 +550,7 @@ pub fn init(
         .font_metrics = rasterizer.metrics,
         .cursor = .default,
         .decoration = .{},
-        .scrollbar = .default,
+        .scrollbar = rendererScrollbarOption(active_config.scrollbar),
         .selection = rendererSelectionOption(active_config.selection),
         .modal_blur = active_config.window.modal.blur,
         .modal_blur_radius = active_config.window.modal.blur_radius,
@@ -631,7 +631,7 @@ pub fn init(
         .latency_path = latency_path,
         .window = win,
         .frame_latch = .init(Window.primaryRefreshHz()),
-        .background_color = normalizedBackground(resolved_theme.background, background_alpha),
+        .background_color = normalizedRgba(resolved_theme.background, background_alpha),
         .blink = .{ .period_ms = blink_half_period_ms },
         .blink_rapid = .{ .period_ms = rapid_blink_half_period_ms },
         .dirs = dirs,
@@ -1483,8 +1483,10 @@ pub fn reloadConfig(self: *App) void {
 
     // Live update renderer background color, alpha, and terminal theme
     const resolved_theme = self.config.resolvedTheme();
-    self.background_color = normalizedBackground(resolved_theme.background, self.config.window.background.alpha);
+    self.background_color = normalizedRgba(resolved_theme.background, self.config.window.background.alpha);
     self.renderer.setSelectionOption(rendererSelectionOption(self.config.selection));
+    self.renderer.setScrollbarOption(rendererScrollbarOption(self.config.scrollbar));
+    self.updateScrollbarHover();
     if (self.kit) |kit| {
         kit.configure(self.config.ui);
         if (!self.config.window.banner.enabled) {
@@ -2515,11 +2517,7 @@ fn handleScrollbarClick(self: *App) bool {
     const frame_height: f32 = @floatFromInt(self.frame_buffer_size.height);
     const mouse_x = self.mouse_x;
     const mouse_y = self.mouse_y;
-    const option = self.renderer.scrollbar.option;
-    const effective_width = if (self.renderer.scrollbar.hover) option.hover_width else option.width;
-
-    const bar_x: f32 = frame_width - effective_width - option.gap;
-    if (mouse_x < bar_x) return false;
+    if (!self.renderer.scrollbar.containsClickX(frame_width, mouse_x)) return false;
 
     // A click on the thumb drags from that point. A click in the track
     // jumps the thumb's centre to it.
@@ -2579,8 +2577,7 @@ fn updateScrollbarHover(self: *App) void {
     const new_hover = blk: {
         if (self.hasModalOverlay() or frame.scrollback_used == 0 or frame.is_alternate) break :blk false;
         const fb_w: f32 = @floatFromInt(self.frame_buffer_size.width);
-        const bar_x = fb_w - sb.option.hover_width - sb.option.gap;
-        break :blk self.mouse_x >= bar_x;
+        break :blk sb.containsHoverX(fb_w, self.mouse_x);
     };
 
     if (new_hover == sb.hover) return;
@@ -3437,7 +3434,7 @@ test "App: a config reload starts from the defaults, in its own arena" {
 fn rendererSelectionOption(sel: Config.Selection) renderer_mod.Selection.Option {
     var out: renderer_mod.Selection.Option = .default;
     out.fill_color[3] = sel.opacity;
-    out.border_color = normalizedBackground(sel.border_color, sel.border_opacity);
+    out.border_color = normalizedRgba(sel.border_color, sel.border_opacity);
     out.border_width = sel.border_width;
     out.border_style = sel.border_style;
     out.radius = sel.radius;
@@ -3445,7 +3442,23 @@ fn rendererSelectionOption(sel: Config.Selection) renderer_mod.Selection.Option 
     return out;
 }
 
-fn normalizedBackground(rgb: rex.color.Rgb, alpha: f32) [4]f32 {
+/// Maps `Config.Scrollbar` into the renderer's `Scrollbar.Option`.
+fn rendererScrollbarOption(sb: Config.Scrollbar) renderer_mod.Scrollbar.Option {
+    var out: renderer_mod.Scrollbar.Option = .default;
+    out.width = sb.width;
+    out.hover_width = sb.hover_width;
+    out.gap = sb.gap;
+    out.min_thumb_height = sb.min_thumb_height;
+    out.radius = sb.radius;
+    out.auto_hide = sb.auto_hide;
+    out.auto_hide_alpha = sb.auto_hide_opacity;
+    out.track_color = normalizedRgba(sb.track_color, sb.track_opacity);
+    out.thumb_color = normalizedRgba(sb.thumb_color, sb.thumb_opacity);
+    out.thumb_hover_color = normalizedRgba(sb.thumb_hover_color, sb.thumb_hover_opacity);
+    return out;
+}
+
+fn normalizedRgba(rgb: rex.color.Rgb, alpha: f32) [4]f32 {
     return .{
         @as(f32, @floatFromInt(rgb.r)) / 255.0,
         @as(f32, @floatFromInt(rgb.g)) / 255.0,
@@ -3481,10 +3494,46 @@ test "rendererSelectionOption: maps Config.Selection onto renderer Selection.Opt
     try testing.expectEqual(@as(u8, 12), mapped.blur_radius);
 }
 
-test "normalizedBackground: scales 0..255 Rgb channels into 0..1 GL clearColor floats" {
+test "rendererScrollbarOption: maps Config.Scrollbar onto renderer Scrollbar.Option" {
+    const testing = std.testing;
+    const def = rendererScrollbarOption(.default);
+    try testing.expectEqual(renderer_mod.Scrollbar.Option.default, def);
+
+    const custom: Config.Scrollbar = .{
+        .width = 7.0,
+        .hover_width = 11.0,
+        .gap = 3.0,
+        .min_thumb_height = 28.0,
+        .radius = 6.0,
+        .auto_hide = false,
+        .auto_hide_opacity = 0.4,
+        .track_color = .{ .r = 0x10, .g = 0x20, .b = 0x30 },
+        .track_opacity = 0.3,
+        .thumb_color = .{ .r = 0x40, .g = 0x50, .b = 0x60 },
+        .thumb_opacity = 0.65,
+        .thumb_hover_color = .{ .r = 0x80, .g = 0x90, .b = 0xA0 },
+        .thumb_hover_opacity = 0.9,
+    };
+    const mapped = rendererScrollbarOption(custom);
+    try testing.expectApproxEqAbs(@as(f32, 7.0), mapped.width, 1e-6);
+    try testing.expectApproxEqAbs(@as(f32, 11.0), mapped.hover_width, 1e-6);
+    try testing.expectApproxEqAbs(@as(f32, 3.0), mapped.gap, 1e-6);
+    try testing.expectApproxEqAbs(@as(f32, 28.0), mapped.min_thumb_height, 1e-6);
+    try testing.expectApproxEqAbs(@as(f32, 6.0), mapped.radius, 1e-6);
+    try testing.expect(!mapped.auto_hide);
+    try testing.expectApproxEqAbs(@as(f32, 0.4), mapped.auto_hide_alpha, 1e-6);
+    try testing.expectApproxEqAbs(@as(f32, 16.0 / 255.0), mapped.track_color[0], 1e-6);
+    try testing.expectApproxEqAbs(@as(f32, 0.3), mapped.track_color[3], 1e-6);
+    try testing.expectApproxEqAbs(@as(f32, 64.0 / 255.0), mapped.thumb_color[0], 1e-6);
+    try testing.expectApproxEqAbs(@as(f32, 0.65), mapped.thumb_color[3], 1e-6);
+    try testing.expectApproxEqAbs(@as(f32, 128.0 / 255.0), mapped.thumb_hover_color[0], 1e-6);
+    try testing.expectApproxEqAbs(@as(f32, 0.9), mapped.thumb_hover_color[3], 1e-6);
+}
+
+test "normalizedRgba: scales 0..255 Rgb channels into 0..1 GL floats" {
     const testing = std.testing;
     const mocha_bg: rex.color.Rgb = .{ .r = 0x1E, .g = 0x1E, .b = 0x2E };
-    const rgba = normalizedBackground(mocha_bg, 0.85);
+    const rgba = normalizedRgba(mocha_bg, 0.85);
     try testing.expectApproxEqAbs(@as(f32, 30.0 / 255.0), rgba[0], 1e-6);
     try testing.expectApproxEqAbs(@as(f32, 30.0 / 255.0), rgba[1], 1e-6);
     try testing.expectApproxEqAbs(@as(f32, 46.0 / 255.0), rgba[2], 1e-6);

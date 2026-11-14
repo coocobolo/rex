@@ -710,3 +710,81 @@ test "settings: ui.color_scheme renders as three-icon segmented control under Ap
     }
     try testing.expect(saw_match_tooltip);
 }
+
+test "settings: scrollbar controls appear under Window & Shell and edit config" {
+    const gpa = testing.allocator;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const dir_path = try std.fs.path.join(gpa, &.{ ".zig-cache", "tmp", &tmp.sub_path });
+    defer gpa.free(dir_path);
+    const cfg_path = try std.fs.path.join(gpa, &.{ dir_path, "config" });
+    defer gpa.free(cfg_path);
+
+    const cfg = config_defaults.default;
+    var state = try settings.init(.{
+        .gpa = gpa,
+        .io = testing.io,
+        .config = &cfg,
+        .state_dir = dir_path,
+        .config_path = cfg_path,
+        .home_dir = dir_path,
+        .wake_loop = struct {
+            fn wake() void {}
+        }.wake,
+    });
+    defer settings.deinit(&state);
+
+    state.frame.current = @intFromEnum(settings.Page.window_shell);
+    _ = settings.update(&state, .{ .size = .{ .width = 960, .height = 720 } });
+
+    var nodes: [settings.node_max]kit.tree.Node = undefined;
+    var lines: [settings.line_max]kit.text.Line = undefined;
+    var tree = kit.tree.Tree.init(&nodes, &lines);
+    try settings.view(&state, &tree, &kit.Theme.dark);
+    try kit.layout.layout(&tree, measurer, 960, 720);
+
+    var saw_scrollbar = false;
+    var saw_width = false;
+    var saw_auto_hide = false;
+    var saw_thumb_color = false;
+    for (tree.nodes[0..tree.len]) |node| {
+        if (node.content != .text) continue;
+        const txt = node.content.text.bytes;
+        if (std.mem.eql(u8, txt, "Scrollbar")) saw_scrollbar = true;
+        if (std.mem.eql(u8, txt, "Bar Width")) saw_width = true;
+        if (std.mem.eql(u8, txt, "Auto-hide at Bottom")) saw_auto_hide = true;
+        if (std.mem.eql(u8, txt, "Thumb Color")) saw_thumb_color = true;
+    }
+    try testing.expect(saw_scrollbar);
+    try testing.expect(saw_width);
+    try testing.expect(saw_auto_hide);
+    try testing.expect(saw_thumb_color);
+
+    // Increment Bar Width stepper: 5.0 -> 6.0.
+    const width_idx = keyIndex(.scrollbar, "width");
+    const inc_id = Id.of("settings.inc").item(width_idx);
+    _ = settings.update(&state, .{ .pointer = .{ .id = inc_id } });
+    _ = settings.update(&state, .{ .press = inc_id });
+    try testing.expect(settings.update(&state, .release));
+    try testing.expectApproxEqAbs(@as(f32, 6.0), state.activeConfig().scrollbar.width, 1e-6);
+
+    // Toggle Auto-hide at Bottom: true -> false.
+    const auto_hide_idx = keyIndex(.scrollbar, "auto_hide");
+    const switch_id = Id.of("settings.switch").item(auto_hide_idx);
+    _ = settings.update(&state, .{ .pointer = .{ .id = switch_id } });
+    _ = settings.update(&state, .{ .press = switch_id });
+    try testing.expect(settings.update(&state, .release));
+    try testing.expect(!state.activeConfig().scrollbar.auto_hide);
+
+    // Edit Thumb Color via color hex input: #b3b3b3 -> #336699.
+    const thumb_idx = keyIndex(.scrollbar, "thumb_color");
+    const color_id = Id.of("settings.input").item(thumb_idx);
+    _ = settings.update(&state, .{ .pointer = .{ .id = color_id } });
+    _ = settings.update(&state, .{ .press = color_id });
+    _ = settings.update(&state, .release);
+    state.inputs[thumb_idx].setText(gpa, "#336699") catch unreachable;
+    state.dirty[thumb_idx] = true;
+    _ = settings.update(&state, .{ .key = .{ .key = .enter } });
+    try testing.expectEqual(@import("../color/Rgb.zig"){ .r = 0x33, .g = 0x66, .b = 0x99 }, state.activeConfig().scrollbar.thumb_color);
+}

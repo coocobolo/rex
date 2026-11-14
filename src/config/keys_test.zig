@@ -549,3 +549,47 @@ test "apply: [selection] appearance keys parse, validate bounds, and reset to de
     try applyText(&config, .selection, "border_style", "left_bar");
     try std.testing.expectEqual(@import("selection.zig").BorderStyle.left_bar, config.selection.border_style);
 }
+
+test "apply: [scrollbar] keys parse, validate bounds, and reset to defaults" {
+    const Rgb = @import("../color/Rgb.zig");
+    var config = testConfig();
+    try applyText(&config, .scrollbar, "width", "6.0");
+    try applyText(&config, .scrollbar, "hover_width", "10.0");
+    try applyText(&config, .scrollbar, "gap", "4.0");
+    try applyText(&config, .scrollbar, "min_thumb_height", "24.0");
+    try applyText(&config, .scrollbar, "radius", "5.0");
+    try applyText(&config, .scrollbar, "auto_hide", "false");
+    try applyText(&config, .scrollbar, "auto_hide_opacity", "0.4");
+    try applyText(&config, .scrollbar, "track_color", "#112233");
+    try applyText(&config, .scrollbar, "track_opacity", "0.2");
+    try applyText(&config, .scrollbar, "thumb_color", "#445566");
+    try applyText(&config, .scrollbar, "thumb_opacity", "0.7");
+    try applyText(&config, .scrollbar, "thumb_hover_color", "#778899");
+    try applyText(&config, .scrollbar, "thumb_hover_opacity", "0.9");
+
+    try std.testing.expectApproxEqAbs(@as(f32, 6.0), config.scrollbar.width, 1e-6);
+    try std.testing.expectApproxEqAbs(@as(f32, 10.0), config.scrollbar.hover_width, 1e-6);
+    try std.testing.expectApproxEqAbs(@as(f32, 4.0), config.scrollbar.gap, 1e-6);
+    try std.testing.expectApproxEqAbs(@as(f32, 24.0), config.scrollbar.min_thumb_height, 1e-6);
+    try std.testing.expectApproxEqAbs(@as(f32, 5.0), config.scrollbar.radius, 1e-6);
+    try std.testing.expect(!config.scrollbar.auto_hide);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.4), config.scrollbar.auto_hide_opacity, 1e-6);
+    try std.testing.expectEqual(Rgb{ .r = 0x11, .g = 0x22, .b = 0x33 }, config.scrollbar.track_color);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.2), config.scrollbar.track_opacity, 1e-6);
+    try std.testing.expectEqual(Rgb{ .r = 0x44, .g = 0x55, .b = 0x66 }, config.scrollbar.thumb_color);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.7), config.scrollbar.thumb_opacity, 1e-6);
+    try std.testing.expectEqual(Rgb{ .r = 0x77, .g = 0x88, .b = 0x99 }, config.scrollbar.thumb_hover_color);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.9), config.scrollbar.thumb_hover_opacity, 1e-6);
+
+    try std.testing.expectError(error.OutOfRange, applyText(&config, .scrollbar, "width", "41"));
+    try std.testing.expectError(error.OutOfRange, applyText(&config, .scrollbar, "hover_width", "45"));
+    try std.testing.expectError(error.OutOfRange, applyText(&config, .scrollbar, "gap", "41"));
+    try std.testing.expectError(error.OutOfRange, applyText(&config, .scrollbar, "min_thumb_height", "0"));
+    try std.testing.expectError(error.OutOfRange, applyText(&config, .scrollbar, "radius", "21"));
+    try std.testing.expectError(error.OutOfRange, applyText(&config, .scrollbar, "auto_hide_opacity", "1.2"));
+    try std.testing.expectError(error.InvalidValue, applyText(&config, .scrollbar, "auto_hide", "maybe"));
+    try std.testing.expectError(error.InvalidValue, applyText(&config, .scrollbar, "thumb_color", "auto"));
+
+    try applyText(&config, .scrollbar, "thumb_color", "default");
+    try std.testing.expectEqual(Config.Scrollbar.default.thumb_color, config.scrollbar.thumb_color);
+}
