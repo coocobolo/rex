@@ -29,7 +29,7 @@ pub const Wellbeing = struct {
     /// Wall-clock second of the last poll; polls run at most once a second.
     last_poll_utc_s: i64 = 0,
     /// Held from `open` to `close`; null in a process that never opened the
-    /// shared state (tests, `rex wellbeing`).
+    /// shared state (tests, `rex wellbeing print`).
     presence: ?storage.Presence = null,
     tracker_engine: tracker.Tracker,
     reminders_engine: reminders.RemindersEngine,
@@ -96,6 +96,10 @@ pub const Wellbeing = struct {
         /// Re-read the file when another process saved it, and merge when a
         /// merge is due and the write lock is free.
         poll,
+        /// As `poll`, but past its once-per-second limit: the caller knows
+        /// the file changed (a directory watch fired), so a save within the
+        /// same second as the last poll is not missed.
+        changed,
         /// Merge now, waiting for the write lock if another process holds it,
         /// and flush the save to disk (`Durability.synced`). For the exit
         /// save and the restart in `open`, off the frame path.
@@ -150,7 +154,7 @@ pub const Wellbeing = struct {
     }
 
     /// Restores saved data and the focus phase without joining the shared
-    /// state (for `rex wellbeing`). On error the current data is kept.
+    /// state (for `rex wellbeing print`). On error the current data is kept.
     pub fn loadState(self: *Wellbeing, io: Io, default_state_dir: []const u8) storage.LoadError!void {
         self.data = try storage.load(io, self.stateDir(default_state_dir), self.option.privacy.state_filename);
         self.base = self.data;
@@ -202,15 +206,19 @@ pub const Wellbeing = struct {
     /// while wellbeing is disabled.
     pub fn sync(self: *Wellbeing, io: Io, default_state_dir: []const u8, utc_s: i64, mode: SyncMode) SyncError!void {
         if (!self.option.enabled) return;
-        if (mode == .poll) {
-            if (utc_s == self.last_poll_utc_s and !self.mergeDue(utc_s)) return;
-            self.last_poll_utc_s = utc_s;
+        switch (mode) {
+            .poll => {
+                if (utc_s == self.last_poll_utc_s and !self.mergeDue(utc_s)) return;
+                self.last_poll_utc_s = utc_s;
+            },
+            .changed => self.last_poll_utc_s = utc_s,
+            .merge => {},
         }
         const dir = self.stateDir(default_state_dir);
         const name = self.option.privacy.state_filename;
         const lock: ?storage.WriteLock = switch (mode) {
             .merge => try storage.lockWrite(io, dir, name),
-            .poll => if (self.mergeDue(utc_s)) try storage.tryLockWrite(io, dir, name) else null,
+            .poll, .changed => if (self.mergeDue(utc_s)) try storage.tryLockWrite(io, dir, name) else null,
         };
         if (lock) |held| {
             defer held.release(io);

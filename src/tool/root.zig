@@ -3,7 +3,10 @@
 
 pub const host = @import("host.zig");
 pub const placeholder = @import("placeholder.zig");
+pub const dashboard = @import("dashboard.zig");
 
 test {
     _ = placeholder;
+    _ = @import("dashboard_test.zig");
+    _ = @import("file_watch_test.zig");
 }

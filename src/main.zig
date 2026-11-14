@@ -51,7 +51,7 @@ pub fn main(init: std.process.Init) !void {
         var stdout_buffer: [4096]u8 = undefined;
         var stdout_writer = std.Io.File.stdout().writerStreaming(init.io, &stdout_buffer);
         const out = &stdout_writer.interface;
-        runCommand(init, arena, &environ, &args, sc, custom_config_path, out) catch |err| switch (err) {
+        runCommand(init, arena, &environ, &args, sc, custom_config_path, argv0, out) catch |err| switch (err) {
             // stdout closed early, e.g. `rex config defaults | head`: the
             // reader has what it wanted, so this isn't a failure.
             error.WriteFailed => if (isBrokenPipe(stdout_writer.err)) return else return err,
@@ -74,11 +74,21 @@ fn runCommand(
     args: *std.process.Args.Iterator,
     sc: []const u8,
     custom_config_path: ?[]const u8,
+    argv0: []const u8,
     out: *std.Io.Writer,
 ) !void {
     if (std.mem.eql(u8, sc, "help")) {
         try out.writeAll(help);
     } else if (std.mem.eql(u8, sc, "wellbeing")) {
+        const action = args.next() orelse {
+            try rex.tool.host.run(rex.tool.dashboard, init, argv0, environ);
+            return;
+        };
+        const print = std.mem.eql(u8, action, "print");
+        if (!print and !std.mem.eql(u8, action, "clear")) {
+            printStderr("Unknown wellbeing command. Available: print, clear\n");
+            std.process.exit(1);
+        }
         const home_dir = try environ.getAlloc(arena, "HOME");
         defer arena.free(home_dir);
         var envmap = try environ.createMap(arena);
@@ -93,16 +103,14 @@ fn runCommand(
 
         var wb = rex.builtin.wellbeing.Wellbeing.init(config.wellbeing);
 
-        if (args.next()) |action| {
-            if (std.mem.eql(u8, action, "clear")) {
-                const now_s: i64 = @intCast(std.Io.Clock.Timestamp.now(init.io, .real).raw.toSeconds());
-                wb.purgeHistory(init.io, dirs.state, now_s) catch |err| {
-                    std.log.err("cannot delete wellbeing state in {s}: {t}", .{ wb.stateDir(dirs.state), err });
-                    return err;
-                };
-                try out.writeAll("Wellbeing history purged.\n");
-                return;
-            }
+        if (!print) {
+            const now_s: i64 = @intCast(std.Io.Clock.Timestamp.now(init.io, .real).raw.toSeconds());
+            wb.purgeHistory(init.io, dirs.state, now_s) catch |err| {
+                std.log.err("cannot delete wellbeing state in {s}: {t}", .{ wb.stateDir(dirs.state), err });
+                return err;
+            };
+            try out.writeAll("Wellbeing history purged.\n");
+            return;
         }
 
         wb.loadState(init.io, dirs.state) catch |err| {
@@ -146,7 +154,9 @@ const help =
     \\
     \\Usage:
     \\  rex [-c <path>]              Start Rex
-    \\  rex wellbeing [clear]        Show the wellbeing dashboard, or clear its history
+    \\  rex wellbeing                Open the wellbeing window
+    \\  rex wellbeing print          Print the wellbeing card
+    \\  rex wellbeing clear          Clear the wellbeing history
     \\  rex config locate            Show where the config files are
     \\  rex config defaults          Print every setting with its default
     \\  rex config validate [<path>] Check a config file (default: the user file)

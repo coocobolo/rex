@@ -12,11 +12,11 @@ The module lives in `src/builtin/wellbeing/` and is reached as `rex.builtin.well
 | Screen time | Counts active time (input within `idle_threshold`) in the focused window; per-app time from the pty's foreground process; a daily limit (off by default) that fades to grayscale, locks input or animates. | `[wellbeing.screen_time]`, `[wellbeing.privacy]` |
 | Reminders | Eyesight (20-20-20) and movement reminders on the shared active-time clock. The focused window fires each one once. Optional input lock and animation. | `[wellbeing.eyesight]`, `[wellbeing.movement]` |
 | Wind-down | An evening window (local time) that warms the screen colors and can mute the bell. Off by default. | `[wellbeing.winddown]` |
-| Dashboard | Overlay with overview, pomodoro and activity tabs; `rex wellbeing` prints a text card. | `[wellbeing]` |
+| Dashboard | Overlay with overview, pomodoro and activity tabs; `rex wellbeing` opens it in its own window (`src/tool/dashboard.zig`), `rex wellbeing print` prints a text card. | `[wellbeing]` |
 
 `[wellbeing] enabled = false` turns everything off: `tick` returns neutral results and `sync` does nothing.
 
-Default keys: `ctrl+shift+p` start, pause or resume the focus timer; `ctrl+shift+]` skip the phase; `ctrl+shift+backspace` reset; `ctrl+shift+a` switch `on_phase_end` until the next reload; `ctrl+shift+w` dashboard; `ctrl+shift+d` dismiss an alert. `wellbeing_clear` has no default key. From a shell: `rex wellbeing` prints the dashboard, `rex wellbeing clear` purges the history.
+Default keys: `ctrl+shift+p` start, pause or resume the focus timer; `ctrl+shift+]` skip the phase; `ctrl+shift+backspace` reset; `ctrl+shift+a` switch `on_phase_end` until the next reload; `ctrl+shift+w` dashboard; `ctrl+shift+d` dismiss an alert. `wellbeing_clear` has no default key. From a shell: `rex wellbeing` opens the window, `rex wellbeing print` prints the card, `rex wellbeing clear` purges the history.
 
 ## Files
 
@@ -30,7 +30,7 @@ Default keys: `ctrl+shift+p` start, pause or resume the focus timer; `ctrl+shift
 | `reminders.zig` | Reminder engines and the `Alert` type. Due points live in the state file. |
 | `winddown.zig` | The wind-down window and its color tint. |
 | `localtime.zig` | UTC to local seconds via `localtime_r`, with a `tzset` once per minute so zone changes apply while Rex runs. |
-| `dashboard.zig` | The text card (`rex wellbeing`, copy to clipboard). |
+| `dashboard.zig` | The text card (`rex wellbeing print`, copy to clipboard). |
 | `overlay.zig`, `icons.zig` | The dashboard overlay and lock screen. Not imported by `root.zig`: they reach `src/renderer/` and `src/ui/`, and the state module must not. |
 | `wellbeing_test.zig` | All tests of the module. |
 
@@ -151,7 +151,7 @@ Check every change against these:
 ## Ownership and lifetimes
 
 - `App` owns the `Wellbeing` value for the life of the process.
-- The presence lock (`Wellbeing.presence`) is held from `open` to `close`; `App` merges before `close`. `presence == null` marks a standalone `Wellbeing` that never joined the shared state (tests, `rex wellbeing`): it records timer statistics at once, since no other writer can race it.
+- The presence lock (`Wellbeing.presence`) is held from `open` to `close`; `App` merges before `close`. `presence == null` marks a standalone `Wellbeing` that never joined the shared state (tests, `rex wellbeing print`): it records timer statistics at once, since no other writer can race it.
 - Strings in `Wellbeing.option` (prompts, display icons) are borrowed from `App.config_arena`. On reload `App` frees the old arena, takes the new one and calls `applyOption` with the new options; nothing reads the options in between.
 - The overlay's instance buffers are allocated with `App`'s allocator and freed by `Overlay.deinit`.
 - Lock and data files are opened per operation and closed before it returns, except the presence file.

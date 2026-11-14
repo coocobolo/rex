@@ -4,13 +4,18 @@
 //! model (ADR 0009) handed to `run` as a type.
 //!
 //! A tool declares `name` (the lock file), `title`, `node_max`, `line_max`,
-//! a `State` with an `empty` value, `update(*State, Event) bool` and
-//! `view(*const State, *Tree, *const Theme) kit.tree.Error!void`.
+//! a `State`, `update(*State, Event) bool` and
+//! `view(*const State, *Tree, *const Theme) kit.tree.Error!void`. `State`
+//! has an `empty` value, or the tool declares `init(Context) !State` and
+//! `deinit(*State)`.
 //!
 //! The loop sleeps in `glfwWaitEvents` and draws only when `update` reports
 //! a change, the framebuffer is resized or the scale changes, so an idle
-//! window causes no wakeups. One instance of each tool runs at a time: a
-//! second start finds the lock taken and exits with a message.
+//! window causes no wakeups. A tool may declare `wait(*const State) ?f64`,
+//! the most seconds to sleep (null: until an event), and
+//! `wake(*State) bool`, called after every sleep, true to redraw. One
+//! instance of each tool runs at a time: a second start finds the lock
+//! taken and exits with a message.
 //!
 //! Imports stay on leaf files: nothing here may reach `term/` or the driver
 //! (ADR 0009 point 8).
@@ -25,6 +30,7 @@ const font_files = @import("../config/font_files.zig");
 const config_defaults = @import("../config/default.zig");
 const config_paths = @import("../config/paths.zig");
 const Loaded = @import("../config/Loaded.zig");
+const Config = @import("../config/Config.zig");
 const kit = @import("../kit/root.zig");
 const input_key = @import("../input/key.zig");
 const gl = @import("../renderer/gl.zig");
@@ -62,6 +68,19 @@ pub const Event = union(enum) {
     key: KeyPress,
 };
 
+/// What a tool's `init` receives. Everything borrowed lives until the
+/// tool's `deinit` returns.
+pub const Context = struct {
+    gpa: Allocator,
+    io: std.Io,
+    /// The config read at start, system file then user file.
+    config: *const Config,
+    /// Rex's state directory (`dirs.Application.state`).
+    state_dir: []const u8,
+    /// Ends the loop's current sleep; safe from any thread.
+    wake_loop: *const fn () void,
+};
+
 pub const KeyPress = struct {
     key: input_key.Key,
     mods: input_key.Modifiers = .none,
@@ -85,7 +104,11 @@ fn Host(comptime Tool: type) type {
         painter: KitPainter,
         atlas: Atlas,
         lock: std.Io.File,
-        state: Tool.State = .empty,
+        /// The config and the directories read at start. `state` may
+        /// borrow from both (`Context`), so they are freed after it.
+        loaded: Loaded,
+        directories: dirs.Application,
+        state: Tool.State,
         nodes: [Tool.node_max]kit.tree.Node = undefined,
         lines: [Tool.line_max]kit.text.Line = undefined,
         /// The last frame drawn, for hit-testing. Points into `nodes` and
@@ -115,7 +138,7 @@ fn Host(comptime Tool: type) type {
             defer gpa.free(home);
 
             var directories = try dirs.Application.resolve(gpa, "rex", home, &envmap);
-            defer directories.deinit(gpa);
+            errdefer directories.deinit(gpa);
 
             const lock = try openLock(io, directories.state, Tool.name ++ ".lock");
             const alone = lock.tryLock(io, .exclusive) catch |err| {
@@ -132,7 +155,9 @@ fn Host(comptime Tool: type) type {
                 lock.close(io);
             }
 
-            const settings = try loadSettings(gpa, io, home, &directories);
+            var loaded = try loadConfig(gpa, io, home, &directories);
+            errdefer loaded.deinit(gpa);
+            const settings = Settings.of(&loaded.config);
 
             const wayland = envmap.get("WAYLAND_DISPLAY") != null or
                 std.mem.eql(u8, envmap.get("XDG_SESSION_TYPE") orelse "", "wayland");
@@ -161,6 +186,7 @@ fn Host(comptime Tool: type) type {
             errdefer atlas.destroy();
 
             const self = try gpa.create(Self);
+            errdefer gpa.destroy(self);
             self.* = .{
                 .io = io,
                 .window = window,
@@ -168,12 +194,24 @@ fn Host(comptime Tool: type) type {
                 .painter = painter,
                 .atlas = atlas,
                 .lock = lock,
+                .loaded = loaded,
+                .directories = directories,
+                .state = undefined,
                 .tree = undefined,
                 .content_scale = content_scale,
                 .started_ms = started_ms,
                 .theme = settings.theme,
             };
             self.tree = .init(&self.nodes, &self.lines);
+            // Last fallible step: nothing after it may fail, or the state
+            // would need its `deinit` on the error path.
+            self.state = if (@hasDecl(Tool, "init")) try Tool.init(.{
+                .gpa = gpa,
+                .io = io,
+                .config = &self.loaded.config,
+                .state_dir = self.directories.state,
+                .wake_loop = Window.glfwPostEmptyEvent,
+            }) else .empty;
 
             self.window.setWindowUserPointer(self);
             self.window.setFramebufferSizeCallback(onResize);
@@ -186,6 +224,9 @@ fn Host(comptime Tool: type) type {
         }
 
         fn destroy(self: *Self, gpa: Allocator) void {
+            if (@hasDecl(Tool, "deinit")) Tool.deinit(&self.state);
+            self.loaded.deinit(gpa);
+            self.directories.deinit(gpa);
             self.painter.deinit();
             self.font.destroy();
             self.atlas.destroy();
@@ -210,7 +251,9 @@ fn Host(comptime Tool: type) type {
                     self.pointerMoved();
                     if (self.redraw) continue;
                 }
-                Window.glfwWaitEvents();
+                const timeout: ?f64 = if (@hasDecl(Tool, "wait")) Tool.wait(&self.state) else null;
+                if (timeout) |seconds| Window.glfwWaitEventsTimeout(seconds) else Window.glfwWaitEvents();
+                if (@hasDecl(Tool, "wake") and Tool.wake(&self.state)) self.redraw = true;
             }
         }
 
@@ -335,26 +378,28 @@ fn Host(comptime Tool: type) type {
     };
 }
 
-/// What a tool window takes from the config: the theme from `[ui]
+/// What the host itself takes from the config: the theme from `[ui]
 /// color_scheme`, against the terminal theme's background for `auto`, and
-/// `[window] platform`. The system file, then the user file, as the
-/// terminal reads them; the terminal reports any problems in them.
+/// `[window] platform`.
 const Settings = struct {
     theme: *const Theme,
     platform: Window.Platform,
+
+    fn of(config: *const Config) Settings {
+        const background = config.theme.background;
+        return .{
+            .theme = config.ui.color_scheme.variant(.{ background.r, background.g, background.b }).theme(),
+            .platform = config.window.platform,
+        };
+    }
 };
 
-fn loadSettings(gpa: Allocator, io: std.Io, home: []const u8, directories: *const dirs.Application) Allocator.Error!Settings {
+/// The system file, then the user file, as the terminal reads them; the
+/// terminal reports any problems in them.
+fn loadConfig(gpa: Allocator, io: std.Io, home: []const u8, directories: *const dirs.Application) Allocator.Error!Loaded {
     const user_path = try config_paths.user(gpa, directories);
     defer gpa.free(user_path);
-    var loaded = try Loaded.load(gpa, io, &config_defaults.default, home, &.{ .file(config_paths.system), .file(user_path) });
-    defer loaded.deinit(gpa);
-    const config = &loaded.config;
-    const background = config.theme.background;
-    return .{
-        .theme = config.ui.color_scheme.variant(.{ background.r, background.g, background.b }).theme(),
-        .platform = config.window.platform,
-    };
+    return Loaded.load(gpa, io, &config_defaults.default, home, &.{ .file(config_paths.system), .file(user_path) });
 }
 
 fn awakeMs(io: std.Io) i64 {

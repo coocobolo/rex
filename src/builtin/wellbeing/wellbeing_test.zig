@@ -582,6 +582,21 @@ test "sync: a poll runs once per second unless a merge is due" {
     try testing.expectEqual(@intFromEnum(wellbeing.focus.Run.running), file.timer.run);
 }
 
+test "sync: a changed file is read within the same second" {
+    var t: StateTmp = .init();
+    defer t.deinit();
+    var a = try openShared(&t);
+    defer a.close(testing.io);
+    var b = try openShared(&t);
+    defer b.close(testing.io);
+
+    try a.sync(testing.io, "unused", 1000, .poll);
+    b.data.today.focus_s = 50;
+    try b.sync(testing.io, "unused", 1000, .merge);
+    try a.sync(testing.io, "unused", 1000, .changed);
+    try testing.expectEqual(50, a.data.today.focus_s);
+}
+
 test "sync: losing focus makes unmerged screen time due" {
     var t: StateTmp = .init();
     defer t.deinit();
