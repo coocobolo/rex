@@ -145,7 +145,7 @@ test "dashboard: every page fits node_max, with either timer mark and the menu o
             try buildView(&state);
         }
         state.page = .focus;
-        state.menu = .open;
+        state.menu = .more;
         try buildView(&state);
     }
 }
@@ -203,9 +203,9 @@ test "dashboard: Ctrl+Tab cycles the pages, Escape closes the menu" {
     // Tab alone does nothing.
     try testing.expect(!dashboard.update(&state, .{ .key = .{ .key = .tab } }));
 
-    state.menu = .open;
+    state.menu = .more;
     try testing.expect(dashboard.update(&state, .{ .key = .{ .key = .escape } }));
-    try testing.expectEqual(.closed, state.menu);
+    try testing.expectEqual(dashboard.Menu.closed, state.menu);
 }
 
 test "dashboard: a click on a tab switches to it; the menu opens and closes" {
@@ -229,14 +229,14 @@ test "dashboard: a click on a tab switches to it; the menu opens and closes" {
     _ = dashboard.update(&state, .{ .press = more });
     _ = dashboard.update(&state, .{ .pointer = .none });
     _ = dashboard.update(&state, .release);
-    try testing.expectEqual(.closed, state.menu);
+    try testing.expectEqual(dashboard.Menu.closed, state.menu);
 
     _ = dashboard.update(&state, .{ .pointer = more });
     _ = dashboard.update(&state, .{ .press = more });
     _ = dashboard.update(&state, .release);
-    try testing.expectEqual(.open, state.menu);
+    try testing.expectEqual(dashboard.Menu.more, state.menu);
     try testing.expect(dashboard.update(&state, .{ .press = kit.tree.Id.of("wellbeing.layer") }));
-    try testing.expectEqual(.closed, state.menu);
+    try testing.expectEqual(dashboard.Menu.closed, state.menu);
 }
 
 test "dashboard: Space starts the timer and the press is saved" {
@@ -429,4 +429,102 @@ test "history: hovering a day fills its tooltip, and the period switch works" {
     try testing.expect(dashboard.update(&state, .release));
     try testing.expectEqual(dashboard.Period.fortnight, state.period);
     try buildView(&state);
+}
+
+test "dashboard: every page fits node_max at each width, the gear's popup open" {
+    var tmp: StateTmp = .init();
+    defer tmp.deinit();
+    const dir = try tmp.path();
+    const config = configWith(dir);
+    var state = try openDashboard(&config, dir);
+    defer dashboard.deinit(&state);
+    state.wb.toggleFocus(1_000);
+    dashboard.refreshAt(&state, 2_000);
+    for ([_][2]f32{ .{ 960, 600 }, .{ 640, 600 }, .{ 400, 600 } }) |size| {
+        _ = dashboard.update(&state, .{ .size = .{ .width = size[0], .height = size[1] } });
+        for ([_]dashboard.Page{ .today, .focus, .history }) |page| {
+            state.page = page;
+            state.menu = if (page == .today) .view else .closed;
+            try buildView(&state);
+        }
+    }
+}
+
+test "dashboard: the gear opens the view choices, and a choice changes the chart" {
+    var tmp: StateTmp = .init();
+    defer tmp.deinit();
+    const dir = try tmp.path();
+    const config = configWith(dir);
+    var state = try openDashboard(&config, dir);
+    defer dashboard.deinit(&state);
+
+    const gear = kit.tree.Id.of("wellbeing.gear");
+    _ = dashboard.update(&state, .{ .pointer = gear });
+    _ = dashboard.update(&state, .{ .press = gear });
+    try testing.expect(dashboard.update(&state, .release));
+    try testing.expectEqual(dashboard.Menu.view, state.menu);
+
+    const ring = kit.tree.Id.of("wellbeing.timer_chart").item(1);
+    _ = dashboard.update(&state, .{ .pointer = ring });
+    _ = dashboard.update(&state, .{ .press = ring });
+    try testing.expect(dashboard.update(&state, .release));
+    try testing.expectEqual(.ring, state.charts.timer_chart);
+    // The menu stays open for the next choice; a press outside closes it.
+    try testing.expectEqual(dashboard.Menu.view, state.menu);
+    try testing.expect(dashboard.update(&state, .{ .press = kit.tree.Id.of("wellbeing.layer") }));
+    try testing.expectEqual(dashboard.Menu.closed, state.menu);
+}
+
+test "dashboard: with wellbeing off the window shows a message and writes nothing" {
+    var tmp: StateTmp = .init();
+    defer tmp.deinit();
+    const dir = try tmp.path();
+    var config = configWith(dir);
+    config.wellbeing.enabled = false;
+    var state = try openDashboard(&config, dir);
+    defer dashboard.deinit(&state);
+
+    try testing.expectEqual(@as(?f64, null), dashboard.wait(&state));
+    try testing.expect(!dashboard.update(&state, .{ .key = .{ .key = .space } }));
+    try testing.expectEqual(focus.Run.paused, state.wb.timer().run);
+    try buildView(&state);
+    // No state file, lock or presence file was made.
+    for ([_][]const u8{ "wb.bin", "wb.bin.lock", "wb.bin.alive" }) |name| {
+        try testing.expectError(error.FileNotFound, tmp.tmp.dir.access(testing.io, name, .{}));
+    }
+}
+
+/// Seven pixels a byte: wide enough that a long note wraps at 400.
+fn fixedWidth(_: *anyopaque, bytes: []const u8, _: kit.text.Style, _: kit.text.Figures) f32 {
+    return @floatFromInt(bytes.len * 7);
+}
+
+test "dashboard: stat cards in a row are as tall as the tallest" {
+    var tmp: StateTmp = .init();
+    defer tmp.deinit();
+    const dir = try tmp.path();
+    const config = configWith(dir);
+    var state = try openDashboard(&config, dir);
+    defer dashboard.deinit(&state);
+    state.page = .history;
+    _ = dashboard.update(&state, .{ .size = .{ .width = 400, .height = 600 } });
+
+    var nodes: [dashboard.node_max]kit.tree.Node = undefined;
+    var lines: [dashboard.line_max]kit.text.Line = undefined;
+    var tree = kit.tree.Tree.init(&nodes, &lines);
+    try dashboard.view(&state, &tree, &kit.Theme.dark);
+    var no_state: u8 = 0;
+    try kit.layout.layout(&tree, .{ .context = &no_state, .widthFn = fixedWidth }, 400, 600);
+
+    // The first two cards share a row.
+    var cards: [2]kit.tree.Rect = undefined;
+    var found: usize = 0;
+    for (tree.items()) |node| {
+        if (node.content != .box or node.box.fill != kit.Theme.dark.card or found == cards.len) continue;
+        cards[found] = node.rect;
+        found += 1;
+    }
+    try testing.expectEqual(2, found);
+    try testing.expectEqual(cards[0].y, cards[1].y);
+    try testing.expectEqual(cards[0].h, cards[1].h);
 }

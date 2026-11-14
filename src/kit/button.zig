@@ -96,7 +96,8 @@ pub const node_max = 4 + kbd.node_max;
 const Look = struct { fill: Color, border: Color, label: Color };
 
 /// A filled button is slightly translucent while hovered and more so
-/// while pressed; an outline or ghost button fills with `accent` for both.
+/// while pressed; an outline or ghost button fills with `accent` for both,
+/// and a ghost button's label brightens from `ghost_foreground`.
 /// The focused button's border takes the ring color, under the ring drawn
 /// around it.
 fn look(theme: *const Theme, options: Options) Look {
@@ -123,7 +124,7 @@ fn look(theme: *const Theme, options: Options) Look {
         .ghost => .{
             .fill = if (touched) theme.accent else .transparent,
             .border = .transparent,
-            .label = theme.foreground,
+            .label = if (touched) theme.foreground else theme.ghost_foreground,
         },
         .destructive => .{
             .fill = theme.destructive.alpha(solid),

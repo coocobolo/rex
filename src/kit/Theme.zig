@@ -76,6 +76,11 @@ ring: Color,
 success: Color,
 warning: Color,
 info: Color,
+/// Text in the `info` hue that reads on `background`: the focus phase's
+/// name.
+info_text: Color,
+/// A ghost button's label and icon at rest; `foreground` once touched.
+ghost_foreground: Color,
 /// Behind a dialog.
 scrim: Color,
 /// The column of sections in a tool window.
@@ -103,6 +108,8 @@ pub const dark: Theme = .{
     .success = .rgb(0x00bc7d),
     .warning = .rgb(0xfe9a00),
     .info = .rgb(0x2b7fff),
+    .info_text = .rgb(0x8ec5ff),
+    .ghost_foreground = .rgb(0xa1a1a1),
     .scrim = Color.rgb(0x000000).alpha(50),
     .sidebar = .rgb(0x171717),
     .chart = .{ .rgb(0x1d4ed8), .rgb(0x2b7fff), .rgb(0x60a5fa), .rgb(0xbfdbfe), .rgb(0x525252) },
@@ -127,6 +134,8 @@ pub const light: Theme = .{
     .success = .rgb(0x009966),
     .warning = .rgb(0xe17100),
     .info = .rgb(0x155dfc),
+    .info_text = .rgb(0x1447e6),
+    .ghost_foreground = .rgb(0x737373),
     .scrim = Color.rgb(0x000000).alpha(50),
     .sidebar = .rgb(0xfafafa),
     .chart = .{ .rgb(0x1447e6), .rgb(0x2b7fff), .rgb(0x51a2ff), .rgb(0x8ec5ff), .rgb(0xa1a1a1) },

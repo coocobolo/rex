@@ -53,6 +53,16 @@ pub const Page = enum(u8) {
 
 const page_count = @typeInfo(Page).@"enum".fields.len;
 
+pub const Menu = enum(u8) { closed, more, view };
+
+const ColorScheme = @FieldType(@import("../config/Config.zig").Ui, "color_scheme");
+const scheme_labels = [_][]const u8{ "Auto", "Dark", "Light" };
+
+/// Below this width the four cards take two rows; below `narrow_width` the
+/// timer chip hides.
+const compact_width = 720;
+const narrow_width = 560;
+
 /// How many days History shows.
 pub const Period = enum(u8) {
     week,
@@ -89,7 +99,13 @@ const Over = union(enum) {
     period: Period,
     /// A History column, by its index among the days shown.
     day: u8,
+    gear: void,
+    timer_chart: TimerChart,
+    program_chart: ProgramChart,
 };
+
+const TimerChart = @TypeOf(@as(DashboardOption, undefined).timer_chart);
+const ProgramChart = @TypeOf(@as(DashboardOption, undefined).program_chart);
 
 const tab_id = Id.of("wellbeing.tab");
 const chip_id = Id.of("wellbeing.chip");
@@ -100,6 +116,10 @@ const reset_id = Id.of("wellbeing.reset");
 const layer_id = Id.of("wellbeing.layer");
 const period_id = Id.of("wellbeing.period");
 const day_id = Id.of("wellbeing.day");
+const gear_id = Id.of("wellbeing.gear");
+const timer_chart_id = Id.of("wellbeing.timer_chart");
+const program_chart_id = Id.of("wellbeing.program_chart");
+const scheme_id = Id.of("wellbeing.scheme");
 
 fn over(id: Id) Over {
     if (id == chip_id) return .chip;
@@ -108,6 +128,11 @@ fn over(id: Id) Over {
     if (id == more_id) return .more;
     if (id == reset_id) return .reset;
     if (id == layer_id) return .outside;
+    if (id == gear_id) return .gear;
+    inline for (0..2) |index| {
+        if (id == timer_chart_id.item(index)) return .{ .timer_chart = @enumFromInt(index) };
+        if (id == program_chart_id.item(index)) return .{ .program_chart = @enumFromInt(index) };
+    }
     inline for (0..page_count) |index| {
         if (id == tab_id.item(index)) return .{ .tab = @enumFromInt(index) };
     }
@@ -122,7 +147,14 @@ fn over(id: Id) Over {
 
 /// The frame: the root, the header, the tab list, the spacer and the
 /// timer chip (its box, dot, time and phase).
-const frame_nodes = 3 + tabs.nodeMax(page_count) + 1 + @as(usize, @max(4, tabs.nodeMax(period_count)));
+/// The frame: the root, the header, the tab list, the spacer, and on the
+/// right Today's group (box, chip of four, gear) or History's switch.
+const frame_nodes = 3 + tabs.nodeMax(page_count) + 1 + @as(usize, @max(1 + 4 + button.node_max, tabs.nodeMax(period_count)));
+/// The card rows' outer column and up to two rows.
+const card_rows_nodes = 3;
+/// The gear's popup: layer and card, the column, three groups (box,
+/// label, tabs), the rule, the settings row (row, text, icon) and the note.
+const choices_nodes = popup.node_max + 1 + 2 * (2 + tabs.nodeMax(2)) + (2 + tabs.nodeMax(scheme_labels.len)) + 1 + 3 + 1;
 /// The Focus page: its column, the timer block (label, time, task line and
 /// the larger of the two marks: a bar, or a ring in its square under an
 /// overlaid column), the button row and three buttons, and the popup with
@@ -132,7 +164,7 @@ const focus_nodes = 1 + 1 + 3 + 6 + 1 + 3 * button.node_max + popup.node_max + p
 /// The Today page: its column, the card row and four stat cards (box,
 /// title, value, bar or spacer, note), the lower row and its two slots,
 /// the week card and the programs card.
-const today_nodes = 1 + 1 + 4 * (4 + chart.progress_nodes) + 1 + 2 + week_nodes + programs_nodes;
+const today_nodes = 1 + card_rows_nodes + 4 * (4 + chart.progress_nodes) + 1 + 2 + week_nodes + programs_nodes + choices_nodes;
 /// Card, header row, title, spacer, two legend items (row, swatch, text),
 /// the chart's column, the bars, and the label row with a box and text
 /// per day.
@@ -145,7 +177,7 @@ fn daysNodes(comptime count: usize) usize {
 }
 /// The History page: like Today with cards of three nodes and no bar, two
 /// weeks of days, and the tooltip (card, column, three lines).
-const history_nodes = 1 + 1 + 4 * 4 + 1 + 2 + daysNodes(history_days) + programs_nodes + 5;
+const history_nodes = 1 + card_rows_nodes + 4 * 4 + 1 + 2 + daysNodes(history_days) + programs_nodes + 5;
 /// Card, title, the chart's box and the larger mark, the list and a row
 /// per program (row, swatch, name, time, share box and share); or one
 /// line when there are none.
@@ -166,8 +198,14 @@ pub const State = struct {
     page: Page = .today,
     hover: Over = .none,
     pressed: Over = .none,
-    /// The Focus page's "more" menu, which holds Reset.
-    menu: enum(u8) { closed, open } = .closed,
+    /// The open popup, if any: Focus's "more" menu, which holds Reset, or
+    /// the gear's view choices.
+    menu: Menu = .closed,
+    /// The config's `[ui] color_scheme`, shown in the view choices; the
+    /// host picks the theme from it at start.
+    scheme: ColorScheme,
+    /// In logical pixels, from the last `size` event.
+    width: f32 = 0,
     /// What `refresh` last computed from the timer.
     shown: Shown = .{},
     /// What `refresh` last computed from the day's records.
@@ -341,7 +379,10 @@ pub fn init(context: host.Context) !State {
         .state_dir = context.state_dir,
         .wb = wellbeing.Wellbeing.init(context.config.wellbeing),
         .charts = context.config.wellbeing.dashboard,
+        .scheme = context.config.ui.color_scheme,
     };
+    // Off, the window says so and leaves the state file alone.
+    if (!state.wb.option.enabled) return state;
     try state.wb.open(state.io, state.state_dir, wallMs(state.io));
     errdefer state.wb.close(state.io);
     refresh(&state);
@@ -377,6 +418,7 @@ pub fn wait(state: *const State) ?f64 {
 /// (and local midnight, when Today becomes a new day), or a poll once a
 /// second without one.
 pub fn waitAt(state: *const State, now_ms: i64) ?f64 {
+    if (!state.wb.option.enabled) return null;
     const shown = focus.State.view(state.wb.timer(), state.wb.option.focus, now_ms);
     const tick_ms = shown.msUntilTick();
     if (tick_ms != std.math.maxInt(u64) and shown.remaining_ms > 0) {
@@ -420,8 +462,13 @@ pub fn update(state: *State, event: host.Event) bool {
     const pressed = state.pressed;
     const menu = state.menu;
     const period = state.period;
+    const charts = state.charts;
+    const width = state.width;
     const timer_changed = switch (event) {
-        .size => false,
+        .size => |size| blk: {
+            state.width = size.width;
+            break :blk false;
+        },
         .pointer => |id| blk: {
             state.hover = over(id);
             refreshTip(state);
@@ -430,7 +477,7 @@ pub fn update(state: *State, event: host.Event) bool {
         .press => |id| blk: {
             const target = over(id);
             // Like a dialog's scrim, a press beside the menu closes it at once.
-            if (state.menu == .open and target == .outside) {
+            if (state.menu != .closed and target == .outside) {
                 state.menu = .closed;
             } else {
                 state.pressed = target;
@@ -445,6 +492,7 @@ pub fn update(state: *State, event: host.Event) bool {
         .key => |press| key(state, press),
     };
     return timer_changed or state.page != page or state.period != period or
+        !std.meta.eql(state.charts, charts) or state.width != width or
         !std.meta.eql(state.hover, hover) or !std.meta.eql(state.pressed, pressed) or state.menu != menu;
 }
 
@@ -485,15 +533,31 @@ fn act(state: *State, target: Over) bool {
         },
         .day => return false,
         .more => {
-            state.menu = if (state.menu == .open) .closed else .open;
+            state.menu = if (state.menu == .more) .closed else .more;
             return false;
         },
+        .gear => {
+            state.menu = if (state.menu == .view) .closed else .view;
+            return false;
+        },
+        .timer_chart => |mark| {
+            state.charts.timer_chart = mark;
+            return false;
+        },
+        .program_chart => |mark| {
+            state.charts.program_chart = mark;
+            return false;
+        },
+        .toggle, .skip, .reset => if (!state.wb.option.enabled) return false,
+    }
+    switch (target) {
         .toggle => state.wb.toggleFocus(now_ms),
         .skip => state.wb.skipFocus(now_ms),
         .reset => {
             state.menu = .closed;
             state.wb.resetFocus(now_ms);
         },
+        else => unreachable, // handled above
     }
     state.wb.sync(state.io, state.state_dir, wallSeconds(state.io), .merge) catch |err| {
         log.err("cannot save wellbeing state: {t}", .{err});
@@ -503,6 +567,7 @@ fn act(state: *State, target: Over) bool {
 }
 
 pub fn view(state: *const State, tree: *Tree, theme: *const Theme) kit.tree.Error!void {
+    if (!state.wb.option.enabled) return offPage(tree, theme);
     const root = try tree.open(.{ .width = .fill, .height = .fill });
     try header(state, tree, theme);
     switch (state.page) {
@@ -517,7 +582,8 @@ pub fn view(state: *const State, tree: *Tree, theme: *const Theme) kit.tree.Erro
         else => {},
     };
 
-    if (state.page == .focus and state.menu == .open) {
+    if (state.page == .today and state.menu == .view) try viewChoices(state, tree, theme);
+    if (state.page == .focus and state.menu == .more) {
         const card = try popup.open(tree, theme, .{ .layer_id = layer_id, .anchor = more_id });
         try popup.item(tree, theme, .{
             .id = reset_id,
@@ -554,18 +620,17 @@ fn todayPage(state: *const State, tree: *Tree, theme: *const Theme) kit.tree.Err
         .padding = .{ .left = 24, .right = 24, .top = 4, .bottom = 24 },
         .gap = card_gap,
     });
-    const cards = try tree.open(.{ .axis = .row, .width = .fill, .gap = card_gap });
+    var rows = try CardRows.begin(tree, state.width);
     for (&state.today.cards, card_titles, 0..) |*card, card_title, index| {
         const fill = switch (index) {
             0 => if (card.over) theme.destructive else theme.primary,
             else => theme.info,
         };
+        try rows.next(tree, index);
         try statCard(tree, theme, card_title, card, fill, true);
     }
-    tree.close(cards);
-    // Three fifths and two fifths; the gap is padding inside the first.
-    const lower = try tree.open(.{ .axis = .row, .width = .fill, .height = .fill });
-    const left = try tree.open(.{ .width = .{ .fraction = 0.6 }, .height = .fill, .padding = .{ .right = card_gap } });
+    rows.end(tree);
+    var lower = try LowerRow.begin(tree);
     try daysCard(tree, theme, .{
         .card_title = "This week",
         .days = &state.today.week,
@@ -573,16 +638,113 @@ fn todayPage(state: *const State, tree: *Tree, theme: *const Theme) kit.tree.Err
         .limit_s = state.today.limit_s,
         .limit_label = state.today.limit_label.slice(),
     });
-    tree.close(left);
-    const right = try tree.open(.{ .width = .{ .fraction = 0.4 }, .height = .fill });
+    try lower.middle(tree);
     try programsCard(state, tree, theme, "Programs today", state.today.programs[0..state.today.program_count]);
-    tree.close(right);
-    tree.close(lower);
+    lower.end(tree);
     tree.close(page);
 }
 
+/// The four stat cards: one row, or two rows of two below `compact_width`.
+const CardRows = struct {
+    outer: kit.tree.Index,
+    row: kit.tree.Index,
+    per_row: u8,
+
+    fn begin(tree: *Tree, width: f32) kit.tree.Error!CardRows {
+        const per_row: u8 = if (width > 0 and width < compact_width) 2 else Today.card_count;
+        const outer = try tree.open(.{ .width = .fill, .gap = card_gap });
+        return .{ .outer = outer, .row = kit.tree.none, .per_row = per_row };
+    }
+
+    fn next(self: *CardRows, tree: *Tree, index: usize) kit.tree.Error!void {
+        if (index % self.per_row != 0) return;
+        if (self.row != kit.tree.none) tree.close(self.row);
+        self.row = try tree.open(.{ .axis = .row, .width = .fill, .gap = card_gap });
+    }
+
+    fn end(self: *CardRows, tree: *Tree) void {
+        if (self.row != kit.tree.none) tree.close(self.row);
+        tree.close(self.outer);
+    }
+};
+
+/// The chart card and the programs card, three fifths and two fifths side
+/// by side. The gap is padding inside the first slot, so the fractions add
+/// up.
+const LowerRow = struct {
+    outer: kit.tree.Index,
+    first: kit.tree.Index,
+    second: kit.tree.Index = kit.tree.none,
+
+    fn begin(tree: *Tree) kit.tree.Error!LowerRow {
+        const outer = try tree.open(.{ .axis = .row, .width = .fill, .height = .fill });
+        const first = try tree.open(.{ .width = .{ .fraction = 0.6 }, .height = .fill, .padding = .{ .right = card_gap } });
+        return .{ .outer = outer, .first = first };
+    }
+
+    fn middle(self: *LowerRow, tree: *Tree) kit.tree.Error!void {
+        tree.close(self.first);
+        self.second = try tree.open(.{ .width = .{ .fraction = 0.4 }, .height = .fill });
+    }
+
+    fn end(self: *const LowerRow, tree: *Tree) void {
+        tree.close(self.second);
+        tree.close(self.outer);
+    }
+};
+
+/// With `[wellbeing] enabled = false`: one message, nothing that writes.
+fn offPage(tree: *Tree, theme: *const Theme) kit.tree.Error!void {
+    const page = try tree.open(.{ .width = .fill, .height = .fill, .padding = .all(24), .gap = 8, .main = .center, .cross = .center });
+    _ = try tree.text("Wellbeing is off", .{ .color = theme.foreground, .style = .lg_semibold });
+    _ = try tree.text("Turn it on with enabled = true under [wellbeing] in the config file.", .{ .color = theme.muted_foreground });
+    tree.close(page);
+}
+
+/// The gear's popup: the chart looks, the color scheme, and the way to the
+/// settings window.
+fn viewChoices(state: *const State, tree: *Tree, theme: *const Theme) kit.tree.Error!void {
+    const card = try popup.open(tree, theme, .{ .layer_id = layer_id, .anchor = gear_id });
+    const column = try tree.open(.{ .width = .{ .fixed = 252 }, .padding = .all(8), .gap = 12 });
+
+    const timer_tabs = [_]tabs.Tab{ .{ .id = timer_chart_id.item(0), .label = "Bar" }, .{ .id = timer_chart_id.item(1), .label = "Ring" } };
+    try choiceGroup(tree, theme, "Timer", &timer_tabs, @intFromEnum(state.charts.timer_chart), switch (state.hover) {
+        .timer_chart => |mark| @intFromEnum(mark),
+        else => tabs.none,
+    });
+    const program_tabs = [_]tabs.Tab{ .{ .id = program_chart_id.item(0), .label = "Bar" }, .{ .id = program_chart_id.item(1), .label = "Donut" } };
+    try choiceGroup(tree, theme, "Programs", &program_tabs, @intFromEnum(state.charts.program_chart), switch (state.hover) {
+        .program_chart => |mark| @intFromEnum(mark),
+        else => tabs.none,
+    });
+    var scheme_tabs: [scheme_labels.len]tabs.Tab = undefined;
+    for (&scheme_tabs, scheme_labels, 0..) |*tab, label, index| tab.* = .{ .id = scheme_id.item(@intCast(index)), .label = label };
+    try choiceGroup(tree, theme, "Color scheme", &scheme_tabs, @intFromEnum(state.scheme), tabs.none);
+
+    _ = try tree.leaf(.{ .width = .fill, .height = .{ .fixed = 1 }, .fill = theme.border });
+    const settings = try tree.open(.{ .axis = .row, .width = .fill, .height = .{ .fixed = Theme.control_sm }, .padding = .symmetric(8, 0), .cross = .center });
+    _ = try tree.text("Wellbeing settings\u{2026}", .{ .color = theme.muted_foreground, .width = .fill });
+    _ = try tree.icon(.{ .codepoint = icons.external_link, .color = theme.muted_foreground, .size = button.icon_size });
+    tree.close(settings);
+    _ = try tree.text("Chart choices last until the window closes; the color scheme and saved choices come from the config file.", .{
+        .color = theme.muted_foreground,
+        .style = .xs,
+        .width = .fill,
+    });
+    tree.close(column);
+    popup.close(tree, card);
+}
+
+fn choiceGroup(tree: *Tree, theme: *const Theme, label: []const u8, list: []const tabs.Tab, current: u8, hovered: u8) kit.tree.Error!void {
+    const group = try tree.open(.{ .width = .fill, .gap = 6 });
+    _ = try tree.text(label, .{ .color = theme.muted_foreground, .style = .xs });
+    try tabs.view(tree, theme, .{ .tabs = list, .current = current, .hovered = hovered });
+    tree.close(group);
+}
+
 fn statCard(tree: *Tree, theme: *const Theme, card_title: []const u8, card: *const Card, fill: Theme.Color, with_bar: bool) kit.tree.Error!void {
-    const box = try tree.open(cardBox(theme, .fit, if (with_bar) 6 else 4));
+    // `fill` across the row: every card in a row is as tall as the tallest.
+    const box = try tree.open(cardBox(theme, .fill, if (with_bar) 6 else 4));
     _ = try tree.text(card_title, .{ .color = theme.muted_foreground, .style = .xs });
     _ = try tree.text(card.value.slice(), .{ .color = theme.foreground, .style = .xl_semibold, .figures = .tabular });
     if (with_bar) {
@@ -722,13 +884,13 @@ fn historyPage(state: *const State, tree: *Tree, theme: *const Theme) kit.tree.E
         .padding = .{ .left = 24, .right = 24, .top = 4, .bottom = 24 },
         .gap = card_gap,
     });
-    const cards = try tree.open(.{ .axis = .row, .width = .fill, .gap = card_gap });
-    for (&history.cards, history_card_titles) |*card, card_title| {
+    var rows = try CardRows.begin(tree, state.width);
+    for (&history.cards, history_card_titles, 0..) |*card, card_title, index| {
+        try rows.next(tree, index);
         try statCard(tree, theme, card_title, card, theme.info, false);
     }
-    tree.close(cards);
-    const lower = try tree.open(.{ .axis = .row, .width = .fill, .height = .fill });
-    const left = try tree.open(.{ .width = .{ .fraction = 0.6 }, .height = .fill, .padding = .{ .right = card_gap } });
+    rows.end(tree);
+    var lower = try LowerRow.begin(tree);
     const count = state.period.days();
     try daysCard(tree, theme, .{
         .card_title = "Each day",
@@ -742,11 +904,9 @@ fn historyPage(state: *const State, tree: *Tree, theme: *const Theme) kit.tree.E
             else => null,
         },
     });
-    tree.close(left);
-    const right = try tree.open(.{ .width = .{ .fraction = 0.4 }, .height = .fill });
+    try lower.middle(tree);
     try programsCard(state, tree, theme, "Where the time went", history.programs[0..history.program_count]);
-    tree.close(right);
-    tree.close(lower);
+    lower.end(tree);
     tree.close(page);
 }
 
@@ -783,7 +943,19 @@ fn header(state: *const State, tree: *Tree, theme: *const Theme) kit.tree.Error!
     });
     _ = try tree.leaf(.{ .width = .fill });
     switch (state.page) {
-        .today => if (state.shown.phase != .idle) try timerChip(state, tree, theme),
+        .today => {
+            const row_inner = try tree.open(.{ .axis = .row, .gap = 8, .cross = .center });
+            if (state.shown.phase != .idle and state.width >= narrow_width) try timerChip(state, tree, theme);
+            try button.view(tree, theme, .{
+                .id = gear_id,
+                .label = "",
+                .icon = icons.settings,
+                .variant = .ghost,
+                .size = .sm,
+                .state = if (state.menu == .view) .hovered else buttonState(state, .gear),
+            });
+            tree.close(row_inner);
+        },
         .focus => {},
         .history => {
             var periods: [period_count]tabs.Tab = undefined;
@@ -866,7 +1038,7 @@ fn focusPage(state: *const State, tree: *Tree, theme: *const Theme) kit.tree.Err
 
 /// The phase over the time.
 fn timerText(state: *const State, tree: *Tree, theme: *const Theme, style: kit.text.Style) kit.tree.Error!void {
-    _ = try tree.text(phaseLabel(state.shown.phase), .{ .color = phaseColor(theme, state.shown.phase), .style = .sm_medium });
+    _ = try tree.text(phaseLabel(state.shown.phase), .{ .color = phaseTextColor(theme, state.shown.phase), .style = .sm_medium });
     _ = try tree.text(state.clock(), .{ .color = theme.foreground, .style = style, .figures = .tabular });
 }
 
@@ -896,7 +1068,7 @@ fn timerButtons(state: *const State, tree: *Tree, theme: *const Theme) kit.tree.
         .icon = icons.ellipsis,
         .variant = .ghost,
         .size = .lg,
-        .state = if (state.menu == .open) .hovered else buttonState(state, .more),
+        .state = if (state.menu == .more) .hovered else buttonState(state, .more),
     });
     tree.close(row);
 }
@@ -923,6 +1095,14 @@ fn phaseLabel(phase: focus.Phase) []const u8 {
         .task => "Focus",
         .short_break => "Short break",
         .long_break => "Long break",
+    };
+}
+
+/// The phase's name over the time: lighter than its dot and bar.
+fn phaseTextColor(theme: *const Theme, phase: focus.Phase) Theme.Color {
+    return switch (phase) {
+        .task => theme.info_text,
+        .idle, .short_break, .long_break => phaseColor(theme, phase),
     };
 }
 
