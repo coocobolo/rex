@@ -206,16 +206,20 @@ pub const Node = struct {
 
 pub const Error = error{ OutOfNodes, OutOfAnchors };
 
-/// A root placed against a node of an earlier root rather than the
-/// window: a popup against the control that opened it. Layout puts it
-/// below the node, or above when there is no room below, inside the
-/// window, and at least as wide as the node.
+/// Where an anchored root is placed: against an earlier node or near
+/// a point in logical pixels.
+pub const AnchorTarget = union(enum) {
+    node: Id,
+    point: struct { x: f32, y: f32 },
+};
+
+/// A root placed against a node of an earlier root or a point rather
+/// than the window: a popup against the control that opened it, or a
+/// tooltip near the pointer.
 pub const Anchor = struct {
     /// The anchored root.
     node: Index,
-    /// The node it is placed against. When no earlier node has this id,
-    /// the root stays at the window's top left.
-    target: Id,
+    target: AnchorTarget,
 };
 
 /// Popups one view can hold.
@@ -272,7 +276,16 @@ pub const Tree = struct {
     pub fn anchorTo(self: *Tree, index: Index, target: Id) Error!void {
         assert(self.nodes[index].parent == none);
         if (self.anchor_len == anchor_max) return error.OutOfAnchors;
-        self.anchors[self.anchor_len] = .{ .node = index, .target = target };
+        self.anchors[self.anchor_len] = .{ .node = index, .target = .{ .node = target } };
+        self.anchor_len += 1;
+    }
+
+    /// Places the root `index` near `(x, y)` in logical pixels. Call it
+    /// right after opening the root.
+    pub fn anchorAt(self: *Tree, index: Index, x: f32, y: f32) Error!void {
+        assert(self.nodes[index].parent == none);
+        if (self.anchor_len == anchor_max) return error.OutOfAnchors;
+        self.anchors[self.anchor_len] = .{ .node = index, .target = .{ .point = .{ .x = x, .y = y } } };
         self.anchor_len += 1;
     }
 
@@ -373,9 +386,27 @@ pub const Tree = struct {
         while (i > 0) {
             i -= 1;
             const node = &self.nodes[i];
-            if (node.box.id != .none and node.rect.contains(x, y) and !self.clippedAt(i, x, y)) return node;
+            if (node.box.id == .none or !node.rect.contains(x, y)) continue;
+            if (node.content == .arc and !arcContains(node.content.arc, node.rect, x, y)) continue;
+            if (!self.clippedAt(i, x, y)) return node;
         }
         return null;
+    }
+
+    fn arcContains(arc_val: Arc, rect: Rect, x: f32, y: f32) bool {
+        if (!(arc_val.radius > 0 and arc_val.thickness > 0 and arc_val.sweep > 0)) return false;
+        const center_x = rect.x + rect.w / 2;
+        const center_y = rect.y + rect.w / 2;
+        const dx = x - center_x;
+        const dy = y - center_y;
+        const dist2 = dx * dx + dy * dy;
+        const outer = arc_val.radius;
+        const inner = outer - @min(outer, arc_val.thickness);
+        if (dist2 < inner * inner or dist2 > outer * outer) return false;
+        if (arc_val.sweep >= std.math.tau) return true;
+        var angle = std.math.atan2(dx, -dy);
+        if (angle < 0) angle += std.math.tau;
+        return @mod(angle - arc_val.start, std.math.tau) <= arc_val.sweep;
     }
 
     /// Whether an ancestor of node `index` clips the point away.

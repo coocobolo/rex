@@ -98,8 +98,10 @@ const Over = union(enum) {
     /// The popup's layer, outside its card.
     outside,
     period: Period,
-    /// A History column, by its index among the days shown.
+    /// A day column on Today or History, by its index among the days shown.
     day: u8,
+    /// A program row or chart slice on Today or History.
+    program: u8,
     gear: void,
     timer_chart: TimerChart,
     program_chart: ProgramChart,
@@ -117,6 +119,7 @@ const reset_id = Id.of("wellbeing.reset");
 const layer_id = Id.of("wellbeing.layer");
 const period_id = Id.of("wellbeing.period");
 const day_id = Id.of("wellbeing.day");
+const program_id = Id.of("wellbeing.program");
 const gear_id = Id.of("wellbeing.gear");
 const timer_chart_id = Id.of("wellbeing.timer_chart");
 const program_chart_id = Id.of("wellbeing.program_chart");
@@ -143,6 +146,9 @@ fn over(id: Id) Over {
     for (0..history_days) |index| {
         if (id == day_id.item(@intCast(index))) return .{ .day = @intCast(index) };
     }
+    for (0..program_rows) |index| {
+        if (id == program_id.item(@intCast(index))) return .{ .program = @intCast(index) };
+    }
     return .none;
 }
 
@@ -165,8 +171,10 @@ const focus_nodes = 1 + 1 + 4 + 6 + 1 + 3 * button.node_max + popup.node_max + p
 /// the week card and the programs card.
 /// A stat card: box, title, value, bar or spacer, and the note, or the
 /// note's row with the delta and the note.
+/// A day or program tooltip: card, date, footer, and two `tooltip.line` rows.
+const tooltip_nodes = 2 + tooltip.nodes(2);
 const stat_card_nodes = 4 + chart.progress_nodes + 2;
-const today_nodes = 1 + card_rows_nodes + 4 * stat_card_nodes + 1 + 2 + week_nodes + programs_nodes;
+const today_nodes = 1 + card_rows_nodes + 4 * stat_card_nodes + 1 + 2 + week_nodes + programs_nodes + tooltip_nodes;
 /// Card, header row, title, spacer, two legend items (row, swatch, text),
 /// the chart's column, the bars, and the label row with a box and text
 /// per day.
@@ -178,8 +186,8 @@ fn daysNodes(comptime count: usize) usize {
     return 4 + 2 * 3 + 1 + chart.dayNodes(count) + 1 + count * 2;
 }
 /// The History page: like Today with cards of three nodes and no bar, two
-/// weeks of days, and the tooltip (card, column, three lines).
-const history_nodes = 1 + card_rows_nodes + 4 * stat_card_nodes + 1 + 2 + daysNodes(history_days) + programs_nodes + 5;
+/// weeks of days, and the tooltip.
+const history_nodes = 1 + card_rows_nodes + 4 * stat_card_nodes + 1 + 2 + daysNodes(history_days) + programs_nodes + tooltip_nodes;
 /// Card, title, the chart's box and the larger mark, the list and a row
 /// per program (row, swatch, name, time, share box and share); or one
 /// line when there are none.
@@ -200,6 +208,9 @@ pub const State = struct {
     page: Page = .today,
     hover: Over = .none,
     pressed: Over = .none,
+    /// Last pointer position in logical pixels when entering `hover`.
+    pointer_x: f32 = 0,
+    pointer_y: f32 = 0,
     /// The open popup, if any: Focus's "more" menu, which holds Reset, or
     /// the gear's view choices.
     menu: Menu = .closed,
@@ -363,11 +374,13 @@ pub const History = struct {
     program_count: u8 = 0,
 };
 
-/// The tooltip of the History column under the pointer.
+/// The tooltip of the hovered day column or program slice.
 pub const Tip = struct {
     title: Label(32) = .{},
-    time: Label(40) = .{},
+    screen: Label(12) = .{},
+    focus: Label(12) = .{},
     counts: Label(32) = .{},
+    program_value: Label(24) = .{},
 };
 
 const history_card_titles = [Today.card_count][]const u8{ "Screen time a day", "Focus a day", "Over the limit", "Breaks" };
@@ -483,8 +496,10 @@ pub fn update(state: *State, event: host.Event) bool {
             state.width = size.width;
             break :blk false;
         },
-        .pointer => |id| blk: {
-            state.hover = over(id);
+        .pointer => |pointer| blk: {
+            state.hover = over(pointer.id);
+            state.pointer_x = pointer.x;
+            state.pointer_y = pointer.y;
             refreshTip(state);
             break :blk false;
         },
@@ -509,7 +524,10 @@ pub fn update(state: *State, event: host.Event) bool {
             break :blk false;
         },
     };
-    if (state.page != page) state.scroll = 0;
+    if (state.page != page) {
+        state.scroll = 0;
+        refreshTip(state);
+    }
     return timer_changed or state.page != page or state.period != period or
         !std.meta.eql(state.charts, charts) or state.width != width or state.scroll != scrolled or
         !std.meta.eql(state.hover, hover) or !std.meta.eql(state.pressed, pressed) or state.menu != menu;
@@ -550,7 +568,7 @@ fn act(state: *State, target: Over) bool {
             refreshHistory(state);
             return false;
         },
-        .day => return false,
+        .day, .program => return false,
         .more => {
             state.menu = if (state.menu == .more) .closed else .more;
             return false;
@@ -596,8 +614,9 @@ pub fn view(state: *const State, tree: *Tree, theme: *const Theme) kit.tree.Erro
     }
     tree.close(root);
 
-    if (state.page == .history) switch (state.hover) {
-        .day => |index| try dayTooltip(state, tree, theme, index),
+    if (state.page == .today or state.page == .history) switch (state.hover) {
+        .day => try dayTooltip(state, tree, theme),
+        .program => |index| try programTooltip(state, tree, theme, index),
         else => {},
     };
 
@@ -641,7 +660,7 @@ fn todayPage(state: *const State, tree: *Tree, theme: *const Theme) kit.tree.Err
             else => theme.info,
         };
         try rows.next(tree, index);
-        try statCard(tree, theme, card_title, card, fill, true);
+        try statCard(tree, theme, card_title, card, fill, true, stackNote(state.width));
     }
     rows.end(tree);
     var lower = try LowerRow.begin(tree, isNarrow(state.width));
@@ -652,6 +671,11 @@ fn todayPage(state: *const State, tree: *Tree, theme: *const Theme) kit.tree.Err
         .weekday = state.today.weekday,
         .limit_s = state.today.limit_s,
         .limit_label = state.today.limit_label.slice(),
+        .ids = day_id,
+        .hovered = switch (state.hover) {
+            .day => |index| index,
+            else => null,
+        },
     });
     try lower.middle(tree);
     try programsCard(state, tree, theme, "Programs today", state.today.programs[0..state.today.program_count], lower.programsHeight());
@@ -697,7 +721,7 @@ const LowerRow = struct {
         const outer = try tree.open(if (stacked)
             .{ .width = .fill, .gap = card_gap }
         else
-            .{ .axis = .row, .width = .fill, .height = .fill });
+            .{ .axis = .row, .width = .fill, .height = .{ .at_most = max_lower_height } });
         const first = try tree.open(if (stacked)
             .{ .width = .fill }
         else
@@ -730,6 +754,15 @@ const LowerRow = struct {
 
 /// The chart card's height when the cards stack.
 const stacked_chart_height = 280;
+/// Cap on the lower row's height so tall windows do not stretch the charts.
+const max_lower_height = 420;
+/// Below this window width a 4-across stat card is too narrow for delta
+/// and note on one line, so they stack.
+const note_stack_width = 940;
+
+fn stackNote(width: f32) bool {
+    return width > 0 and width < note_stack_width;
+}
 
 /// A page's column under the header, and the scroll region: content that
 /// does not fit the window, wide or narrow, scrolls instead of squeezing.
@@ -805,7 +838,7 @@ fn choiceGroup(tree: *Tree, theme: *const Theme, label: []const u8, list: []cons
     tree.close(group);
 }
 
-fn statCard(tree: *Tree, theme: *const Theme, card_title: []const u8, card: *const Card, fill: Theme.Color, with_bar: bool) kit.tree.Error!void {
+fn statCard(tree: *Tree, theme: *const Theme, card_title: []const u8, card: *const Card, fill: Theme.Color, with_bar: bool, stacked_note: bool) kit.tree.Error!void {
     // `fill` across the row: every card in a row is as tall as the tallest.
     const box = try tree.open(cardBox(theme, .fill, if (with_bar) 6 else 4));
     _ = try tree.text(card_title, .{ .color = theme.muted_foreground, .style = .xs });
@@ -824,7 +857,10 @@ fn statCard(tree: *Tree, theme: *const Theme, card_title: []const u8, card: *con
     if (card.delta.len == 0) {
         _ = try tree.text(card.note.slice(), .{ .color = theme.muted_foreground, .style = .xs });
     } else {
-        const line = try tree.open(.{ .axis = .row, .gap = 4, .cross = .center });
+        const line = try tree.open(if (stacked_note)
+            .{ .gap = 2 }
+        else
+            .{ .axis = .row, .gap = 4, .cross = .center });
         _ = try tree.text(card.delta.slice(), .{
             .color = switch (card.trend) {
                 .better => theme.success,
@@ -928,7 +964,12 @@ fn programsCard(state: *const State, tree: *Tree, theme: *const Theme, card_titl
     }
     var parts: [program_rows]chart.Part = undefined;
     for (parts[0..rows.len], rows, 0..) |*part, row, index| {
-        part.* = .{ .label = row.name.slice(), .value = @floatFromInt(row.seconds), .fill = theme.chart[index] };
+        part.* = .{
+            .id = program_id.item(@intCast(index)),
+            .label = row.name.slice(),
+            .value = @floatFromInt(row.seconds),
+            .fill = theme.chart[index],
+        };
     }
     const mark: chart.ShareMark = switch (state.charts.program_chart) {
         .bar => .bar,
@@ -940,7 +981,13 @@ fn programsCard(state: *const State, tree: *Tree, theme: *const Theme, card_titl
 
     const list = try tree.open(.{ .width = .fill, .gap = 8 });
     for (rows, 0..) |*row, index| {
-        const line = try tree.open(.{ .axis = .row, .width = .fill, .gap = 8, .cross = .center });
+        const line = try tree.open(.{
+            .id = program_id.item(@intCast(index)),
+            .axis = .row,
+            .width = .fill,
+            .gap = 8,
+            .cross = .center,
+        });
         _ = try tree.leaf(.{ .width = .{ .fixed = 8 }, .height = .{ .fixed = 8 }, .fill = theme.chart[index], .radius = 2 });
         _ = try tree.text(row.name.slice(), .{ .color = theme.foreground, .width = .fill });
         _ = try tree.text(row.time.slice(), .{ .color = theme.muted_foreground, .figures = .tabular });
@@ -959,7 +1006,7 @@ fn historyPage(state: *const State, tree: *Tree, theme: *const Theme) kit.tree.E
     var rows = try CardRows.begin(tree, state.width);
     for (&history.cards, history_card_titles, 0..) |*card, card_title, index| {
         try rows.next(tree, index);
-        try statCard(tree, theme, card_title, card, theme.info, false);
+        try statCard(tree, theme, card_title, card, theme.info, false, stackNote(state.width));
     }
     rows.end(tree);
     var lower = try LowerRow.begin(tree, isNarrow(state.width));
@@ -983,15 +1030,35 @@ fn historyPage(state: *const State, tree: *Tree, theme: *const Theme) kit.tree.E
     tree.close(page);
 }
 
-/// The hovered day's date and numbers, anchored to its column.
-fn dayTooltip(state: *const State, tree: *Tree, theme: *const Theme, index: u8) kit.tree.Error!void {
-    const card = try tooltip.open(tree, theme, day_id.item(index));
-    const lines = try tree.open(.{ .padding = .symmetric(2, 4), .gap = 2 });
+/// The hovered day's date and numbers, placed near the pointer.
+fn dayTooltip(state: *const State, tree: *Tree, theme: *const Theme) kit.tree.Error!void {
+    const card = try tooltip.openAt(tree, theme, state.pointer_x, state.pointer_y);
     _ = try tree.text(state.tip.title.slice(), .{ .color = theme.foreground, .style = .xs });
-    _ = try tree.text(state.tip.time.slice(), .{ .color = theme.muted_foreground, .style = .xs, .figures = .tabular });
+    try tooltip.line(tree, theme, .{ .name = "Screen", .value = state.tip.screen.slice(), .swatch = screenFill(theme) });
+    try tooltip.line(tree, theme, .{ .name = "Focus", .value = state.tip.focus.slice(), .swatch = theme.info });
     _ = try tree.text(state.tip.counts.slice(), .{ .color = theme.muted_foreground, .style = .xs });
-    tree.close(lines);
     tooltip.close(tree, card);
+}
+
+/// The hovered program's name, duration and share, placed near the pointer.
+fn programTooltip(state: *const State, tree: *Tree, theme: *const Theme, index: u8) kit.tree.Error!void {
+    const rows = programRows(state);
+    if (index >= rows.len) return;
+    const card = try tooltip.openAt(tree, theme, state.pointer_x, state.pointer_y);
+    try tooltip.line(tree, theme, .{
+        .name = rows[index].name.slice(),
+        .value = state.tip.program_value.slice(),
+        .swatch = theme.chart[index],
+    });
+    tooltip.close(tree, card);
+}
+
+fn programRows(state: *const State) []const Program {
+    return switch (state.page) {
+        .today => state.today.programs[0..state.today.program_count],
+        .history => state.history.programs[0..state.history.program_count],
+        .focus => &.{},
+    };
 }
 
 fn header(state: *const State, tree: *Tree, theme: *const Theme) kit.tree.Error!void {
@@ -1241,33 +1308,45 @@ fn refreshHistory(state: *State) void {
 }
 
 fn refreshTip(state: *State) void {
-    const index = switch (state.hover) {
-        .day => |index| index,
-        else => return,
-    };
-    const count = state.period.days();
-    if (index >= count) return;
-    const history = &state.history;
-    const back: u32 = count - 1 - index;
-    const day = history.day -| back;
-    const summary = history.days[history_days - count + index];
-    const civil = (std.time.epoch.EpochDay{ .day = day }).calculateYearDay().calculateMonthDay();
-    state.tip.title.set("{s}, {d} {s}", .{
-        weekday_long[(day + 4) % 7],
-        civil.day_index + 1,
-        month_names[@intFromEnum(civil.month) - 1],
-    });
-    var screen: Label(12) = .{};
-    var focused: Label(12) = .{};
-    screen.duration(summary.screen_s);
-    focused.duration(summary.focus_s);
-    state.tip.time.set("Screen {s} \u{00b7} Focus {s}", .{ screen.slice(), focused.slice() });
-    state.tip.counts.set("{d} {s} \u{00b7} {d} {s}", .{
-        summary.tasks,
-        if (summary.tasks == 1) "task" else "tasks",
-        summary.breaks,
-        if (summary.breaks == 1) "break" else "breaks",
-    });
+    switch (state.hover) {
+        .day => |index| {
+            const summary, const day = switch (state.page) {
+                .today => blk: {
+                    if (index >= week_days) return;
+                    const back: u32 = week_days - 1 - index;
+                    break :blk .{ state.today.week[index], state.today_key.day -| back };
+                },
+                .history => blk: {
+                    const count = state.period.days();
+                    if (index >= count) return;
+                    const back: u32 = count - 1 - index;
+                    break :blk .{ state.history.days[history_days - count + index], state.history.day -| back };
+                },
+                .focus => return,
+            };
+            const civil = (std.time.epoch.EpochDay{ .day = day }).calculateYearDay().calculateMonthDay();
+            state.tip.title.set("{s}, {d} {s}", .{
+                weekday_long[(day + 4) % 7],
+                civil.day_index + 1,
+                month_names[@intFromEnum(civil.month) - 1],
+            });
+            state.tip.screen.duration(summary.screen_s);
+            state.tip.focus.duration(summary.focus_s);
+            state.tip.counts.set("{d} {s} \u{00b7} {d} {s}", .{
+                summary.tasks,
+                if (summary.tasks == 1) "task" else "tasks",
+                summary.breaks,
+                if (summary.breaks == 1) "break" else "breaks",
+            });
+        },
+        .program => |index| {
+            const rows = programRows(state);
+            if (index >= rows.len) return;
+            const row = &rows[index];
+            state.tip.program_value.set("{s} \u{00b7} {s}", .{ row.time.slice(), row.share.slice() });
+        },
+        else => {},
+    }
 }
 
 fn limitSeconds(option: *const wellbeing.Option) u32 {

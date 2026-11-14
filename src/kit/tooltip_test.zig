@@ -44,9 +44,9 @@ const Fixture = struct {
 test "tooltip: the card sits below its anchor and is as wide as its text" {
     var fixture: Fixture = .{};
     try fixture.build(40, 100, 800, 600);
-    // Swatch 8, gaps 8, "Focus" 35, "2h" 14, padding 8 on each side: 89.
-    // The anchor is 40 wide, so the text wins. One line of 16 inside 4 of padding.
-    try testing.expectEqual(Rect{ .x = 40, .y = 140, .w = 89, .h = 24 }, fixture.tree.nodes[fixture.card].rect);
+    // Swatch 8, gaps 8, "Focus" 35, "2h" 14, padding 12 on each side: 97.
+    // The anchor is 40 wide, so the text wins. One line of 16 inside 8 of padding: 32.
+    try testing.expectEqual(Rect{ .x = 40, .y = 140, .w = 97, .h = 32 }, fixture.tree.nodes[fixture.card].rect);
     try testing.expectEqual(tooltip.nodes(1), fixture.tree.len - 2);
     try testing.expectEqual(Theme.dark.popover, fixture.tree.nodes[fixture.card].box.fill);
     try testing.expectEqual(Theme.dark.border, fixture.tree.nodes[fixture.card].box.border);
@@ -56,8 +56,8 @@ test "tooltip: the card sits below its anchor and is as wide as its text" {
 test "tooltip: the card goes above when there is more room there" {
     var fixture: Fixture = .{};
     try fixture.build(40, 250, 800, 300);
-    // Below would start at 290 with 2 left; the card is 24 tall, so it goes above.
-    try testing.expectEqual(@as(f32, 250 - layout.anchor_gap - 24), fixture.tree.nodes[fixture.card].rect.y);
+    // Below would start at 290 with 2 left; the card is 32 tall, so it goes above.
+    try testing.expectEqual(@as(f32, 250 - layout.anchor_gap - 32), fixture.tree.nodes[fixture.card].rect.y);
 }
 
 test "tooltip: a hit on the card falls through to the page" {

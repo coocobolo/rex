@@ -59,8 +59,8 @@ pub const Event = union(enum) {
     /// before the first frame and before every frame after a resize.
     size: struct { width: f32, height: f32 },
     /// The pointer moved onto the node with this id; `.none` for no node or
-    /// off the window.
-    pointer: Id,
+    /// off the window. `x` and `y` are in logical pixels (`-1` when off).
+    pointer: struct { id: Id, x: f32 = 0, y: f32 = 0 },
     /// The left button went down on the node with this id.
     press: Id,
     /// The left button was let go, wherever the pointer is.
@@ -327,7 +327,7 @@ fn Host(comptime Tool: type) type {
             } else .arrow);
             if (id == self.over) return;
             self.over = id;
-            self.send(.{ .pointer = id });
+            self.send(.{ .pointer = .{ .id = id, .x = self.pointer_x, .y = self.pointer_y } });
         }
 
         fn fromWindow(window: ?*c.GLFWwindow) *Self {

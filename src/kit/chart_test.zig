@@ -178,8 +178,8 @@ test "chart: donut slices share the square and the gaps" {
     var fixture: Fixture = .{};
     var tree = fixture.tree();
     const parts = [_]chart.Part{
-        .{ .label = "Rex", .value = 1, .fill = Theme.dark.primary },
-        .{ .label = "Shell", .value = 3, .fill = Theme.dark.info },
+        .{ .id = tree_zig.Id.of("part").item(0), .label = "Rex", .value = 1, .fill = Theme.dark.primary },
+        .{ .id = tree_zig.Id.of("part").item(1), .label = "Shell", .value = 3, .fill = Theme.dark.info },
     };
     try chart.share(&tree, &Theme.dark, .donut, &parts);
     try lay(&tree);
@@ -192,6 +192,13 @@ test "chart: donut slices share the square and the gaps" {
     try testing.expectApproxEqAbs(smaller.sweep * 3, larger.sweep, 0.001);
     try testing.expectEqual(tree_zig.Caps.butt, smaller.caps);
     try testing.expectApproxEqAbs(smaller.sweep + (chart.donut_gap / (chart.donut_radius - chart.donut_thickness / 2)), larger.start, 0.001);
+
+    // Hit-testing picks the exact wedge on the ring, and misses the hollow center.
+    const center = chart.donut_radius;
+    const mid_r = chart.donut_radius - chart.donut_thickness / 2;
+    try testing.expect(tree.hit(center, center) == null);
+    try testing.expectEqual(parts[0].id, tree.hit(center + mid_r * @sin(@as(f32, 0.4)), center - mid_r * @cos(@as(f32, 0.4))).?.box.id);
+    try testing.expectEqual(parts[1].id, tree.hit(center - mid_r, center).?.box.id);
 }
 
 test "chart: a missing limit draws no line" {

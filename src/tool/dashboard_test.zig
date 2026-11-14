@@ -217,7 +217,7 @@ test "dashboard: a click on a tab switches to it; the menu opens and closes" {
     defer dashboard.deinit(&state);
 
     const history_tab = kit.tree.Id.of("wellbeing.tab").item(2);
-    _ = dashboard.update(&state, .{ .pointer = history_tab });
+    _ = dashboard.update(&state, .{ .pointer = .{ .id = history_tab } });
     _ = dashboard.update(&state, .{ .press = history_tab });
     try testing.expect(dashboard.update(&state, .release));
     try testing.expectEqual(dashboard.Page.history, state.page);
@@ -225,13 +225,13 @@ test "dashboard: a click on a tab switches to it; the menu opens and closes" {
     // A release away from where the press went down does nothing.
     state.page = .focus;
     const more = kit.tree.Id.of("wellbeing.more");
-    _ = dashboard.update(&state, .{ .pointer = more });
+    _ = dashboard.update(&state, .{ .pointer = .{ .id = more } });
     _ = dashboard.update(&state, .{ .press = more });
-    _ = dashboard.update(&state, .{ .pointer = .none });
+    _ = dashboard.update(&state, .{ .pointer = .{ .id = .none } });
     _ = dashboard.update(&state, .release);
     try testing.expectEqual(dashboard.Menu.closed, state.menu);
 
-    _ = dashboard.update(&state, .{ .pointer = more });
+    _ = dashboard.update(&state, .{ .pointer = .{ .id = more } });
     _ = dashboard.update(&state, .{ .press = more });
     _ = dashboard.update(&state, .release);
     try testing.expectEqual(dashboard.Menu.more, state.menu);
@@ -431,14 +431,24 @@ test "history: hovering a day fills its tooltip, and the period switch works" {
     state.wb.data.today = .{ .day = 20513, .active_screen_s = 3600, .tasks_completed = 1, .eyesight_breaks = 2 };
     dashboard.refreshHistoryAt(&state, 20513);
 
-    try testing.expect(dashboard.update(&state, .{ .pointer = kit.tree.Id.of("wellbeing.day").item(6) }));
+    try testing.expect(dashboard.update(&state, .{ .pointer = .{ .id = kit.tree.Id.of("wellbeing.day").item(6), .x = 200, .y = 350 } }));
     try testing.expectEqualStrings("Sunday, 1 March", state.tip.title.slice());
-    try testing.expectEqualStrings("Screen 1h \u{00b7} Focus 0m", state.tip.time.slice());
+    try testing.expectEqualStrings("1h", state.tip.screen.slice());
+    try testing.expectEqualStrings("0m", state.tip.focus.slice());
     try testing.expectEqualStrings("1 task \u{00b7} 2 breaks", state.tip.counts.slice());
     try buildView(&state);
 
+    // Same day tooltip works on Today's "This week" chart too.
+    state.page = .today;
+    try testing.expect(dashboard.update(&state, .{ .pointer = .{ .id = .none } }));
+    try testing.expect(dashboard.update(&state, .{ .pointer = .{ .id = kit.tree.Id.of("wellbeing.day").item(6), .x = 200, .y = 350 } }));
+    try testing.expectEqualStrings("Sunday, 1 March", state.tip.title.slice());
+    try testing.expectEqualStrings("1h", state.tip.screen.slice());
+    try buildView(&state);
+    state.page = .history;
+
     const fortnight = kit.tree.Id.of("wellbeing.period").item(1);
-    _ = dashboard.update(&state, .{ .pointer = fortnight });
+    _ = dashboard.update(&state, .{ .pointer = .{ .id = fortnight } });
     _ = dashboard.update(&state, .{ .press = fortnight });
     try testing.expect(dashboard.update(&state, .release));
     try testing.expectEqual(dashboard.Period.fortnight, state.period);
@@ -473,13 +483,13 @@ test "dashboard: the gear opens the view choices, and a choice changes the chart
     defer dashboard.deinit(&state);
 
     const gear = kit.tree.Id.of("wellbeing.gear");
-    _ = dashboard.update(&state, .{ .pointer = gear });
+    _ = dashboard.update(&state, .{ .pointer = .{ .id = gear } });
     _ = dashboard.update(&state, .{ .press = gear });
     try testing.expect(dashboard.update(&state, .release));
     try testing.expectEqual(dashboard.Menu.view, state.menu);
 
     const ring = kit.tree.Id.of("wellbeing.timer_chart").item(1);
-    _ = dashboard.update(&state, .{ .pointer = ring });
+    _ = dashboard.update(&state, .{ .pointer = .{ .id = ring } });
     _ = dashboard.update(&state, .{ .press = ring });
     try testing.expect(dashboard.update(&state, .release));
     try testing.expectEqual(.ring, state.charts.timer_chart);
@@ -614,4 +624,26 @@ test "dashboard: a short window scrolls the programs card instead of squeezing i
         }
     }
     try testing.expectEqual(4, rows);
+}
+
+test "dashboard: program tooltip works on Today and History and stays near the pointer" {
+    var tmp: StateTmp = .init();
+    defer tmp.deinit();
+    const dir = try tmp.path();
+    const config = configWith(dir);
+    var state = try openDashboard(&config, dir);
+    defer dashboard.deinit(&state);
+    state.wb.data.today = .{ .day = 20513, .active_screen_s = 3600 };
+    state.wb.data.today.top_apps[0].setName("nvim");
+    state.wb.data.today.top_apps[0].seconds = 2700;
+    dashboard.refreshHistoryAt(&state, 20513);
+
+    const prog0 = kit.tree.Id.of("wellbeing.program").item(0);
+    for ([_]dashboard.Page{ .today, .history }) |page| {
+        state.page = page;
+        try testing.expect(dashboard.update(&state, .{ .pointer = .{ .id = prog0, .x = 500, .y = 400 } }));
+        try testing.expectEqualStrings("45m \u{00b7} 100%", state.tip.program_value.slice());
+        try buildView(&state);
+        try testing.expect(dashboard.update(&state, .{ .pointer = .{ .id = .none } }));
+    }
 }

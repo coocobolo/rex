@@ -41,7 +41,10 @@ pub fn layout(tree: *Tree, measurer: text.Measurer, viewport_width: f32, viewpor
     while (root < nodes.len) {
         const range: Range = .{ .start = root, .end = nodes[root].end };
         const anchor = tree.anchorOf(root);
-        const target: ?Rect = if (anchor) |a| if (findBefore(nodes, root, a.target)) |node| node.rect else null else null;
+        const target: ?Rect = if (anchor) |a| switch (a.target) {
+            .node => |id| if (findBefore(nodes, root, id)) |node| node.rect else null,
+            .point => null,
+        } else null;
 
         fit(nodes, range, .horizontal, measurer);
         // At least as wide as its anchor, as a dropdown list is.
@@ -56,10 +59,16 @@ pub fn layout(tree: *Tree, measurer: text.Measurer, viewport_width: f32, viewpor
         place(nodes, range);
         // Before later roots anchor to nodes inside the region.
         if (tree.scroll_index >= range.start and tree.scroll_index < range.end) scroll(tree, nodes);
-        if (target) |rect| {
-            const at = anchorPosition(nodes[root].rect, rect, viewport_width, viewport_height);
-            tree.translate(root, at.x, at.y);
-        }
+        if (anchor) |a| switch (a.target) {
+            .node => if (target) |rect| {
+                const at = anchorPosition(nodes[root].rect, rect, viewport_width, viewport_height);
+                tree.translate(root, at.x, at.y);
+            },
+            .point => |pt| {
+                const at = anchorPointPosition(nodes[root].rect, pt.x, pt.y, viewport_width, viewport_height);
+                tree.translate(root, at.x, at.y);
+            },
+        };
         root = range.end;
     }
 }
@@ -72,16 +81,27 @@ pub const anchor_margin = 8;
 /// Where an anchored root of size `own` goes against `target`: below it,
 /// left edges aligned; above it when it does not fit below and there is
 /// more room above; then moved inside the window's margin.
+const point_gap: f32 = 12;
+
 fn anchorPosition(own: Rect, target: Rect, viewport_width: f32, viewport_height: f32) struct { x: f32, y: f32 } {
-    const below = target.y + target.h + anchor_gap;
-    const above = target.y - anchor_gap - own.h;
-    const room_below = viewport_height - anchor_margin - below;
-    const room_above = above - anchor_margin;
-    const y = if (own.h <= room_below or room_below >= room_above) below else above;
     return .{
         .x = clamp(target.x, anchor_margin, viewport_width - anchor_margin - own.w),
-        .y = clamp(y, anchor_margin, viewport_height - anchor_margin - own.h),
+        .y = placeAxis(target.y + target.h + anchor_gap, target.y - anchor_gap - own.h, own.h, viewport_height),
     };
+}
+
+fn anchorPointPosition(own: Rect, px: f32, py: f32, viewport_width: f32, viewport_height: f32) struct { x: f32, y: f32 } {
+    return .{
+        .x = placeAxis(px + point_gap, px - point_gap - own.w, own.w, viewport_width),
+        .y = placeAxis(py + point_gap, py - point_gap - own.h, own.h, viewport_height),
+    };
+}
+
+fn placeAxis(after: f32, before: f32, span: f32, viewport: f32) f32 {
+    const room_after = viewport - anchor_margin - after;
+    const room_before = before - anchor_margin;
+    const pos = if (span <= room_after or room_after >= room_before) after else before;
+    return clamp(pos, anchor_margin, viewport - anchor_margin - span);
 }
 
 /// `value` within `low` and `high`; `low` wins when they cross, so a root

@@ -18,9 +18,9 @@ const Id = tree_zig.Id;
 const Index = tree_zig.Index;
 
 /// Horizontal padding inside the card.
-pub const pad_x = 8;
+pub const pad_x = 12;
 /// Vertical padding inside the card.
-pub const pad_y = 4;
+pub const pad_y = 8;
 /// The color swatch, a square the shader rounds into a dot.
 pub const swatch = 8;
 /// Between the swatch, the name and the value, and between lines.
@@ -41,8 +41,22 @@ pub fn nodes(count: usize) usize {
 /// Opens the card as a root, anchored to `anchor`. Write the lines, then
 /// `close`.
 pub fn open(tree: *Tree, theme: *const Theme, anchor: Id) tree_zig.Error!Index {
+    const card = try openCard(tree, theme);
+    try tree.anchorTo(card, anchor);
+    return card;
+}
+
+/// Opens the card as a root, placed near `(x, y)` in logical pixels.
+/// Write the lines, then `close`.
+pub fn openAt(tree: *Tree, theme: *const Theme, x: f32, y: f32) tree_zig.Error!Index {
+    const card = try openCard(tree, theme);
+    try tree.anchorAt(card, x, y);
+    return card;
+}
+
+fn openCard(tree: *Tree, theme: *const Theme) tree_zig.Error!Index {
     assert(tree.current == tree_zig.none);
-    const card = try tree.open(.{
+    return tree.open(.{
         .padding = .symmetric(pad_x, pad_y),
         .gap = gap,
         .fill = theme.popover,
@@ -50,8 +64,6 @@ pub fn open(tree: *Tree, theme: *const Theme, anchor: Id) tree_zig.Error!Index {
         .border_width = Theme.border_width,
         .radius = Theme.radius_md,
     });
-    try tree.anchorTo(card, anchor);
-    return card;
 }
 
 pub fn close(tree: *Tree, card: Index) void {

@@ -236,14 +236,14 @@ fn ringChart(tree: *Tree, theme: *const Theme, fraction: f32, fill: Color) tree_
         .thickness = ring_thickness,
         .sweep = turn,
         .fill = theme.muted,
-    });
+    }, .none);
     try segment(tree, .{
         .radius = ring_radius,
         .thickness = ring_thickness,
         .sweep = clamp01(fraction) * turn,
         .fill = fill,
         .caps = .round,
-    });
+    }, .none);
     tree.close(square);
 }
 
@@ -268,14 +268,14 @@ fn donutChart(tree: *Tree, parts: []const Part) tree_zig.Error!void {
             .start = cursor,
             .sweep = sweep,
             .fill = part.fill,
-        });
+        }, part.id);
         cursor += sweep + gap;
     }
     tree.close(square);
 }
 
-fn segment(tree: *Tree, arc: tree_zig.Arc) tree_zig.Error!void {
-    _ = try tree.arc(arc, .{ .overlay = true, .width = .fill, .height = .fill });
+fn segment(tree: *Tree, arc: tree_zig.Arc, id: tree_zig.Id) tree_zig.Error!void {
+    _ = try tree.arc(arc, .{ .id = id, .overlay = true, .width = .fill, .height = .fill });
 }
 
 fn clamp01(value: f32) f32 {

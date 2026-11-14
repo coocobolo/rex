@@ -104,9 +104,9 @@ pub fn update(state: *State, event: host.Event) bool {
     const before = state.*;
     switch (event) {
         .size => |size| _ = state.frame.update(count, .{ .width = size.width }),
-        .pointer => |id| {
-            _ = state.frame.update(count, .{ .pointer = sidebar.hit(id, count) });
-            state.hover = over(id);
+        .pointer => |pointer| {
+            _ = state.frame.update(count, .{ .pointer = sidebar.hit(pointer.id, count) });
+            state.hover = over(pointer.id);
             switch (state.hover) {
                 .choice => |index| if (state.dropdown == .open) {
                     state.dropdown = .{ .open = index };
@@ -241,7 +241,7 @@ test "placeholder: the pane follows the menu, by keyboard and by pointer" {
 test "placeholder: the dropdown opens on release, chooses, and closes beside the list" {
     const testing = std.testing;
     var state: State = .empty;
-    try testing.expect(update(&state, .{ .pointer = trigger_id }));
+    try testing.expect(update(&state, .{ .pointer = .{ .id = trigger_id } }));
     try testing.expect(update(&state, .{ .press = trigger_id }));
     try testing.expectEqual(Dropdown.closed, state.dropdown);
     try testing.expect(update(&state, .release));
@@ -255,17 +255,17 @@ test "placeholder: the dropdown opens on release, chooses, and closes beside the
     try testing.expectEqual(Dropdown.closed, state.dropdown);
 
     // By pointer: the highlight follows it, release takes the choice.
-    _ = update(&state, .{ .pointer = trigger_id });
+    _ = update(&state, .{ .pointer = .{ .id = trigger_id } });
     _ = update(&state, .{ .press = trigger_id });
     _ = update(&state, .release);
-    try testing.expect(update(&state, .{ .pointer = choiceId(2) }));
+    try testing.expect(update(&state, .{ .pointer = .{ .id = choiceId(2) } }));
     try testing.expectEqual(Dropdown{ .open = 2 }, state.dropdown);
     _ = update(&state, .{ .press = choiceId(2) });
     try testing.expect(update(&state, .release));
     try testing.expectEqual(2, state.choice);
 
     // A press beside the list closes it and reaches nothing else.
-    _ = update(&state, .{ .pointer = trigger_id });
+    _ = update(&state, .{ .pointer = .{ .id = trigger_id } });
     _ = update(&state, .{ .press = trigger_id });
     _ = update(&state, .release);
     try testing.expect(update(&state, .{ .press = layer_id }));
@@ -274,7 +274,7 @@ test "placeholder: the dropdown opens on release, chooses, and closes beside the
     try testing.expectEqual(2, state.choice);
 
     // Esc closes it without choosing.
-    _ = update(&state, .{ .pointer = trigger_id });
+    _ = update(&state, .{ .pointer = .{ .id = trigger_id } });
     _ = update(&state, .{ .press = trigger_id });
     _ = update(&state, .release);
     try testing.expect(update(&state, .{ .key = .{ .key = .escape } }));
