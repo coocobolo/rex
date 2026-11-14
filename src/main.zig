@@ -65,7 +65,8 @@ pub fn main(init: std.process.Init) !void {
         return;
     }
 
-    var app: rex.App = try .init(init.gpa, init.io, &environ, argv0, &config, custom_config_path);
+    var app: rex.App = undefined;
+    try app.init(init.gpa, init.io, &environ, argv0, &config, custom_config_path);
     defer app.deinit(init.gpa);
 
     try app.run();

@@ -1706,21 +1706,49 @@ fn viewScrollbar(state: *const State, tree: *Tree, theme: *const Theme) kit.tree
     tree.close(rail);
 }
 
-fn viewPage(state: *const State, tree: *Tree, theme: *const Theme, page: Page) kit.tree.Error!void {
+const RowInfo = struct {
+    section: keys.Section,
+    page: ?Page,
+    meta: KeyMeta,
+    kind: ControlKind,
+    placeholder: []const u8,
+    restart_required: bool,
+    min: f64,
+    max: f64,
+};
+
+const row_infos: [keys.table.len]RowInfo = blk: {
     @setEvalBranchQuota(keys.eval_branch_quota);
+    var table: [keys.table.len]RowInfo = undefined;
+    for (keys.table, 0..) |key, i| {
+        table[i] = .{
+            .section = key.section,
+            .page = pageForSection(key.section),
+            .meta = keyMeta(key.section, key.name),
+            .kind = controlKind(key),
+            .placeholder = inputPlaceholder(key),
+            .restart_required = key.reload == .restart,
+            .min = key.bounds.min,
+            .max = key.bounds.max,
+        };
+    }
+    break :blk table;
+};
+
+fn viewPage(state: *const State, tree: *Tree, theme: *const Theme, page: Page) kit.tree.Error!void {
     const cfg = state.activeConfig();
     var current_section: ?keys.Section = null;
     var section_open: ?kit.tree.Index = null;
     var first_in_section = true;
 
-    inline for (keys.table, 0..) |key, i| {
+    for (row_infos, 0..) |info, i| {
         const idx: u16 = @intCast(i);
-        if (keys.availableHere(idx) and pageForSection(key.section) == page) {
-            if (current_section == null or current_section.? != key.section) {
+        if (keys.availableHere(idx) and info.page == page) {
+            if (current_section == null or current_section.? != info.section) {
                 if (section_open) |open_box| tree.close(open_box);
-                current_section = key.section;
+                current_section = info.section;
                 first_in_section = true;
-                _ = try tree.text(section_titles.get(key.section), .{
+                _ = try tree.text(section_titles.get(info.section), .{
                     .color = theme.foreground,
                     .style = .sm_medium,
                 });
@@ -1741,7 +1769,7 @@ fn viewPage(state: *const State, tree: *Tree, theme: *const Theme, page: Page) k
                 });
             }
             first_in_section = false;
-            try viewKeyRow(state, tree, theme, key, idx, cfg);
+            try viewKeyRow(state, tree, theme, info, idx, cfg);
         }
     }
     if (section_open) |open_box| tree.close(open_box);
@@ -1852,15 +1880,67 @@ fn groupColors(theme: *const Theme, is_err: bool, focused: bool, hovered: bool) 
     };
 }
 
+fn toggleValue(idx: u16, cfg: *const Config) bool {
+    @setEvalBranchQuota(keys.eval_branch_quota);
+    inline for (keys.table, 0..) |key, i| {
+        if (comptime controlKind(key) == .toggle) {
+            if (idx == i) return keys.fieldValue(Config, key.field, cfg);
+        }
+    }
+    return false;
+}
+
+fn stepperValue(idx: u16, cfg: *const Config) ?f64 {
+    @setEvalBranchQuota(keys.eval_branch_quota);
+    inline for (keys.table, 0..) |key, i| {
+        if (comptime controlKind(key) == .stepper) {
+            if (idx == i) {
+                const v = keys.fieldValue(Config, key.field, cfg);
+                return switch (@typeInfo(@TypeOf(v))) {
+                    .optional => if (v) |inner| switch (@typeInfo(@TypeOf(inner))) {
+                        .float => @as(f64, @floatCast(inner)),
+                        .int => @as(f64, @floatFromInt(inner)),
+                        else => null,
+                    } else null,
+                    .float => @as(f64, @floatCast(v)),
+                    .int => @as(f64, @floatFromInt(v)),
+                    else => null,
+                };
+            }
+        }
+    }
+    return null;
+}
+
+fn selectDisplayValue(idx: u16, cfg: *const Config) []const u8 {
+    @setEvalBranchQuota(keys.eval_branch_quota);
+    inline for (keys.table, 0..) |key, i| {
+        if (comptime controlKind(key) == .select) {
+            if (idx == i) return formatSelectDisplay(key, cfg);
+        }
+    }
+    return "";
+}
+
+fn enumSetSummaryValue(idx: u16, cfg: *const Config) []const u8 {
+    @setEvalBranchQuota(keys.eval_branch_quota);
+    inline for (keys.table, 0..) |key, i| {
+        if (comptime controlKind(key) == .enum_set) {
+            if (idx == i) return enumSetSummary(key, cfg);
+        }
+    }
+    return "None";
+}
+
 fn viewKeyRow(
     state: *const State,
     tree: *Tree,
     theme: *const Theme,
-    comptime key: keys.Key,
+    info: RowInfo,
     idx: u16,
     cfg: *const Config,
 ) kit.tree.Error!void {
-    const meta = comptime keyMeta(key.section, key.name);
+    const meta = info.meta;
     const pane_w = if (state.frame.shown() and !state.frame.narrow)
         state.viewport_width - sidebar.width
     else
@@ -1877,7 +1957,7 @@ fn viewKeyRow(
     const row = try tree.open(.{
         .axis = if (compact) .column else .row,
         .width = .fill,
-        .cross = if (compact or comptime controlKind(key) == .list) .start else .center,
+        .cross = if (compact or info.kind == .list) .start else .center,
         .gap = if (compact) 10 else 16,
     });
 
@@ -1891,7 +1971,7 @@ fn viewKeyRow(
         .color = theme.foreground,
         .style = .sm_medium,
     });
-    if (key.reload == .restart) {
+    if (info.restart_required) {
         const badge = try tree.open(.{
             .padding = .symmetric(6, 1),
             .fill = theme.muted,
@@ -1912,9 +1992,9 @@ fn viewKeyRow(
     });
     tree.close(label_box);
 
-    switch (comptime controlKind(key)) {
+    switch (info.kind) {
         .toggle => {
-            const on = keys.fieldValue(Config, key.field, cfg);
+            const on = toggleValue(idx, cfg);
             try switch_control.view(tree, theme, .{
                 .id = switchId(idx),
                 .checked = on,
@@ -1941,22 +2021,9 @@ fn viewKeyRow(
         .stepper => {
             const inp = &state.inputs[idx];
             const is_err = state.error_key == idx;
-            const placeholder = comptime inputPlaceholder(key);
-            const cur_val: ?f64 = blk: {
-                const v = keys.fieldValue(Config, key.field, cfg);
-                break :blk switch (@typeInfo(@TypeOf(v))) {
-                    .optional => if (v) |inner| switch (@typeInfo(@TypeOf(inner))) {
-                        .float => @as(f64, @floatCast(inner)),
-                        .int => @as(f64, @floatFromInt(inner)),
-                        else => null,
-                    } else null,
-                    .float => @as(f64, @floatCast(v)),
-                    .int => @as(f64, @floatFromInt(v)),
-                    else => null,
-                };
-            };
-            const at_min = if (cur_val) |v| v <= key.bounds.min else false;
-            const at_max = if (cur_val) |v| v >= key.bounds.max else false;
+            const cur_val = stepperValue(idx, cfg);
+            const at_min = if (cur_val) |v| v <= info.min else false;
+            const at_max = if (cur_val) |v| v >= info.max else false;
             const dec_hovered = std.meta.eql(state.hover, Target{ .stepper_dec = idx });
             const inc_hovered = std.meta.eql(state.hover, Target{ .stepper_inc = idx });
             const input_hovered = std.meta.eql(state.hover, Target{ .key_input = idx });
@@ -1999,7 +2066,7 @@ fn viewKeyRow(
             try input.view(tree, theme, .{
                 .id = inputId(idx),
                 .value = inp.text(),
-                .placeholder = placeholder,
+                .placeholder = info.placeholder,
                 .cursor = inp.cursor,
                 .anchor = inp.anchor,
                 .width = .fill,
@@ -2097,7 +2164,7 @@ fn viewKeyRow(
             tree.close(ring);
         },
         .select => {
-            const current_label = formatSelectDisplay(key, cfg);
+            const current_label = selectDisplayValue(idx, cfg);
             const is_open = if (state.open_select) |sel| sel.key == idx else false;
             try select.trigger(tree, theme, .{
                 .id = selectId(idx),
@@ -2112,7 +2179,7 @@ fn viewKeyRow(
             const is_open = if (state.open_select) |sel| sel.key == idx else false;
             try select.trigger(tree, theme, .{
                 .id = selectId(idx),
-                .value = enumSetSummary(key, cfg),
+                .value = enumSetSummaryValue(idx, cfg),
                 .width = control_width,
                 .hovered = std.meta.eql(state.hover, Target{ .key_select = idx }),
                 .open = is_open,
@@ -2244,7 +2311,7 @@ fn viewKeyRow(
             try input.view(tree, theme, .{
                 .id = inputId(idx),
                 .value = inp.text(),
-                .placeholder = comptime inputPlaceholder(key),
+                .placeholder = info.placeholder,
                 .cursor = inp.cursor,
                 .anchor = inp.anchor,
                 .width = .fill,
@@ -2273,11 +2340,10 @@ fn viewKeyRow(
         .text_input => {
             const inp = &state.inputs[idx];
             const is_err = state.error_key == idx;
-            const placeholder = comptime inputPlaceholder(key);
             try input.view(tree, theme, .{
                 .id = inputId(idx),
                 .value = inp.text(),
-                .placeholder = placeholder,
+                .placeholder = info.placeholder,
                 .cursor = inp.cursor,
                 .anchor = inp.anchor,
                 .width = control_width,

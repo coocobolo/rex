@@ -400,13 +400,14 @@ fn awakeNs(io: std.Io) u64 {
 }
 
 pub fn init(
+    self: *App,
     gpa: std.mem.Allocator,
     io: std.Io,
     environ: *const std.process.Environ,
     argv0: []const u8,
     config: *const Config,
     custom_config_path: ?[]const u8,
-) !App {
+) !void {
     log.debug("envi.block.len: {d}", .{environ.block.slice.len});
 
     const home_dir = try environ.getAlloc(gpa, "HOME");
@@ -623,7 +624,7 @@ pub fn init(
         }
     }
 
-    const app = App{
+    self.* = .{
         .io = io,
         .driver = driver,
         .latency = latency,
@@ -656,8 +657,6 @@ pub fn init(
         .last_frame = now,
         .word_classifier = classifier,
     };
-
-    return app;
 }
 
 pub fn deinit(self: *App, gpa: std.mem.Allocator) void {
