@@ -384,11 +384,15 @@ test "KitPainter: an arc instance is the square around its centre" {
         .fill = .{ .r = 1, .g = 2, .b = 3, .a = 255 },
         .caps = .round,
     };
-    const got = KitPainter.arcInstance(arc, 100, 50, 20, 2);
+    const clip: KitPainter.Clip = .{ 0, 110, 400, 400 };
+    const got = KitPainter.arcInstance(arc, 100, 50, 20, 2, clip);
     try testing.expectEqual([4]f32{ 200, 100, 40, 40 }, got.rect);
     try testing.expectEqual([2]f32{ 20, -8 }, got.params);
     try testing.expectEqual([2]f32{ 1, 2 }, got.arc);
     try testing.expectEqual(KitPainter.Kind.arc, got.kind);
+    // A scrolled donut is cut where its region ends, as boxes and glyphs
+    // are.
+    try testing.expectEqual(clip, got.clip);
 }
 
 test "KitPainter: a toast is a filled, bordered box with text, over an untouched background" {

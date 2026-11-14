@@ -49,10 +49,10 @@ pub fn layout(tree: *Tree, measurer: text.Measurer, viewport_width: f32, viewpor
             .fit, .at_least => nodes[root].rect.w = @max(nodes[root].rect.w, rect.w),
             .fill, .fixed, .at_most, .fraction => {},
         };
-        distribute(nodes, range, .horizontal, viewport_width);
+        distribute(nodes, range, .horizontal, viewport_width, tree.scroll_index);
         try wrapTexts(tree, range, measurer);
         fit(nodes, range, .vertical, measurer);
-        distribute(nodes, range, .vertical, viewport_height);
+        distribute(nodes, range, .vertical, viewport_height, tree.scroll_index);
         place(nodes, range);
         // Before later roots anchor to nodes inside the region.
         if (tree.scroll_index >= range.start and tree.scroll_index < range.end) scroll(tree, nodes);
@@ -193,7 +193,7 @@ fn fit(nodes: []Node, range: Range, comptime dimension: Dimension, measurer: tex
 
 /// Top-down: the root takes its extent from the viewport, then every box
 /// hands its inner extent out to its children.
-fn distribute(nodes: []Node, range: Range, comptime dimension: Dimension, viewport: f32) void {
+fn distribute(nodes: []Node, range: Range, comptime dimension: Dimension, viewport: f32, scroll_index: Index) void {
     const root = &nodes[range.start];
     const own = extent(root, dimension);
     own.* = switch (size(root, dimension)) {
@@ -206,7 +206,7 @@ fn distribute(nodes: []Node, range: Range, comptime dimension: Dimension, viewpo
         if (node.content != .box) continue;
         const inner = @max(0, extent(node, dimension).* - padding(node, dimension));
         if (isAlong(node, dimension)) {
-            distributeAlong(nodes, i, dimension, inner);
+            distributeAlong(nodes, i, dimension, inner, i == scroll_index);
         } else {
             var it = children(nodes, i);
             while (it.next()) |child| {
@@ -231,7 +231,9 @@ fn distribute(nodes: []Node, range: Range, comptime dimension: Dimension, viewpo
 /// `fixed`, which is what makes a long text in a row wrap instead of
 /// spilling out; a clipping box keeps its children's sizes and cuts them
 /// instead.
-fn distributeAlong(nodes: []Node, index: usize, comptime dimension: Dimension, inner: f32) void {
+/// In a scroll region a `fill` child takes at least what its content needs:
+/// content that does not fit scrolls rather than being squeezed.
+fn distributeAlong(nodes: []Node, index: usize, comptime dimension: Dimension, inner: f32, scrolls: bool) void {
     var used: f32 = 0;
     var count: u32 = 0;
     var fills: u32 = 0;
@@ -266,7 +268,11 @@ fn distributeAlong(nodes: []Node, index: usize, comptime dimension: Dimension, i
         it = children(nodes, index);
         while (it.next()) |child| {
             if (child.box.overlay) continue;
-            if (size(child, dimension) == .fill) extent(child, dimension).* = share;
+            if (size(child, dimension) == .fill) {
+                const own = extent(child, dimension);
+                // `fit` left the content's extent here.
+                own.* = if (scrolls) @max(share, own.*) else share;
+            }
         }
     } else if (used > inner and nodes[index].box.overflow == .visible) {
         if (largest_fit) |child| {

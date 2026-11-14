@@ -59,8 +59,8 @@ const ColorScheme = @FieldType(@import("../config/Config.zig").Ui, "color_scheme
 const scheme_labels = [_][]const u8{ "Auto", "Dark", "Light" };
 
 /// Below this width the four cards take two rows; below `narrow_width` the
-/// timer chip hides and the page scrolls, the chart and programs cards one
-/// over the other at their own heights.
+/// timer chip hides and the chart and programs cards go one over the other
+/// at their own heights. A page taller than the window scrolls.
 const compact_width = 720;
 const narrow_width = 560;
 
@@ -210,8 +210,8 @@ pub const State = struct {
     scheme: ColorScheme,
     /// In logical pixels, from the last `size` event.
     width: f32 = 0,
-    /// How far a narrow page is scrolled, 0 to the last `max` the host
-    /// sent; 0 again on another page.
+    /// How far the page is scrolled, 0 to the last `max` the host sent; 0
+    /// again on another page.
     scroll: f32 = 0,
     /// What `refresh` last computed from the timer.
     shown: Shown = .{},
@@ -733,18 +733,25 @@ const LowerRow = struct {
 /// The chart card's height when the cards stack.
 const stacked_chart_height = 280;
 
-/// A page's column under the header. A narrow one is the scroll region.
+/// A page's column under the header, and the scroll region: content that
+/// does not fit the window, wide or narrow, scrolls instead of squeezing.
 fn pageBox(state: *const State, tree: *Tree) kit.tree.Error!kit.tree.Index {
-    const narrow = isNarrow(state.width);
     const page = try tree.open(.{
         .width = .fill,
         .height = .fill,
-        .padding = .{ .left = 24, .right = 24, .top = 4, .bottom = 24 },
+        .padding = .{ .left = sideMargin(state.width), .right = sideMargin(state.width), .top = 4, .bottom = 24 },
         .gap = card_gap,
-        .overflow = if (narrow) .clip else .visible,
+        .overflow = .clip,
     });
-    if (narrow) tree.scrollRegion(page, state.scroll);
+    tree.scrollRegion(page, state.scroll);
     return page;
+}
+
+/// Left and right of the header and the page: less when narrow, so the
+/// tabs and the period switch fit side by side down to the window's
+/// 360 px minimum.
+fn sideMargin(width: f32) u8 {
+    return if (isNarrow(width)) 16 else 24;
 }
 
 fn isNarrow(width: f32) bool {
@@ -1000,7 +1007,7 @@ fn header(state: *const State, tree: *Tree, theme: *const Theme) kit.tree.Error!
         .axis = .row,
         .width = .fill,
         .height = .{ .fixed = 56 },
-        .padding = .symmetric(24, 0),
+        .padding = .symmetric(sideMargin(state.width), 0),
         .cross = .center,
     });
     var list: [page_count]tabs.Tab = undefined;

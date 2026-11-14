@@ -217,7 +217,7 @@ pub fn paint(self: *KitPainter, tree: *const Tree, font: *KitFont, atlas: *Atlas
             .arc => |arc| {
                 if (!(arc.radius > 0 and arc.thickness > 0 and arc.sweep > 0)) continue;
                 if (!std.math.isFinite(arc.radius) or !std.math.isFinite(arc.sweep)) continue;
-                try self.push(arcInstance(arc, node.rect.x, node.rect.y, node.rect.w, scale));
+                try self.push(arcInstance(arc, node.rect.x, node.rect.y, node.rect.w, scale, clip));
             },
             .text => |t| {
                 const line_height: f32 = @floatFromInt(t.style.metrics().line_height);
@@ -246,7 +246,8 @@ fn intersect(a: Clip, b: Clip) Clip {
 /// The instance for `arc`. The quad is the square around its centre, of
 /// side `2 * radius` in physical pixels. `origin_x`, `origin_y` and `side`
 /// are the node's rectangle in logical pixels.
-pub fn arcInstance(arc: tree_zig.Arc, origin_x: f32, origin_y: f32, side: f32, scale: f32) Instance {
+/// `clip` is the clipping boxes' cut, as for every other instance.
+pub fn arcInstance(arc: tree_zig.Arc, origin_x: f32, origin_y: f32, side: f32, scale: f32, clip: Clip) Instance {
     const center_x = (origin_x + side / 2) * scale;
     const center_y = (origin_y + side / 2) * scale;
     const outer = arc.radius * scale;
@@ -257,6 +258,7 @@ pub fn arcInstance(arc: tree_zig.Arc, origin_x: f32, origin_y: f32, side: f32, s
         .params = .{ outer, if (arc.caps == .round) -thick else thick },
         .arc = .{ arc.start, arc.sweep },
         .kind = .arc,
+        .clip = clip,
     };
 }
 

@@ -441,3 +441,31 @@ test "layout: content shorter than its region does not scroll" {
     tree.reset();
     try testing.expectEqual(tree_zig.none, tree.scroll_index);
 }
+
+test "layout: in a scroll region a fill child keeps its content's height" {
+    var fixture: Fixture = .{};
+    var tree = fixture.tree();
+    const region = try tree.open(.{ .width = .{ .fixed = 50 }, .height = .{ .fixed = 100 }, .overflow = .clip });
+    tree.scrollRegion(region, 0);
+    _ = try tree.leaf(.{ .width = .fill, .height = .{ .fixed = 70 } });
+    const grows = try tree.open(.{ .width = .fill, .height = .fill });
+    _ = try tree.leaf(.{ .width = .fill, .height = .{ .fixed = 60 } });
+    tree.close(grows);
+    tree.close(region);
+    try layout(&tree, measurer, 400, 400);
+    // 30 is left for it, but its content needs 60: it scrolls instead.
+    try expectRect(&tree, 2, 0, 70, 50, 60);
+    try testing.expectEqual(30, tree.scroll_max);
+}
+
+test "layout: in a scroll region a fill child still takes the room left" {
+    var fixture: Fixture = .{};
+    var tree = fixture.tree();
+    const region = try tree.open(.{ .width = .{ .fixed = 50 }, .height = .{ .fixed = 100 }, .overflow = .clip });
+    tree.scrollRegion(region, 0);
+    _ = try tree.leaf(.{ .width = .fill, .height = .fill });
+    tree.close(region);
+    try layout(&tree, measurer, 400, 400);
+    try expectRect(&tree, 1, 0, 0, 50, 100);
+    try testing.expectEqual(0, tree.scroll_max);
+}

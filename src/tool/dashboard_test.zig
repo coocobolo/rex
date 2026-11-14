@@ -572,17 +572,46 @@ test "dashboard: a narrow page scrolls within what the host reports, and a new p
     try testing.expectEqual(0, state.scroll);
 }
 
-test "dashboard: a wide page has no scroll region" {
+test "dashboard: a short window scrolls the programs card instead of squeezing it" {
     var tmp: StateTmp = .init();
     defer tmp.deinit();
     const dir = try tmp.path();
-    const config = configWith(dir);
+    var config = configWith(dir);
+    config.wellbeing.dashboard.program_chart = .donut;
     var state = try openDashboard(&config, dir);
     defer dashboard.deinit(&state);
-    _ = dashboard.update(&state, .{ .size = .{ .width = 960, .height = 600 } });
+    state.wb.data.today = .{ .day = 9 };
+    for ([_][]const u8{ "claude", "nvim", "grok", "zsh", "htop" }, 0..) |name, index| {
+        state.wb.data.today.top_apps[index].setName(name);
+        state.wb.data.today.top_apps[index].seconds = @intCast(5000 - index * 900);
+    }
+    dashboard.refreshHistoryAt(&state, 9);
+    _ = dashboard.update(&state, .{ .size = .{ .width = 760, .height = 380 } });
+
     var nodes: [dashboard.node_max]kit.tree.Node = undefined;
     var lines: [dashboard.line_max]kit.text.Line = undefined;
     var tree = kit.tree.Tree.init(&nodes, &lines);
     try dashboard.view(&state, &tree, &kit.Theme.dark);
-    try testing.expectEqual(kit.tree.none, tree.scroll_index);
+    var no_state: u8 = 0;
+    try kit.layout.layout(&tree, .{ .context = &no_state, .widthFn = fixedWidth }, 760, 380);
+    try testing.expect(tree.scroll_max > 0);
+
+    // Every program row sits inside the programs card, below the one before.
+    var card: ?kit.tree.Rect = null;
+    var last_bottom: f32 = 0;
+    var rows: usize = 0;
+    for (tree.items()) |node| {
+        if (node.content == .text and std.mem.eql(u8, node.content.text.bytes, "Programs today")) {
+            card = tree.nodes[node.parent].rect;
+        }
+        if (node.content != .text or card == null) continue;
+        for ([_][]const u8{ "claude", "nvim", "grok", "Other" }) |name| {
+            if (!std.mem.eql(u8, node.content.text.bytes, name)) continue;
+            try testing.expect(node.rect.y >= last_bottom);
+            try testing.expect(node.rect.y + node.rect.h <= card.?.y + card.?.h);
+            last_bottom = node.rect.y + node.rect.h;
+            rows += 1;
+        }
+    }
+    try testing.expectEqual(4, rows);
 }
