@@ -11,7 +11,6 @@ const Atlas = renderer.Atlas;
 
 const Cell = renderer.Cell;
 const Background = renderer.Background;
-const Card = renderer.Card;
 const Decoration = renderer.Decoration;
 const Selection = renderer.Selection;
 const Scrollbar = renderer.Scrollbar;

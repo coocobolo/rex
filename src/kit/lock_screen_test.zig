@@ -77,3 +77,19 @@ test "lock_screen: view fits nodes, centers card, and hit-tests scrim vs card vs
     try testing.expectEqual(lock_screen.Hit.card, state.hit(tree.hitTest(card.x + 8, card.y + 8)));
     try testing.expectEqual(lock_screen.Hit.scrim, state.hit(tree.hitTest(10, 10)));
 }
+
+test "lock_screen: blur drops keyboard activation until focus restores it" {
+    var state: lock_screen.State = .empty;
+    _ = lock_screen.update(&state, .{ .sync = sample });
+    _ = lock_screen.update(&state, .{ .tick = Theme.duration });
+    try testing.expect(state.focused);
+
+    try testing.expectEqual(lock_screen.Outcome.redraw, lock_screen.update(&state, .blur));
+    try testing.expect(!state.focused);
+    try testing.expectEqual(lock_screen.Outcome.quiet, lock_screen.update(&state, .activate));
+
+    try testing.expectEqual(lock_screen.Outcome.redraw, lock_screen.update(&state, .focus));
+    try testing.expectEqual(lock_screen.Outcome.quiet, lock_screen.update(&state, .focus));
+    try testing.expect(state.focused);
+    try testing.expectEqual(lock_screen.Outcome.unlocked, lock_screen.update(&state, .activate));
+}

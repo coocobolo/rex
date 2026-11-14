@@ -136,6 +136,8 @@ pub const Event = union(enum) {
     pointer: Pointer,
     press,
     release: Pointer,
+    focus,
+    activate,
     blur,
 };
 
@@ -162,6 +164,8 @@ pub fn update(state: *State, event: Event) Outcome {
         .pointer => |over| hoverAt(state, over),
         .press => pressUnlock(state),
         .release => |over| releaseUnlock(state, over),
+        .focus => focusUnlock(state),
+        .activate => activateUnlock(state),
         .blur => blur(state),
     };
 }
@@ -256,6 +260,17 @@ fn releaseUnlock(self: *State, over: Pointer) Outcome {
     };
     if (over == .unlock) return .unlocked;
     return .redraw;
+}
+
+fn focusUnlock(self: *State) Outcome {
+    if (!self.phase.acceptsInput() or self.focused) return .quiet;
+    self.focused = true;
+    return .redraw;
+}
+
+fn activateUnlock(self: *State) Outcome {
+    if (!self.phase.acceptsInput() or !self.focused) return .quiet;
+    return .unlocked;
 }
 
 fn blur(self: *State) Outcome {

@@ -192,6 +192,7 @@ content_scale: f32,
 content_scale_pending: ?f32 = null,
 
 needs_redraw: bool = true,
+renderer_dirty: bool = false,
 quit_confirm_open: bool = false,
 quit_confirmed: bool = false,
 skip_next_char: bool = false,
@@ -829,7 +830,10 @@ pub fn run(self: *App) !void {
             if (kit.tick(dt_ms)) self.needs_redraw = true;
             self.syncWellbeingKit(false);
         }
-        if (self.renderer.tick(dt_clamped)) self.needs_redraw = true;
+        if (self.renderer.tick(dt_clamped)) {
+            self.renderer_dirty = true;
+            self.needs_redraw = true;
+        }
 
         if (is_posix and sighup_pending.swap(false, .acq_rel)) {
             self.reloadConfig();
@@ -846,7 +850,8 @@ pub fn run(self: *App) !void {
             // its echo can be published before the draw latches the frame.
             self.waitUntilFrame();
             if (latency_trace.enabled) self.latency.?.setCause(blink_changed, title_updated);
-            if (try self.renderFrame()) self.needs_redraw = false;
+            self.needs_redraw = false;
+            _ = try self.renderFrame();
         }
 
         self.waitForNextEvent(had_data);
@@ -907,10 +912,11 @@ fn renderFrame(self: *App) !bool {
         frame.modal_blur_radius = self.config.window.modal.blur_radius;
     }
 
-    if (!frame.dirty.any()) {
+    if (!frame.dirty.any() and !self.renderer_dirty) {
         self.frame_latch.used_prediction = false;
         return false;
     }
+    self.renderer_dirty = false;
 
     if (latency_trace.enabled) self.latency.?.frameBuilt(latency_trace.now(self.io));
 
@@ -1592,6 +1598,8 @@ fn handleAction(self: *App, action: rex.input.Action) void {
                 self.wellbeing_state.dismissAlert();
                 self.needs_redraw = true;
                 self.syncWellbeingKit(false);
+            } else if (self.kit != null and self.kit.?.dismissAlert()) {
+                self.needs_redraw = true;
             }
         },
         .toast_activate => {
@@ -2028,21 +2036,24 @@ pub fn confirmQuit(self: *App) void {
     self.window.setWindowShouldClose(true);
 }
 
+fn hasModalOverlay(self: *const App) bool {
+    if (self.wellbeing_state.input_locked) return true;
+    if (self.kit) |kit| return kit.hasScrim();
+    return false;
+}
+
+fn unlockLockScreen(self: *App) void {
+    self.wellbeing_state.skipFocus(self.wallMs());
+    self.ringBell();
+    self.syncWellbeingKit(false);
+    self.needs_redraw = true;
+}
+
 /// Routes physical key events to active UI modals, overlays, and application keybindings.
 /// Returns true when the event was consumed by the UI layer, signaling the input callback
 /// to bypass terminal key encoding and suppress trailing text input callbacks.
 fn routeKeyToUi(self: *App, maybe_key: ?rex.input.Key, mods: rex.input.Modifiers) bool {
     const k = maybe_key orelse return false;
-
-    if (self.kit) |kit| {
-        if (kit.alertShown() and k == .escape) {
-            if (kit.dismissAlert()) {
-                self.frame_builder.last_generation = null;
-                self.needs_redraw = true;
-            }
-            return true;
-        }
-    }
 
     if (self.quit_confirm_open) {
         self.handleQuitModalKey(k, mods);
@@ -2057,10 +2068,19 @@ fn routeKeyToUi(self: *App, maybe_key: ?rex.input.Key, mods: rex.input.Modifiers
             else => false,
         } else false;
         if (ctrl_shift_d or is_unlock_binding) {
-            self.wellbeing_state.skipFocus(self.wallMs());
-            self.ringBell();
-            self.syncWellbeingKit(false);
-            self.needs_redraw = true;
+            self.unlockLockScreen();
+        } else if (self.kit) |kit| {
+            if (kit.lockScreenTakesInput()) {
+                if (k == .tab) {
+                    if (kit.lockScreenInput(.focus) == .redraw) self.needs_redraw = true;
+                } else if ((k == .enter or k == .kp_enter or k == .space) and !mods.ctrl and !mods.alt and !mods.super) {
+                    switch (kit.lockScreenInput(.activate)) {
+                        .quiet => {},
+                        .redraw => self.needs_redraw = true,
+                        .unlocked => self.unlockLockScreen(),
+                    }
+                }
+            }
         }
         return true;
     }
@@ -2421,6 +2441,8 @@ const mouseButtonCb: c.GLFWmousebuttonfun = struct {
         const frame = app.driver.getFrame();
         const scrollback_used = frame.scrollback_used;
 
+        const modal_active = app.hasModalOverlay();
+
         if (button == c.GLFW_MOUSE_BUTTON_LEFT) {
             if (press) {
                 if (app.kit) |kit| switch (kit.press(app.mouse_x / app.content_scale, app.mouse_y / app.content_scale)) {
@@ -2436,6 +2458,7 @@ const mouseButtonCb: c.GLFWmousebuttonfun = struct {
                         return;
                     },
                 };
+                if (modal_active) return;
                 if (scrollback_used > 0 and app.handleScrollbarClick()) return;
             } else {
                 if (app.kit) |kit| {
@@ -2446,18 +2469,20 @@ const mouseButtonCb: c.GLFWmousebuttonfun = struct {
                             .quiet => {},
                             .redraw => app.needs_redraw = true,
                             .dialog => |outcome| app.applyDialogOutcome(outcome),
-                            .lock_unlocked => {
-                                app.wellbeing_state.skipFocus(app.wallMs());
-                                app.ringBell();
-                                app.syncWellbeingKit(false);
-                                app.needs_redraw = true;
-                            },
+                            .lock_unlocked => app.unlockLockScreen(),
                         }
                         return;
                     }
                 }
+                if (modal_active) {
+                    _ = app.handleScrollbarRelease();
+                    app.handleSelectionRelease();
+                    return;
+                }
                 if (app.handleScrollbarRelease()) return;
             }
+        } else if (modal_active) {
+            return;
         }
 
         const is_primary = !frame.is_alternate;
@@ -2552,7 +2577,7 @@ fn updateScrollbarHover(self: *App) void {
     const sb = &self.renderer.scrollbar;
     const frame = self.driver.getFrame();
     const new_hover = blk: {
-        if (frame.scrollback_used == 0 or frame.is_alternate) break :blk false;
+        if (self.hasModalOverlay() or frame.scrollback_used == 0 or frame.is_alternate) break :blk false;
         const fb_w: f32 = @floatFromInt(self.frame_buffer_size.width);
         const bar_x = fb_w - sb.option.hover_width - sb.option.gap;
         break :blk self.mouse_x >= bar_x;
@@ -2560,6 +2585,7 @@ fn updateScrollbarHover(self: *App) void {
 
     if (new_hover == sb.hover) return;
     sb.hover = new_hover;
+    self.renderer_dirty = true;
     self.needs_redraw = true;
 }
 
@@ -2598,6 +2624,7 @@ const scrollCb: c.GLFWscrollfun = struct {
     fn cb(handle: ?*c.GLFWwindow, _: f64, y_offset: f64) callconv(.c) void {
         const app: *App = @ptrCast(@alignCast(c.glfwGetWindowUserPointer(handle) orelse return));
         app.wellbeing_state.recordActivity();
+        if (app.hasModalOverlay()) return;
 
         // Clear sub-line fractional remainder on scroll direction reversal to eliminate hysteresis
         if ((app.scroll_accumulator_y > 0 and y_offset < 0) or (app.scroll_accumulator_y < 0 and y_offset > 0)) {
@@ -2656,6 +2683,7 @@ const cursorPosCb: c.GLFWcursorposfun = struct {
 
         // update scrollbar hover detection
         app.updateScrollbarHover();
+        if (app.hasModalOverlay()) return;
 
         // Scrollbar drag
         if (app.handleScrollbarDrag()) return;
