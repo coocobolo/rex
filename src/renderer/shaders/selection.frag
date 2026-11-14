@@ -32,6 +32,17 @@ float roundedBoxCorners(vec2 pixel, vec2 size, vec4 radii) {
   return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r;
 }
 
+// Returns [0, 1] suppression weight along an overlapping row seam: 1 inside
+// [overlap.x + w, overlap.y - w] so flush side edges and interior step L-joints
+// keep a continuous border around adjacent vertical strokes.
+float seamSuppress(float x, vec2 overlap, float border_w) {
+  float lo = overlap.x + border_w;
+  float hi = overlap.y - border_w;
+  if (hi <= lo) return 0.0;
+  return smoothstep(lo - 0.5, lo + 0.5, x) *
+         (1.0 - smoothstep(hi - 0.5, hi + 0.5, x));
+}
+
 void main() {
   vec2 pixel = v_uv * v_size;
   bool is_first = (v_flags & 1u) != 0u;
@@ -58,40 +69,23 @@ void main() {
   float inner = 1.0 - smoothstep(-u_border_width - 0.5, -u_border_width + 0.5, d);
 
   float border = outer - inner;
-  float border_orig = border;
+  float suppress = 0.0;
 
-  if (u_border_style == BORDER_STYLE_UNIFIED)  {
+  if (u_border_style == BORDER_STYLE_UNIFIED) {
     bool in_top_zone = !is_first && pixel.y < u_border_width + 0.5;
     bool in_bot_zone = !is_last && pixel.y > v_size.y - u_border_width - 0.5;
 
-    // Suppress only where this row overlaps with the adjacent row's span
-    bool in_top_suppress = in_top_zone && pixel.x >= v_prev_overlap.x &&
-                           pixel.x < v_prev_overlap.y;
-    bool in_bot_suppress = in_bot_zone && pixel.x >= v_next_overlap.x &&
-                           pixel.x < v_next_overlap.y;
-
-    if (in_top_suppress || in_bot_suppress) {
-      // Left/right border still drawn; fill in the suppressed zone
-      float left =
-          1.0 - smoothstep(u_border_width - 0.5, u_border_width + 0.5, pixel.x);
-      float right = smoothstep(v_size.x - u_border_width - 0.5,
-                               v_size.x - u_border_width + 0.5, pixel.x);
-      float side_mask = max(left, right);
-      float border_alpha = border_orig * side_mask;
-
-      vec4 fill = vec4(u_color.rgb, u_color.a * (1.0 - side_mask));
-      vec4 outline = vec4(u_border_color.rgb, u_border_color.a * border_alpha);
-      frag_color = outline + fill * (1.0 - outline.a);
-      if (frag_color.a < 0.01) discard;
-      return;
+    if (in_top_zone) {
+      suppress = max(suppress, seamSuppress(pixel.x, v_prev_overlap, u_border_width));
     }
-
-    // Pixels in the top/bottom border zone but OUTSIDE the overlap are step
-    // edges hey fall through to the normal SDF path and keep their border
+    if (in_bot_zone) {
+      suppress = max(suppress, seamSuppress(pixel.x, v_next_overlap, u_border_width));
+    }
   }
 
-  float border_alpha = border;
-  vec4 fill = vec4(u_color.rgb, u_color.a * inner);
+  float border_alpha = border * (1.0 - suppress);
+  float fill_alpha = mix(inner, 1.0, suppress);
+  vec4 fill = vec4(u_color.rgb, u_color.a * fill_alpha);
   vec4 outline = vec4(u_border_color.rgb, u_border_color.a * border_alpha);
 
   // Composite border over fill.
