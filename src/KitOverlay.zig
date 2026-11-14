@@ -38,7 +38,8 @@ const line_capacity = @max(toast.line_max, alert_dialog.line_max);
 
 font: KitFont,
 painter: KitPainter,
-nodes: [toast.node_max]tree_zig.Node = undefined,
+/// A frame shows the dialog or the toast stack, never both.
+nodes: [@max(toast.node_max, alert_dialog.node_max)]tree_zig.Node = undefined,
 lines: [line_capacity]text.Line = undefined,
 /// The last built frame, for hit-testing. Empty after `skipFrame`.
 tree: tree_zig.Tree,
@@ -54,12 +55,6 @@ elapsed_ms: u32 = 0,
 /// Whether the last built frame left a toast short of its place.
 motion: toast.Motion = .settled,
 color_scheme: Theme.ColorScheme = .auto,
-
-comptime {
-    // A frame shows the dialog or the toast stack, never both, so `nodes`
-    // is sized for the stack and the dialog has to fit in it.
-    if (alert_dialog.node_max > toast.node_max) @compileError("dialog does not fit the kit node buffer");
-}
 
 pub const CreateError = Allocator.Error || @import("freetype/root.zig").FtError || @import("renderer/Shader.zig").Error;
 

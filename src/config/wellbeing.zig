@@ -28,9 +28,15 @@ pub const Wellbeing = struct {
 
     dashboard: struct {
         modal_enabled: bool = true,
+        /// How the wellbeing window draws the focus timer's progress.
+        timer_chart: TimerChart = .bar,
+        /// How the wellbeing window draws the share of each program.
+        program_chart: ProgramChart = .bar,
     } = .{},
 
     pub const default: Wellbeing = .{};
+    pub const TimerChart = enum { bar, ring };
+    pub const ProgramChart = enum { bar, donut };
 };
 
 pub const LimitAction = enum {

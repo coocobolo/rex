@@ -396,6 +396,8 @@ const enum_names = [_]struct { []const u8, []const []const u8 }{
     .{ "wellbeing.screen_time.on_limit", &.{ "grayscale", "lock_input", "animation" } },
     .{ "wellbeing.focus.timer", &.{ "countdown", "countup" } },
     .{ "wellbeing.focus.on_phase_end", &.{ "wait", "start_next" } },
+    .{ "wellbeing.dashboard.timer_chart", &.{ "bar", "ring" } },
+    .{ "wellbeing.dashboard.program_chart", &.{ "bar", "donut" } },
     .{ "wellbeing.focus.during_task", &.{"mute_bell"} },
     .{ "wellbeing.focus.on_break", &.{ "prompt", "lock_input", "animation" } },
     .{ "wellbeing.focus.on_alert", &.{"pause"} },

@@ -80,6 +80,9 @@ info: Color,
 scrim: Color,
 /// The column of sections in a tool window.
 sidebar: Color,
+/// Series of a chart, in order: blues that step in lightness so
+/// neighbours stay apart without hue, then a gray for "the rest".
+chart: [5]Color,
 
 pub const dark: Theme = .{
     .background = .rgb(0x0a0a0a),
@@ -102,6 +105,7 @@ pub const dark: Theme = .{
     .info = .rgb(0x2b7fff),
     .scrim = Color.rgb(0x000000).alpha(50),
     .sidebar = .rgb(0x171717),
+    .chart = .{ .rgb(0x1d4ed8), .rgb(0x2b7fff), .rgb(0x60a5fa), .rgb(0xbfdbfe), .rgb(0x525252) },
 };
 
 pub const light: Theme = .{
@@ -125,6 +129,7 @@ pub const light: Theme = .{
     .info = .rgb(0x155dfc),
     .scrim = Color.rgb(0x000000).alpha(50),
     .sidebar = .rgb(0xfafafa),
+    .chart = .{ .rgb(0x1447e6), .rgb(0x2b7fff), .rgb(0x51a2ff), .rgb(0x8ec5ff), .rgb(0xa1a1a1) },
 };
 
 /// Dialogs, toasts, cards.

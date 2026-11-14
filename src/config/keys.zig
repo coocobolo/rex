@@ -40,6 +40,7 @@ pub const Section = enum {
     @"wellbeing.movement",
     @"wellbeing.routines",
     @"wellbeing.privacy",
+    @"wellbeing.dashboard",
     ui,
     scroll,
     selection,
@@ -292,6 +293,9 @@ pub const table = [_]Key{
     // The tracker's field: privacy is where users look for what Rex records.
     .{ .section = .@"wellbeing.privacy", .name = "track_foreground_apps", .field = "wellbeing.screen_time.track_foreground_apps" },
 
+    .{ .section = .@"wellbeing.dashboard", .name = "timer_chart", .field = "wellbeing.dashboard.timer_chart" },
+    .{ .section = .@"wellbeing.dashboard", .name = "program_chart", .field = "wellbeing.dashboard.program_chart" },
+
     .{ .section = .ui, .name = "motion", .field = "ui.motion" },
     .{ .section = .ui, .name = "color_scheme", .field = "ui.color_scheme" },
     .{ .section = .scroll, .name = "step_lines", .field = "scroll.lines", .bounds = at_least_one },
@@ -386,7 +390,7 @@ pub const internal = [_][]const u8{
     "wellbeing.focus.time_fields",
     "wellbeing.winddown.prompt",
     "wellbeing.lock_screen",
-    "wellbeing.dashboard",
+    "wellbeing.dashboard.modal_enabled",
 };
 
 /// Whether `leaf` is `prefix` or lies below it.

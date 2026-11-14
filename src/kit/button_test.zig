@@ -3,6 +3,7 @@ const testing = std.testing;
 
 const Theme = @import("Theme.zig");
 const button = @import("button.zig");
+const icons = @import("icons.zig");
 const kbd = @import("kbd.zig");
 const text = @import("text.zig");
 const tree_zig = @import("tree.zig");
@@ -119,12 +120,35 @@ test "button: the small size is lower and narrower" {
 
 test "button: a key cap follows the label, and the node count holds" {
     var fixture: Fixture = .{};
-    const tree = try one(&fixture, &Theme.dark, .{ .id = id, .label = "Cancel", .key_cap = "Esc" });
+    const tree = try one(&fixture, &Theme.dark, .{ .id = id, .label = "Cancel", .icon = icons.x, .key_cap = "Esc" });
     try testing.expectEqual(button.node_max, tree.len);
-    const label = tree.nodes[2].rect;
-    const cap = tree.nodes[3].rect;
+    const label = tree.nodes[3].rect;
+    const cap = tree.nodes[4].rect;
     try testing.expectEqual(label.x + label.w + button.gap, cap.x);
-    try testing.expectEqual(Theme.dark.muted, tree.nodes[3].box.fill);
+    try testing.expectEqual(Theme.dark.muted, tree.nodes[4].box.fill);
+}
+
+test "button: an icon comes before the label, in the label's color" {
+    var fixture: Fixture = .{};
+    const tree = try one(&fixture, &Theme.dark, .{ .id = id, .label = "Pause", .icon = icons.pause, .variant = .primary, .size = .lg });
+    const icon = tree.nodes[2];
+    try testing.expectEqual(icons.pause, icon.content.icon.codepoint);
+    try testing.expectEqual(Theme.dark.primary_foreground, icon.content.icon.color);
+    try testing.expectEqual(icon.rect.x + button.icon_size + button.gap, tree.nodes[3].rect.x);
+    try testing.expectEqual(Theme.control_lg, tree.nodes[1].rect.h);
+    try testing.expectEqual(2 * 20 + button.icon_size + button.gap + 5 * byte_width, tree.nodes[1].rect.w);
+}
+
+test "button: an icon-only button is square, its icon centred" {
+    var fixture: Fixture = .{};
+    const tree = try one(&fixture, &Theme.dark, .{ .id = id, .label = "", .icon = icons.settings, .variant = .ghost, .size = .sm });
+    try testing.expectEqual(3, tree.len);
+    const face = tree.nodes[1].rect;
+    try testing.expectEqual(Theme.control_sm, face.w);
+    try testing.expectEqual(Theme.control_sm, face.h);
+    const icon = tree.nodes[2].rect;
+    try testing.expectEqual(face.x + (face.w - button.icon_size) / 2, icon.x);
+    try testing.expectEqual(face.y + (face.h - button.icon_size) / 2, icon.y);
 }
 
 test "kbd: a group is its caps in a row" {

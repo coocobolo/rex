@@ -10,6 +10,7 @@ const assert = std.debug.assert;
 
 const Theme = @import("Theme.zig");
 const Color = Theme.Color;
+const icons = @import("icons.zig");
 const kbd = @import("kbd.zig");
 const tree_zig = @import("tree.zig");
 const Tree = tree_zig.Tree;
@@ -21,12 +22,14 @@ pub const gap = 8;
 pub const Size = enum(u8) {
     default,
     sm,
+    lg,
 
     /// The face's height in logical pixels.
     pub fn height(self: Size) u8 {
         return switch (self) {
             .default => Theme.control,
             .sm => Theme.control_sm,
+            .lg => Theme.control_lg,
         };
     }
 
@@ -35,9 +38,13 @@ pub const Size = enum(u8) {
         return switch (self) {
             .default => 16,
             .sm => 12,
+            .lg => 20,
         };
     }
 };
+
+/// Edge length of a button's icon.
+pub const icon_size = 16;
 
 pub const Variant = enum(u8) {
     /// Bordered, no fill: an action of no special weight.
@@ -66,8 +73,11 @@ pub const State = enum(u8) {
 pub const Options = struct {
     /// On the whole button, focus ring included, for `Tree.hitTest`.
     id: Id,
-    /// Borrowed until the view is rebuilt, like `key_cap`.
+    /// Borrowed until the view is rebuilt, like `key_cap`. Empty for an
+    /// icon-only button, which is square and needs `icon`.
     label: []const u8,
+    /// One of `icons.zig`, before the label; `icons.none` for none.
+    icon: u21 = icons.none,
     /// Empty for none.
     key_cap: []const u8 = "",
     variant: Variant = .outline,
@@ -79,9 +89,9 @@ pub const Options = struct {
     presence: f32 = 1,
 };
 
-/// Most nodes one button writes: the ring slot, the face, the label and
-/// the key cap.
-pub const node_max = 3 + kbd.node_max;
+/// Most nodes one button writes: the ring slot, the face, the icon, the
+/// label and the key cap.
+pub const node_max = 4 + kbd.node_max;
 
 const Look = struct { fill: Color, border: Color, label: Color };
 
@@ -131,7 +141,10 @@ const disabled_opacity = 0.5;
 /// Writes the button into the innermost open box.
 pub fn view(tree: *Tree, theme: *const Theme, options: Options) tree_zig.Error!void {
     assert(!(options.focused and options.state == .disabled));
+    assert(options.label.len > 0 or options.icon != icons.none);
     const colors = look(theme, options);
+    const height: f32 = @floatFromInt(options.size.height());
+    const square = options.label.len == 0;
     const presence = switch (options.state) {
         .normal, .hovered, .pressed => options.presence,
         .disabled => options.presence * disabled_opacity,
@@ -150,8 +163,9 @@ pub fn view(tree: *Tree, theme: *const Theme, options: Options) tree_zig.Error!v
     });
     const face = try tree.open(.{
         .axis = .row,
-        .height = .{ .fixed = @floatFromInt(options.size.height()) },
-        .padding = .symmetric(options.size.pad(), 0),
+        .width = if (square) .{ .fixed = height } else .fit,
+        .height = .{ .fixed = height },
+        .padding = if (square) .zero else .symmetric(options.size.pad(), 0),
         .gap = gap,
         .main = .center,
         .cross = .center,
@@ -160,7 +174,12 @@ pub fn view(tree: *Tree, theme: *const Theme, options: Options) tree_zig.Error!v
         .border_width = Theme.border_width,
         .radius = Theme.radius_md,
     });
-    _ = try tree.text(options.label, .{
+    if (options.icon != icons.none) _ = try tree.icon(.{
+        .codepoint = options.icon,
+        .color = colors.label.fade(presence),
+        .size = icon_size,
+    });
+    if (!square) _ = try tree.text(options.label, .{
         .color = colors.label.fade(presence),
         .style = .sm_medium,
     });

@@ -370,7 +370,7 @@ test "snap: shared edges stay shared and hairlines stay visible at fractional sc
 test "sizes of the kit's types" {
     // Reported in the ticket; a change here is a layout change to look at.
     try testing.expectEqual(4, @sizeOf(Theme.Color));
-    try testing.expectEqual(80, @sizeOf(Theme));
+    try testing.expectEqual(100, @sizeOf(Theme));
     try testing.expectEqual(12, @sizeOf(text.Line));
     try testing.expectEqual(104, @sizeOf(Node));
     try testing.expectEqual(8, @alignOf(Node));
