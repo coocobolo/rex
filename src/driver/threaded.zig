@@ -751,7 +751,7 @@ fn sleepNs(ns: u64) void {
     _ = system.nanosleep(&req, &rem);
 }
 
-const test_options: root.Options = .{ .theme = Theme.graphite, .sync_output_timeout_ms = 150 };
+const test_options: root.Options = .{ .theme = Theme.default, .sync_output_timeout_ms = 150 };
 
 test "readBudget: short turns only inside the echo window" {
     try std.testing.expectEqual(turn_budget, readBudget(5_000_000, 0));

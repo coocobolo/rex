@@ -390,7 +390,7 @@ pub fn Driver(comptime option: Option) type {
 
 pub const SingleDriver = Driver;
 
-const test_options: root.Options = .{ .theme = Theme.graphite, .sync_output_timeout_ms = 150 };
+const test_options: root.Options = .{ .theme = Theme.default, .sync_output_timeout_ms = 150 };
 
 test "SingleDriver: init, deinit, and snapshot" {
     const testing = std.testing;

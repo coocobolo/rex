@@ -311,7 +311,7 @@ test "driver: Driver polymorphic union dispatch" {
     };
 
     {
-        const s: Single(opt) = try .init(testing.allocator, testing.io, Pty.inactive, .{ .theme = Theme.graphite, .sync_output_timeout_ms = 150 });
+        const s: Single(opt) = try .init(testing.allocator, testing.io, Pty.inactive, .{ .theme = Theme.default, .sync_output_timeout_ms = 150 });
         var driver: Driver(opt) = .{ .single = s };
         defer driver.deinit();
 
@@ -326,7 +326,7 @@ test "driver: Driver polymorphic union dispatch" {
     }
 
     {
-        const th: *Threaded(opt) = try .create(testing.allocator, testing.io, Pty.inactive, .{ .theme = Theme.graphite, .sync_output_timeout_ms = 200 }, latency_trace.none);
+        const th: *Threaded(opt) = try .create(testing.allocator, testing.io, Pty.inactive, .{ .theme = Theme.default, .sync_output_timeout_ms = 200 }, latency_trace.none);
         var driver: Driver(opt) = .{ .threaded = th };
         defer driver.deinit();
 
@@ -340,7 +340,7 @@ test "driver: Driver polymorphic union dispatch" {
         try testing.expectEqual(Pty.inactive.master, driver.getMasterFd());
 
         driver.setWakeupFn(null);
-        driver.setTheme(Theme.graphite);
+        driver.setTheme(Theme.default);
     }
 }
 

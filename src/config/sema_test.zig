@@ -71,7 +71,7 @@ const Applied = struct {
 
 test "apply: sets keys and records the entry that set them" {
     var a = try Applied.init(
-        \\theme = graphite
+        \\theme = default
         \\[font]
         \\size = 16
         \\[toast]
@@ -100,7 +100,7 @@ test "apply: unknown and reserved sections skip their keys" {
         \\[profile.work]
         \\size = 99
         \\[root]
-        \\theme = graphite
+        \\theme = default
         \\[font]
         \\size = 15
     );

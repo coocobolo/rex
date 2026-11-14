@@ -3969,7 +3969,7 @@ test "color: OSC 104 resets each index in its list" {
 
 /// A theme whose colors differ from every built-in default.
 const test_theme: Theme = blk: {
-    var t = Theme.graphite;
+    var t = Theme.default;
     t.background = .{ .r = 0x10, .g = 0x20, .b = 0x30 };
     t.foreground = .{ .r = 0xE0, .g = 0xD0, .b = 0xC0 };
     t.selection_background = .{ .r = 0x11, .g = 0x22, .b = 0x33 };

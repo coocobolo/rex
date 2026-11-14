@@ -108,7 +108,7 @@ fn expectSetKeysInBounds(config: *const Config, result: *const Sema.Result) !voi
 }
 
 const seeds = [_][]const u8{
-    "theme = graphite\n[font]\nsize = 16\nmin_size = 8\nmax_size = 64\n",
+    "theme = default\n[font]\nsize = 16\nmin_size = 8\nmax_size = 64\n",
     "[font]\nfallback = /a.ttf\nfallback = none\nfallback = b.ttc\nfallback = default\nfallback = ~/c.ttf\n",
     "[ui]\nmotion = full\nmotion = none\ncolor_scheme = auto\ncolor_scheme = dark\n[toast]\nenabled = true\nduration = 3s\n[banner]\nenabled = false\n",
     "[font]\nitalic_file = i.ttf\nemoji_file = ~/e.ttf\nitalic_file = none\nemoji_file = default\n",

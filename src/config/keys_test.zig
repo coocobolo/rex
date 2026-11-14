@@ -251,8 +251,8 @@ test "apply: font weights are whole numbers from 1 to 1000" {
 
 test "apply: theme is a preset name" {
     var config = testConfig();
-    try applyText(&config, .root, "theme", "graphite");
-    try std.testing.expectError(error.InvalidValue, applyText(&config, .root, "theme", "Graphite"));
+    try applyText(&config, .root, "theme", "default");
+    try std.testing.expectError(error.InvalidValue, applyText(&config, .root, "theme", "Default"));
     try std.testing.expectError(error.InvalidValue, applyText(&config, .root, "theme", "dark"));
 }
 
@@ -341,7 +341,7 @@ test "writeExpected: describes each kind" {
         .{ .shell, "argument", "a program argument, one per line, or none" },
         .{ .selection, "extra_word_characters", "printable ASCII characters, like \"-./~@\", or \"\"" },
         .{ .@"wellbeing.screen_time", "on_limit", "none, or any of grayscale, lock_input, animation separated by commas" },
-        .{ .root, "theme", "a theme name: graphite" },
+        .{ .root, "theme", "a theme name: default" },
     };
     for (cases) |case| {
         var w: std.Io.Writer = .fixed(&buf);

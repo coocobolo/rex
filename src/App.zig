@@ -3060,7 +3060,7 @@ const ClipboardRig = struct {
         try rex.termio.pipe.openSocketPair(&sv, .{ .NONBLOCK = true });
         errdefer _ = system.close(sv[1]);
         const pty: rex.termio.pty.Posix = .{ .master = sv[0], .pid = -1, .stdout_read_fd = -1, .error_read_fd = -1 };
-        var driver: Driver = .{ .single = try SingleDriverType.init(std.testing.allocator, std.testing.io, pty, .{ .theme = .graphite, .sync_output_timeout_ms = 150 }) };
+        var driver: Driver = .{ .single = try SingleDriverType.init(std.testing.allocator, std.testing.io, pty, .{ .theme = .default, .sync_output_timeout_ms = 150 }) };
         errdefer driver.deinit();
         return .{
             .driver = driver,
@@ -3207,7 +3207,7 @@ test "Driver: single and threaded polymorphic dispatch" {
         .error_read_fd = -1,
     };
 
-    const driver_options: rex.driver.Options = .{ .theme = .graphite, .sync_output_timeout_ms = 150 };
+    const driver_options: rex.driver.Options = .{ .theme = .default, .sync_output_timeout_ms = 150 };
     const single_driver = try SingleDriverType.init(allocator, testing.io, pty_single, driver_options);
     var driver_s: Driver = .{ .single = single_driver };
     defer driver_s.deinit();
@@ -3395,7 +3395,7 @@ test "App: a config reload starts from the defaults, in its own arena" {
             .min_size = 6,
         },
         .keymap = rex.input.default_keymap,
-        .theme = Theme.graphite,
+        .theme = Theme.default,
         .window = .default,
         .scroll = .{},
         .selection = .default,

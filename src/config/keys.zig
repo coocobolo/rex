@@ -360,7 +360,7 @@ pub const qualified_names = blk: {
 };
 
 pub const theme_preset_list = .{
-    .{ "graphite", Theme.graphite },
+    .{ "default", Theme.default },
 };
 
 /// Theme presets by name, for `Kind.theme`.
