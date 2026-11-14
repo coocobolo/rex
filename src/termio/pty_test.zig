@@ -116,8 +116,17 @@ test "Posix: the child gets only stdin, stdout and stderr" {
     try testing.expectEqual(posix.E.SUCCESS, posix.errno(inherited));
     defer _ = system.close(@intCast(inherited));
 
-    // `ls` runs as a child of the shell and lists the shell's descriptors.
-    const argv = [_:null]?[*:0]const u8{ "/bin/sh", "-c", "ls /proc/$$/fd", null };
+    // Probe descriptors 0..max_fd in POSIX sh via `/dev/fd/$i` (stat() in
+    // the shell itself) rather than `/proc/$$/fd` (absent on macOS) or
+    // `ls /dev/fd` (which exposes ls's own opendir descriptor on macOS).
+    const max_fd: c_int = @max(@as(c_int, @intCast(inherited)) + 16, 64);
+    var cmd_buf: [128]u8 = undefined;
+    const cmd = std.fmt.bufPrintZ(
+        &cmd_buf,
+        "i=0; while [ \"$i\" -le {d} ]; do [ -e \"/dev/fd/$i\" ] && printf '%d\\n' \"$i\"; i=$((i + 1)); done",
+        .{max_fd},
+    ) catch unreachable;
+    const argv = [_:null]?[*:0]const u8{ "/bin/sh", "-c", cmd.ptr, null };
     var pty: Posix = try Posix.spawn(.{ .argv = &argv, .capture_stdout = true });
     defer pty.close(testing.io);
     try pty.waitForSpawn();

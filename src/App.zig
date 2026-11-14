@@ -3057,7 +3057,7 @@ const ClipboardRig = struct {
     fn init() !ClipboardRig {
         try Window.testGlContext();
         var sv: [2]posix.fd_t = undefined;
-        if (system.socketpair(posix.AF.UNIX, posix.SOCK.STREAM | posix.SOCK.NONBLOCK, 0, &sv) != 0) return error.SocketPair;
+        try rex.termio.pipe.openSocketPair(&sv, .{ .NONBLOCK = true });
         errdefer _ = system.close(sv[1]);
         const pty: rex.termio.pty.Posix = .{ .master = sv[0], .pid = -1, .stdout_read_fd = -1, .error_read_fd = -1 };
         var driver: Driver = .{ .single = try SingleDriverType.init(std.testing.allocator, std.testing.io, pty, .{ .theme = .graphite, .sync_output_timeout_ms = 150 }) };
@@ -3198,7 +3198,7 @@ test "Driver: single and threaded polymorphic dispatch" {
     const allocator = testing.allocator;
 
     var sv_single: [2]posix.fd_t = undefined;
-    try testing.expectEqual(@as(c_int, 0), system.socketpair(posix.AF.UNIX, posix.SOCK.STREAM | posix.SOCK.NONBLOCK, 0, &sv_single));
+    try rex.termio.pipe.openSocketPair(&sv_single, .{ .NONBLOCK = true });
     defer _ = system.close(sv_single[1]);
     const pty_single = rex.termio.pty.Posix{
         .master = sv_single[0],
@@ -3217,7 +3217,7 @@ test "Driver: single and threaded polymorphic dispatch" {
     _ = driver_s.getFrame();
 
     var sv_multi: [2]posix.fd_t = undefined;
-    try testing.expectEqual(@as(c_int, 0), system.socketpair(posix.AF.UNIX, posix.SOCK.STREAM | posix.SOCK.NONBLOCK, 0, &sv_multi));
+    try rex.termio.pipe.openSocketPair(&sv_multi, .{ .NONBLOCK = true });
     defer _ = system.close(sv_multi[1]);
     const pty_multi = rex.termio.pty.Posix{
         .master = sv_multi[0],

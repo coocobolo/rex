@@ -157,6 +157,7 @@ fn compact(self: *OutboundQueue) void {
 // master for these purposes: writes stop with EAGAIN when its buffer is full.
 
 const testing = std.testing;
+const pipe = @import("../termio/pipe.zig");
 
 const Pair = struct {
     writer: posix.fd_t,
@@ -164,8 +165,7 @@ const Pair = struct {
 
     fn open() !Pair {
         var sv: [2]posix.fd_t = undefined;
-        const rc = system.socketpair(posix.AF.UNIX, posix.SOCK.STREAM | posix.SOCK.NONBLOCK, 0, &sv);
-        if (posix.errno(rc) != .SUCCESS) return error.SocketPairFailed;
+        try pipe.openSocketPair(&sv, .{ .NONBLOCK = true });
         return .{ .writer = sv[0], .reader = sv[1] };
     }
 

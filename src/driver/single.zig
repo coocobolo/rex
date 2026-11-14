@@ -22,6 +22,7 @@ const MouseButton = term.term.MouseButton;
 const MouseInput = term.term.MouseInput;
 const HeldButtons = term.term.HeldButtons;
 
+const pipe = @import("../termio/pipe.zig");
 const termio = @import("../termio/root.zig");
 const Pty = termio.pty.Posix;
 
@@ -419,8 +420,7 @@ test "SingleDriver: mock socketpair PTY input and pollAndDrain" {
     const DriverType = Driver(test_option);
 
     var sv: [2]posix.fd_t = undefined;
-    const rc = system.socketpair(posix.AF.UNIX, posix.SOCK.STREAM | posix.SOCK.NONBLOCK, 0, &sv);
-    try testing.expectEqual(@as(c_int, 0), rc);
+    try pipe.openSocketPair(&sv, .{ .NONBLOCK = true });
     defer {
         _ = system.close(sv[1]);
     }
@@ -470,8 +470,7 @@ test "SingleDriver: DA1 reply drained back to mock PTY" {
     const DriverType = Driver(test_option);
 
     var sv: [2]posix.fd_t = undefined;
-    const rc = system.socketpair(posix.AF.UNIX, posix.SOCK.STREAM | posix.SOCK.NONBLOCK, 0, &sv);
-    try testing.expectEqual(@as(c_int, 0), rc);
+    try pipe.openSocketPair(&sv, .{ .NONBLOCK = true });
     defer {
         _ = system.close(sv[1]);
     }
@@ -505,7 +504,7 @@ test "SingleDriver: XTGETTCAP reports the TERM from Options" {
     const test_option: Option = .{ .max_rows = 24, .max_cols = 80, .max_scrollback = 100 };
 
     var sv: [2]posix.fd_t = undefined;
-    try testing.expectEqual(@as(c_int, 0), system.socketpair(posix.AF.UNIX, posix.SOCK.STREAM | posix.SOCK.NONBLOCK, 0, &sv));
+    try pipe.openSocketPair(&sv, .{ .NONBLOCK = true });
     defer _ = system.close(sv[1]);
     const mock_pty: Pty = .{ .master = sv[0], .pid = -1, .stdout_read_fd = -1, .error_read_fd = -1 };
 
@@ -529,7 +528,7 @@ test "SingleDriver: copyTitle returns the title a program set, and RIS empties i
     const test_option: Option = .{ .max_rows = 24, .max_cols = 80, .max_scrollback = 100 };
 
     var sv: [2]posix.fd_t = undefined;
-    try testing.expectEqual(@as(c_int, 0), system.socketpair(posix.AF.UNIX, posix.SOCK.STREAM | posix.SOCK.NONBLOCK, 0, &sv));
+    try pipe.openSocketPair(&sv, .{ .NONBLOCK = true });
     defer _ = system.close(sv[1]);
     const mock_pty: Pty = .{ .master = sv[0], .pid = -1, .stdout_read_fd = -1, .error_read_fd = -1 };
 
@@ -554,7 +553,7 @@ test "SingleDriver: takeClipboard hands over an OSC 52 write once" {
     const test_option: Option = .{ .max_rows = 24, .max_cols = 80, .max_scrollback = 100, .max_clipboard_bytes = 64 };
 
     var sv: [2]posix.fd_t = undefined;
-    try testing.expectEqual(@as(c_int, 0), system.socketpair(posix.AF.UNIX, posix.SOCK.STREAM | posix.SOCK.NONBLOCK, 0, &sv));
+    try pipe.openSocketPair(&sv, .{ .NONBLOCK = true });
     defer _ = system.close(sv[1]);
     const mock_pty: Pty = .{ .master = sv[0], .pid = -1, .stdout_read_fd = -1, .error_read_fd = -1 };
 
@@ -578,7 +577,7 @@ test "SingleDriver: sendReply is written as is, even with bracketed paste on" {
     const test_option: Option = .{ .max_rows = 24, .max_cols = 80, .max_scrollback = 100, .max_clipboard_bytes = 64 };
 
     var sv: [2]posix.fd_t = undefined;
-    try testing.expectEqual(@as(c_int, 0), system.socketpair(posix.AF.UNIX, posix.SOCK.STREAM | posix.SOCK.NONBLOCK, 0, &sv));
+    try pipe.openSocketPair(&sv, .{ .NONBLOCK = true });
     defer _ = system.close(sv[1]);
     const mock_pty: Pty = .{ .master = sv[0], .pid = -1, .stdout_read_fd = -1, .error_read_fd = -1 };
 
@@ -606,8 +605,7 @@ test "SingleDriver: extractSelectionText for stream and block selections" {
     const DriverType = Driver(test_option);
 
     var sv: [2]posix.fd_t = undefined;
-    const rc = system.socketpair(posix.AF.UNIX, posix.SOCK.STREAM | posix.SOCK.NONBLOCK, 0, &sv);
-    try testing.expectEqual(@as(c_int, 0), rc);
+    try pipe.openSocketPair(&sv, .{ .NONBLOCK = true });
     defer _ = system.close(sv[1]);
 
     const mock_pty: Pty = .{
@@ -659,8 +657,7 @@ test "SingleDriver: mouse_scroll primary viewport vs alternate alt_scroll" {
     const DriverType = Driver(test_option);
 
     var sv: [2]posix.fd_t = undefined;
-    const rc = system.socketpair(posix.AF.UNIX, posix.SOCK.STREAM | posix.SOCK.NONBLOCK, 0, &sv);
-    try testing.expectEqual(@as(c_int, 0), rc);
+    try pipe.openSocketPair(&sv, .{ .NONBLOCK = true });
     defer {
         _ = system.close(sv[1]);
     }
@@ -756,8 +753,7 @@ test "SingleDriver: a 1 MiB paste is delivered whole across pollAndDrain calls" 
     const opt: Option = .{ .max_rows = 24, .max_cols = 80, .max_scrollback = 100 };
 
     var sv: [2]posix.fd_t = undefined;
-    const rc = system.socketpair(posix.AF.UNIX, posix.SOCK.STREAM | posix.SOCK.NONBLOCK, 0, &sv);
-    try testing.expectEqual(@as(c_int, 0), rc);
+    try pipe.openSocketPair(&sv, .{ .NONBLOCK = true });
     defer _ = system.close(sv[1]);
 
     const mock_pty: Pty = .{ .master = sv[0], .pid = -1, .stdout_read_fd = -1, .error_read_fd = -1 };
@@ -791,8 +787,7 @@ test "SingleDriver: pasted text can't end a bracketed paste early" {
     const opt: Option = .{ .max_rows = 24, .max_cols = 80, .max_scrollback = 100 };
 
     var sv: [2]posix.fd_t = undefined;
-    const rc = system.socketpair(posix.AF.UNIX, posix.SOCK.STREAM | posix.SOCK.NONBLOCK, 0, &sv);
-    try testing.expectEqual(@as(c_int, 0), rc);
+    try pipe.openSocketPair(&sv, .{ .NONBLOCK = true });
     defer _ = system.close(sv[1]);
 
     const mock_pty: Pty = .{ .master = sv[0], .pid = -1, .stdout_read_fd = -1, .error_read_fd = -1 };
@@ -826,8 +821,7 @@ test "SingleDriver: a flood of queries is reported, the replies that fit arrive 
     const opt: Option = .{ .max_rows = 24, .max_cols = 80, .max_scrollback = 100 };
 
     var sv: [2]posix.fd_t = undefined;
-    const rc = system.socketpair(posix.AF.UNIX, posix.SOCK.STREAM | posix.SOCK.NONBLOCK, 0, &sv);
-    try testing.expectEqual(@as(c_int, 0), rc);
+    try pipe.openSocketPair(&sv, .{ .NONBLOCK = true });
     defer _ = system.close(sv[1]);
 
     const mock_pty: Pty = .{ .master = sv[0], .pid = -1, .stdout_read_fd = -1, .error_read_fd = -1 };

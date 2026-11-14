@@ -717,13 +717,29 @@ pub fn foregroundGroup(master: posix.fd_t) ?posix.pid_t {
     return if (group > 0) group else null;
 }
 
-/// The name of the terminal's foreground program: the `comm` of the
-/// foreground group's leader, from `/proc/<pid>/comm`, at most 15 bytes
-/// (proc_pid_comm(5)). Null when there is no foreground group or the file
-/// cannot be read, as when the leader has exited. The result lies in `out`.
+/// The name of the terminal's foreground program: on Linux, the `comm`
+/// of the foreground group's leader from `/proc/<pid>/comm` (up to 15
+/// bytes); on macOS, `proc_name()` from libproc. Null when there is no
+/// foreground group or the name cannot be read, as when the leader has
+/// exited. The result lies in `out`.
 pub fn foregroundComm(master: posix.fd_t, out: []u8) ?[]const u8 {
     if (out.len == 0) return null;
     const group = foregroundGroup(master) orelse return null;
+    if (comptime native_os == .macos) {
+        const darwin = struct {
+            extern "c" fn proc_name(pid: c_int, buffer: ?*anyopaque, buffersize: u32) c_int;
+        };
+        // XNU's proc_name returns 0 (ENOMEM) if buffersize < sizeof(pbi_name) (32),
+        // so query into a 64-byte stack buffer first and copy into `out`.
+        var name_buf: [64]u8 = undefined;
+        const n = darwin.proc_name(group, &name_buf, name_buf.len);
+        if (n <= 0) return null;
+        const trimmed = std.mem.trimEnd(u8, name_buf[0..@intCast(n)], "\x00");
+        if (trimmed.len == 0) return null;
+        const copy_len = @min(trimmed.len, out.len);
+        @memcpy(out[0..copy_len], trimmed[0..copy_len]);
+        return out[0..copy_len];
+    }
     var path_buf: [64]u8 = undefined;
     const path = std.fmt.bufPrintZ(&path_buf, "/proc/{d}/comm", .{group}) catch return null;
     const fd = system.open(path.ptr, .{ .ACCMODE = .RDONLY, .CLOEXEC = true }, @as(posix.mode_t, 0));

@@ -29,3 +29,19 @@ test "pipe: both ends get the flags asked for, and only those" {
         try testing.expect(!status.NONBLOCK);
     }
 }
+
+test "pipe: openSocketPair applies CLOEXEC and NONBLOCK on both ends" {
+    var sv: [2]posix.fd_t = undefined;
+    try pipe.openSocketPair(&sv, .{ .CLOEXEC = true, .NONBLOCK = true });
+    defer for (sv) |fd| {
+        _ = system.close(fd);
+    };
+    for (sv) |fd| {
+        try testing.expect(system.fcntl(fd, posix.F.GETFD, @as(usize, 0)) & posix.FD_CLOEXEC != 0);
+        const status: posix.O = @bitCast(@as(u32, @intCast(system.fcntl(fd, posix.F.GETFL, @as(usize, 0)))));
+        try testing.expect(status.NONBLOCK);
+    }
+
+    var buf: [4]u8 = undefined;
+    try testing.expectEqual(posix.E.AGAIN, posix.errno(system.read(sv[0], &buf, buf.len)));
+}

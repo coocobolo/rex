@@ -31,6 +31,7 @@ const MouseButton = term.term.MouseButton;
 const MouseInput = term.term.MouseInput;
 const HeldButtons = term.term.HeldButtons;
 
+const pipe = @import("../termio/pipe.zig");
 const termio = @import("../termio/root.zig");
 const Pty = termio.pty.Posix;
 
@@ -774,8 +775,7 @@ test "ThreadedDriver: create, destroy and basic frame acquisition" {
     const DriverType = Driver(test_option);
 
     var sv: [2]posix.fd_t = undefined;
-    const rc = system.socketpair(posix.AF.UNIX, posix.SOCK.STREAM | posix.SOCK.NONBLOCK, 0, &sv);
-    try testing.expectEqual(@as(c_int, 0), rc);
+    try pipe.openSocketPair(&sv, .{ .NONBLOCK = true });
     defer {
         _ = system.close(sv[1]);
     }
@@ -811,8 +811,7 @@ test "ThreadedDriver: async PTY input, frame update, and GUI reply" {
     const DriverType = Driver(test_option);
 
     var sv: [2]posix.fd_t = undefined;
-    const rc = system.socketpair(posix.AF.UNIX, posix.SOCK.STREAM | posix.SOCK.NONBLOCK, 0, &sv);
-    try testing.expectEqual(@as(c_int, 0), rc);
+    try pipe.openSocketPair(&sv, .{ .NONBLOCK = true });
     defer {
         _ = system.close(sv[1]);
     }
@@ -868,7 +867,7 @@ test "ThreadedDriver: XTGETTCAP reports the TERM from Options" {
     const test_option: Option = .{ .max_rows = 24, .max_cols = 80, .max_scrollback = 100 };
 
     var sv: [2]posix.fd_t = undefined;
-    try testing.expectEqual(@as(c_int, 0), system.socketpair(posix.AF.UNIX, posix.SOCK.STREAM | posix.SOCK.NONBLOCK, 0, &sv));
+    try pipe.openSocketPair(&sv, .{ .NONBLOCK = true });
     defer _ = system.close(sv[1]);
     const mock_pty: Pty = .{ .master = sv[0], .pid = -1, .stdout_read_fd = -1, .error_read_fd = -1 };
 
@@ -925,7 +924,7 @@ test "ThreadedDriver: copyTitle returns the title a program set, and RIS empties
     const test_option: Option = .{ .max_rows = 24, .max_cols = 80, .max_scrollback = 100 };
 
     var sv: [2]posix.fd_t = undefined;
-    try testing.expectEqual(@as(c_int, 0), system.socketpair(posix.AF.UNIX, posix.SOCK.STREAM | posix.SOCK.NONBLOCK, 0, &sv));
+    try pipe.openSocketPair(&sv, .{ .NONBLOCK = true });
     defer _ = system.close(sv[1]);
     const mock_pty: Pty = .{ .master = sv[0], .pid = -1, .stdout_read_fd = -1, .error_read_fd = -1 };
 
@@ -947,7 +946,7 @@ test "ThreadedDriver: copyTitle never returns a mix of two titles" {
     const test_option: Option = .{ .max_rows = 24, .max_cols = 80, .max_scrollback = 100 };
 
     var sv: [2]posix.fd_t = undefined;
-    try testing.expectEqual(@as(c_int, 0), system.socketpair(posix.AF.UNIX, posix.SOCK.STREAM | posix.SOCK.NONBLOCK, 0, &sv));
+    try pipe.openSocketPair(&sv, .{ .NONBLOCK = true });
     defer _ = system.close(sv[1]);
     const mock_pty: Pty = .{ .master = sv[0], .pid = -1, .stdout_read_fd = -1, .error_read_fd = -1 };
 
@@ -975,7 +974,7 @@ test "ThreadedDriver: takeClipboard hands over an OSC 52 read with its C1 format
     const test_option: Option = .{ .max_rows = 24, .max_cols = 80, .max_scrollback = 100, .max_clipboard_bytes = 64 };
 
     var sv: [2]posix.fd_t = undefined;
-    try testing.expectEqual(@as(c_int, 0), system.socketpair(posix.AF.UNIX, posix.SOCK.STREAM | posix.SOCK.NONBLOCK, 0, &sv));
+    try pipe.openSocketPair(&sv, .{ .NONBLOCK = true });
     defer _ = system.close(sv[1]);
     const mock_pty: Pty = .{ .master = sv[0], .pid = -1, .stdout_read_fd = -1, .error_read_fd = -1 };
 
@@ -1000,7 +999,7 @@ test "ThreadedDriver: sendReply is written as is, even with bracketed paste on" 
     const test_option: Option = .{ .max_rows = 24, .max_cols = 80, .max_scrollback = 100, .max_clipboard_bytes = 64 };
 
     var sv: [2]posix.fd_t = undefined;
-    try testing.expectEqual(@as(c_int, 0), system.socketpair(posix.AF.UNIX, posix.SOCK.STREAM | posix.SOCK.NONBLOCK, 0, &sv));
+    try pipe.openSocketPair(&sv, .{ .NONBLOCK = true });
     defer _ = system.close(sv[1]);
     const mock_pty: Pty = .{ .master = sv[0], .pid = -1, .stdout_read_fd = -1, .error_read_fd = -1 };
 
@@ -1032,7 +1031,7 @@ test "ThreadedDriver: destroy frees replies and pastes the worker never took" {
     const test_option: Option = .{ .max_rows = 24, .max_cols = 80, .max_scrollback = 100, .max_clipboard_bytes = 64 };
 
     var sv: [2]posix.fd_t = undefined;
-    try testing.expectEqual(@as(c_int, 0), system.socketpair(posix.AF.UNIX, posix.SOCK.STREAM | posix.SOCK.NONBLOCK, 0, &sv));
+    try pipe.openSocketPair(&sv, .{ .NONBLOCK = true });
     defer _ = system.close(sv[1]);
     const mock_pty: Pty = .{ .master = sv[0], .pid = -1, .stdout_read_fd = -1, .error_read_fd = -1 };
 
@@ -1054,8 +1053,7 @@ test "ThreadedDriver: Mode 2026 synchronized output hold and release" {
     const DriverType = Driver(test_option);
 
     var sv: [2]posix.fd_t = undefined;
-    const rc = system.socketpair(posix.AF.UNIX, posix.SOCK.STREAM | posix.SOCK.NONBLOCK, 0, &sv);
-    try testing.expectEqual(@as(c_int, 0), rc);
+    try pipe.openSocketPair(&sv, .{ .NONBLOCK = true });
     defer {
         _ = system.close(sv[1]);
     }
@@ -1114,8 +1112,7 @@ test "ThreadedDriver: wakeup_fn callback and alternate screen alt_scroll" {
     const DriverType = Driver(test_option);
 
     var sv: [2]posix.fd_t = undefined;
-    const rc = system.socketpair(posix.AF.UNIX, posix.SOCK.STREAM | posix.SOCK.NONBLOCK, 0, &sv);
-    try testing.expectEqual(@as(c_int, 0), rc);
+    try pipe.openSocketPair(&sv, .{ .NONBLOCK = true });
     defer {
         _ = system.close(sv[1]);
     }
@@ -1184,7 +1181,7 @@ test "ThreadedDriver: the wheel on the alternate screen follows mode 1007" {
     const test_option: Option = .{ .max_rows = 24, .max_cols = 80, .max_scrollback = 100 };
 
     var sv: [2]posix.fd_t = undefined;
-    try testing.expectEqual(@as(c_int, 0), system.socketpair(posix.AF.UNIX, posix.SOCK.STREAM | posix.SOCK.NONBLOCK, 0, &sv));
+    try pipe.openSocketPair(&sv, .{ .NONBLOCK = true });
     defer _ = system.close(sv[1]);
     const mock_pty: Pty = .{ .master = sv[0], .pid = -1, .stdout_read_fd = -1, .error_read_fd = -1 };
 
@@ -1220,8 +1217,7 @@ test "ThreadedDriver: a 1 MiB paste reaches a child that echoes it back" {
     const DriverType = Driver(test_option);
 
     var sv: [2]posix.fd_t = undefined;
-    const rc = system.socketpair(posix.AF.UNIX, posix.SOCK.STREAM | posix.SOCK.NONBLOCK, 0, &sv);
-    try testing.expectEqual(@as(c_int, 0), rc);
+    try pipe.openSocketPair(&sv, .{ .NONBLOCK = true });
     defer _ = system.close(sv[1]);
 
     const mock_pty: Pty = .{ .master = sv[0], .pid = -1, .stdout_read_fd = -1, .error_read_fd = -1 };
@@ -1271,8 +1267,7 @@ test "ThreadedDriver: pasted text can't end a bracketed paste early" {
     const DriverType = Driver(test_option);
 
     var sv: [2]posix.fd_t = undefined;
-    const rc = system.socketpair(posix.AF.UNIX, posix.SOCK.STREAM | posix.SOCK.NONBLOCK, 0, &sv);
-    try testing.expectEqual(@as(c_int, 0), rc);
+    try pipe.openSocketPair(&sv, .{ .NONBLOCK = true });
     defer _ = system.close(sv[1]);
 
     const mock_pty: Pty = .{ .master = sv[0], .pid = -1, .stdout_read_fd = -1, .error_read_fd = -1 };
