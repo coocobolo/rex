@@ -146,11 +146,9 @@ fn over(id: Id) Over {
     return .none;
 }
 
-/// The frame: the root, the header, the tab list, the spacer and the
-/// timer chip (its box, dot, time and phase).
-/// The frame: the root, the header, the tab list, the spacer, and on the
-/// right Today's group (box, chip of four, gear) or History's switch.
-const frame_nodes = 3 + tabs.nodeMax(page_count) + 1 + @as(usize, @max(1 + 4 + button.node_max, tabs.nodeMax(period_count)));
+/// The frame: the root, the header, the tab list, the spacer, and the
+/// right group (Today's chip or History's switch, and the gear button).
+const frame_nodes = 3 + tabs.nodeMax(page_count) + 1 + 1 + @as(usize, @max(4, tabs.nodeMax(period_count))) + button.node_max;
 /// The card rows' outer column and up to two rows.
 const card_rows_nodes = 3;
 /// The gear's popup: layer and card, the column, three groups (box,
@@ -168,7 +166,7 @@ const focus_nodes = 1 + 1 + 4 + 6 + 1 + 3 * button.node_max + popup.node_max + p
 /// A stat card: box, title, value, bar or spacer, and the note, or the
 /// note's row with the delta and the note.
 const stat_card_nodes = 4 + chart.progress_nodes + 2;
-const today_nodes = 1 + card_rows_nodes + 4 * stat_card_nodes + 1 + 2 + week_nodes + programs_nodes + choices_nodes;
+const today_nodes = 1 + card_rows_nodes + 4 * stat_card_nodes + 1 + 2 + week_nodes + programs_nodes;
 /// Card, header row, title, spacer, two legend items (row, swatch, text),
 /// the chart's column, the bars, and the label row with a box and text
 /// per day.
@@ -187,7 +185,7 @@ const history_nodes = 1 + card_rows_nodes + 4 * stat_card_nodes + 1 + 2 + daysNo
 /// line when there are none.
 const programs_nodes = 2 + 1 + @as(usize, @max(chart.shareNodes(program_rows), chart.donutNodes(program_rows))) + 1 + program_rows * 6;
 
-pub const node_max = frame_nodes + @as(usize, @max(focus_nodes, @max(today_nodes, history_nodes)));
+pub const node_max = frame_nodes + choices_nodes + @as(usize, @max(focus_nodes, @max(today_nodes, history_nodes)));
 /// At most one line per text node: no text here wraps.
 pub const line_max = node_max;
 
@@ -603,7 +601,7 @@ pub fn view(state: *const State, tree: *Tree, theme: *const Theme) kit.tree.Erro
         else => {},
     };
 
-    if (state.page == .today and state.menu == .view) try viewChoices(state, tree, theme);
+    if (state.menu == .view) try viewChoices(state, tree, theme);
     if (state.page == .focus and state.menu == .more) {
         const card = try popup.open(tree, theme, .{ .layer_id = layer_id, .anchor = more_id });
         try popup.item(tree, theme, .{
@@ -803,7 +801,7 @@ fn viewChoices(state: *const State, tree: *Tree, theme: *const Theme) kit.tree.E
 fn choiceGroup(tree: *Tree, theme: *const Theme, label: []const u8, list: []const tabs.Tab, current: u8, hovered: u8) kit.tree.Error!void {
     const group = try tree.open(.{ .width = .fill, .gap = 6 });
     _ = try tree.text(label, .{ .color = theme.muted_foreground, .style = .xs });
-    try tabs.view(tree, theme, .{ .tabs = list, .current = current, .hovered = hovered });
+    try tabs.view(tree, theme, .{ .tabs = list, .current = current, .hovered = hovered, .width = .fill });
     tree.close(group);
 }
 
@@ -1017,19 +1015,10 @@ fn header(state: *const State, tree: *Tree, theme: *const Theme) kit.tree.Error!
         },
     });
     _ = try tree.leaf(.{ .width = .fill });
+    const row_inner = try tree.open(.{ .axis = .row, .gap = 8, .cross = .center });
     switch (state.page) {
         .today => {
-            const row_inner = try tree.open(.{ .axis = .row, .gap = 8, .cross = .center });
             if (state.shown.phase != .idle and state.width >= narrow_width) try timerChip(state, tree, theme);
-            try button.view(tree, theme, .{
-                .id = gear_id,
-                .label = "",
-                .icon = icons.settings,
-                .variant = .ghost,
-                .size = .sm,
-                .state = if (state.menu == .view) .hovered else buttonState(state, .gear),
-            });
-            tree.close(row_inner);
         },
         .focus => {},
         .history => {
@@ -1047,6 +1036,15 @@ fn header(state: *const State, tree: *Tree, theme: *const Theme) kit.tree.Error!
             });
         },
     }
+    try button.view(tree, theme, .{
+        .id = gear_id,
+        .label = "",
+        .icon = icons.settings,
+        .variant = .ghost,
+        .size = .sm,
+        .state = if (state.menu == .view) .hovered else buttonState(state, .gear),
+    });
+    tree.close(row_inner);
     tree.close(row);
 }
 

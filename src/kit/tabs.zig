@@ -36,6 +36,8 @@ pub const Options = struct {
     hovered: u8 = none,
     /// Index with the focus ring. `none` when nothing has it.
     focused: u8 = none,
+    /// Width of the track; `.fill` stretches each tab face to share it.
+    width: tree_zig.Size = .fit,
 };
 
 /// The track, then each tab's face and its label.
@@ -52,6 +54,7 @@ pub fn view(tree: *Tree, theme: *const Theme, options: Options) tree_zig.Error!v
     assert(options.current < options.tabs.len);
     const track = try tree.open(.{
         .axis = .row,
+        .width = options.width,
         .height = .{ .fixed = Theme.control_sm },
         .padding = .all(inset),
         .cross = .center,
@@ -64,6 +67,7 @@ pub fn view(tree: *Tree, theme: *const Theme, options: Options) tree_zig.Error!v
         const face = try tree.open(.{
             .id = tab.id,
             .pointer = .hand,
+            .width = if (options.width == .fill) .fill else .fit,
             .height = .{ .fixed = face_height },
             .padding = .symmetric(pad, 0),
             .main = .center,

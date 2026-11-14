@@ -458,7 +458,7 @@ test "dashboard: every page fits node_max at each width, the gear's popup open" 
         _ = dashboard.update(&state, .{ .size = .{ .width = size[0], .height = size[1] } });
         for ([_]dashboard.Page{ .today, .focus, .history }) |page| {
             state.page = page;
-            state.menu = if (page == .today) .view else .closed;
+            state.menu = .view;
             try buildView(&state);
         }
     }
