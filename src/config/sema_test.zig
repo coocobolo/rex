@@ -75,7 +75,7 @@ test "apply: sets keys and records the entry that set them" {
         \\[font]
         \\size = 16
         \\[toast]
-        \\position = bottom_right
+        \\enabled = false
         \\duration = 3s
         \\[modal.blur]
         \\enabled = true
@@ -83,7 +83,7 @@ test "apply: sets keys and records the entry that set them" {
     defer a.deinit();
     try a.expectErrors(&.{});
     try std.testing.expectEqual(16, a.config.font.size);
-    try std.testing.expectEqual(.bottom_right, a.config.window.toast.position);
+    try std.testing.expectEqual(false, a.config.window.toast.enabled);
     try std.testing.expectEqual(3000, a.config.window.toast.duration_ms);
     try std.testing.expectEqual(true, a.config.window.modal.blur);
     const size = keys.lookup(.font, "size").?;
@@ -175,14 +175,14 @@ test "apply: invalid, out of range and not applicable values keep the old value"
         \\[toast]
         \\duration = 5
         \\[modal]
-        \\border_style = "subtle"
+        \\default_focus = "confirm"
     );
     defer a.deinit();
     try a.expectErrors(&.{
         .{ .invalid_value, 1, "invalid value 'loud' for bell.volume, expected a number from 0 to 1" },
         .{ .value_out_of_range, 3, "scroll.step_lines = 0 is out of range, expected a whole number of at least 1" },
         .{ .invalid_value, 5, "invalid value '5' for toast.duration, expected a duration of at least 1ms, like 500ms, 30s, 25m or 1h" },
-        .{ .invalid_value, 7, "invalid value '\"subtle\"' for modal.border_style, expected one of: semantic, subtle, or inherit" },
+        .{ .invalid_value, 7, "invalid value '\"confirm\"' for modal.default_focus, expected one of: confirm, cancel" },
     });
     try std.testing.expectEqual(defaults.window.bell.volume, a.config.window.bell.volume);
     try std.testing.expectEqual(defaults.scroll.lines, a.config.scroll.lines);

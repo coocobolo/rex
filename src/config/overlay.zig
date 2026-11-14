@@ -1,70 +1,25 @@
 //! What the user sets for the toasts, banners and dialogs drawn over the
-//! terminal by `src/ui/` (`[toast]`, `[banner]` and `[modal]`). Plain data
-//! that imports nothing but std, so anything that reads the config can
-//! import it without the UI code. The UI's `Option` types are these.
+//! terminal by the UI kit (`[toast]`, `[banner]`, `[modal]` and
+//! `[modal.blur]`). Plain data that imports nothing but std, so anything
+//! that reads the config can import it without the UI code.
 
 const std = @import("std");
 
-/// Icon rendering mode for terminal UI elements.
-pub const IconStyle = enum {
-    auto,
-    nerd_font,
-    unicode,
-    ascii,
-};
-
 pub const Toast = struct {
     enabled: bool = true,
-    position: Position = .top_right,
-    icon_style: IconStyle = .auto,
     duration_ms: u32 = 5000,
-    min_cols: u16 = 32,
-    max_cols: u16 = 48,
-    margin_cols: u16 = 2,
-    margin_rows: u16 = 1,
-    dismiss_str: ?[]const u8 = null,
-    action_prompt: []const u8 = ">",
-    action_margin: u16 = 1,
-
-    pub const Position = enum {
-        top_right,
-        top_center,
-        bottom_right,
-    };
 };
 
 pub const Banner = struct {
     enabled: bool = true,
-    placement: Placement = .floating,
-    position: Position = .top_center,
-    min_cols: u16 = 36,
-    max_cols: u16 = 72,
-    margin_cols: u16 = 2,
-    margin_rows: u16 = 1,
-    dismiss_str: []const u8 = "✕",
-
-    /// Whether the banner floats over the terminal or is docked to its edge.
-    pub const Placement = enum {
-        floating,
-        docked,
-    };
-
-    pub const Position = enum {
-        top_center,
-        top_right,
-        top_left,
-    };
 };
 
 pub const Modal = struct {
-    /// Dialog width, in terminal columns.
-    cols: u16 = 46,
     /// Opacity of the darkened backdrop behind the dialog, 0 to 1.
     backdrop_opacity: f32 = 180.0 / 255.0,
     blur: bool = false,
     blur_radius: u8 = 12,
     on_outside_click: OutsideClick = .close,
-    icon_style: IconStyle = .auto,
     default_focus: DefaultFocus = .confirm,
 
     /// `backdrop_opacity` as the alpha byte the renderer uses; out-of-range

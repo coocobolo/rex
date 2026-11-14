@@ -69,7 +69,7 @@ const page_titles = [_][]const u8{
 const page_descriptions = [_][]const u8{
     "Theme, UI motion, color scheme, and font configuration.",
     "Window behavior, bell, scrolling, selection, clipboard, and shell.",
-    "Shared surface styling, cards, toasts, banners, and modal dialogs.",
+    "Toasts, banners, and modal dialogs.",
     "Wellbeing tracking, daily screen time limits, and dashboard charts.",
     "Pomodoro focus intervals, alerts, and evening wind-down schedule.",
     "Periodic eyesight and movement break reminders.",
@@ -79,7 +79,7 @@ pub fn pageForSection(section: keys.Section) ?Page {
     return switch (section) {
         .root, .font, .ui => .appearance,
         .window, .bell, .scroll, .selection, .clipboard, .shell => .window_shell,
-        .surface, .card, .toast, .banner, .modal, .@"modal.blur" => .overlays,
+        .toast, .banner, .modal, .@"modal.blur" => .overlays,
         .wellbeing, .@"wellbeing.screen_time", .@"wellbeing.privacy", .@"wellbeing.dashboard" => .wellbeing,
         .@"wellbeing.focus", .@"wellbeing.winddown" => .focus_winddown,
         .@"wellbeing.eyesight", .@"wellbeing.movement" => .reminders,
@@ -100,8 +100,6 @@ const section_titles = std.EnumArray(keys.Section, []const u8).init(.{
     .font = "Font",
     .window = "Window",
     .bell = "Bell",
-    .surface = "Default Surface",
-    .card = "Card Surface",
     .toast = "Toast",
     .banner = "Banner",
     .modal = "Modal",
@@ -245,7 +243,7 @@ fn keyMeta(comptime section: keys.Section, comptime key_name: []const u8) KeyMet
             .description = "Starting directory for new shells, or inherit from the launcher.",
         } else @compileError("unmapped shell key: " ++ key_name),
 
-        .surface, .card, .toast, .banner, .modal => overlayMeta(section, key_name),
+        .toast, .banner, .modal => overlayMeta(section, key_name),
 
         .@"modal.blur" => if (std.mem.eql(u8, key_name, "enabled")) .{
             .label = "Backdrop Blur",
@@ -340,28 +338,6 @@ fn keyMeta(comptime section: keys.Section, comptime key_name: []const u8) KeyMet
 }
 
 fn overlayMeta(comptime section: keys.Section, comptime key_name: []const u8) KeyMeta {
-    if (std.mem.eql(u8, key_name, "corner_radius")) return .{
-        .label = "Corner Radius",
-        .description = if (section == .surface)
-            "Rounded corner radius in pixels."
-        else
-            "Rounded corner radius in pixels (or inherit from default surface).",
-    };
-    if (std.mem.eql(u8, key_name, "border_width")) return .{
-        .label = "Border Width",
-        .description = if (section == .surface)
-            "Border stroke thickness in pixels."
-        else
-            "Border stroke thickness in pixels (or inherit).",
-    };
-    if (std.mem.eql(u8, key_name, "border_shape")) return .{
-        .label = "Border Shape",
-        .description = "Edge treatment used around the overlay box.",
-    };
-    if (std.mem.eql(u8, key_name, "border_style")) return .{
-        .label = "Border Style",
-        .description = "Stroke style (solid, dashed, etc.) for the overlay border.",
-    };
     if (std.mem.eql(u8, key_name, "enabled")) return .{
         .label = if (section == .toast) "Enable Toasts" else "Enable Banners",
         .description = if (section == .toast)
@@ -369,37 +345,9 @@ fn overlayMeta(comptime section: keys.Section, comptime key_name: []const u8) Ke
         else
             "Show persistent status banners inside the terminal.",
     };
-    if (std.mem.eql(u8, key_name, "position")) return .{
-        .label = "Position",
-        .description = "Corner or edge where the overlay appears.",
-    };
-    if (std.mem.eql(u8, key_name, "placement")) return .{
-        .label = "Placement",
-        .description = "Whether banners reserve space or float over terminal cells.",
-    };
     if (std.mem.eql(u8, key_name, "duration")) return .{
         .label = "Display Duration",
         .description = "How long a toast remains visible before dismissing.",
-    };
-    if (std.mem.eql(u8, key_name, "min_cols")) return .{
-        .label = "Minimum Width (Cols)",
-        .description = "Minimum overlay width measured in terminal columns.",
-    };
-    if (std.mem.eql(u8, key_name, "max_cols")) return .{
-        .label = "Maximum Width (Cols)",
-        .description = "Maximum overlay width measured in terminal columns.",
-    };
-    if (std.mem.eql(u8, key_name, "margin_cols")) return .{
-        .label = "Horizontal Margin (Cols)",
-        .description = "Horizontal inset from the terminal edge in columns.",
-    };
-    if (std.mem.eql(u8, key_name, "margin_rows")) return .{
-        .label = "Vertical Margin (Rows)",
-        .description = "Vertical inset from the terminal edge in rows.",
-    };
-    if (std.mem.eql(u8, key_name, "cols")) return .{
-        .label = "Dialog Width (Cols)",
-        .description = "Target width of modal dialogs in terminal columns.",
     };
     if (std.mem.eql(u8, key_name, "backdrop_opacity")) return .{
         .label = "Backdrop Opacity",
@@ -481,7 +429,7 @@ fn humanToken(comptime token: []const u8) []const u8 {
     if (std.mem.eql(u8, token, "wayland")) return "Wayland";
     if (std.mem.eql(u8, token, "auto")) return "Automatic";
     if (std.mem.eql(u8, token, "none")) return "None";
-    if (std.mem.eql(u8, token, "inherit")) return "Inherit from surface";
+    if (std.mem.eql(u8, token, "inherit")) return "Inherit";
     if (std.mem.eql(u8, token, "when_needed")) return "When needed";
     if (std.mem.eql(u8, token, "allow_always")) return "Always allow";
     if (std.mem.eql(u8, token, "grayscale")) return "Grayscale screen";

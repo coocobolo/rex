@@ -5,8 +5,6 @@
 //! Strings and slices in an applied config point either at static data or
 //! into the arena that applying the files allocated from.
 
-const std = @import("std");
-
 const window_types = @import("window.zig");
 const overlay = @import("overlay.zig");
 const font_config = @import("font.zig");
@@ -72,19 +70,12 @@ pub const Window = struct {
     /// Window title; null (`auto`) shows the title programs set with OSC 0
     /// and 2, or `default_title` until they set one.
     title: ?[:0]const u8 = null,
-    /// The default look of every surface (`[surface]`): cards, toasts,
-    /// banners and dialogs.
-    surface: Surface = .{},
-    /// Each component's own look over `surface`; read through `surfaceFor`.
-    surfaces: Surfaces = .{},
     /// In-terminal toast notification options.
     toast: overlay.Toast = .{},
     /// Configuration diagnostic notification banner options.
     banner: overlay.Banner = .{},
-    /// Modal dialog options including dimensions, dimming, and default focus.
+    /// Modal dialog options including backdrop opacity, blur, and focus.
     modal: overlay.Modal = .{},
-    /// Copy and labels for the quit confirmation modal dialog.
-    quit_dialog: QuitDialog = .{},
     /// What closing the window does.
     on_close: OnClose = .ask_if_running,
 
@@ -97,48 +88,10 @@ pub const Window = struct {
         close,
     };
 
-    pub const Surfaces = struct {
-        card: SurfaceOverride = .inherit,
-        toast: SurfaceOverride = .inherit,
-        banner: SurfaceOverride = .inherit,
-        modal: SurfaceOverride = .inherit,
-    };
-
-    pub const Component = std.meta.FieldEnum(Surfaces);
-
-    /// The look of `component`: its own settings, the rest from `surface`.
-    pub fn surfaceFor(window: *const Window, comptime component: Component) Surface {
-        return @field(window.surfaces, @tagName(component)).resolve(window.surface);
-    }
-
     /// Neutral values: every option's own preset.
     pub const default: Window = .{
         .background = .default,
     };
-};
-
-/// The look of a surface: corner radius, border width, shape and style.
-pub const Surface = window_types.Surface;
-
-/// A component's own surface settings; null takes the value from
-/// `Window.surface` (CF11, naming doc §6.1). Resolved on read, so every
-/// layer and reload sees the same rule and nothing derived can go stale.
-pub const SurfaceOverride = struct {
-    corner_radius: ?f32 = null,
-    border_width: ?f32 = null,
-    border_shape: ?Surface.BorderShape = null,
-    border_style: ?Surface.BorderStyle = null,
-
-    pub const inherit: SurfaceOverride = .{};
-
-    pub fn resolve(override: SurfaceOverride, base: Surface) Surface {
-        return .{
-            .corner_radius = override.corner_radius orelse base.corner_radius,
-            .border_width = override.border_width orelse base.border_width,
-            .border_shape = override.border_shape orelse base.border_shape,
-            .border_style = override.border_style orelse base.border_style,
-        };
-    }
 };
 
 /// What runs in the terminal (`[shell]`). Read once, when Rex starts.
@@ -191,13 +144,4 @@ pub const Bell = struct {
     enabled: bool = true,
     /// Fraction of the X server's bell volume, 0 to 1.
     volume: f32 = 1.0,
-};
-
-/// Copy and labels of the quit confirmation dialog.
-pub const QuitDialog = struct {
-    title: []const u8 = "QUIT TERMINAL?",
-    line1: []const u8 = "Active terminal session is still running.",
-    line2: []const u8 = "Close this window and terminate the session?",
-    confirm_label: []const u8 = "Quit terminal",
-    cancel_label: []const u8 = "Cancel and stay",
 };
