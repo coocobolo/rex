@@ -30,7 +30,7 @@ pub fn build(b: *std.Build) !void {
         else => @panic("Rex builds for Linux and macOS only"),
     }
 
-    // glad 0.1.36, gl 4.5 compatibility, vendored: the generator only
+    // glad 0.1.36, gl 3.3 core, vendored: the generator only
     // serves its zips from temporary URLs.
     const glad_dir = b.path("vendor/glad");
     const glad_lib = b.addLibrary(.{
