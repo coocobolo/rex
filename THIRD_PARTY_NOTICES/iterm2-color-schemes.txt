@@ -1,0 +1,84 @@
+iTerm2-Color-Schemes (curated permissive subset)
+-------------------------------------------------
+
+This project includes generated theme preset data derived from a curated
+subset of schemes in iTerm2-Color-Schemes (Ghostty export files), limited to
+schemes whose per-scheme licenses are explicitly verified as MIT or
+Apache-2.0 in upstream licenses.yml.
+
+The generated data is used in: src/color/presets.zig
+The input snapshot is: tools/themes/schemes.conf
+The curated index is: tools/themes/manifest.conf
+
+Upstream project:
+https://github.com/mbadolato/iTerm2-Color-Schemes
+
+Upstream revision:
+95705098082c5d07fad152c31f020d50d38e10e8
+
+Upstream repository license (collection scripts & exports)
+----------------------------------------------------------
+MIT License
+
+Copyright (c) 2011 to Present Mark Badolato
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+This license covers the iTerm-Color-Schemes repository collection of themes. 
+
+The copyright/license for each individual theme belongs to the author of that theme.
+
+Apache-2.0 License text
+-----------------------
+Schemes marked Apache-2.0 below are distributed under the Apache License,
+Version 2.0 (full text included in THIRD_PARTY_NOTICES/Apache-2.0.txt).
+
+Included schemes and individual licenses
+----------------------------------------
+- Catppuccin Mocha [MIT] - Copyright (c) 2021 Catppuccin (https://github.com/catppuccin/palette)
+- Catppuccin Macchiato [MIT] - Copyright (c) 2021 Catppuccin (https://github.com/catppuccin/palette)
+- Catppuccin Frappe [MIT] - Copyright (c) 2021 Catppuccin (https://github.com/catppuccin/palette)
+- Catppuccin Latte [MIT] - Copyright (c) 2021 Catppuccin (https://github.com/catppuccin/palette)
+- TokyoNight [Apache-2.0] - Folke Lemaitre (folke/tokyonight.nvim) (https://github.com/folke/tokyonight.nvim)
+- TokyoNight Storm [Apache-2.0] - Folke Lemaitre (folke/tokyonight.nvim) (https://github.com/folke/tokyonight.nvim)
+- TokyoNight Moon [Apache-2.0] - Folke Lemaitre (folke/tokyonight.nvim) (https://github.com/folke/tokyonight.nvim)
+- TokyoNight Day [Apache-2.0] - Folke Lemaitre (folke/tokyonight.nvim) (https://github.com/folke/tokyonight.nvim)
+- Gruvbox Dark [MIT] - Pavel Pertsev <morhetz@gmail.com> (https://github.com/morhetz/gruvbox/blob/697c00291db857ca0af00ec154e5bd514a79191f/package.json#L6)
+- Gruvbox Dark Hard [MIT] - Pavel Pertsev <morhetz@gmail.com> (https://github.com/morhetz/gruvbox/blob/697c00291db857ca0af00ec154e5bd514a79191f/package.json#L6)
+- Gruvbox Light [MIT] - Pavel Pertsev <morhetz@gmail.com> (https://github.com/morhetz/gruvbox/blob/697c00291db857ca0af00ec154e5bd514a79191f/package.json#L6)
+- Gruvbox Light Hard [MIT] - Pavel Pertsev <morhetz@gmail.com> (https://github.com/morhetz/gruvbox/blob/697c00291db857ca0af00ec154e5bd514a79191f/package.json#L6)
+- Nord [MIT] - Copyright (c) 2016-present Sven Greb <development@svengreb.de> (https://github.com/nordtheme/iterm2)
+- Nord Light [MIT] - Copyright (c) 2016-present Sven Greb <development@svengreb.de> (https://github.com/nordtheme/iterm2)
+- Rose Pine [MIT] - Copyright (c) mvllow (https://github.com/rose-pine/build)
+- Rose Pine Moon [MIT] - Copyright (c) mvllow (https://github.com/rose-pine/build)
+- Rose Pine Dawn [MIT] - Copyright (c) mvllow (https://github.com/rose-pine/build)
+- Kanagawa Wave [MIT] - Copyright (c) 2021 Tommaso Laurenzi (https://github.com/rebelot/kanagawa.nvim)
+- Kanagawa Dragon [MIT] - Copyright (c) 2021 Tommaso Laurenzi (https://github.com/rebelot/kanagawa.nvim)
+- Atom One Dark [MIT] - Copyright (c) 2014 GitHub Inc. (https://github.com/atom/atom/tree/master/packages/one-dark-ui)
+- Atom One Light [MIT] - Copyright (c) 2014 GitHub Inc. (https://github.com/atom/atom/tree/master/packages/one-light-ui)
+- Everforest Dark Hard [MIT] - Copyright (c) 2021 Nikolai Osaulenko (https://github.com/icewind/everforest.iterm2)
+- Everforest Light Med [MIT] - Copyright (c) 2021 Nikolai Osaulenko (https://github.com/icewind/everforest.iterm2)
+- GitHub Dark Default [MIT] - Copyright (c) 2020 Primer (https://github.com/primer/github-vscode-theme)
+- GitHub Light Default [MIT] - Copyright (c) 2020 Primer (https://github.com/primer/github-vscode-theme)
+- Flexoki Dark [MIT] - Copyright (c) 2023 Steph Ango (https://github.com/kepano/flexoki)
+- Flexoki Light [MIT] - Copyright (c) 2023 Steph Ango (https://github.com/kepano/flexoki)
+- Tomorrow Night [MIT] - Copyright (C) 2011 Chris Kempson (https://github.com/chriskempson/tomorrow-theme/tree/master/iTerm2)
+- Tomorrow [MIT] - Copyright (C) 2011 Chris Kempson (https://github.com/chriskempson/tomorrow-theme)
+- Ayu Mirage [MIT] - Copyright (c) 2016 Ike Kurghinyan (https://github.com/ayu-theme/vscode-ayu)
+- Alabaster [MIT] - Copyright (c) 2018 Nikita Prokopov (https://github.com/mkaschenko/iterm2-theme-alabaster, https://github.com/tonsky/sublime-scheme-alabaster)

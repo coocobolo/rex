@@ -17,6 +17,7 @@ const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 const Config = @import("Config.zig");
 const Theme = @import("../color/Theme.zig");
+const color_presets = @import("../color/presets.zig");
 const Face = @import("font.zig").Face;
 const TimeOfDay = @import("wellbeing.zig").TimeOfDay;
 
@@ -359,8 +360,13 @@ pub const qualified_names = blk: {
     break :blk names;
 };
 
-pub const theme_preset_list = .{
-    .{ "default", Theme.default },
+pub const theme_preset_list: [1 + color_presets.entries.len]struct { []const u8, Theme } = blk: {
+    var list: [1 + color_presets.entries.len]struct { []const u8, Theme } = undefined;
+    list[0] = .{ "default", Theme.default };
+    for (color_presets.entries, 1..) |entry, i| {
+        list[i] = .{ entry.slug, entry.theme };
+    }
+    break :blk list;
 };
 
 /// Theme presets by name, for `Kind.theme`.
@@ -419,13 +425,7 @@ fn writeExpectedKey(comptime key: Key, w: *std.Io.Writer) std.Io.Writer.Error!vo
             try w.writeAll(" separated by commas");
         },
         .font_weight => try w.print("a whole number from {d} to {d}", .{ key.bounds.min, key.bounds.max }),
-        .theme => {
-            try w.writeAll("a theme name: ");
-            inline for (theme_preset_list, 0..) |preset, i| {
-                if (i > 0) try w.writeAll(", ");
-                try w.writeAll(preset[0]);
-            }
-        },
+        .theme => try w.writeAll("a built-in theme name, like \"nord\""),
         .font_fallback => try w.writeAll("a path to a font file, one per line, or none"),
         .path => try w.writeAll("a path to a font file"),
         .program_path => try w.writeAll("an absolute path to a program, ~/ allowed"),

@@ -277,6 +277,26 @@ pub fn build(b: *std.Build) !void {
     b.getInstallStep().dependOn(&check_run.step);
     b.step("check-fonts", "Check each font's copyright against its OFL file").dependOn(&check_run.step);
 
+    const check_theme_module = b.createModule(.{
+        .root_source_file = b.path("tools/themes/check.zig"),
+        .target = b.graph.host,
+        .optimize = .Debug,
+    });
+    const check_themes = b.addExecutable(.{
+        .name = "check-theme-license",
+        .root_module = check_theme_module,
+    });
+    const check_theme_run = b.addRunArtifact(check_themes);
+    check_theme_run.addFileArg(b.path("tools/themes/REVISION"));
+    check_theme_run.addFileArg(b.path("tools/themes/manifest.conf"));
+    check_theme_run.addFileArg(b.path("tools/themes/schemes.conf"));
+    check_theme_run.addFileArg(b.path("THIRD_PARTY_NOTICES/iterm2-color-schemes.txt"));
+    check_theme_run.addFileArg(b.path("THIRD_PARTY_NOTICES/Apache-2.0.txt"));
+    check_theme_run.addFileArg(b.path("src/color/presets.zig"));
+    b.getInstallStep().dependOn(&check_theme_run.step);
+    const theme_check_step = b.step("check-themes", "Check curated theme presets against manifest and license notices");
+    theme_check_step.dependOn(&check_theme_run.step);
+
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());
 
@@ -460,6 +480,8 @@ pub fn build(b: *std.Build) !void {
     }
     test_step.dependOn(import_check_step);
     test_step.dependOn(tests.run(tests.add("test-import-check", import_check_module, test_filters)));
+    test_step.dependOn(theme_check_step);
+    test_step.dependOn(tests.run(tests.add("test-theme-check", check_theme_module, test_filters)));
 
     // Fuzzing (see CONTRIBUTING.md, "Fuzzing"):
     //   - One target per file in src/fuzz/, each built on
@@ -501,6 +523,7 @@ pub fn build(b: *std.Build) !void {
         .{ "x11-colors", "src/color/x11.zig", .{"tools/x11/rgb.txt"} },
         .{ "charset-pages", "src/term/charset_pages.zig", .{"tools/xterm/charsets.h"} },
         .{ "icons", "src/kit/icons.zig", .{ "tools/gen/icons.txt", "assets/fonts/lucide.ttf" } },
+        .{ "themes", "src/color/presets.zig", .{"tools/themes/schemes.conf"} },
     };
     const gen_all = b.step("gen", "Regenerate every generated table");
     inline for (generators) |g| {

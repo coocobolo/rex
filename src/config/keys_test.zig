@@ -252,7 +252,14 @@ test "apply: font weights are whole numbers from 1 to 1000" {
 test "apply: theme is a preset name" {
     var config = testConfig();
     try applyText(&config, .root, "theme", "default");
+    try applyText(&config, .root, "theme", "nord");
+    try std.testing.expectEqual(@import("../color/presets.zig").nord, config.theme);
+    try applyText(&config, .root, "theme", "catppuccin_mocha");
+    try std.testing.expectEqual(@import("../color/presets.zig").catppuccin_mocha, config.theme);
+    try applyText(&config, .root, "theme", "tokyo_night_day");
+    try std.testing.expectEqual(@import("../color/presets.zig").tokyo_night_day, config.theme);
     try std.testing.expectError(error.InvalidValue, applyText(&config, .root, "theme", "Default"));
+    try std.testing.expectError(error.InvalidValue, applyText(&config, .root, "theme", "Nord"));
     try std.testing.expectError(error.InvalidValue, applyText(&config, .root, "theme", "dark"));
 }
 
@@ -341,7 +348,7 @@ test "writeExpected: describes each kind" {
         .{ .shell, "argument", "a program argument, one per line, or none" },
         .{ .selection, "extra_word_characters", "printable ASCII characters, like \"-./~@\", or \"\"" },
         .{ .@"wellbeing.screen_time", "on_limit", "none, or any of grayscale, lock_input, animation separated by commas" },
-        .{ .root, "theme", "a theme name: default" },
+        .{ .root, "theme", "a built-in theme name, like \"nord\"" },
     };
     for (cases) |case| {
         var w: std.Io.Writer = .fixed(&buf);

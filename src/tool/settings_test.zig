@@ -303,3 +303,68 @@ test "settings: Tab scrolls viewport when moving to an offscreen control" {
     }
     try testing.expect(state.scroll > 0);
 }
+
+test "settings: theme select popup windows long list and saves selection" {
+    const gpa = testing.allocator;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const dir_path = try std.fs.path.join(gpa, &.{ ".zig-cache", "tmp", &tmp.sub_path });
+    defer gpa.free(dir_path);
+    const cfg_path = try std.fs.path.join(gpa, &.{ dir_path, "config" });
+    defer gpa.free(cfg_path);
+
+    const cfg = config_defaults.default;
+    const Helper = struct {
+        var tree: kit.tree.Tree = undefined;
+        fn getRect(_: *const anyopaque, id: Id) ?kit.tree.Rect {
+            for (tree.nodes[0..tree.len]) |node| {
+                if (node.box.id == id) return node.rect;
+            }
+            return null;
+        }
+    };
+
+    var state = try settings.init(.{
+        .gpa = gpa,
+        .io = testing.io,
+        .config = &cfg,
+        .config_path = cfg_path,
+        .state_dir = dir_path,
+        .home_dir = dir_path,
+        .node_rect = .{ .ctx = &dummy, .getFn = Helper.getRect },
+        .wake_loop = struct {
+            fn wake() void {}
+        }.wake,
+    });
+    defer settings.deinit(&state);
+
+    const theme_idx = keyIndex(.root, "theme");
+    const theme_id = Id.of("settings.select").item(theme_idx);
+    _ = settings.update(&state, .{ .pointer = .{ .id = theme_id } });
+    _ = settings.update(&state, .{ .press = theme_id });
+    try testing.expect(settings.update(&state, .release));
+    try testing.expect(state.open_select != null);
+    try testing.expectEqual(@as(usize, 0), state.open_select.?.top);
+
+    // Move down past the 10-row visible window so `top` advances and the
+    // laid-out popup stays comfortably inside the 600px window height.
+    for (0..12) |_| {
+        try testing.expect(settings.update(&state, .{ .key = .{ .key = .down } }));
+    }
+    try testing.expect(state.open_select.?.top > 0);
+
+    var nodes: [settings.node_max]kit.tree.Node = undefined;
+    var lines: [settings.line_max]kit.text.Line = undefined;
+    const ui_theme = kit.Theme.dark;
+    Helper.tree = .init(&nodes, &lines);
+    try settings.view(&state, &Helper.tree, &ui_theme);
+    try kit.layout.layout(&Helper.tree, measurer, 960, 600);
+
+    const sel_rect = Helper.getRect(undefined, Id.of("settings.choice").item(12)).?;
+    try testing.expect(sel_rect.y + sel_rect.h <= 600);
+
+    try testing.expect(settings.update(&state, .{ .key = .{ .key = .enter } }));
+    try testing.expect(state.open_select == null);
+    try testing.expect(!std.meta.eql(state.activeConfig().theme, cfg.theme));
+}

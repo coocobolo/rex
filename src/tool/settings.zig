@@ -15,6 +15,7 @@ const config_paths = @import("../config/paths.zig");
 const config_writer = @import("../config/writer.zig");
 const config_font = @import("../config/font.zig");
 const ThemePreset = @import("../color/Theme.zig");
+const theme_presets = @import("../color/presets.zig");
 
 const sidebar = kit.sidebar;
 const popup = kit.popup;
@@ -33,6 +34,7 @@ pub const title = "Rex Settings";
 
 pub const node_max = 1536;
 pub const line_max = 1024;
+const popup_max_items: usize = 10;
 
 pub const Page = enum(u8) {
     appearance,
@@ -442,13 +444,6 @@ fn humanToken(comptime token: []const u8) []const u8 {
     if (std.mem.eql(u8, token, "bottom_left")) return "Bottom left";
     if (std.mem.eql(u8, token, "bottom_center")) return "Bottom center";
     if (std.mem.eql(u8, token, "bottom_right")) return "Bottom right";
-    if (std.mem.eql(u8, token, "catppuccin_mocha")) return "Catppuccin Mocha";
-    if (std.mem.eql(u8, token, "catppuccin_latte")) return "Catppuccin Latte";
-    if (std.mem.eql(u8, token, "gruvbox_dark")) return "Gruvbox Dark";
-    if (std.mem.eql(u8, token, "tokyo_night")) return "Tokyo Night";
-    if (std.mem.eql(u8, token, "solarized_dark")) return "Solarized Dark";
-    if (std.mem.eql(u8, token, "solarized_light")) return "Solarized Light";
-    if (std.mem.eql(u8, token, "one_dark")) return "One Dark";
 
     comptime {
         var out: [token.len]u8 = undefined;
@@ -639,7 +634,7 @@ pub const State = struct {
     pressed: Target = .none,
     focused: Target = .none,
     dragging_slider: ?u16 = null,
-    open_select: ?struct { key: u16, highlight: usize } = null,
+    open_select: ?struct { key: u16, highlight: usize, top: usize = 0 } = null,
     inputs: [keys.table.len]input.State = [_]input.State{.{}} ** keys.table.len,
     list_items: [keys.table.len]std.ArrayListUnmanaged([]u8) = [_]std.ArrayListUnmanaged([]u8){.empty} ** keys.table.len,
     duration_units: [keys.table.len]DurationUnit = [_]DurationUnit{.ms} ** keys.table.len,
@@ -870,6 +865,23 @@ pub fn update(state: *State, event: host.Event) bool {
             return sb;
         },
         .scroll => |wheel| {
+            if (state.open_select) |*sel| {
+                const count = selectChoiceCount(sel.key);
+                if (count > popup_max_items) {
+                    const max_top = count - popup_max_items;
+                    const step: usize = @max(1, @as(usize, @intFromFloat(@abs(wheel.dy) / popup.item_height)));
+                    const next_top = if (wheel.dy > 0)
+                        @min(sel.top + step, max_top)
+                    else if (wheel.dy < 0)
+                        sel.top -| step
+                    else
+                        sel.top;
+                    if (next_top == sel.top) return false;
+                    sel.top = next_top;
+                    return true;
+                }
+                return false;
+            }
             state.scroll_max = wheel.max;
             const next = std.math.clamp(state.scroll + wheel.dy, 0, wheel.max);
             if (next == state.scroll) return false;
@@ -888,16 +900,29 @@ pub fn update(state: *State, event: host.Event) bool {
     }
 }
 
+fn fitPopupTop(highlight: usize, count: usize, prev_top: usize) usize {
+    if (count <= popup_max_items) return 0;
+    const max_top = count - popup_max_items;
+    var top = @min(prev_top, max_top);
+    if (highlight < top) top = highlight;
+    if (highlight >= top + popup_max_items) top = highlight - popup_max_items + 1;
+    return @min(top, max_top);
+}
+
 fn handleKey(state: *State, press: host.KeyPress) bool {
     if (state.open_select) |*sel| {
         const count = selectChoiceCount(sel.key);
         switch (press.key) {
             .up => {
                 sel.highlight -|= 1;
+                sel.top = fitPopupTop(sel.highlight, count, sel.top);
                 return true;
             },
             .down => {
-                if (count > 0) sel.highlight = @min(sel.highlight + 1, count - 1);
+                if (count > 0) {
+                    sel.highlight = @min(sel.highlight + 1, count - 1);
+                    sel.top = fitPopupTop(sel.highlight, count, sel.top);
+                }
                 return true;
             },
             .enter => {
@@ -1201,12 +1226,15 @@ fn activate(state: *State, target: Target) bool {
                     return true;
                 }
             }
+            const highlight = if (keys.table[idx].kind == .duration)
+                @intFromEnum(state.duration_units[idx])
+            else
+                currentSelectIndex(idx, state.activeConfig()) orelse 0;
+            const count = selectChoiceCount(idx);
             state.open_select = .{
                 .key = idx,
-                .highlight = if (keys.table[idx].kind == .duration)
-                    @intFromEnum(state.duration_units[idx])
-                else
-                    currentSelectIndex(idx, state.activeConfig()) orelse 0,
+                .highlight = highlight,
+                .top = fitPopupTop(highlight, count, highlight -| (popup_max_items / 2)),
             };
             return true;
         },
@@ -1268,8 +1296,10 @@ fn activate(state: *State, target: Target) bool {
 fn over(state: *const State, id: Id) Target {
     if (id == .none) return .none;
     if (id == layer_id) return .layer;
-    for (0..32) |choice_idx| {
-        if (id == choiceId(choice_idx)) return .{ .select_choice = choice_idx };
+    if (state.open_select) |sel| {
+        for (0..selectChoiceCount(sel.key)) |choice_idx| {
+            if (id == choiceId(choice_idx)) return .{ .select_choice = choice_idx };
+        }
     }
     for (row_infos, 0..) |info, i| {
         const idx: u16 = @intCast(i);
@@ -1772,8 +1802,9 @@ fn comptimeKeyLabels(comptime key: keys.Key, comptime display: bool) []const []c
     if (kind != .select) return &.{};
     if (key.kind == .theme) {
         comptime var list: [keys.theme_preset_list.len][]const u8 = undefined;
-        inline for (keys.theme_preset_list, 0..) |preset, i| {
-            list[i] = if (display) comptime humanToken(preset[0]) else preset[0];
+        list[0] = if (display) "Default" else "default";
+        inline for (theme_presets.entries, 1..) |entry, i| {
+            list[i] = if (display) entry.title else entry.slug;
         }
         const final = list;
         return &final;
@@ -2509,10 +2540,13 @@ fn viewSelectPopup(
         },
         .select => {
             const selected_idx = currentSelectIndex(key_idx, cfg);
-            for (info.display_labels, 0..) |label, c_idx| {
+            const count = info.display_labels.len;
+            const start = if (count > popup_max_items) @min(state.open_select.?.top, count - popup_max_items) else 0;
+            const end = @min(count, start + popup_max_items);
+            for (start..end) |c_idx| {
                 try popup.item(tree, theme, .{
                     .id = choiceId(c_idx),
-                    .label = label,
+                    .label = info.display_labels[c_idx],
                     .highlighted = c_idx == highlight,
                     .selected = if (selected_idx) |s| c_idx == s else false,
                 });

@@ -7,6 +7,7 @@ pub const x11 = @import("x11.zig");
 pub const Color = @import("color.zig").Color;
 pub const Rgb = @import("Rgb.zig");
 pub const Theme = @import("Theme.zig");
+pub const presets = @import("presets.zig");
 pub const xterm256 = ansi.xterm256;
 
 test {
