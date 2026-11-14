@@ -155,6 +155,8 @@ local_clock: wellbeing.localtime.Clock = .{},
 wellbeing_toast_serial: ?u32 = null,
 /// Null only if the bundled UI fonts could not be loaded on startup.
 kit: ?*KitOverlay = null,
+/// Config or startup banner deferred while this window was unfocused.
+pending_banner: ?PendingAlert = null,
 
 window: Window,
 
@@ -617,10 +619,17 @@ pub fn init(
 
     const kit = createKit(gpa, io, argv0, content_scale, active_config.font.faces.regular);
     errdefer if (kit) |k| k.destroy(gpa);
+    var initial_pending_banner: ?PendingAlert = null;
     if (kit) |k| {
         k.configure(kitOverlayOptions(active_config.ui, active_config.window));
         if (active_config.window.banner.enabled) {
-            if (startup_banner) |*b| _ = k.showAlert(b.request());
+            if (startup_banner) |b| {
+                if (win.focused()) {
+                    _ = k.showAlert(b.request());
+                } else {
+                    initial_pending_banner = b;
+                }
+            }
         }
     }
 
@@ -652,6 +661,7 @@ pub fn init(
         .wellbeing_state = wellbeing_state,
         .wellbeing_watch = wellbeing_watch,
         .kit = kit,
+        .pending_banner = initial_pending_banner,
         .frame_buffer_size = .empty,
         .clipboard_buf = clipboard_buf,
         .last_frame = now,
@@ -736,6 +746,7 @@ pub fn run(self: *App) !void {
     const focused_now = self.window.focused();
     self.window_focused = focused_now;
     self.wellbeing_state.window_focused = focused_now;
+    if (focused_now) self.applyPendingBanner();
     self.window.setWindowCloseCallback(windowCloseCb);
     self.window.setWindowContentScaleCallback(contentScaleCb);
 
@@ -1232,7 +1243,7 @@ fn syncWellbeingKit(self: *App, new_alert_fired: bool) void {
             _ = kit.dismissToast(serial);
             self.wellbeing_toast_serial = null;
         }
-        if (!self.config.window.toast.enabled) return;
+        if (!self.window_focused or !self.config.window.toast.enabled) return;
         const title: []const u8, const kind: kit_toast.Kind = switch (wb.current_alert.kind) {
             .eyesight => .{ "Rest your eyes", .success },
             .movement => .{ "Stretch and move", .success },
@@ -1326,23 +1337,83 @@ fn reportWellbeingError(
     self.notifySimple(title, desc, .err);
 }
 
-/// Pushes a concise toast notification into the UI kit stack.
-pub fn notifySimple(self: *App, title: []const u8, description: []const u8, kind: kit_toast.Kind) void {
-    if (!self.config.window.toast.enabled) return;
-    const kit = self.kit orelse return;
-    const pushed = kit.push(.{
+fn pushFocusedToast(
+    kit: *KitOverlay,
+    focused: bool,
+    toast_cfg: @import("config/overlay.zig").Toast,
+    title: []const u8,
+    description: []const u8,
+    kind: kit_toast.Kind,
+) bool {
+    if (!focused or !toast_cfg.enabled) return false;
+    return kit.push(.{
         .title = title,
         .description = description,
         .kind = kind,
-        .duration_ms = self.config.window.toast.duration_ms,
+        .duration_ms = toast_cfg.duration_ms,
     });
-    if (pushed) self.needs_redraw = true;
+}
+
+fn pushOrDeferBanner(
+    kit: ?*KitOverlay,
+    focused: bool,
+    banner_enabled: bool,
+    pending_banner: *?PendingAlert,
+    kind: kit_alert.Kind,
+    title: []const u8,
+    description: []const u8,
+) bool {
+    if (!banner_enabled) {
+        pending_banner.* = null;
+        return false;
+    }
+    if (!focused) {
+        pending_banner.* = PendingAlert.init(kind, title, description);
+        return false;
+    }
+    pending_banner.* = null;
+    const k = kit orelse return false;
+    return k.showAlert(.{ .kind = kind, .title = title, .description = description });
+}
+
+fn flushDeferredBanner(
+    kit: ?*KitOverlay,
+    focused: bool,
+    banner_enabled: bool,
+    pending_banner: *?PendingAlert,
+) bool {
+    if (!focused or !banner_enabled) return false;
+    const b = pending_banner.* orelse return false;
+    pending_banner.* = null;
+    const k = kit orelse return false;
+    return k.showAlert(b.request());
+}
+
+/// Pushes a concise toast notification into the UI kit stack when focused.
+pub fn notifySimple(self: *App, title: []const u8, description: []const u8, kind: kit_toast.Kind) void {
+    const kit = self.kit orelse return;
+    if (pushFocusedToast(kit, self.window_focused, self.config.window.toast, title, description, kind)) {
+        self.needs_redraw = true;
+    }
 }
 
 fn showAlert(self: *App, kind: kit_alert.Kind, title: []const u8, description: []const u8) void {
-    const kit = self.kit orelse return;
-    if (!self.config.window.banner.enabled) return;
-    if (kit.showAlert(.{ .kind = kind, .title = title, .description = description })) {
+    if (pushOrDeferBanner(
+        self.kit,
+        self.window_focused,
+        self.config.window.banner.enabled,
+        &self.pending_banner,
+        kind,
+        title,
+        description,
+    )) {
+        self.needs_redraw = true;
+    }
+}
+
+/// Surfaces a banner deferred while unfocused when this window gains focus.
+pub fn applyPendingBanner(self: *App) void {
+    if (flushDeferredBanner(self.kit, self.window_focused, self.config.window.banner.enabled, &self.pending_banner)) {
         self.needs_redraw = true;
     }
 }
@@ -1491,13 +1562,17 @@ pub fn reloadConfig(self: *App) void {
     if (self.kit) |kit| {
         kit.configure(kitOverlayOptions(self.config.ui, self.config.window));
         if (!self.config.window.banner.enabled) {
+            self.pending_banner = null;
             if (kit.dismissAlert()) self.needs_redraw = true;
         } else if (configBanner(&loaded)) |*banner| {
             const req = banner.request();
             self.showAlert(req.kind, req.title, req.description);
-        } else if (kit.dismissAlert()) {
-            self.needs_redraw = true;
+        } else {
+            self.pending_banner = null;
+            if (kit.dismissAlert()) self.needs_redraw = true;
         }
+    } else if (!self.config.window.banner.enabled or configBanner(&loaded) == null) {
+        self.pending_banner = null;
     }
     self.renderer.background.option.alpha = self.config.window.background.alpha;
     self.renderer.setModalBlur(self.config.window.modal.blur, self.config.window.modal.blur_radius);
@@ -2777,6 +2852,7 @@ const windowFocusCb: c.GLFWwindowfocusfun = struct {
         const is_focused = (focused != 0);
         app.window_focused = is_focused;
         app.wellbeing_state.windowFocusChanged(is_focused);
+        if (is_focused) app.applyPendingBanner();
         const modes = app.driver.getModes();
         if (!modes.focus_events) return;
         app.driver.sendInput(.{ .focus = is_focused }) catch |err| {
@@ -3632,4 +3708,41 @@ test "kitOverlayOptions: maps overlay config sections onto KitOverlay options" {
     try testing.expectEqual(@as(u8, 18), opts.dialog.padding);
     try testing.expectEqual(@as(u8, 10), opts.dialog.gap);
     try testing.expectEqual(@as(?u8, 128), opts.dialog.scrim_alpha);
+}
+
+test "focus gating: unfocused window skips toasts and defers banners until focused" {
+    const testing = std.testing;
+    try Window.testGlContext();
+    const kit = try KitOverlay.create(testing.allocator, .{
+        .regular = "assets/fonts/Inter-Regular.ttf",
+        .medium = "assets/fonts/Inter-Medium.ttf",
+        .semibold = "assets/fonts/Inter-SemiBold.ttf",
+    }, 1);
+    defer kit.destroy(testing.allocator);
+
+    const toast_cfg: @import("config/overlay.zig").Toast = .{};
+    // Unfocused: toast is dropped; banner is deferred rather than shown immediately.
+    try testing.expect(!pushFocusedToast(kit, false, toast_cfg, "Configuration", "Configuration reloaded", .info));
+    try testing.expectEqual(@as(usize, 0), kit.toasts.len);
+
+    var pending: ?PendingAlert = null;
+    try testing.expect(!pushOrDeferBanner(kit, false, true, &pending, .err, "Config error", "bad key"));
+    try testing.expect(!kit.alertShown());
+    try testing.expect(pending != null);
+
+    // Gaining focus surfaces the deferred banner once and clears `pending`.
+    try testing.expect(flushDeferredBanner(kit, true, true, &pending));
+    try testing.expect(kit.alertShown());
+    try testing.expectEqual(@as(?PendingAlert, null), pending);
+    try testing.expect(!flushDeferredBanner(kit, true, true, &pending));
+
+    // While focused, both toasts and banners show immediately.
+    try testing.expect(pushFocusedToast(kit, true, toast_cfg, "Configuration", "Configuration reloaded", .info));
+    try testing.expectEqual(@as(usize, 1), kit.toasts.len);
+
+    // Disabling banners clears any deferred banner.
+    try testing.expect(!pushOrDeferBanner(kit, false, true, &pending, .warn, "Config warning", "deprecated"));
+    try testing.expect(pending != null);
+    try testing.expect(!pushOrDeferBanner(kit, false, false, &pending, .warn, "Config warning", "deprecated"));
+    try testing.expectEqual(@as(?PendingAlert, null), pending);
 }

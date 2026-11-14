@@ -861,3 +861,95 @@ test "settings: Overlays page groups toast, banner, modal, and alert dialog cont
     try testing.expect(settings.update(&state, .release));
     try testing.expect(!state.activeConfig().window.banner.enabled);
 }
+
+test "settings: Overlays preview buttons trigger, lay out, and dismiss in-window overlays" {
+    const gpa = testing.allocator;
+    const cfg = config_defaults.default;
+    var state = try settings.init(.{
+        .gpa = gpa,
+        .io = testing.io,
+        .config = &cfg,
+        .state_dir = "",
+        .wake_loop = struct {
+            fn wake() void {}
+        }.wake,
+    });
+    defer settings.deinit(&state);
+
+    state.frame.current = @intFromEnum(settings.Page.overlays);
+    _ = settings.update(&state, .{ .size = .{ .width = 960, .height = 720 } });
+
+    var nodes: [settings.node_max]kit.tree.Node = undefined;
+    var lines: [settings.line_max]kit.text.Line = undefined;
+    var tree = kit.tree.Tree.init(&nodes, &lines);
+    try settings.view(&state, &tree, &kit.Theme.dark);
+    try kit.layout.layout(&tree, measurer, 960, 720);
+
+    var saw_toast_btn = false;
+    var saw_banner_btn = false;
+    var saw_dialog_btn = false;
+    for (tree.nodes[0..tree.len]) |node| {
+        if (node.content != .text) continue;
+        if (std.mem.eql(u8, node.content.text.bytes, "Test Toast")) saw_toast_btn = true;
+        if (std.mem.eql(u8, node.content.text.bytes, "Test Banner")) saw_banner_btn = true;
+        if (std.mem.eql(u8, node.content.text.bytes, "Test Alert Dialog")) saw_dialog_btn = true;
+    }
+    try testing.expect(saw_toast_btn and saw_banner_btn and saw_dialog_btn);
+
+    // Click Test Toast -> pushes preview toast, waits for transition, and close button dismisses.
+    const toast_btn_id = Id.of("settings.preview_toast");
+    _ = settings.update(&state, .{ .pointer = .{ .id = toast_btn_id } });
+    _ = settings.update(&state, .{ .press = toast_btn_id });
+    try testing.expect(settings.update(&state, .release));
+    try testing.expectEqual(@as(usize, 1), state.preview_toast.len);
+    try testing.expect(settings.wait(&state) != null);
+
+    const toast_serial = state.preview_toast.entries[0].serial;
+    tree.reset();
+    try settings.view(&state, &tree, &kit.Theme.dark);
+    try kit.layout.layout(&tree, measurer, 960, 720);
+    settings.place(&state, &tree);
+    try testing.expect(tree.find(kit.toast.cardId(toast_serial)) != null);
+
+    try testing.expect(settings.update(&state, .{ .press = kit.toast.closeId(toast_serial) }));
+    try testing.expectEqual(kit.toast.Phase.leaving, std.meta.activeTag(state.preview_toast.entries[0].phase));
+
+    // Click Test Banner -> opens banner card and close button dismisses on release.
+    const banner_btn_id = Id.of("settings.preview_banner");
+    _ = settings.update(&state, .{ .pointer = .{ .id = banner_btn_id } });
+    _ = settings.update(&state, .{ .press = banner_btn_id });
+    try testing.expect(settings.update(&state, .release));
+    try testing.expect(state.preview_banner.isShown());
+
+    tree.reset();
+    try settings.view(&state, &tree, &kit.Theme.dark);
+    try kit.layout.layout(&tree, measurer, 960, 720);
+    settings.place(&state, &tree);
+    try testing.expect(tree.find(kit.alert.card_id) != null);
+
+    _ = settings.update(&state, .{ .pointer = .{ .id = kit.alert.close_id } });
+    _ = settings.update(&state, .{ .press = kit.alert.close_id });
+    try testing.expect(settings.update(&state, .release));
+    try testing.expect(!state.preview_banner.isShown());
+
+    // Click Test Alert Dialog -> opens dialog with configured default_focus and Esc dismisses.
+    const dialog_btn_id = Id.of("settings.preview_dialog");
+    _ = settings.update(&state, .{ .pointer = .{ .id = dialog_btn_id } });
+    _ = settings.update(&state, .{ .press = dialog_btn_id });
+    try testing.expect(settings.update(&state, .release));
+    try testing.expect(state.preview_dialog.phase != .closed);
+    try testing.expectEqual(@as(u8, 1), state.preview_dialog.focus);
+
+    tree.reset();
+    try settings.view(&state, &tree, &kit.Theme.dark);
+    try kit.layout.layout(&tree, measurer, 960, 720);
+    settings.place(&state, &tree);
+    try testing.expect(tree.find(kit.alert_dialog.card_id) != null);
+    try testing.expect(tree.find(kit.alert_dialog.scrim_id) != null);
+
+    try testing.expect(settings.update(&state, .{ .key = .{ .key = .escape } }));
+    try testing.expectEqual(
+        @as(std.meta.Tag(kit.dialog.Phase), .leaving),
+        std.meta.activeTag(state.preview_dialog.phase),
+    );
+}

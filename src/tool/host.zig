@@ -369,6 +369,7 @@ fn Host(comptime Tool: type) type {
             self.tree.reset();
             try Tool.view(&self.state, &self.tree, theme);
             try kit.layout.layout(&self.tree, self.font.measurer(), width, height);
+            if (@hasDecl(Tool, "place")) Tool.place(&self.state, &self.tree);
             try self.painter.paint(&self.tree, &self.font, &self.atlas);
         }
 

@@ -8,6 +8,7 @@ const Allocator = std.mem.Allocator;
 const kit = @import("../kit/root.zig");
 const host = @import("host.zig");
 const Config = @import("../config/Config.zig");
+const overlay = @import("../config/overlay.zig");
 const Loaded = @import("../config/Loaded.zig");
 const keys = @import("../config/keys.zig");
 const config_defaults = @import("../config/default.zig");
@@ -35,7 +36,7 @@ const Id = kit.tree.Id;
 pub const name = "settings";
 pub const title = "Rex Settings";
 
-pub const node_max = 1536;
+pub const node_max = 1600;
 pub const line_max = 1024;
 const popup_max_items: usize = 10;
 
@@ -781,12 +782,23 @@ pub const Target = union(enum) {
     list_down: struct { key: u16, item: u16 },
     list_remove: struct { key: u16, item: u16 },
     ansi_colors_toggle,
+    preview_toast,
+    preview_banner,
+    preview_dialog,
+    preview_banner_close,
+    preview_toast_close: u32,
+    preview_dialog_action: u8,
+    preview_dialog_card,
+    preview_dialog_scrim,
     layer,
 };
 
 const layer_id = Id.of("settings.layer");
 const scroll_area_id = Id.of("settings.scroll_area");
 const ansi_toggle_id = Id.of("settings.ansi_toggle");
+const preview_toast_id = Id.of("settings.preview_toast");
+const preview_banner_id = Id.of("settings.preview_banner");
+const preview_dialog_id = Id.of("settings.preview_dialog");
 
 fn switchId(idx: u16) Id {
     return Id.of("settings.switch").item(idx);
@@ -893,6 +905,13 @@ pub const State = struct {
     ansi_colors_open: bool = false,
     error_key: ?u16 = null,
     error_msg: std.ArrayListUnmanaged(u8) = .empty,
+    preview_toast: kit.toast.State = .empty,
+    preview_banner: kit.alert.State = .empty,
+    preview_dialog: kit.alert_dialog.State = .empty,
+    preview_table: kit.memory.Table = .empty,
+    preview_toast_motion: kit.toast.Motion = .settled,
+    preview_last_ms: ?i64 = null,
+    preview_glide_ms: u32 = 0,
 
     pub fn activeConfig(self: *const State) *const Config {
         if (self.loaded) |*l| return &l.config;
@@ -920,6 +939,7 @@ pub fn init(context: host.Context) !State {
     };
     errdefer deinit(&state);
     try syncInputs(&state);
+    syncPreviewOptions(&state);
     return state;
 }
 
@@ -1106,6 +1126,200 @@ fn syncInputs(state: *State) Allocator.Error!void {
     }
 }
 
+const preview_dialog_actions = [_]kit.alert_dialog.Action{
+    .{ .label = "Cancel", .role = .dismiss, .key_cap = "Esc" },
+    .{ .label = "Confirm", .variant = .primary },
+};
+
+fn overlayAnchor(pos: overlay.Position) kit.tree.ScreenAnchor {
+    return switch (pos) {
+        .top_left => .top_left,
+        .top_center => .top_center,
+        .top_right => .top_right,
+        .bottom_left => .bottom_left,
+        .bottom_center => .bottom_center,
+        .bottom_right => .bottom_right,
+    };
+}
+
+fn syncPreviewOptions(state: *State) void {
+    const cfg = state.activeConfig();
+    const win = cfg.window;
+    state.preview_toast.motion = cfg.ui.motion;
+    state.preview_banner.motion = cfg.ui.motion;
+    state.preview_dialog.motion = cfg.ui.motion;
+
+    const next_toast_pos = overlayAnchor(win.toast.position);
+    if (state.preview_toast.option.position != next_toast_pos) {
+        state.preview_table = .empty;
+    }
+    state.preview_toast.option = .{
+        .width = win.toast.width,
+        .position = next_toast_pos,
+        .margin = win.toast.margin,
+        .padding = win.toast.padding,
+        .gap = win.toast.gap,
+    };
+    state.preview_banner.option = .{
+        .max_width = win.banner.max_width,
+        .placement = switch (win.banner.placement) {
+            .floating => .floating,
+            .docked => .docked,
+        },
+        .position = overlayAnchor(win.banner.position),
+        .margin = win.banner.margin,
+        .padding = win.banner.padding,
+    };
+    state.preview_dialog.option = .{
+        .width = win.alert_dialog.width,
+        .position = switch (win.modal.position) {
+            .center => .center,
+            .top_center => .top_center,
+            .bottom_center => .bottom_center,
+        },
+        .margin = win.modal.margin,
+        .padding = win.modal.padding,
+        .gap = win.modal.gap,
+        .scrim_alpha = @intFromFloat(@round(std.math.clamp(win.modal.backdrop_opacity, 0.0, 1.0) * 255.0)),
+    };
+}
+
+fn previewNowMs(state: *const State) i64 {
+    return std.Io.Clock.Timestamp.now(state.io, .awake).raw.toMilliseconds();
+}
+
+fn anyPreviewActive(state: *const State) bool {
+    return state.preview_dialog.phase != .closed or
+        state.preview_banner.phase != .closed or
+        state.preview_toast.len > 0 or
+        state.preview_toast_motion == .moving;
+}
+
+fn minOptMs(a: ?u32, b: ?u32) ?u32 {
+    const bv = b orelse return a;
+    const av = a orelse return bv;
+    return @min(av, bv);
+}
+
+fn triggerPreviewToast(state: *State) void {
+    syncPreviewOptions(state);
+    _ = kit.toast.update(&state.preview_toast, .{ .push = .{
+        .title = "Sample toast notification",
+        .description = "Positioned and timed from [toast].",
+        .kind = .info,
+        .duration_ms = state.activeConfig().window.toast.duration_ms,
+    } });
+    if (state.preview_last_ms == null) state.preview_last_ms = previewNowMs(state);
+}
+
+fn triggerPreviewBanner(state: *State) void {
+    syncPreviewOptions(state);
+    _ = kit.alert.update(&state.preview_banner, .{ .show = .{
+        .kind = .info,
+        .title = "Sample status banner",
+        .description = "Placement, width, and spacing follow [banner].",
+    } });
+    if (state.preview_last_ms == null) state.preview_last_ms = previewNowMs(state);
+}
+
+fn triggerPreviewDialog(state: *State) void {
+    syncPreviewOptions(state);
+    state.open_select = null;
+    const focus_idx: u8 = switch (state.activeConfig().window.alert_dialog.default_focus) {
+        .cancel => 0,
+        .confirm => 1,
+    };
+    _ = kit.alert_dialog.update(&state.preview_dialog, .{ .open = .{
+        .media = kit.icons.info,
+        .title = "Sample alert dialog",
+        .body = "Uses [modal] backdrop, position, spacing, and [alert_dialog] width & focus.",
+        .actions = &preview_dialog_actions,
+        .focus = focus_idx,
+    } });
+    if (state.preview_last_ms == null) state.preview_last_ms = previewNowMs(state);
+}
+
+pub fn wait(state: *const State) ?f64 {
+    var min_ms: ?u32 = null;
+    if (state.preview_dialog.phase != .closed) {
+        min_ms = minOptMs(min_ms, state.preview_dialog.phase.wakeMs());
+    } else {
+        min_ms = minOptMs(min_ms, state.preview_banner.wakeMs());
+        const toast_ms: ?u32 = if (state.preview_toast_motion == .moving)
+            kit.motion.frame_ms
+        else
+            state.preview_toast.wakeMs();
+        min_ms = minOptMs(min_ms, toast_ms);
+    }
+    const ms = min_ms orelse return null;
+    return @as(f64, @floatFromInt(ms)) / std.time.ms_per_s;
+}
+
+pub fn wake(state: *State) bool {
+    if (!anyPreviewActive(state)) {
+        state.preview_last_ms = null;
+        state.preview_glide_ms = 0;
+        return false;
+    }
+    const now = previewNowMs(state);
+    const prev = state.preview_last_ms orelse {
+        state.preview_last_ms = now;
+        return false;
+    };
+    const raw = now - prev;
+    if (raw <= 0) return false;
+    state.preview_last_ms = now;
+    const dt_ms: u32 = @intCast(@min(raw, std.math.maxInt(u32)));
+    state.preview_glide_ms +|= @min(dt_ms, 500);
+
+    var changed = false;
+    if (state.preview_dialog.phase != .closed) {
+        if (kit.alert_dialog.update(&state.preview_dialog, .{ .tick = dt_ms }) != .quiet) {
+            changed = true;
+        }
+    } else {
+        if (kit.alert.update(&state.preview_banner, .{ .tick = dt_ms })) changed = true;
+        if (kit.toast.update(&state.preview_toast, .{ .tick = dt_ms })) changed = true;
+        if (state.preview_toast_motion == .moving) changed = true;
+    }
+    if (!anyPreviewActive(state)) {
+        state.preview_last_ms = null;
+        state.preview_glide_ms = 0;
+    }
+    return changed;
+}
+
+/// Applies enter/leave/glide motion to any active preview overlay after layout.
+pub fn place(state: *State, tree: *Tree) void {
+    if (state.preview_dialog.phase != .closed) return;
+    if (state.preview_banner.phase != .closed) {
+        if (tree.find(kit.alert.card_id)) |card| {
+            if (card.parent != kit.tree.none) {
+                kit.alert.place(&state.preview_banner, tree, card.parent);
+            }
+        }
+    }
+    const visible = state.preview_toast.visible();
+    if (visible.len > 0) {
+        if (tree.find(kit.toast.cardId(visible[0].serial))) |card| {
+            if (card.parent != kit.tree.none) {
+                const dt = state.preview_glide_ms;
+                state.preview_glide_ms = 0;
+                state.preview_toast_motion = kit.toast.place(
+                    &state.preview_toast,
+                    tree,
+                    card.parent,
+                    &state.preview_table,
+                    dt,
+                ) catch .settled;
+                return;
+            }
+        }
+    }
+    state.preview_glide_ms = 0;
+    state.preview_toast_motion = .settled;
+}
+
 pub fn update(state: *State, event: host.Event) bool {
     switch (event) {
         .size => |size| {
@@ -1121,6 +1335,21 @@ pub fn update(state: *State, event: host.Event) bool {
             if (state.dragging_slider) |idx| {
                 return updateSliderFromPointer(state, idx, pointer.x);
             }
+            if (state.preview_dialog.phase != .closed) {
+                const over_btn: u8 = switch (kit.alert_dialog.hit(pointer.id) orelse .scrim) {
+                    .action => |btn_idx| btn_idx,
+                    .scrim, .card => kit.alert_dialog.no_action,
+                };
+                const dialog_changed = kit.alert_dialog.update(&state.preview_dialog, .{ .pointer = over_btn }) == .redraw;
+                const next_hover = over(state, pointer.id);
+                const h_changed = !std.meta.eql(state.hover, next_hover);
+                state.hover = next_hover;
+                return dialog_changed or h_changed;
+            }
+            const alert_over: kit.alert.Pointer = if (state.preview_banner.hit(pointer.id) == .close) .close else .away;
+            const alert_changed = kit.alert.update(&state.preview_banner, .{ .pointer = alert_over });
+            const toast_over: kit.toast.Pointer = if (state.preview_toast.hit(pointer.id) != .none) .over else .away;
+            _ = kit.toast.update(&state.preview_toast, .{ .pointer = toast_over });
             const sb = state.frame.update(page_count, .{ .pointer = sidebar.hit(pointer.id, page_count) });
             const next_hover = over(state, pointer.id);
             const h_changed = !std.meta.eql(state.hover, next_hover);
@@ -1134,9 +1363,51 @@ pub fn update(state: *State, event: host.Event) bool {
                     }
                 }
             }
-            return sb or h_changed;
+            return sb or h_changed or alert_changed;
         },
         .press => |id| {
+            if (state.preview_dialog.phase != .closed) {
+                switch (kit.alert_dialog.hit(id) orelse .scrim) {
+                    .action => |btn_idx| {
+                        state.pressed = .{ .preview_dialog_action = btn_idx };
+                        return kit.alert_dialog.update(&state.preview_dialog, .{ .press = btn_idx }) == .redraw;
+                    },
+                    .card => {
+                        state.pressed = .preview_dialog_card;
+                        return kit.alert_dialog.update(&state.preview_dialog, .blur) == .redraw;
+                    },
+                    .scrim => {
+                        if (state.activeConfig().window.modal.on_outside_click == .close) {
+                            state.pressed = .none;
+                            return kit.alert_dialog.update(&state.preview_dialog, .dismiss) != .quiet;
+                        }
+                        state.pressed = .preview_dialog_scrim;
+                        return false;
+                    },
+                }
+            }
+            switch (state.preview_banner.hit(id)) {
+                .close => {
+                    state.pressed = .preview_banner_close;
+                    return kit.alert.update(&state.preview_banner, .press);
+                },
+                .card => {
+                    state.pressed = .none;
+                    return false;
+                },
+                .none => {},
+            }
+            switch (state.preview_toast.hit(id)) {
+                .close => |serial| {
+                    state.pressed = .none;
+                    return kit.toast.update(&state.preview_toast, .{ .dismiss = serial });
+                },
+                .toast => {
+                    state.pressed = .none;
+                    return false;
+                },
+                .none => {},
+            }
             if (state.open_select != null and id == layer_id) {
                 state.open_select = null;
                 state.pressed = .none;
@@ -1168,6 +1439,15 @@ pub fn update(state: *State, event: host.Event) bool {
             return sb;
         },
         .release => {
+            if (state.preview_dialog.pressed != kit.alert_dialog.no_action) {
+                state.pressed = .none;
+                return kit.alert_dialog.update(&state.preview_dialog, .release) != .quiet;
+            }
+            if (state.preview_banner.touch == .pressed) {
+                const over_close: kit.alert.Pointer = if (state.hover == .preview_banner_close) .close else .away;
+                state.pressed = .none;
+                return kit.alert.update(&state.preview_banner, .{ .release = over_close });
+            }
             if (state.dragging_slider) |idx| {
                 state.dragging_slider = null;
                 commitSlider(state, idx);
@@ -1227,6 +1507,18 @@ fn fitPopupTop(highlight: usize, count: usize, prev_top: usize) usize {
 }
 
 fn handleKey(state: *State, press: host.KeyPress) bool {
+    if (state.preview_dialog.phase.acceptsInput()) {
+        return switch (press.key) {
+            .escape => kit.alert_dialog.update(&state.preview_dialog, .dismiss) != .quiet,
+            .left => kit.alert_dialog.update(&state.preview_dialog, .{ .focus = .previous }) != .quiet,
+            .right => kit.alert_dialog.update(&state.preview_dialog, .{ .focus = .next }) != .quiet,
+            .tab => kit.alert_dialog.update(&state.preview_dialog, .{
+                .focus = if (press.mods.shift) .previous else .next,
+            }) != .quiet,
+            .enter, .space => kit.alert_dialog.update(&state.preview_dialog, .activate) != .quiet,
+            else => false,
+        };
+    }
     if (state.open_select) |*sel| {
         const count = selectChoiceCount(sel.key);
         switch (press.key) {
@@ -1401,6 +1693,14 @@ fn handleKey(state: *State, press: host.KeyPress) bool {
             },
             else => {},
         },
+        .preview_toast, .preview_banner, .preview_dialog => switch (press.key) {
+            .enter, .space => return activate(state, state.focused),
+            .escape => {
+                state.focused = .none;
+                return true;
+            },
+            else => {},
+        },
         .sidebar => switch (press.key) {
             .enter, .space => return cycleFocus(state, false),
             .escape => {
@@ -1517,13 +1817,30 @@ fn pageFocusTargets(page: Page, ansi_open: bool, out: []Target) usize {
                 },
             }
         }
+        if (page == .overlays) {
+            switch (sec) {
+                .toast => {
+                    out[count] = .preview_toast;
+                    count += 1;
+                },
+                .banner => {
+                    out[count] = .preview_banner;
+                    count += 1;
+                },
+                .alert_dialog => {
+                    out[count] = .preview_dialog;
+                    count += 1;
+                },
+                else => {},
+            }
+        }
     }
     return count;
 }
 
 fn cycleFocus(state: *State, reverse: bool) bool {
     const page: Page = @enumFromInt(state.frame.current);
-    var targets: [keys.table.len * 2 + 2]Target = undefined;
+    var targets: [keys.table.len * 2 + 8]Target = undefined;
     var count: usize = 0;
     if (state.frame.shown()) {
         targets[0] = .sidebar;
@@ -1575,6 +1892,9 @@ fn targetId(target: Target) ?Id {
         .stepper_inc => |idx| incId(idx),
         .list_add => |idx| listAddId(idx),
         .ansi_colors_toggle => ansi_toggle_id,
+        .preview_toast => preview_toast_id,
+        .preview_banner => preview_banner_id,
+        .preview_dialog => preview_dialog_id,
         else => null,
     };
 }
@@ -1611,7 +1931,15 @@ fn blurFocused(state: *State) void {
 
 fn activate(state: *State, target: Target) bool {
     switch (target) {
-        .none, .sidebar, .layer => return false,
+        .none,
+        .sidebar,
+        .layer,
+        .preview_banner_close,
+        .preview_toast_close,
+        .preview_dialog_action,
+        .preview_dialog_card,
+        .preview_dialog_scrim,
+        => return false,
         .key_switch => |idx| {
             blurFocused(state);
             toggleSwitch(state, idx);
@@ -1715,13 +2043,48 @@ fn activate(state: *State, target: Target) bool {
             state.ansi_colors_open = !state.ansi_colors_open;
             return true;
         },
+        .preview_toast => {
+            if (state.focused != .preview_toast) blurFocused(state);
+            triggerPreviewToast(state);
+            return true;
+        },
+        .preview_banner => {
+            if (state.focused != .preview_banner) blurFocused(state);
+            triggerPreviewBanner(state);
+            return true;
+        },
+        .preview_dialog => {
+            if (state.focused != .preview_dialog) blurFocused(state);
+            triggerPreviewDialog(state);
+            return true;
+        },
     }
 }
 
 fn over(state: *const State, id: Id) Target {
     if (id == .none) return .none;
+    if (state.preview_dialog.phase != .closed) {
+        if (kit.alert_dialog.hit(id)) |hit| return switch (hit) {
+            .action => |idx| .{ .preview_dialog_action = idx },
+            .card => .preview_dialog_card,
+            .scrim => .preview_dialog_scrim,
+        };
+    }
+    switch (state.preview_banner.hit(id)) {
+        .close => return .preview_banner_close,
+        .card => return .none,
+        .none => {},
+    }
+    switch (state.preview_toast.hit(id)) {
+        .close => |serial| return .{ .preview_toast_close = serial },
+        .toast => return .none,
+        .none => {},
+    }
     if (id == layer_id) return .layer;
     if (id == ansi_toggle_id) return .ansi_colors_toggle;
+    if (id == preview_toast_id) return .preview_toast;
+    if (id == preview_banner_id) return .preview_banner;
+    if (id == preview_dialog_id) return .preview_dialog;
     if (state.open_select) |sel| {
         for (0..selectChoiceCount(sel.key)) |choice_idx| {
             if (id == choiceId(choice_idx)) return .{ .select_choice = choice_idx };
@@ -2116,6 +2479,7 @@ fn reloadAfterWrite(state: *State, idx: u16) void {
         state.error_msg.clearRetainingCapacity();
     }
     syncInputs(state) catch {};
+    syncPreviewOptions(state);
 }
 
 fn firstLayerError(idx: u16, loaded: *const Loaded, buf: []u8) ?[]const u8 {
@@ -2213,6 +2577,13 @@ pub fn view(state: *const State, tree: *Tree, theme: *const Theme) kit.tree.Erro
             });
             tooltip.close(tree, card);
         }
+    }
+
+    if (state.preview_dialog.phase != .closed) {
+        _ = try kit.alert_dialog.view(&state.preview_dialog, tree, theme);
+    } else {
+        _ = try kit.alert.view(&state.preview_banner, tree, theme);
+        _ = try kit.toast.view(&state.preview_toast, tree, theme);
     }
 }
 
@@ -2560,8 +2931,86 @@ fn viewPage(state: *const State, tree: *Tree, theme: *const Theme, page: Page) k
             first_in_section = false;
             try viewKeyRow(state, tree, theme, info, idx, cfg);
         }
-        if (section_open) |open_box| tree.close(open_box);
+        if (section_open) |open_box| {
+            if (page == .overlays and (sec == .toast or sec == .banner or sec == .alert_dialog)) {
+                _ = try tree.leaf(.{
+                    .width = .fill,
+                    .height = .{ .fixed = 1 },
+                    .fill = theme.border,
+                });
+                try viewPreviewRow(state, tree, theme, sec);
+            }
+            tree.close(open_box);
+        }
     }
+}
+
+fn viewPreviewRow(
+    state: *const State,
+    tree: *Tree,
+    theme: *const Theme,
+    sec: keys.Section,
+) kit.tree.Error!void {
+    const id: Id, const tgt: Target, const btn_label: []const u8, const desc: []const u8 = switch (sec) {
+        .toast => .{
+            preview_toast_id,
+            .preview_toast,
+            "Test Toast",
+            "Show a sample toast notification inside this window.",
+        },
+        .banner => .{
+            preview_banner_id,
+            .preview_banner,
+            "Test Banner",
+            "Show a sample status banner inside this window.",
+        },
+        .alert_dialog => .{
+            preview_dialog_id,
+            .preview_dialog,
+            "Test Alert Dialog",
+            "Open a sample alert dialog using these modal and dialog settings.",
+        },
+        else => unreachable,
+    };
+
+    const compact = paneWidth(state) < 540;
+    const hovered = std.meta.eql(state.hover, tgt);
+    const pressed = std.meta.eql(state.pressed, tgt);
+    const focused = std.meta.eql(state.focused, tgt);
+    const btn_state: button.State = if (pressed and hovered)
+        .pressed
+    else if (hovered)
+        .hovered
+    else
+        .normal;
+
+    const row = try tree.open(.{
+        .axis = if (compact) .column else .row,
+        .width = .fill,
+        .cross = if (compact) .start else .center,
+        .gap = if (compact) 10 else 16,
+    });
+    const label_box = try tree.open(.{ .width = .fill, .gap = 3 });
+    _ = try tree.text("Preview", .{
+        .color = theme.foreground,
+        .style = .sm_medium,
+    });
+    _ = try tree.text(desc, .{
+        .color = theme.muted_foreground,
+        .style = .xs,
+        .width = .fill,
+    });
+    tree.close(label_box);
+
+    try button.view(tree, theme, .{
+        .id = id,
+        .label = btn_label,
+        .variant = .outline,
+        .size = .sm,
+        .state = btn_state,
+        .focused = focused,
+    });
+    tree.close(row);
 }
 
 const pct_labels: [101][]const u8 = blk: {
