@@ -6,6 +6,7 @@ pub fn build(b: *std.Build) !void {
 
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+    const strip = b.option(bool, "strip", "Strip debug info and symbol tables") orelse false;
 
     const glfw_dep = b.dependency("glfw", .{});
     const glfw_lib = b.addLibrary(.{
@@ -14,6 +15,7 @@ pub fn build(b: *std.Build) !void {
         .root_module = b.createModule(.{
             .target = target,
             .optimize = optimize,
+            .strip = strip,
             .link_libc = true,
         }),
     });
@@ -37,6 +39,7 @@ pub fn build(b: *std.Build) !void {
         .root_module = b.createModule(.{
             .target = target,
             .optimize = optimize,
+            .strip = strip,
             .link_libc = true,
         }),
     });
@@ -52,6 +55,7 @@ pub fn build(b: *std.Build) !void {
             .target = target,
             .link_libc = true, // freetype needs libc (malloc, memcpy, file I/O, etc.)
             .optimize = optimize,
+            .strip = strip,
         }),
     });
     freetype_lib.root_module.addCSourceFiles(.{
@@ -94,6 +98,7 @@ pub fn build(b: *std.Build) !void {
         .root_source_file = b.path("src/root.zig"),
         .optimize = optimize,
         .target = target,
+        .strip = strip,
         .link_libc = true,
         .imports = &.{
             .{ .name = "glfw", .module = glfw_mod },
@@ -180,6 +185,7 @@ pub fn build(b: *std.Build) !void {
         .root_source_file = b.path("src/memset.zig"),
         .target = target,
         .optimize = optimize,
+        .strip = strip,
         .no_builtin = true,
     });
 
@@ -190,11 +196,11 @@ pub fn build(b: *std.Build) !void {
             .root_source_file = b.path("src/main.zig"),
             .target = target,
             .optimize = optimize,
+            .strip = strip,
             .imports = &.{
                 .{ .name = "rex", .module = mod },
                 .{ .name = "memset", .module = memset_mod },
             },
-            .strip = false, // TODO delete for testing only
             .link_libc = true,
         }),
     });
@@ -270,12 +276,6 @@ pub fn build(b: *std.Build) !void {
     run_cmd.step.dependOn(b.getInstallStep());
 
     if (b.args) |args| run_cmd.addArgs(args);
-
-    const strip = b.option(
-        bool,
-        "strip",
-        "Strip debug information from executables",
-    ) orelse false;
 
     // Benchmarks (see bench/main.zig and scripts/README.md):
     //   - One suite per folder in bench/cases/, registered in
