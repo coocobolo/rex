@@ -406,7 +406,7 @@ pub const qualified_names = blk: {
     break :blk names;
 };
 
-const theme_preset_list = .{
+pub const theme_preset_list = .{
     .{ "graphite", Theme.graphite },
 };
 

@@ -41,6 +41,7 @@ pub fn trigger(tree: *Tree, theme: *const Theme, options: TriggerOptions) tree_z
 
     const ring = try tree.open(.{
         .id = options.id,
+        .width = if (options.width == .fill) .fill else .fit,
         .pointer = if (options.disabled) .arrow else .hand,
         .padding = .all(Theme.ring_width),
         .border = ring_color,

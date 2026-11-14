@@ -99,6 +99,17 @@ pub const Clipboard = struct {
     }
 };
 
+pub const NodeRect = struct {
+    ctx: ?*const anyopaque = null,
+    getFn: ?*const fn (ctx: *const anyopaque, id: Id) ?kit.tree.Rect = null,
+
+    pub fn get(self: NodeRect, id: Id) ?kit.tree.Rect {
+        const ctx = self.ctx orelse return null;
+        const f = self.getFn orelse return null;
+        return f(ctx, id);
+    }
+};
+
 pub const Context = struct {
     gpa: Allocator,
     io: std.Io,
@@ -106,10 +117,16 @@ pub const Context = struct {
     config: *const Config,
     /// Rex's state directory (`dirs.Application.state`).
     state_dir: []const u8,
+    /// User config file path (`config_paths.user`).
+    config_path: []const u8 = "",
+    /// User home directory (`$HOME`).
+    home_dir: []const u8 = "",
     /// Ends the loop's current sleep; safe from any thread.
     wake_loop: *const fn () void,
     /// Window clipboard access (main thread only).
     clipboard: Clipboard = .{},
+    /// Laid-out rectangle lookup for the most recently rendered frame.
+    node_rect: NodeRect = .{},
 };
 
 pub const KeyPress = struct {
@@ -139,6 +156,8 @@ fn Host(comptime Tool: type) type {
         /// borrow from both (`Context`), so they are freed after it.
         loaded: Loaded,
         directories: dirs.Application,
+        home: []const u8,
+        user_config_path: []const u8,
         state: Tool.State,
         nodes: [Tool.node_max]kit.tree.Node = undefined,
         lines: [Tool.line_max]kit.text.Line = undefined,
@@ -151,6 +170,8 @@ fn Host(comptime Tool: type) type {
         pointer_y: f32 = -1,
         /// The node under the pointer as last told to the tool.
         over: Id = .none,
+        /// Node captured on left mouse press until release, for drag gestures.
+        drag_id: Id = .none,
         /// The size last told to the tool, in logical pixels.
         width: f32 = 0,
         height: f32 = 0,
@@ -166,10 +187,13 @@ fn Host(comptime Tool: type) type {
             defer envmap.deinit();
 
             const home = try environ.getAlloc(gpa, "HOME");
-            defer gpa.free(home);
+            errdefer gpa.free(home);
 
             var directories = try dirs.Application.resolve(gpa, "rex", home, &envmap);
             errdefer directories.deinit(gpa);
+
+            const user_config_path = try config_paths.user(gpa, &directories);
+            errdefer gpa.free(user_config_path);
 
             const lock = try openLock(io, directories.state, Tool.name ++ ".lock");
             const alone = lock.tryLock(io, .exclusive) catch |err| {
@@ -227,6 +251,8 @@ fn Host(comptime Tool: type) type {
                 .lock = lock,
                 .loaded = loaded,
                 .directories = directories,
+                .home = home,
+                .user_config_path = user_config_path,
                 .state = undefined,
                 .tree = undefined,
                 .content_scale = content_scale,
@@ -241,11 +267,17 @@ fn Host(comptime Tool: type) type {
                 .io = io,
                 .config = &self.loaded.config,
                 .state_dir = self.directories.state,
+                .config_path = self.user_config_path,
+                .home_dir = self.home,
                 .wake_loop = Window.glfwPostEmptyEvent,
                 .clipboard = .{
                     .ctx = &self.window,
                     .getFn = clipboardGet,
                     .setFn = clipboardSet,
+                },
+                .node_rect = .{
+                    .ctx = self,
+                    .getFn = nodeRect,
                 },
             }) else .empty;
 
@@ -264,6 +296,8 @@ fn Host(comptime Tool: type) type {
         fn destroy(self: *Self, gpa: Allocator) void {
             if (@hasDecl(Tool, "deinit")) Tool.deinit(&self.state);
             self.loaded.deinit(gpa);
+            gpa.free(self.user_config_path);
+            gpa.free(self.home);
             self.directories.deinit(gpa);
             self.painter.deinit();
             self.font.destroy();
@@ -355,9 +389,20 @@ fn Host(comptime Tool: type) type {
                 .hand => .hand,
                 .text => .text,
             } else .arrow);
+            if (self.drag_id != .none) {
+                self.over = id;
+                self.send(.{ .pointer = .{ .id = self.drag_id, .x = self.pointer_x, .y = self.pointer_y } });
+                return;
+            }
             if (id == self.over) return;
             self.over = id;
             self.send(.{ .pointer = .{ .id = id, .x = self.pointer_x, .y = self.pointer_y } });
+        }
+
+        fn nodeRect(ctx: *const anyopaque, id: Id) ?kit.tree.Rect {
+            const self: *const Self = @ptrCast(@alignCast(ctx));
+            const n = self.tree.find(id) orelse return null;
+            return n.rect;
         }
 
         fn fromWindow(window: ?*c.GLFWwindow) *Self {
@@ -402,8 +447,14 @@ fn Host(comptime Tool: type) type {
             if (button != c.GLFW_MOUSE_BUTTON_LEFT) return;
             const self = fromWindow(window);
             switch (action) {
-                c.GLFW_PRESS => self.send(.{ .press = self.over }),
-                c.GLFW_RELEASE => self.send(.release),
+                c.GLFW_PRESS => {
+                    self.drag_id = self.over;
+                    self.send(.{ .press = self.over });
+                },
+                c.GLFW_RELEASE => {
+                    self.drag_id = .none;
+                    self.send(.release);
+                },
                 else => {},
             }
         }

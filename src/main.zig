@@ -47,6 +47,10 @@ pub fn main(init: std.process.Init) !void {
             try rex.tool.host.run(rex.tool.placeholder, init, argv0, &environ);
             return;
         }
+        if (std.mem.eql(u8, sc, "settings")) {
+            try rex.tool.host.run(rex.tool.settings, init, argv0, &environ);
+            return;
+        }
 
         var stdout_buffer: [4096]u8 = undefined;
         var stdout_writer = std.Io.File.stdout().writerStreaming(init.io, &stdout_buffer);
@@ -154,6 +158,7 @@ const help =
     \\
     \\Usage:
     \\  rex [-c <path>]              Start Rex
+    \\  rex settings                 Open the settings window
     \\  rex wellbeing                Open the wellbeing window
     \\  rex wellbeing print          Print the wellbeing card
     \\  rex wellbeing clear          Clear the wellbeing history

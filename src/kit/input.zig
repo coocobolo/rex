@@ -256,6 +256,8 @@ pub const Options = struct {
     focused: bool = false,
     invalid: bool = false,
     disabled: bool = false,
+    center: bool = false,
+    borderless: bool = false,
 };
 
 pub fn view(tree: *Tree, theme: *const Theme, options: Options) tree_zig.Error!void {
@@ -279,11 +281,12 @@ pub fn view(tree: *Tree, theme: *const Theme, options: Options) tree_zig.Error!v
 
     const ring = try tree.open(.{
         .id = options.id,
+        .width = if (options.width == .fill) .fill else .fit,
         .pointer = if (options.disabled) .arrow else .text,
-        .padding = .all(Theme.ring_width),
-        .border = ring_color,
-        .border_width = Theme.ring_width,
-        .radius = Theme.radius_md + Theme.ring_width,
+        .padding = if (options.borderless) .all(0) else .all(Theme.ring_width),
+        .border = if (options.borderless) Theme.Color.transparent else ring_color,
+        .border_width = if (options.borderless) 0 else Theme.ring_width,
+        .radius = if (options.borderless) 0 else Theme.radius_md + Theme.ring_width,
     });
 
     const face = try tree.open(.{
@@ -292,16 +295,17 @@ pub fn view(tree: *Tree, theme: *const Theme, options: Options) tree_zig.Error!v
         .height = .{ .fixed = options.height },
         .padding = .symmetric(12, 0),
         .cross = .center,
-        .fill = theme.background.fade(presence),
-        .border = border_color,
-        .border_width = Theme.border_width,
-        .radius = Theme.radius_md,
+        .fill = if (options.borderless) .transparent else theme.background.fade(presence),
+        .border = if (options.borderless) Theme.Color.transparent else border_color,
+        .border_width = if (options.borderless) 0 else Theme.border_width,
+        .radius = if (options.borderless) 0 else Theme.radius_md,
     });
 
     const clip = try tree.open(.{
         .axis = .row,
         .width = .fill,
         .height = .fill,
+        .main = if (options.center) .center else .start,
         .cross = .center,
         .overflow = .clip,
     });
