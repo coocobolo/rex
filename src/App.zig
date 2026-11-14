@@ -597,7 +597,6 @@ pub fn init(
 
     driver.setWakeupFn(Window.glfwPostEmptyEvent);
 
-    const background_color = resolved_theme.background;
     const background_alpha = active_config.window.background.alpha;
 
     const classifier = try unicode.Classifier.init(active_config.selection.classifier);
@@ -632,7 +631,7 @@ pub fn init(
         .latency_path = latency_path,
         .window = win,
         .frame_latch = .init(Window.primaryRefreshHz()),
-        .background_color = .{ background_color.r, background_color.g, background_color.b, background_alpha },
+        .background_color = normalizedBackground(resolved_theme.background, background_alpha),
         .blink = .{ .period_ms = blink_half_period_ms },
         .blink_rapid = .{ .period_ms = rapid_blink_half_period_ms },
         .dirs = dirs,
@@ -1481,8 +1480,7 @@ pub fn reloadConfig(self: *App) void {
 
     // Live update renderer background color, alpha, and terminal theme
     const resolved_theme = self.config.resolvedTheme();
-    const bg = resolved_theme.background;
-    self.background_color = .{ bg.r, bg.g, bg.b, self.config.window.background.alpha };
+    self.background_color = normalizedBackground(resolved_theme.background, self.config.window.background.alpha);
     if (self.kit) |kit| {
         kit.configure(self.config.ui);
         if (!self.config.window.banner.enabled) {
@@ -3429,4 +3427,23 @@ test "App: a config reload starts from the defaults, in its own arena" {
     defer second.deinit(gpa);
     try testing.expectEqualStrings("/base/regular.ttf", std.mem.span(second.config.font.faces.regular));
     try testing.expectEqual(base.keymap.ptr, second.config.keymap.ptr);
+}
+
+fn normalizedBackground(rgb: rex.color.Rgb, alpha: f32) [4]f32 {
+    return .{
+        @as(f32, @floatFromInt(rgb.r)) / 255.0,
+        @as(f32, @floatFromInt(rgb.g)) / 255.0,
+        @as(f32, @floatFromInt(rgb.b)) / 255.0,
+        alpha,
+    };
+}
+
+test "normalizedBackground: scales 0..255 Rgb channels into 0..1 GL clearColor floats" {
+    const testing = std.testing;
+    const mocha_bg: rex.color.Rgb = .{ .r = 0x1E, .g = 0x1E, .b = 0x2E };
+    const rgba = normalizedBackground(mocha_bg, 0.85);
+    try testing.expectApproxEqAbs(@as(f32, 30.0 / 255.0), rgba[0], 1e-6);
+    try testing.expectApproxEqAbs(@as(f32, 30.0 / 255.0), rgba[1], 1e-6);
+    try testing.expectApproxEqAbs(@as(f32, 46.0 / 255.0), rgba[2], 1e-6);
+    try testing.expectApproxEqAbs(@as(f32, 0.85), rgba[3], 1e-6);
 }
