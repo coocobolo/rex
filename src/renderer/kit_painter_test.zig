@@ -354,7 +354,7 @@ fn render(scene: Scene, variant: Theme.Variant, background: Color, scale: f32, k
     }
     if (scene == .dialog or scene == .dialog_cancel_focused or scene == .dialog_media) {
         _ = alert_dialog.update(&result.dialog, .{ .open = .{
-            .media = if (scene == .dialog_media) icons.triangle_alert else 0,
+            .media = if (scene == .dialog_media) icons.alert_triangle else 0,
             .title = "Close this window?",
             .body = "A program is still running: nvim. Closing the window ends it.",
             .actions = &.{

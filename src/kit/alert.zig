@@ -45,7 +45,7 @@ pub const Kind = enum(u8) {
                 .border = theme.destructive.alpha(45),
             },
             .warn => .{
-                .codepoint = icons.triangle_alert,
+                .codepoint = icons.alert_triangle,
                 .icon_color = theme.warning,
                 .border = theme.warning.alpha(45),
             },

@@ -1,0 +1,18 @@
+# Icons shipped by the kit, named as in assets/fonts/lucide.ttf's post table.
+# Run `zig build gen-icons` after changing this list.
+
+info
+check-circle-2
+alert-triangle
+circle-x
+x
+panel-left
+check
+chevron-down
+settings
+play
+pause
+skip-forward
+ellipsis
+rotate-ccw
+external-link

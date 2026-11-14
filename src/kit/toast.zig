@@ -58,9 +58,9 @@ pub const Kind = enum(u8) {
     fn mark(self: Kind, theme: *const Theme) ?Mark {
         return switch (self) {
             .default => null,
-            .success => .{ .codepoint = icons.circle_check, .color = theme.success },
+            .success => .{ .codepoint = icons.check_circle_2, .color = theme.success },
             .info => .{ .codepoint = icons.info, .color = theme.info },
-            .warning => .{ .codepoint = icons.triangle_alert, .color = theme.warning },
+            .warning => .{ .codepoint = icons.alert_triangle, .color = theme.warning },
             .err => .{ .codepoint = icons.circle_x, .color = theme.destructive },
         };
     }

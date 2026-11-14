@@ -308,7 +308,7 @@ test "dialog: a button is taken when the pointer is let go on it" {
 
 test "dialog: media is an icon in a box above the title" {
     var state: State = .empty;
-    _ = update(&state, .{ .open = .{ .media = icons.triangle_alert, .title = "Close?", .actions = &sample_actions } });
+    _ = update(&state, .{ .open = .{ .media = icons.alert_triangle, .title = "Close?", .actions = &sample_actions } });
     _ = update(&state, .{ .tick = Theme.duration });
 
     var fixture: Fixture = .{};
@@ -323,7 +323,7 @@ test "dialog: media is an icon in a box above the title" {
     try testing.expectEqual(Theme.dark.muted, box.box.fill);
     try testing.expectEqual(alert_dialog.media_box, box.rect.w);
     try testing.expectEqual(alert_dialog.media_box, box.rect.h);
-    try testing.expectEqual(icons.triangle_alert, icon.content.icon.codepoint);
+    try testing.expectEqual(icons.alert_triangle, icon.content.icon.codepoint);
     try testing.expectEqual(box.rect.x + (alert_dialog.media_box - alert_dialog.media_icon) / 2, icon.rect.x);
     try testing.expectEqual(box.rect.y + box.rect.h + dialog.header_gap, title.rect.y);
 

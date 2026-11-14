@@ -473,6 +473,7 @@ pub fn build(b: *std.Build) !void {
         .{ "grapheme-table", "src/term/grapheme_table.zig", .{ ucd ++ "GraphemeBreakProperty.txt", ucd ++ "emoji-data.txt" } },
         .{ "x11-colors", "src/color/x11.zig", .{"tools/x11/rgb.txt"} },
         .{ "charset-pages", "src/term/charset_pages.zig", .{"tools/xterm/charsets.h"} },
+        .{ "icons", "src/kit/icons.zig", .{ "tools/gen/icons.txt", "assets/fonts/lucide.ttf" } },
     };
     const gen_all = b.step("gen", "Regenerate every generated table");
     inline for (generators) |g| {
