@@ -757,10 +757,14 @@ pub fn run(self: *App) !void {
         const local_s = self.local_clock.localSeconds(@intCast(now_real.raw.toSeconds()));
 
         const wb_res = self.wellbeing_state.tick(dt_clamped, self.driver.getMasterFd(), local_s, @intCast(now_real.raw.toMilliseconds()));
-        self.renderer.grayscale = wb_res.grayscale;
-        self.renderer.color_tint = wb_res.tint;
+        if (self.renderer.grayscale != wb_res.grayscale or !std.meta.eql(self.renderer.color_tint, wb_res.tint)) {
+            self.renderer.grayscale = wb_res.grayscale;
+            self.renderer.color_tint = wb_res.tint;
+            self.renderer_dirty = true;
+            self.needs_redraw = true;
+        }
         if (wb_res.needs_redraw) {
-            self.frame_builder.last_generation = null;
+            self.renderer_dirty = true;
             self.needs_redraw = true;
         }
         self.syncWellbeing(@intCast(now_real.raw.toSeconds()));
@@ -1586,7 +1590,6 @@ fn handleAction(self: *App, action: rex.input.Action) void {
                 _ = kit.dismissAlert();
                 _ = kit.dialogInput(.dismiss);
             }
-            self.frame_builder.last_generation = null;
             self.needs_redraw = true;
             self.syncWellbeingKit(false);
         },
@@ -1964,7 +1967,6 @@ pub fn requestQuit(self: *App) void {
         },
         .scrim_alpha = self.config.window.modal.backdropAlpha(),
     });
-    self.frame_builder.last_generation = null;
     self.needs_redraw = true;
 }
 
@@ -2002,7 +2004,6 @@ fn applyDialogOutcome(self: *App, outcome: alert_dialog.Outcome) void {
     switch (outcome) {
         .quiet => {},
         .redraw, .closed => {
-            self.frame_builder.last_generation = null;
             self.needs_redraw = true;
         },
         .chosen => |action| if (action == quit_close) self.confirmQuit(),
@@ -2018,7 +2019,6 @@ fn syncQuitPrompt(self: *App) void {
     const kit = self.kit orelse return;
     if (!self.quit_confirm_open or kit.dialogTakesInput()) return;
     self.quit_confirm_open = false;
-    self.frame_builder.last_generation = null;
     self.needs_redraw = true;
 }
 
@@ -2061,27 +2061,7 @@ fn routeKeyToUi(self: *App, maybe_key: ?rex.input.Key, mods: rex.input.Modifiers
     }
 
     if (self.wellbeing_state.input_locked) {
-        // Ctrl+Shift+D is the emergency unlock shortcut alongside unlock keybindings.
-        const ctrl_shift_d = mods.ctrl and mods.shift and !mods.alt and !mods.super and k == .d;
-        const is_unlock_binding = if (rex.input.matchBinding(self.config.keymap, k, mods)) |act| switch (act) {
-            .focus_skip, .wellbeing_dismiss, .toast_dismiss, .toast_activate => true,
-            else => false,
-        } else false;
-        if (ctrl_shift_d or is_unlock_binding) {
-            self.unlockLockScreen();
-        } else if (self.kit) |kit| {
-            if (kit.lockScreenTakesInput()) {
-                if (k == .tab) {
-                    if (kit.lockScreenInput(.focus) == .redraw) self.needs_redraw = true;
-                } else if ((k == .enter or k == .kp_enter or k == .space) and !mods.ctrl and !mods.alt and !mods.super) {
-                    switch (kit.lockScreenInput(.activate)) {
-                        .quiet => {},
-                        .redraw => self.needs_redraw = true,
-                        .unlocked => self.unlockLockScreen(),
-                    }
-                }
-            }
-        }
+        self.handleLockScreenKey(k, mods);
         return true;
     }
 
@@ -2091,6 +2071,32 @@ fn routeKeyToUi(self: *App, maybe_key: ?rex.input.Key, mods: rex.input.Modifiers
     }
 
     return false;
+}
+
+fn handleLockScreenKey(self: *App, k: rex.input.Key, mods: rex.input.Modifiers) void {
+    // Ctrl+Shift+D is the emergency unlock shortcut alongside unlock keybindings.
+    const ctrl_shift_d = mods.ctrl and mods.shift and !mods.alt and !mods.super and k == .d;
+    const is_unlock_binding = if (rex.input.matchBinding(self.config.keymap, k, mods)) |act| switch (act) {
+        .focus_skip, .wellbeing_dismiss, .toast_dismiss, .toast_activate => true,
+        else => false,
+    } else false;
+    if (ctrl_shift_d or is_unlock_binding) {
+        self.unlockLockScreen();
+        return;
+    }
+
+    const kit = self.kit orelse return;
+    if (!kit.lockScreenTakesInput() or mods.ctrl or mods.alt or mods.super) return;
+    const event: kit_lock_screen.Event = switch (k) {
+        .tab => .focus,
+        .enter, .kp_enter, .space => .activate,
+        else => return,
+    };
+    switch (kit.lockScreenInput(event)) {
+        .quiet => {},
+        .redraw => self.needs_redraw = true,
+        .unlocked => self.unlockLockScreen(),
+    }
 }
 
 fn handleQuitModalKey(self: *App, k: rex.input.Key, mods: rex.input.Modifiers) void {

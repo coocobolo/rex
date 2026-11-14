@@ -128,11 +128,37 @@ pub fn Renderer(comptime option: TerminalOption) type {
             },
         ) void {
             const blur_active = frame.overlay_has_modal and frame.modal_blur;
-            if (blur_active) {
-                self.blur.beginScene(
-                    @intFromFloat(frame_dimension.width),
-                    @intFromFloat(frame_dimension.height),
+            const fb_w: u32 = @intFromFloat(frame_dimension.width);
+            const fb_h: u32 = @intFromFloat(frame_dimension.height);
+            const scene_key: Blur.SceneKey = .{
+                .background = background_color,
+                .color_tint = self.color_tint,
+                .width = fb_w,
+                .height = fb_h,
+                .grayscale = self.grayscale,
+                .scrollbar_alpha = self.scrollbar.last_alpha,
+                .selection_bg = selection_bg,
+                .blur_radius = frame.modal_blur_radius,
+                .focused = focused,
+                .scrollbar_hover = self.scrollbar.hover,
+                .blink_rapid_on = cursor_state.blink_rapid_on,
+            };
+            const terminal_dirty = frame.dirty.cells or frame.dirty.selection or frame.dirty.cursor or frame.dirty.scrollbar or frame.dirty.blink;
+            if (!blur_active or terminal_dirty) {
+                self.blur.invalidate();
+            } else if (self.blur.hasCachedPyramid(scene_key)) {
+                gl.enable(gl.BLEND);
+                gl.blendFuncSeparate(
+                    gl.SRC_ALPHA,
+                    gl.ONE_MINUS_SRC_ALPHA,
+                    gl.ONE,
+                    gl.ONE_MINUS_SRC_ALPHA,
                 );
+                self.blur.compositeCached(fb_w, fb_h, frame.modal_blur_radius, 0, scrimColor(background_color));
+                return;
+            }
+            if (blur_active) {
+                self.blur.beginScene(fb_w, fb_h);
             }
 
             gl.enable(gl.BLEND);
@@ -247,19 +273,23 @@ pub fn Renderer(comptime option: TerminalOption) type {
 
             // Pass 6: Frosted backdrop blur behind the UI kit's modal scrim.
             if (blur_active) {
-                const scrim_color = [3]u8{
-                    @intFromFloat(@min(255.0, @max(0.0, background_color[0] * 255.0))),
-                    @intFromFloat(@min(255.0, @max(0.0, background_color[1] * 255.0))),
-                    @intFromFloat(@min(255.0, @max(0.0, background_color[2] * 255.0))),
-                };
                 self.blur.renderBlur(
-                    @intFromFloat(frame_dimension.width),
-                    @intFromFloat(frame_dimension.height),
+                    fb_w,
+                    fb_h,
                     frame.modal_blur_radius,
                     0,
-                    scrim_color,
+                    scrimColor(background_color),
                 );
+                self.blur.markCached(scene_key);
             }
+        }
+
+        fn scrimColor(bg: [4]f32) [3]u8 {
+            return .{
+                @intFromFloat(@min(255.0, @max(0.0, bg[0] * 255.0))),
+                @intFromFloat(@min(255.0, @max(0.0, bg[1] * 255.0))),
+                @intFromFloat(@min(255.0, @max(0.0, bg[2] * 255.0))),
+            };
         }
 
         /// Draws the glyph coverage when some run has an underline that

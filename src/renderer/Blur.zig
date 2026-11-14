@@ -21,6 +21,20 @@ pub const Level = struct {
     height: u32 = 0,
 };
 
+pub const SceneKey = struct {
+    background: [4]f32 = .{ 0, 0, 0, 0 },
+    color_tint: [3]f32 = .{ 1, 1, 1 },
+    width: u32 = 0,
+    height: u32 = 0,
+    grayscale: f32 = 0,
+    scrollbar_alpha: f32 = 0,
+    selection_bg: ?[3]u8 = null,
+    blur_radius: u8 = 0,
+    focused: bool = true,
+    scrollbar_hover: bool = false,
+    blink_rapid_on: bool = true,
+};
+
 down_shader: Shader,
 up_shader: Shader,
 dummy_vao: gl.GLuint = 0,
@@ -32,6 +46,8 @@ levels: [max_levels]Level = undefined,
 
 width: u32 = 0,
 height: u32 = 0,
+cache_valid: bool = false,
+cached_scene: SceneKey = .{},
 
 /// Compiles Dual Kawase GLSL shaders and initializes OpenGL framebuffer handles.
 pub fn init() !Blur {
@@ -90,10 +106,28 @@ pub fn deinit(self: *Blur) void {
     self.* = undefined;
 }
 
+/// Invalidates the cached blurred pyramid so the next modal frame re-captures
+/// and filters the terminal scene.
+pub fn invalidate(self: *Blur) void {
+    self.cache_valid = false;
+}
+
+/// Returns whether the cached `levels[0]` blurred texture matches `key`.
+pub fn hasCachedPyramid(self: *const Blur, key: SceneKey) bool {
+    return self.cache_valid and key.width > 0 and key.height > 0 and std.meta.eql(self.cached_scene, key);
+}
+
+/// Records `key` as the scene snapshot held in `levels[0]`.
+pub fn markCached(self: *Blur, key: SceneKey) void {
+    self.cached_scene = key;
+    self.cache_valid = key.width > 0 and key.height > 0;
+}
+
 /// Allocates or resizes offscreen render textures when the viewport dimensions change.
 pub fn ensureCapacity(self: *Blur, width: u32, height: u32) void {
     if (width == self.width and height == self.height and self.width > 0) return;
 
+    self.cache_valid = false;
     self.width = @max(1, width);
     self.height = @max(1, height);
 
@@ -215,6 +249,42 @@ pub fn renderBlur(
     }
 
     // Final Upsample Pass: Level 0 -> Target Framebuffer (Screen) with Scrim & Dither
+    self.drawFinalPass(width, height, dim_alpha, scrim_rgb);
+}
+
+/// Composites the previously blurred `levels[0]` pyramid onto framebuffer 0.
+pub fn compositeCached(
+    self: *const Blur,
+    width: u32,
+    height: u32,
+    blur_radius: u8,
+    dim_alpha: u8,
+    scrim_rgb: [3]u8,
+) void {
+    const base_offset: f32 = 1.0 + (@as(f32, @floatFromInt(blur_radius)) / 32.0) * 0.4;
+    gl.bindVertexArray(self.dummy_vao);
+    gl.activeTexture(gl.TEXTURE0);
+    self.up_shader.use();
+    self.up_shader.set1i("u_texture", 0);
+    self.up_shader.set1f("u_offset", base_offset);
+    self.drawFinalPass(width, height, dim_alpha, scrim_rgb);
+}
+
+fn drawFinalPass(
+    self: *const Blur,
+    width: u32,
+    height: u32,
+    dim_alpha: u8,
+    scrim_rgb: [3]u8,
+) void {
+    self.up_shader.set1f("u_dim_alpha", @as(f32, @floatFromInt(dim_alpha)) / 255.0);
+    self.up_shader.set3f(
+        "u_scrim_color",
+        @as(f32, @floatFromInt(scrim_rgb[0])) / 255.0,
+        @as(f32, @floatFromInt(scrim_rgb[1])) / 255.0,
+        @as(f32, @floatFromInt(scrim_rgb[2])) / 255.0,
+    );
+
     gl.bindFramebuffer(gl.FRAMEBUFFER, 0);
     gl.viewport(0, 0, @intCast(width), @intCast(height));
 
