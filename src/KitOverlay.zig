@@ -142,6 +142,27 @@ pub fn push(self: *KitOverlay, request: toast.Push) bool {
     return toast.update(&self.toasts, .{ .push = request });
 }
 
+/// Shows a toast and returns its assigned serial along with whether a redraw
+/// is due, so callers can track or dismiss that specific entry later.
+pub fn pushTracked(self: *KitOverlay, request: toast.Push) struct { changed: bool, serial: u32 } {
+    const serial = self.toasts.next_serial;
+    const changed = toast.update(&self.toasts, .{ .push = request });
+    return .{ .changed = changed, .serial = serial };
+}
+
+/// Whether toast `serial` is still queued or visible and not yet leaving.
+pub fn hasToast(self: *const KitOverlay, serial: u32) bool {
+    for (self.toasts.entries[0..self.toasts.len]) |entry| {
+        if (entry.serial == serial) return entry.phase != .leaving;
+    }
+    return false;
+}
+
+/// Dismisses toast `serial`. Returns whether a redraw is due.
+pub fn dismissToast(self: *KitOverlay, serial: u32) bool {
+    return toast.update(&self.toasts, .{ .dismiss = serial });
+}
+
 /// Asks `request` in the dialog. Returns whether a redraw is due.
 /// A dialog that is already up keeps its own question.
 pub fn openDialog(self: *KitOverlay, request: alert_dialog.Request) bool {

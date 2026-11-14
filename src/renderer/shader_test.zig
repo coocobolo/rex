@@ -13,7 +13,6 @@ const pairs = [_][2][:0]const u8{
     .{ @embedFile("shaders/decoration.vert"), @embedFile("shaders/decoration.frag") },
     .{ @embedFile("shaders/scrollbar.vert"), @embedFile("shaders/scrollbar.frag") },
     .{ @embedFile("shaders/selection.vert"), @embedFile("shaders/selection.frag") },
-    .{ @embedFile("shaders/card.vert"), @embedFile("shaders/card.frag") },
     .{ @embedFile("shaders/kit.vert"), @embedFile("shaders/kit.frag") },
 };
 

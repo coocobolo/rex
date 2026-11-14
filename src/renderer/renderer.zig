@@ -7,8 +7,6 @@ const gl = @import("gl.zig");
 const Atlas = @import("Atlas.zig");
 const Background = @import("Background.zig");
 const Blur = @import("Blur.zig");
-const Card = @import("Card.zig");
-const buffer = @import("buffer.zig");
 const Cell = @import("Cell.zig");
 const Cursor = @import("Cursor.zig");
 const Decoration = @import("Decoration.zig");
@@ -40,7 +38,6 @@ pub fn Renderer(comptime option: TerminalOption) type {
 
         background: Background,
         blur: Blur,
-        card: Card,
         cell: Cell,
         cell_ascender: i16,
         cell_dimension: Dimension(f32),
@@ -50,10 +47,6 @@ pub fn Renderer(comptime option: TerminalOption) type {
         ink_mask: InkMask,
         selection: Selection,
         scrollbar: Scrollbar,
-
-        overlay_bg_buffer: buffer.BgBuffer,
-        overlay_gray_buffer: buffer.CellBuffer,
-        overlay_color_buffer: buffer.CellBuffer,
 
         grayscale: f32 = 0.0,
         color_tint: [3]f32 = .{ 1.0, 1.0, 1.0 },
@@ -77,25 +70,12 @@ pub fn Renderer(comptime option: TerminalOption) type {
             var decoration = try Decoration.init(max_cells, opt.decoration);
             errdefer decoration.deinit();
 
-            var overlay_bg_buffer = buffer.BgBuffer.init(4096);
-            errdefer overlay_bg_buffer.deinit();
-
-            var overlay_gray_buffer = buffer.CellBuffer.init(4096);
-            errdefer overlay_gray_buffer.deinit();
-
-            var overlay_color_buffer = buffer.CellBuffer.init(4096);
-            errdefer overlay_color_buffer.deinit();
-
-            var card = try Card.init();
-            errdefer card.deinit();
-
             var blur = try Blur.init();
             errdefer blur.deinit();
 
             var self: Self = .{
                 .background = background,
                 .blur = blur,
-                .card = card,
                 .cell = cell,
                 .cell_ascender = undefined,
                 .cell_dimension = undefined,
@@ -105,9 +85,6 @@ pub fn Renderer(comptime option: TerminalOption) type {
                 .ink_mask = .init(),
                 .scrollbar = scrollbar,
                 .selection = selection,
-                .overlay_bg_buffer = overlay_bg_buffer,
-                .overlay_gray_buffer = overlay_gray_buffer,
-                .overlay_color_buffer = overlay_color_buffer,
             };
             self.setFontMetrics(opt.font_metrics);
             return self;
@@ -126,11 +103,7 @@ pub fn Renderer(comptime option: TerminalOption) type {
         }
 
         pub fn deinit(self: *Self) void {
-            self.card.deinit();
             self.blur.deinit();
-            self.overlay_bg_buffer.deinit();
-            self.overlay_gray_buffer.deinit();
-            self.overlay_color_buffer.deinit();
             self.cell.deinit();
             self.decoration.deinit();
             self.ink_mask.deinit();
@@ -272,7 +245,7 @@ pub fn Renderer(comptime option: TerminalOption) type {
                 self.scrollbar.draw();
             }
 
-            // Pass 6: In-terminal visual overlay (frosted blur backdrop, rounded SDF cards, text/icons)
+            // Pass 6: Frosted backdrop blur behind the UI kit's modal scrim.
             if (blur_active) {
                 const scrim_color = [3]u8{
                     @intFromFloat(@min(255.0, @max(0.0, background_color[0] * 255.0))),
@@ -283,53 +256,9 @@ pub fn Renderer(comptime option: TerminalOption) type {
                     @intFromFloat(frame_dimension.width),
                     @intFromFloat(frame_dimension.height),
                     frame.modal_blur_radius,
-                    frame.modal_dim_alpha,
+                    0,
                     scrim_color,
                 );
-            }
-
-            if (frame.overlay_background_instances.len > 0 or
-                frame.overlay_card_instances.len > 0 or
-                frame.overlay_gray_instances.len > 0 or
-                frame.overlay_color_instances.len > 0)
-            {
-                if (frame.overlay_background_instances.len > 0 and !blur_active) {
-                    self.overlay_bg_buffer.resize(frame.overlay_background_instances.len);
-                    self.overlay_bg_buffer.upload(frame.overlay_background_instances);
-                    self.background.shader.use();
-                    self.background.shader.set2f("u_cell_size", self.cell_dimension.width, self.cell_dimension.height);
-                    self.background.shader.set2f("u_screen_size", frame_dimension.width, frame_dimension.height);
-                    self.background.shader.set1f("u_bg_alpha", 1.0);
-                    self.background.shader.set1f("u_grayscale", 0.0);
-                    self.background.shader.set3f("u_color_tint", 1.0, 1.0, 1.0);
-                    self.overlay_bg_buffer.draw(frame.overlay_background_instances.len);
-                }
-                if (frame.overlay_card_instances.len > 0) {
-                    self.card.draw(frame.overlay_card_instances, frame_dimension, self.cell_dimension);
-                }
-                if (frame.overlay_gray_instances.len > 0 or frame.overlay_color_instances.len > 0) {
-                    if (frame.overlay_gray_instances.len > 0) {
-                        self.overlay_gray_buffer.resize(frame.overlay_gray_instances.len);
-                        self.overlay_gray_buffer.upload(frame.overlay_gray_instances);
-                    }
-                    if (frame.overlay_color_instances.len > 0) {
-                        self.overlay_color_buffer.resize(frame.overlay_color_instances.len);
-                        self.overlay_color_buffer.upload(frame.overlay_color_instances);
-                    }
-                    const overlay_glyphs: Cell.DrawArgs = .{
-                        .atlas = atlas,
-                        .ascender = @floatFromInt(self.cell_ascender),
-                        .blink_on = false,
-                        .blink_rapid_on = false,
-                        .cell = self.cell_dimension,
-                        .frame = frame_dimension,
-                        .gray_len = frame.overlay_gray_instances.len,
-                        .color_len = frame.overlay_color_instances.len,
-                        .grayscale = 0.0,
-                        .color_tint = .{ 1.0, 1.0, 1.0 },
-                    };
-                    self.cell.drawExternal(&self.overlay_gray_buffer, &self.overlay_color_buffer, overlay_glyphs);
-                }
             }
         }
 

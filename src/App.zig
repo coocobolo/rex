@@ -41,18 +41,9 @@ const SelectionState = renderer_mod.Selection.State;
 const Renderer = renderer_mod.Renderer;
 const Dimension = renderer_mod.Dimension;
 const FrameBuilder = renderer_mod.Frame.Builder;
-const ui_mod = rex.ui;
-const Modal = ui_mod.Modal;
-const Toast = ui_mod.Toast;
-const Icon = ui_mod.Icon;
-const Button = ui_mod.Button;
-const FocusGroup = ui_mod.FocusGroup;
-const Table = ui_mod.Table;
-const Action = ui_mod.Action;
-const Tag = ui_mod.Tag;
-const Text = ui_mod.Text;
-const Drawer = ui_mod.Drawer;
-const Banner = ui_mod.Banner;
+const kit_alert = @import("kit/alert.zig");
+const kit_lock_screen = @import("kit/lock_screen.zig");
+const kit_toast = @import("kit/toast.zig");
 
 const Freetype = rex.FreeType;
 const Rasterizer = rex.FreeType.Rasterizer;
@@ -74,7 +65,6 @@ const Screen = rex.terminal.screen.Screen;
 const Response = rex.terminal.Response;
 
 const wellbeing = rex.builtin.wellbeing;
-const WellbeingOverlay = @import("builtin/wellbeing/overlay.zig");
 const FileWatch = @import("tool/FileWatch.zig");
 
 /// Largest selection copied to the clipboard, in bytes.
@@ -160,12 +150,11 @@ wellbeing_state: wellbeing.Wellbeing,
 /// `startWellbeingWatch`.
 wellbeing_watch: ?*FileWatch = null,
 local_clock: wellbeing.localtime.Clock = .{},
-wellbeing_overlay: WellbeingOverlay.Overlay = .{},
-toast_queue: Toast.Queue = .{},
-/// The UI kit's toast stack, shown in place of `toast_queue` when
-/// `REX_UI_KIT=1` is in the environment (trial of ADR 0009, ticket 87).
+/// Serial of the toast currently representing a non-locking wellbeing alert,
+/// so dismissing either side keeps the other in sync.
+wellbeing_toast_serial: ?u32 = null,
+/// Null only if the bundled UI fonts could not be loaded on startup.
 kit: ?*KitOverlay = null,
-config_banner: ?Banner = null,
 
 window: Window,
 
@@ -205,8 +194,6 @@ content_scale_pending: ?f32 = null,
 needs_redraw: bool = true,
 quit_confirm_open: bool = false,
 quit_confirmed: bool = false,
-quit_modal_focus: FocusGroup = FocusGroup.init(2, 0),
-hotspots: Table = .{},
 skip_next_char: bool = false,
 
 // Blink state
@@ -511,7 +498,7 @@ pub fn init(
             else
                 "[shell] failed to start; started the login shell instead";
             log.err("{s}", .{message});
-            startup_banner = Banner.init(.err, "Shell error", message);
+            startup_banner = PendingAlert.init(.err, "Shell error", message);
             break :blk try spawnShell(gpa, io, .{}, login_shell, block.slice, &failure);
         },
         else => return err,
@@ -625,12 +612,14 @@ pub fn init(
         }, null);
     }
 
-    const kit: ?*KitOverlay = if (std.mem.eql(u8, envmap.get("REX_UI_KIT") orelse "", "1"))
-        createKit(gpa, io, argv0, content_scale, active_config.font.faces.regular)
-    else
-        null;
+    const kit = createKit(gpa, io, argv0, content_scale, active_config.font.faces.regular);
     errdefer if (kit) |k| k.destroy(gpa);
-    if (kit) |k| k.configure(active_config.ui);
+    if (kit) |k| {
+        k.configure(active_config.ui);
+        if (active_config.window.banner.enabled) {
+            if (startup_banner) |*b| _ = k.showAlert(b.request());
+        }
+    }
 
     const app = App{
         .io = io,
@@ -659,11 +648,7 @@ pub fn init(
         .content_scale = content_scale,
         .wellbeing_state = wellbeing_state,
         .wellbeing_watch = wellbeing_watch,
-        // Its options and tokens come with every `build`.
-        .wellbeing_overlay = .{},
-        .toast_queue = .{},
         .kit = kit,
-        .config_banner = startup_banner,
         .frame_buffer_size = .empty,
         .clipboard_buf = clipboard_buf,
         .last_frame = now,
@@ -699,7 +684,6 @@ pub fn deinit(self: *App, gpa: std.mem.Allocator) void {
         self.latency.?.destroy(gpa);
         gpa.free(self.latency_path);
     }
-    self.wellbeing_overlay.deinit(gpa);
 
     // No toast: the window is closing.
     self.wellbeing_state.sync(self.io, self.dirs.state, self.wallSeconds(), .merge) catch |err| {
@@ -780,6 +764,7 @@ pub fn run(self: *App) !void {
         }
         self.syncWellbeing(@intCast(now_real.raw.toSeconds()));
         if (wb_res.phase_changed or wb_res.alert != null) self.ringBell();
+        self.syncWellbeingKit(wb_res.alert != null);
 
         var had_data = false;
         const driver_events = try self.driver.pollAndDrain();
@@ -838,11 +823,11 @@ pub fn run(self: *App) !void {
             self.font_size_pending = null;
         }
 
-        if (self.toast_queue.tick(dt_clamped)) self.needs_redraw = true;
         if (self.kit) |kit| {
             // The real time: a toast whose wakeup is seconds away must not
             // have that sleep clamped, or it would stay several times as long.
             if (kit.tick(dt_ms)) self.needs_redraw = true;
+            self.syncWellbeingKit(false);
         }
         if (self.renderer.tick(dt_clamped)) self.needs_redraw = true;
 
@@ -901,146 +886,25 @@ fn renderFrame(self: *App) !bool {
         null,
     );
 
-    const total_cols = current_frame.active_cols;
-    const total_rows = current_frame.active_rows;
-
-    self.hotspots.clear();
-
-    const tokens = rex.color.Tokens.fromTheme(self.config.theme);
-
-    if (self.quit_confirm_open) {
-        self.wellbeing_overlay.bg_buffer.clearRetainingCapacity();
-        self.wellbeing_overlay.card_buffer.clearRetainingCapacity();
-        self.wellbeing_overlay.gray_buffer.clearRetainingCapacity();
-        self.wellbeing_overlay.color_buffer.clearRetainingCapacity();
-        self.wellbeing_overlay.toast_active = false;
-        self.wellbeing_overlay.lock_screen_active = false;
-        self.wellbeing_overlay.last_toast_layout = null;
-
-        // With the kit on, the prompt is the kit's dialog, built below.
-        if (self.kit == null) {
-            const drawer: Drawer = .{
-                .allocator = self.allocator,
-                .atlas = atlas,
-                .rasterizer = &self.rasterizer,
-                .gray_buffer = &self.wellbeing_overlay.gray_buffer,
-                .color_buffer = &self.wellbeing_overlay.color_buffer,
-            };
-            var actions: [2]Modal.Action = undefined;
-            _ = Modal.render(
-                quitConfirmModalRequest(
-                    self.config.window.surfaceFor(.modal),
-                    self.config.window.modal,
-                    self.config.window.quit_dialog,
-                    &actions,
-                ),
-                tokens,
-                total_cols,
-                total_rows,
-                &self.wellbeing_overlay.bg_buffer,
-                &self.wellbeing_overlay.card_buffer,
-                drawer,
-                &self.quit_modal_focus,
-                &self.hotspots,
-            );
-        }
-    } else {
-        self.wellbeing_overlay.build(
-            self.allocator,
-            atlas,
-            &self.rasterizer,
-            &self.wellbeing_state,
-            tokens,
-            overlaySurfaces(&self.config.window),
-            self.config.window.toast,
-            .{},
-            self.config.window.modal,
-            total_cols,
-            total_rows,
-            &self.hotspots,
-        );
-
-        if (self.config.window.toast.enabled and self.toast_queue.isActive()) {
-            const drawer: Drawer = .{
-                .allocator = self.allocator,
-                .atlas = atlas,
-                .rasterizer = &self.rasterizer,
-                .gray_buffer = &self.wellbeing_overlay.gray_buffer,
-                .color_buffer = &self.wellbeing_overlay.color_buffer,
-            };
-            self.toast_queue.build(
-                tokens,
-                total_cols,
-                total_rows,
-                self.wellbeing_overlay.toastRowOffset(),
-                &self.wellbeing_overlay.card_buffer,
-                drawer,
-                &self.hotspots,
-            );
-        }
-    }
-
-    if (self.config_banner) |*b| {
-        if (self.config.window.banner.enabled) {
-            const drawer: Drawer = .{
-                .allocator = self.allocator,
-                .atlas = atlas,
-                .rasterizer = &self.rasterizer,
-                .gray_buffer = &self.wellbeing_overlay.gray_buffer,
-                .color_buffer = &self.wellbeing_overlay.color_buffer,
-            };
-            _ = b.render(
-                tokens,
-                total_cols,
-                total_rows,
-                self.config.window.banner,
-                self.config.window.surfaceFor(.banner),
-                &self.wellbeing_overlay.card_buffer,
-                drawer,
-                &self.hotspots,
-            );
-        }
-    }
-
     if (self.kit) |kit| {
-        // The lock screen covers the kit's UI too.
-        const kit_changed = if (self.wellbeing_overlay.lock_screen_active)
-            kit.skipFrame()
-        else changed: {
-            // The size `handleResize` last saw: asking the window is a
-            // round trip to the X server on every frame.
-            const width: f32 = @floatFromInt(self.frame_buffer_size.width);
-            const height: f32 = @floatFromInt(self.frame_buffer_size.height);
-            var background: [3]u8 = undefined;
-            for (&background, self.background_color[0..3]) |*out, channel| {
-                out.* = @intFromFloat(@round(std.math.clamp(channel, 0, 1) * 255));
-            }
-            break :changed kit.buildFrame(atlas, width / self.content_scale, height / self.content_scale, background);
-        };
-        if (kit_changed) frame.dirty.overlay = true;
+        // The size `handleResize` last saw: asking the window is a
+        // round trip to the X server on every frame.
+        const width: f32 = @floatFromInt(self.frame_buffer_size.width);
+        const height: f32 = @floatFromInt(self.frame_buffer_size.height);
+        var background: [3]u8 = undefined;
+        for (&background, self.background_color[0..3]) |*out, channel| {
+            out.* = @intFromFloat(@round(std.math.clamp(channel, 0, 1) * 255));
+        }
+        if (kit.buildFrame(atlas, width / self.content_scale, height / self.content_scale, background)) {
+            frame.dirty.overlay = true;
+        }
         // A dialog the kit could not build was dropped.
         self.syncQuitPrompt();
-    }
 
-    const banner_active = self.config_banner != null and self.config.window.banner.enabled;
-    const app_toasts_active = !self.quit_confirm_open and self.config.window.toast.enabled and self.toast_queue.isActive();
-    const overlay_active = self.quit_confirm_open or self.wellbeing_overlay.isActive() or app_toasts_active or banner_active;
-    const overlay_changed = overlay_active or self.wellbeing_overlay.was_active;
-    self.wellbeing_overlay.was_active = overlay_active;
-
-    if (overlay_active) {
-        frame.overlay_background_instances = self.wellbeing_overlay.bg_buffer.items;
-        frame.overlay_card_instances = self.wellbeing_overlay.card_buffer.items;
-        frame.overlay_gray_instances = self.wellbeing_overlay.gray_buffer.items;
-        frame.overlay_color_instances = self.wellbeing_overlay.color_buffer.items;
-        const has_modal = self.quit_confirm_open and self.kit == null;
+        const has_modal = kit.hasScrim();
         frame.overlay_has_modal = has_modal;
-        frame.modal_blur = self.config.window.modal.blur;
+        frame.modal_blur = has_modal and self.config.window.modal.blur;
         frame.modal_blur_radius = self.config.window.modal.blur_radius;
-        frame.modal_dim_alpha = self.config.window.modal.backdropAlpha();
-        frame.dirty.overlay = true;
-    } else if (overlay_changed) {
-        frame.dirty.overlay = true;
     }
 
     if (!frame.dirty.any()) {
@@ -1102,14 +966,14 @@ fn waitForNextEvent(self: *App, had_data: bool) void {
 
     const alert = self.wellbeing_state.current_alert;
     const animating = alert.kind != .none and alert.remaining_s > 0 and alert.show_animation and alert.animation != .none;
-    const overlay_active = self.wellbeing_overlay.isActive();
+    const lock_active = self.wellbeing_state.input_locked and self.wellbeing_state.option.lock_screen.enabled;
 
     var ms = @min(
         self.blink.remaining(),
         @min(
             self.blink_rapid.remaining(),
             @min(
-                @min(self.wellbeing_state.focus_state.msUntilTick(), self.toast_queue.msUntilNextTick()),
+                self.wellbeing_state.focus_state.msUntilTick(),
                 self.wellbeing_state.msUntilSync(self.wallMs()),
             ),
         ),
@@ -1117,8 +981,8 @@ fn waitForNextEvent(self: *App, had_data: bool) void {
     if (self.kit) |kit| {
         if (kit.wakeMs()) |wake| ms = @min(ms, wake);
     }
+    if (lock_active and alert.remaining_s > 0) ms = @min(ms, 1000);
     if (animating) ms = @min(ms, 33);
-    if (overlay_active) ms = @min(ms, 250);
     if (self.needs_redraw) ms = @min(ms, 8);
 
     Window.glfwWaitEventsTimeout(@max(0.001, @as(f64, @floatFromInt(ms)) / 1000.0));
@@ -1269,12 +1133,111 @@ fn pasteFromClipboard(self: *App) void {
     self.snapToLiveView();
 }
 
-/// Pushes a structured toast notification into the application toast queue.
-pub fn notifyToast(self: *App, req: Toast.Request) u64 {
-    if (!self.config.window.toast.enabled) return 0;
-    const id = self.toast_queue.push(req, self.config.window.toast.duration_ms);
-    self.needs_redraw = true;
-    return id;
+/// Synchronizes wellbeing alerts and lock screen state with the UI kit overlay.
+fn syncWellbeingKit(self: *App, new_alert_fired: bool) void {
+    const kit = self.kit orelse return;
+    const wb = &self.wellbeing_state;
+
+    // If the toast tracking the active wellbeing alert was dismissed or expired,
+    // clear the underlying alert (unless a fresh alert replaced it this tick).
+    if (self.wellbeing_toast_serial) |serial| {
+        if (!kit.hasToast(serial)) {
+            self.wellbeing_toast_serial = null;
+            if (!new_alert_fired and
+                wb.current_alert.kind != .none and
+                !(wb.input_locked and wb.option.lock_screen.enabled))
+            {
+                wb.dismissAlert();
+            }
+        }
+    }
+
+    const locking = wb.input_locked and wb.option.lock_screen.enabled;
+    if (locking) {
+        if (self.wellbeing_toast_serial) |serial| {
+            if (kit.dismissToast(serial)) self.needs_redraw = true;
+            self.wellbeing_toast_serial = null;
+        }
+        const is_paused = wb.isFocusPausedByAlert() or
+            wb.focus_state.phase == .task or
+            (wb.focus_state.phase != .short_break and wb.focus_state.phase != .long_break) or
+            wb.focus_state.paused;
+        const tone: kit_lock_screen.Tone = if (is_paused) .warning else .healthy;
+        const header_text: []const u8 = if (is_paused) "BREAK PAUSED" else "BREAK IN PROGRESS";
+        const subtitle_text: []const u8 = if (is_paused)
+            "A health alert temporarily interrupted your break."
+        else switch (wb.focus_state.phase) {
+            .short_break => "Short Rest Break",
+            .long_break => "Long Rest Break",
+            else => "Rest & Recharge",
+        };
+        const prompt_text = if (wb.current_alert.remaining_s > 0 and wb.current_alert.prompt.len > 0)
+            wb.current_alert.prompt
+        else
+            "Roll your shoulders backward and release tension in your neck.";
+        const rem_s: u32 = if (wb.focus_state.phase == .short_break or wb.focus_state.phase == .long_break)
+            @intCast((wb.focus_state.remaining_ms + 999) / 1000)
+        else
+            wb.current_alert.remaining_s;
+        const total_s: u32 = if (wb.focus_state.phase == .short_break)
+            @intCast(wb.focus_state.option.short_break_ms / 1000)
+        else if (wb.focus_state.phase == .long_break)
+            @intCast(wb.focus_state.option.long_break_ms / 1000)
+        else
+            30;
+        const dim_byte: u8 = @intFromFloat(std.math.clamp(wb.option.lock_screen.dim_strength, 0.0, 1.0) * 255.0);
+        if (kit.syncLockScreen(.{
+            .tone = tone,
+            .title = header_text,
+            .subtitle = subtitle_text,
+            .prompt = prompt_text,
+            .remaining_s = rem_s,
+            .total_s = total_s,
+            .steps_total = wb.focus_state.option.tasks_before_long_break,
+            .steps_done = wb.focus_state.tasks_in_cycle,
+            .scrim_alpha = dim_byte,
+        })) self.needs_redraw = true;
+        return;
+    }
+
+    if (kit.lockScreenShown()) {
+        if (kit.closeLockScreen()) self.needs_redraw = true;
+    }
+
+    if (wb.current_alert.kind == .none) {
+        if (self.wellbeing_toast_serial) |serial| {
+            if (kit.dismissToast(serial)) self.needs_redraw = true;
+            self.wellbeing_toast_serial = null;
+        }
+        return;
+    }
+
+    if (new_alert_fired or self.wellbeing_toast_serial == null) {
+        if (self.wellbeing_toast_serial) |serial| {
+            _ = kit.dismissToast(serial);
+            self.wellbeing_toast_serial = null;
+        }
+        if (!self.config.window.toast.enabled) return;
+        const title: []const u8, const kind: kit_toast.Kind = switch (wb.current_alert.kind) {
+            .eyesight => .{ "Rest your eyes", .success },
+            .movement => .{ "Stretch and move", .success },
+            .healthy_break => .{ "Time for a healthy break", .success },
+            .screen_limit => .{ "Screen limit reached", .err },
+            .none => return,
+        };
+        const duration_ms: u32 = if (wb.current_alert.remaining_s > 0)
+            wb.current_alert.remaining_s *| 1000
+        else
+            self.config.window.toast.duration_ms;
+        const tracked = kit.pushTracked(.{
+            .title = title,
+            .description = wb.current_alert.prompt,
+            .kind = kind,
+            .duration_ms = @max(duration_ms, 1000),
+        });
+        self.wellbeing_toast_serial = tracked.serial;
+        if (tracked.changed) self.needs_redraw = true;
+    }
 }
 
 /// Linux only: wakes the loop when another process saves the wellbeing
@@ -1345,55 +1308,28 @@ fn reportWellbeingError(
     const title = std.fmt.bufPrint(&title_buf, "Couldn't {s} wellbeing data", .{action}) catch "Wellbeing data error";
     var desc_buf: [256]u8 = undefined;
     const desc = std.fmt.bufPrint(&desc_buf, "{t} in {s}", .{ err, dir }) catch @errorName(err);
-    self.notifySimple(title, desc, .critical);
+    self.notifySimple(title, desc, .err);
 }
 
-/// Pushes a concise toast notification with the configured toast surface, toast and icon options.
-pub fn notifySimple(self: *App, title: []const u8, description: []const u8, variant: Toast.Variant) void {
+/// Pushes a concise toast notification into the UI kit stack.
+pub fn notifySimple(self: *App, title: []const u8, description: []const u8, kind: kit_toast.Kind) void {
     if (!self.config.window.toast.enabled) return;
-    if (self.kit) |kit| {
-        const pushed = kit.push(.{
-            .title = title,
-            .description = description,
-            .kind = switch (variant) {
-                .neutral => .default,
-                .info => .info,
-                .success => .success,
-                .warning => .warning,
-                .critical => .err,
-            },
-            .duration_ms = self.config.window.toast.duration_ms,
-        });
-        if (pushed) self.needs_redraw = true;
-        return;
-    }
-    const icon_id: Icon.IconId = switch (variant) {
-        .neutral, .info => .info,
-        .success => .success,
-        .warning => .warning,
-        .critical => .error_icon,
-    };
-    const icon_str = Icon.getGlyphWithOption(icon_id, .{});
-    const icon_style = Icon.resolveStyle(.auto);
-    const dismiss_str = self.config.window.toast.dismiss_str orelse (if (icon_style == .ascii) "x" else "✕");
-    const toast_surface = self.config.window.surfaceFor(.toast);
-    _ = self.notifyToast(.{
+    const kit = self.kit orelse return;
+    const pushed = kit.push(.{
         .title = title,
         .description = description,
-        .icon = if (icon_str.len > 0) icon_str else null,
-        .dismiss_str = dismiss_str,
-        .action_prompt = self.config.window.toast.action_prompt,
-        .variant = variant,
-        .position = self.config.window.toast.position,
-        .border_style = toast_surface.border_style,
-        .corner_radius = toast_surface.effectiveRadius(),
-        .border_width = toast_surface.border_width,
-        .min_cols = self.config.window.toast.min_cols,
-        .max_cols = self.config.window.toast.max_cols,
-        .margin_cols = self.config.window.toast.margin_cols,
-        .margin_rows = self.config.window.toast.margin_rows,
-        .icon_style = .auto,
+        .kind = kind,
+        .duration_ms = self.config.window.toast.duration_ms,
     });
+    if (pushed) self.needs_redraw = true;
+}
+
+fn showAlert(self: *App, kind: kit_alert.Kind, title: []const u8, description: []const u8) void {
+    const kit = self.kit orelse return;
+    if (!self.config.window.banner.enabled) return;
+    if (kit.showAlert(.{ .kind = kind, .title = title, .description = description })) {
+        self.needs_redraw = true;
+    }
 }
 
 /// Sets the font size in logical pixels, clamped to the configured bounds,
@@ -1470,9 +1406,7 @@ pub fn reloadConfig(self: *App) void {
     }) catch |err| {
         var err_buf: [128]u8 = undefined;
         const err_msg = std.fmt.bufPrint(&err_buf, "Failed to apply: {}", .{err}) catch "Apply failed";
-        self.config_banner = Banner.init(.err, "Config error", err_msg);
-        self.frame_builder.last_generation = null;
-        self.needs_redraw = true;
+        self.showAlert(.err, "Config error", err_msg);
         return;
     };
 
@@ -1480,30 +1414,27 @@ pub fn reloadConfig(self: *App) void {
     logConfigDiagnostics(self.allocator, &loaded);
 
     if (!loaded.found()) {
-        self.notifySimple("Configuration", "No config file found", .neutral);
+        self.notifySimple("Configuration", "No config file found", .default);
         return;
     }
 
     // A running session keeps its config when a file has errors (decision
     // P4); a config with only warnings applies, and the banner shows the
     // first warning. Without either, the banner goes.
-    self.config_banner = configBanner(&loaded);
-    if (loaded.firstError() != null) {
-        self.frame_builder.last_generation = null;
-        self.needs_redraw = true;
-        return;
+    if (configBanner(&loaded)) |*banner| {
+        const req = banner.request();
+        self.showAlert(req.kind, req.title, req.description);
+    } else if (self.kit) |kit| {
+        if (kit.dismissAlert()) self.needs_redraw = true;
     }
+    if (loaded.firstError() != null) return;
     useBuiltinFonts(self.io, loaded.arena.allocator(), &loaded, self.argv0) catch |err| switch (err) {
         error.OutOfMemory => {
-            self.config_banner = Banner.init(.err, "Config error", "Out of memory");
-            self.frame_builder.last_generation = null;
-            self.needs_redraw = true;
+            self.showAlert(.err, "Config error", "Out of memory");
             return;
         },
         error.BadExePath => {
-            self.config_banner = Banner.init(.err, "Config error", "font.file is not set, and the executable path is not usable");
-            self.frame_builder.last_generation = null;
-            self.needs_redraw = true;
+            self.showAlert(.err, "Config error", "font.file is not set, and the executable path is not usable");
             return;
         },
         error.BuiltinFontMissing => {
@@ -1512,16 +1443,12 @@ pub fn reloadConfig(self: *App) void {
             log.err("no font: set `file` in [font]; missing {s}", .{face});
             const name = std.fs.path.basename(face);
             const msg = std.fmt.bufPrint(&buf, "{s} is missing; set `file` in [font]", .{name}) catch "the built-in face is missing; set `file` in [font]";
-            self.config_banner = Banner.init(.err, "Config error", msg);
-            self.frame_builder.last_generation = null;
-            self.needs_redraw = true;
+            self.showAlert(.err, "Config error", msg);
             return;
         },
     };
     if (!hasFontFile(loaded.config.font)) {
-        self.config_banner = Banner.init(.err, "Config error", "font.file is not set");
-        self.frame_builder.last_generation = null;
-        self.needs_redraw = true;
+        self.showAlert(.err, "Config error", "font.file is not set");
         return;
     }
     const new_config = loaded.config;
@@ -1542,7 +1469,12 @@ pub fn reloadConfig(self: *App) void {
     // Live update renderer background color, alpha, and terminal theme
     const bg = self.config.theme.background;
     self.background_color = .{ bg.r, bg.g, bg.b, self.config.window.background.alpha };
-    if (self.kit) |kit| kit.configure(self.config.ui);
+    if (self.kit) |kit| {
+        kit.configure(self.config.ui);
+        if (!self.config.window.banner.enabled) {
+            if (kit.dismissAlert()) self.needs_redraw = true;
+        }
+    }
     self.renderer.background.option.alpha = self.config.window.background.alpha;
     self.driver.setTheme(self.config.theme);
     self.updateWindowTitle();
@@ -1557,7 +1489,7 @@ pub fn reloadConfig(self: *App) void {
         self.setFontSize(self.config.font.size);
     }
     if (faces_changed and self.font_size == size_before and !self.rebuildFont(self.font_size, self.content_scale)) {
-        self.config_banner = Banner.init(.err, "Config error", "the new font could not be loaded; the previous one stays");
+        self.showAlert(.err, "Config error", "the new font could not be loaded; the previous one stays");
     }
 
     self.wellbeing_state.applyOption(self.config.wellbeing);
@@ -1621,6 +1553,7 @@ fn handleAction(self: *App, action: rex.input.Action) void {
         .focus_skip => {
             self.wellbeing_state.skipFocus(self.wallMs());
             self.ringBell();
+            self.syncWellbeingKit(false);
         },
         .focus_toggle_phase_end => {
             self.wellbeing_state.toggleFocusPhaseEnd();
@@ -1635,37 +1568,40 @@ fn handleAction(self: *App, action: rex.input.Action) void {
                     .prompt = "Wellbeing history cleared.",
                     .remaining_s = 10,
                 };
+                self.syncWellbeingKit(true);
             }
         },
         .wellbeing_dismiss => {
             self.wellbeing_state.dismissAlert();
             self.quit_confirm_open = false;
-            self.toast_queue.dismissAll();
-            if (self.kit) |kit| _ = kit.dismissAll();
+            self.wellbeing_toast_serial = null;
+            if (self.kit) |kit| {
+                _ = kit.dismissAll();
+                _ = kit.dismissAlert();
+                _ = kit.dialogInput(.dismiss);
+            }
             self.frame_builder.last_generation = null;
             self.needs_redraw = true;
+            self.syncWellbeingKit(false);
         },
         .toast_dismiss => {
             if (self.kit != null and self.kit.?.dismissOldest()) {
                 self.needs_redraw = true;
-            } else if (self.toast_queue.isActive()) {
-                _ = self.toast_queue.dismiss(self.toast_queue.entries[0].id);
-                self.needs_redraw = true;
+                self.syncWellbeingKit(false);
             } else if (self.wellbeing_state.current_alert.kind != .none) {
                 self.wellbeing_state.dismissAlert();
                 self.needs_redraw = true;
+                self.syncWellbeingKit(false);
             }
         },
         .toast_activate => {
-            if (self.kit != null and self.kit.?.dismissOldest()) {
-                self.needs_redraw = true;
-            } else if (self.toast_queue.isActive()) {
-                const id = self.toast_queue.entries[0].id;
-                _ = self.toast_queue.dismiss(id);
-                self.needs_redraw = true;
-            } else if (self.wellbeing_state.current_alert.kind != .none) {
+            const dismissed = self.kit != null and self.kit.?.dismissOldest();
+            if (self.wellbeing_state.current_alert.kind != .none) {
                 self.wellbeing_state.skipFocus(self.wallMs());
                 self.ringBell();
+                self.needs_redraw = true;
+                self.syncWellbeingKit(false);
+            } else if (dismissed) {
                 self.needs_redraw = true;
             }
         },
@@ -1861,9 +1797,8 @@ fn useBuiltinFonts(io: std.Io, arena: std.mem.Allocator, loaded: *rex.config.Loa
 }
 
 /// The UI kit for a window at display `scale`, with the UI font installed
-/// next to this executable, or null with a warning when it cannot be set
-/// up; the window then keeps its built-in toasts. Needs a current GL
-/// context.
+/// next to this executable, or null with an error log when it cannot be set
+/// up. Needs a current GL context.
 fn createKit(gpa: std.mem.Allocator, io: std.Io, argv0: []const u8, scale: f32, terminal_face: [*:0]const u8) ?*KitOverlay {
     var exe_buf: [std.fs.max_path_bytes]u8 = undefined;
     const exe: []const u8 = if (std.process.executablePath(io, &exe_buf)) |len|
@@ -1871,7 +1806,7 @@ fn createKit(gpa: std.mem.Allocator, io: std.Io, argv0: []const u8, scale: f32, 
     else |_|
         argv0;
     return createKitFrom(gpa, exe, scale, terminal_face) catch |err| {
-        log.warn("REX_UI_KIT: cannot set up the UI kit ({t}); using the built-in toasts", .{err});
+        log.err("cannot initialize the UI kit ({t}); overlays are disabled", .{err});
         return null;
     };
 }
@@ -1889,7 +1824,7 @@ fn createKitFrom(gpa: std.mem.Allocator, exe: []const u8, scale: f32, terminal_f
     defer gpa.free(semibold);
     const icons = try std.fs.path.joinZ(gpa, &.{ dir, names.ui_icons_name });
     defer gpa.free(icons);
-    const kit = try KitOverlay.create(gpa, .{
+    return try KitOverlay.create(gpa, .{
         .regular = regular,
         .medium = medium,
         .semibold = semibold,
@@ -1898,8 +1833,6 @@ fn createKitFrom(gpa: std.mem.Allocator, exe: []const u8, scale: f32, terminal_f
         // change does not reach the kit.
         .fallback = if (terminal_face[0] != 0) terminal_face else null,
     }, scale);
-    log.info("REX_UI_KIT: toasts are drawn by the UI kit", .{});
-    return kit;
 }
 
 /// The shipped regular face this process would load, or its file name when
@@ -1928,14 +1861,41 @@ fn logConfigDiagnostics(gpa: std.mem.Allocator, loaded: *const Loaded) void {
     if (counts.errors > 0) log.err("config problems:\n{s}", .{text}) else log.warn("config warnings:\n{s}", .{text});
 }
 
-/// The banner for the first error of `loaded`, else its first warning.
-fn configBanner(loaded: *const Loaded) ?Banner {
+const PendingAlert = struct {
+    kind: kit_alert.Kind,
+    title_buf: [kit_alert.title_capacity]u8 = undefined,
+    title_len: u8 = 0,
+    description_buf: [kit_alert.description_capacity]u8 = undefined,
+    description_len: u16 = 0,
+
+    fn init(kind: kit_alert.Kind, title: []const u8, description: []const u8) PendingAlert {
+        var out: PendingAlert = .{ .kind = kind };
+        const tlen = @min(title.len, out.title_buf.len);
+        @memcpy(out.title_buf[0..tlen], title[0..tlen]);
+        out.title_len = @intCast(tlen);
+        const mlen = @min(description.len, out.description_buf.len);
+        @memcpy(out.description_buf[0..mlen], description[0..mlen]);
+        out.description_len = @intCast(mlen);
+        return out;
+    }
+
+    fn request(self: *const PendingAlert) kit_alert.Request {
+        return .{
+            .kind = self.kind,
+            .title = self.title_buf[0..self.title_len],
+            .description = self.description_buf[0..self.description_len],
+        };
+    }
+};
+
+/// The alert for the first error of `loaded`, else its first warning.
+fn configBanner(loaded: *const Loaded) ?PendingAlert {
     if (loaded.firstError()) |problem| switch (problem) {
         .unreadable => |u| {
             var buf: [128]u8 = undefined;
             const name = std.fs.path.basename(u.layer.source.label);
             const message = std.fmt.bufPrint(&buf, "cannot read {s}: {s}", .{ name, @errorName(u.err) }) catch "cannot read a config file";
-            return Banner.init(.err, "Config error", message);
+            return PendingAlert.init(.err, "Config error", message);
         },
         .syntax => |e| return diagnosticBanner(&e.layer.state.loaded, .{ .syntax = e.err }),
     };
@@ -1943,49 +1903,18 @@ fn configBanner(loaded: *const Loaded) ?Banner {
     return null;
 }
 
-fn diagnosticBanner(file: *const diagnostics.File, d: diagnostics.Diagnostic) Banner {
-    const level: Banner.Level, const prefix: []const u8 = switch (d.severity()) {
+fn diagnosticBanner(file: *const diagnostics.File, d: diagnostics.Diagnostic) PendingAlert {
+    const kind: kit_alert.Kind, const prefix: []const u8 = switch (d.severity()) {
         .err => .{ .err, "Config error" },
         .warn => .{ .warn, "Config warning" },
     };
     const loc = file.tree.tokenLocation(d.token());
     var title_buf: [64]u8 = undefined;
     const title = std.fmt.bufPrint(&title_buf, "{s} (line {d}, col {d})", .{ prefix, loc.line + 1, loc.column + 1 }) catch prefix;
-    // Banner.init copies both strings. A message longer than its buffer is
-    // cut here; the log has it in full.
     var message_buf: [256]u8 = undefined;
     var w: std.Io.Writer = .fixed(&message_buf);
     diagnostics.renderMessage(file, d, &w) catch {};
-    return Banner.init(level, title, w.buffered());
-}
-
-/// The resolved looks of the surfaces the wellbeing overlay draws.
-fn overlaySurfaces(window: *const Config.Window) WellbeingOverlay.Surfaces {
-    return .{
-        .card = window.surfaceFor(.card),
-        .toast = window.surfaceFor(.toast),
-        .modal = window.surfaceFor(.modal),
-    };
-}
-
-fn quitConfirmModalRequest(surface: Config.Surface, modal_opt: Modal.Option, quit_opt: Config.QuitDialog, actions: *[2]Modal.Action) Modal.Request {
-    actions.* = .{
-        .{ .shortcut = "Enter / Y", .label = quit_opt.confirm_label },
-        .{ .shortcut = "Esc / N", .label = quit_opt.cancel_label },
-    };
-    return .{
-        .title = quit_opt.title,
-        .line1 = quit_opt.line1,
-        .line2 = quit_opt.line2,
-        .actions = actions,
-        .variant = .warning,
-        .border_style = surface.border_style,
-        .dim_alpha = modal_opt.backdropAlpha(),
-        .cols = modal_opt.cols,
-        .icon_style = modal_opt.icon_style,
-        .corner_radius = surface.effectiveRadius(),
-        .border_width = surface.border_width,
-    };
+    return PendingAlert.init(kind, title, w.buffered());
 }
 
 /// Requests closing the terminal window, opening the quit confirmation modal
@@ -1996,39 +1925,37 @@ pub fn requestQuit(self: *App) void {
         .ask_if_running => self.programRunning(),
         .close => false,
     };
+    const kit = self.kit orelse {
+        self.confirmQuit();
+        return;
+    };
     if (!ask or self.quit_confirm_open) {
         self.confirmQuit();
         return;
     }
     self.window.setWindowShouldClose(false);
-    const initial_idx: u8 = switch (self.config.window.modal.default_focus) {
-        .confirm => 0,
-        .cancel => 1,
-    };
-    self.quit_modal_focus = FocusGroup.init(2, initial_idx);
     self.quit_confirm_open = true;
-    if (self.kit) |kit| {
-        // The body names the program that closing would end, and says
-        // nothing of one when `ask` asks at an idle shell.
-        var name_buf: [32]u8 = undefined;
-        const running = switch (self.config.window.on_close) {
-            .close => false,
-            // `ask` above was true, so `programRunning` already was.
-            .ask_if_running => true,
-            .ask => self.programRunning(),
-        };
-        const program = if (running) self.foregroundProgram(&name_buf) else null;
-        var body_buf: [alert_dialog.body_capacity]u8 = undefined;
-        _ = kit.openDialog(.{
-            .title = "Close this window?",
-            .body = quitDialogBodyFor(running, program, &body_buf),
-            .actions = &quit_actions,
-            .focus = switch (self.config.window.modal.default_focus) {
-                .confirm => quit_close,
-                .cancel => quit_cancel,
-            },
-        });
-    }
+    // The body names the program that closing would end, and says
+    // nothing of one when `ask` asks at an idle shell.
+    var name_buf: [32]u8 = undefined;
+    const running = switch (self.config.window.on_close) {
+        .close => false,
+        // `ask` above was true, so `programRunning` already was.
+        .ask_if_running => true,
+        .ask => self.programRunning(),
+    };
+    const program = if (running) self.foregroundProgram(&name_buf) else null;
+    var body_buf: [alert_dialog.body_capacity]u8 = undefined;
+    _ = kit.openDialog(.{
+        .title = "Close this window?",
+        .body = quitDialogBodyFor(running, program, &body_buf),
+        .actions = &quit_actions,
+        .focus = switch (self.config.window.modal.default_focus) {
+            .confirm => quit_close,
+            .cancel => quit_cancel,
+        },
+        .scrim_alpha = self.config.window.modal.backdropAlpha(),
+    });
     self.frame_builder.last_generation = null;
     self.needs_redraw = true;
 }
@@ -2107,11 +2034,14 @@ pub fn confirmQuit(self: *App) void {
 fn routeKeyToUi(self: *App, maybe_key: ?rex.input.Key, mods: rex.input.Modifiers) bool {
     const k = maybe_key orelse return false;
 
-    if (self.config_banner != null and k == .escape) {
-        self.config_banner = null;
-        self.frame_builder.last_generation = null;
-        self.needs_redraw = true;
-        return true;
+    if (self.kit) |kit| {
+        if (kit.alertShown() and k == .escape) {
+            if (kit.dismissAlert()) {
+                self.frame_builder.last_generation = null;
+                self.needs_redraw = true;
+            }
+            return true;
+        }
     }
 
     if (self.quit_confirm_open) {
@@ -2120,6 +2050,18 @@ fn routeKeyToUi(self: *App, maybe_key: ?rex.input.Key, mods: rex.input.Modifiers
     }
 
     if (self.wellbeing_state.input_locked) {
+        // Ctrl+Shift+D is the emergency unlock shortcut alongside unlock keybindings.
+        const ctrl_shift_d = mods.ctrl and mods.shift and !mods.alt and !mods.super and k == .d;
+        const is_unlock_binding = if (rex.input.matchBinding(self.config.keymap, k, mods)) |act| switch (act) {
+            .focus_skip, .wellbeing_dismiss, .toast_dismiss, .toast_activate => true,
+            else => false,
+        } else false;
+        if (ctrl_shift_d or is_unlock_binding) {
+            self.wellbeing_state.skipFocus(self.wallMs());
+            self.ringBell();
+            self.syncWellbeingKit(false);
+            self.needs_redraw = true;
+        }
         return true;
     }
 
@@ -2132,59 +2074,21 @@ fn routeKeyToUi(self: *App, maybe_key: ?rex.input.Key, mods: rex.input.Modifiers
 }
 
 fn handleQuitModalKey(self: *App, k: rex.input.Key, mods: rex.input.Modifiers) void {
-    if (self.kit) |kit| {
-        // Y, Q, N and Backspace are this prompt's own shortcuts.
-        const event: ?alert_dialog.Event = switch (k) {
-            .tab => .{ .focus = if (mods.shift) .previous else .next },
-            .left, .up => .{ .focus = .previous },
-            .right, .down => .{ .focus = .next },
-            .enter, .kp_enter, .space => .activate,
-            .y, .q => .{ .take = quit_close },
-            .escape, .n, .backspace => .dismiss,
-            else => null,
-        };
-        if (event) |ev| self.applyDialogOutcome(kit.dialogInput(ev));
+    const kit = self.kit orelse {
+        self.confirmQuit();
         return;
-    }
-    switch (k) {
-        .tab => {
-            if (mods.shift) {
-                self.quit_modal_focus.previous();
-            } else {
-                self.quit_modal_focus.next();
-            }
-            self.frame_builder.last_generation = null;
-            self.needs_redraw = true;
-        },
-        .left, .up => {
-            self.quit_modal_focus.previous();
-            self.frame_builder.last_generation = null;
-            self.needs_redraw = true;
-        },
-        .right, .down => {
-            self.quit_modal_focus.next();
-            self.frame_builder.last_generation = null;
-            self.needs_redraw = true;
-        },
-        .enter, .kp_enter, .space => {
-            if (self.quit_modal_focus.isFocused(0)) {
-                self.confirmQuit();
-            } else {
-                self.quit_confirm_open = false;
-                self.frame_builder.last_generation = null;
-                self.needs_redraw = true;
-            }
-        },
-        .y, .q => {
-            self.confirmQuit();
-        },
-        .escape, .n, .backspace => {
-            self.quit_confirm_open = false;
-            self.frame_builder.last_generation = null;
-            self.needs_redraw = true;
-        },
-        else => {},
-    }
+    };
+    // Y, Q, N and Backspace are this prompt's own shortcuts.
+    const event: ?alert_dialog.Event = switch (k) {
+        .tab => .{ .focus = if (mods.shift) .previous else .next },
+        .left, .up => .{ .focus = .previous },
+        .right, .down => .{ .focus = .next },
+        .enter, .kp_enter, .space => .activate,
+        .y, .q => .{ .take = quit_close },
+        .escape, .n, .backspace => .dismiss,
+        else => null,
+    };
+    if (event) |ev| self.applyDialogOutcome(kit.dialogInput(ev));
 }
 
 const charCb: c.GLFWcharfun = struct {
@@ -2532,7 +2436,6 @@ const mouseButtonCb: c.GLFWmousebuttonfun = struct {
                         return;
                     },
                 };
-                if (app.handleOverlayClick(col, row)) return;
                 if (scrollback_used > 0 and app.handleScrollbarClick()) return;
             } else {
                 if (app.kit) |kit| {
@@ -2544,7 +2447,9 @@ const mouseButtonCb: c.GLFWmousebuttonfun = struct {
                             .redraw => app.needs_redraw = true,
                             .dialog => |outcome| app.applyDialogOutcome(outcome),
                             .lock_unlocked => {
-                                _ = app.wellbeing_state.skipFocus(std.Io.Clock.real.now(app.io).toSeconds());
+                                app.wellbeing_state.skipFocus(app.wallMs());
+                                app.ringBell();
+                                app.syncWellbeingKit(false);
                                 app.needs_redraw = true;
                             },
                         }
@@ -2570,94 +2475,6 @@ const mouseButtonCb: c.GLFWmousebuttonfun = struct {
         }
     }
 }.cb;
-
-fn handleOverlayClick(self: *App, col: u16, row: u16) bool {
-    if (self.hotspots.hitTest(col, row)) |action| {
-        switch (action) {
-            .modal_action => |idx| if (idx == 0) self.confirmQuit() else {
-                self.quit_confirm_open = false;
-                self.frame_builder.last_generation = null;
-                self.needs_redraw = true;
-            },
-            .modal_dismiss => {
-                self.quit_confirm_open = false;
-                self.frame_builder.last_generation = null;
-                self.needs_redraw = true;
-            },
-            .toast_dismiss, .toast_action => |id| {
-                _ = self.toast_queue.dismiss(id);
-                self.needs_redraw = true;
-            },
-            .banner_dismiss => {
-                self.config_banner = null;
-                self.frame_builder.last_generation = null;
-                self.needs_redraw = true;
-                return true;
-            },
-            .button => |id| {
-                if (std.enums.fromInt(WellbeingOverlay.ButtonId, id)) |btn_id| {
-                    switch (btn_id) {
-                        .close => {
-                            if (self.wellbeing_overlay.toast_active) {
-                                self.wellbeing_state.dismissAlert();
-                                self.wellbeing_overlay.toast_active = false;
-                            }
-                            self.frame_builder.last_generation = null;
-                            self.needs_redraw = true;
-                        },
-                    }
-                }
-            },
-            .none => {},
-        }
-        return true;
-    }
-
-    if (self.quit_confirm_open) {
-        const current_frame = self.driver.getFrame();
-        var actions: [2]Modal.Action = undefined;
-        if (Modal.hitTest(
-            quitConfirmModalRequest(self.config.window.surfaceFor(.modal), self.config.window.modal, self.config.window.quit_dialog, &actions),
-            current_frame.active_cols,
-            current_frame.active_rows,
-            col,
-            row,
-        )) |hit| {
-            if (hit == .outside and self.config.window.modal.on_outside_click == .close) {
-                self.quit_confirm_open = false;
-                self.frame_builder.last_generation = null;
-                self.needs_redraw = true;
-            }
-        }
-        return true;
-    }
-
-    if (self.wellbeing_overlay.lock_screen_active) {
-        return true;
-    }
-
-    if (self.config.window.toast.enabled and self.toast_queue.isActive()) {
-        const current_frame = self.driver.getFrame();
-        if (self.toast_queue.hitTest(
-            col,
-            row,
-            current_frame.active_cols,
-            current_frame.active_rows,
-            self.wellbeing_overlay.toastRowOffset(),
-        )) |hit| {
-            switch (hit.part) {
-                .dismiss, .action => {
-                    _ = self.toast_queue.dismiss(hit.id);
-                    self.needs_redraw = true;
-                },
-                .body => {},
-            }
-            return true;
-        }
-    }
-
-    return false;
-}
 
 fn handleScrollbarRelease(self: *App) bool {
     if (!self.scrollbar_dragging) return false;
@@ -3445,75 +3262,13 @@ test "quit dialog copy: the running program, or the idle ask" {
     );
 }
 
-test "App: quitConfirmModalRequest layout and hitTest" {
+test "PendingAlert copies title and description into fixed buffers" {
     const testing = std.testing;
-
-    var actions: [2]Modal.Action = undefined;
-    const req = quitConfirmModalRequest(.{ .corner_radius = 8.0, .border_width = 1.0, .border_shape = .rounded }, .{}, .{}, &actions);
-    try testing.expectEqual(@as(f32, 8.0), req.corner_radius);
-    try testing.expectEqualStrings("Quit terminal", actions[0].label);
-    try testing.expectEqualStrings("Cancel and stay", actions[1].label);
-
-    // Outside click cancels
-    try testing.expectEqual(Modal.HitResult.outside, Modal.hitTest(req, 80, 24, 2, 2).?);
-
-    // Action 0 ("Quit terminal" at row 13)
-    try testing.expectEqual(Modal.HitResult{ .action = 0 }, Modal.hitTest(req, 80, 24, 25, 13).?);
-
-    // Action 1 ("Cancel and stay" at row 14)
-    try testing.expectEqual(Modal.HitResult{ .action = 1 }, Modal.hitTest(req, 80, 24, 25, 14).?);
-
-    // Custom configuration overrides
-    var custom_actions: [2]Modal.Action = undefined;
-    const custom_req = quitConfirmModalRequest(.{}, .{
-        .backdrop_opacity = 100.0 / 255.0,
-        .cols = 50,
-    }, .{
-        .title = "TERMINATE NOW?",
-        .confirm_label = "Yes, kill it",
-        .cancel_label = "No, go back",
-    }, &custom_actions);
-    try testing.expectEqualStrings("TERMINATE NOW?", custom_req.title);
-    try testing.expectEqualStrings("Yes, kill it", custom_actions[0].label);
-    try testing.expectEqualStrings("No, go back", custom_actions[1].label);
-    try testing.expectEqual(@as(u8, 100), custom_req.dim_alpha);
-    try testing.expectEqual(@as(u16, 50), custom_req.cols);
-}
-
-test "App: quit confirm modal focus cycling and hotspot routing" {
-    const testing = std.testing;
-
-    var focus = FocusGroup.init(2, 0);
-    try testing.expect(focus.isFocused(0));
-    try testing.expect(!focus.isFocused(1));
-
-    // Tab forward cycles to cancel button
-    focus.next();
-    try testing.expect(focus.isFocused(1));
-    try testing.expect(!focus.isFocused(0));
-
-    // Tab wraps around to quit button
-    focus.next();
-    try testing.expect(focus.isFocused(0));
-
-    // Shift-Tab cycles backward
-    focus.previous();
-    try testing.expect(focus.isFocused(1));
-
-    // Hotspot table routing
-    var table: Table = .{};
-    table.add(17, 13, 40, 1, .{ .modal_action = 0 });
-    table.add(17, 14, 40, 1, .{ .modal_action = 1 });
-
-    const hit_quit = table.hitTest(25, 13);
-    try testing.expect(hit_quit != null);
-    try testing.expectEqual(Tag.modal_action, std.meta.activeTag(hit_quit.?));
-    try testing.expectEqual(@as(u8, 0), hit_quit.?.modal_action);
-
-    const hit_cancel = table.hitTest(25, 14);
-    try testing.expect(hit_cancel != null);
-    try testing.expectEqual(Tag.modal_action, std.meta.activeTag(hit_cancel.?));
-    try testing.expectEqual(@as(u8, 1), hit_cancel.?.modal_action);
+    const alert = PendingAlert.init(.warn, "Config warning (line 2, col 1)", "unknown key");
+    const req = alert.request();
+    try testing.expectEqual(kit_alert.Kind.warn, req.kind);
+    try testing.expectEqualStrings("Config warning (line 2, col 1)", req.title);
+    try testing.expectEqualStrings("unknown key", req.description);
 }
 
 test "App: routeKeyToUi unified dispatcher consumes modal keys and suppresses text leakage" {

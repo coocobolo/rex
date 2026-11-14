@@ -6,7 +6,6 @@ const gl = @import("gl.zig");
 
 const CellInstance = @import("Cell.zig").Instance;
 const BackgroundInstance = @import("Background.zig").Instance;
-const CardInstance = @import("Card.zig").Instance;
 const DecorationInstance = @import("Decoration.zig").Instance;
 const SelectionInstance = @import("Selection.zig").Instance;
 const SelectionPolygon = @import("Frame.zig").SelectionPolygon;
@@ -22,7 +21,6 @@ const quad_verts_size = @sizeOf(@TypeOf(quad_verts));
 const f32_size = @sizeOf(f32);
 const cell_instance_size = @sizeOf(CellInstance);
 const background_instance_size = @sizeOf(BackgroundInstance);
-const card_instance_size = @sizeOf(CardInstance);
 const decoration_instance_size = @sizeOf(DecorationInstance);
 const selection_instance_size = @sizeOf(SelectionInstance);
 
@@ -514,102 +512,6 @@ pub const PolygonBuffer = struct {
         if (count == 0) return;
         gl.bindVertexArray(self.vao);
         gl.drawArrays(gl.TRIANGLE_FAN, 0, @intCast(count));
-        gl.bindVertexArray(0);
-    }
-};
-
-inline fn cardOff(comptime field: []const u8) ?*const anyopaque {
-    return @ptrFromInt(@offsetOf(CardInstance, field));
-}
-
-pub const CardBuffer = struct {
-    vao: gl.GLuint,
-    inst_vbo: gl.GLuint,
-    capacity: usize,
-
-    pub fn init(capacity: usize) CardBuffer {
-        var self: CardBuffer = undefined;
-        self.capacity = capacity;
-
-        gl.genVertexArrays(1, &self.vao);
-        gl.genBuffers(1, &self.inst_vbo);
-
-        gl.bindVertexArray(self.vao);
-        gl.bindBuffer(gl.ARRAY_BUFFER, self.inst_vbo);
-        gl.bufferData(gl.ARRAY_BUFFER, @intCast(capacity * card_instance_size), null, gl.DYNAMIC_DRAW);
-
-        const stride: gl.GLsizei = card_instance_size;
-
-        // loc 0: uvec4 a_grid_rect (col, row, width, height)
-        gl.enableVertexAttribArray(0);
-        gl.vertexAttribIPointer(0, 4, gl.UNSIGNED_SHORT, stride, cardOff("col"));
-        gl.vertexAttribDivisor(0, 1);
-
-        // loc 1: vec2 a_offset (offset_x, offset_y)
-        gl.enableVertexAttribArray(1);
-        gl.vertexAttribPointer(1, 2, gl.FLOAT, gl.FALSE, stride, cardOff("offset_x"));
-        gl.vertexAttribDivisor(1, 1);
-
-        // loc 2: vec4 a_bg_color
-        gl.enableVertexAttribArray(2);
-        gl.vertexAttribPointer(2, 4, gl.FLOAT, gl.FALSE, stride, cardOff("bg_color"));
-        gl.vertexAttribDivisor(2, 1);
-
-        // loc 3: vec4 a_border_color
-        gl.enableVertexAttribArray(3);
-        gl.vertexAttribPointer(3, 4, gl.FLOAT, gl.FALSE, stride, cardOff("border_color"));
-        gl.vertexAttribDivisor(3, 1);
-
-        // loc 4: vec2 a_params (radius, border_width)
-        gl.enableVertexAttribArray(4);
-        gl.vertexAttribPointer(4, 2, gl.FLOAT, gl.FALSE, stride, cardOff("radius"));
-        gl.vertexAttribDivisor(4, 1);
-
-        // loc 5: float a_progress
-        gl.enableVertexAttribArray(5);
-        gl.vertexAttribPointer(5, 1, gl.FLOAT, gl.FALSE, stride, cardOff("progress"));
-        gl.vertexAttribDivisor(5, 1);
-
-        // loc 6: uint a_kind
-        gl.enableVertexAttribArray(6);
-        gl.vertexAttribIPointer(6, 1, gl.UNSIGNED_INT, stride, cardOff("kind"));
-        gl.vertexAttribDivisor(6, 1);
-
-        gl.bindVertexArray(0);
-        gl.bindBuffer(gl.ARRAY_BUFFER, 0);
-
-        return self;
-    }
-
-    pub fn deinit(self: *CardBuffer) void {
-        gl.deleteVertexArrays(1, &self.vao);
-        gl.deleteBuffers(1, &self.inst_vbo);
-        self.* = undefined;
-    }
-
-    pub fn resize(self: *CardBuffer, new_cap: usize) void {
-        if (new_cap <= self.capacity) return;
-        self.capacity = new_cap;
-        gl.bindBuffer(gl.ARRAY_BUFFER, self.inst_vbo);
-        gl.bufferData(gl.ARRAY_BUFFER, @intCast(new_cap * card_instance_size), null, gl.DYNAMIC_DRAW);
-        gl.bindBuffer(gl.ARRAY_BUFFER, 0);
-    }
-
-    pub fn upload(self: *CardBuffer, instances: []const CardInstance) void {
-        if (instances.len == 0) return;
-        if (instances.len > self.capacity) {
-            self.resize(instances.len);
-        }
-        gl.bindBuffer(gl.ARRAY_BUFFER, self.inst_vbo);
-        gl.bufferData(gl.ARRAY_BUFFER, @as(gl.GLsizeiptr, @intCast(self.capacity * card_instance_size)), null, gl.DYNAMIC_DRAW);
-        gl.bufferSubData(gl.ARRAY_BUFFER, 0, @as(gl.GLsizeiptr, @intCast(instances.len * card_instance_size)), instances.ptr);
-        gl.bindBuffer(gl.ARRAY_BUFFER, 0);
-    }
-
-    pub fn draw(self: *const CardBuffer, count: usize) void {
-        if (count == 0) return;
-        gl.bindVertexArray(self.vao);
-        gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, @intCast(count));
         gl.bindVertexArray(0);
     }
 };

@@ -136,30 +136,6 @@ pub fn draw(self: *Cell, args: DrawArgs) void {
     );
 }
 
-pub fn drawExternal(self: *Cell, gray_buffer: *Buffer, color_buffer: *Buffer, args: DrawArgs) void {
-    self.setup(args, false);
-    if (args.gray_len > 0) {
-        self.shader.set1i("u_is_color", 0);
-        gray_buffer.draw(args.gray_len);
-    }
-    if (args.color_len > 0) {
-        gl.blendFuncSeparate(
-            gl.ONE,
-            gl.ONE_MINUS_SRC_ALPHA,
-            gl.ONE,
-            gl.ONE_MINUS_SRC_ALPHA,
-        );
-        self.shader.set1i("u_is_color", 1);
-        color_buffer.draw(args.color_len);
-        gl.blendFuncSeparate(
-            gl.SRC_ALPHA,
-            gl.ONE_MINUS_SRC_ALPHA,
-            gl.ONE,
-            gl.ONE_MINUS_SRC_ALPHA,
-        );
-    }
-}
-
 /// Draws the coverage of every glyph, gray and color, into the bound
 /// framebuffer, keeping the highest coverage where glyphs overlap. The
 /// decoration pass reads it to skip the underline where ink is.

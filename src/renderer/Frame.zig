@@ -310,15 +310,10 @@ gray_spliced_range: ?SplicedRange = null,
 color_spliced_range: ?SplicedRange = null,
 decoration_spliced_range: ?SplicedRange = null,
 
-/// Visual overlay instances (for toasts, break lock screen, and dashboard modal)
-overlay_background_instances: []const Background.Instance = &.{},
-overlay_card_instances: []const Card.Instance = &.{},
-overlay_gray_instances: []const Cell.Instance = &.{},
-overlay_color_instances: []const Cell.Instance = &.{},
+/// Whether a modal scrim is active behind the UI kit overlay (drives backdrop blur).
 overlay_has_modal: bool = false,
 modal_blur: bool = false,
 modal_blur_radius: u8 = 12,
-modal_dim_alpha: u8 = 180,
 
 /// Set by FrameBuilder when instance data changed since the last build.
 /// Renderer skips VBO re-upload when false, but always issues draw calls.

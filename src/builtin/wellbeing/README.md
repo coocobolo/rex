@@ -31,7 +31,6 @@ Default keys: `ctrl+shift+p` start, pause or resume the focus timer; `ctrl+shift
 | `winddown.zig` | The wind-down window and its color tint. |
 | `localtime.zig` | UTC to local seconds via `localtime_r`, with a `tzset` once per minute so zone changes apply while Rex runs. |
 | `dashboard.zig` | The text card (`rex wellbeing print`, copy to clipboard). |
-| `overlay.zig`, `icons.zig` | The dashboard overlay and lock screen. Not imported by `root.zig`: they reach `src/renderer/` and `src/ui/`, and the state module must not. |
 | `wellbeing_test.zig` | All tests of the module. |
 
 ## Each frame
@@ -153,7 +152,6 @@ Check every change against these:
 - `App` owns the `Wellbeing` value for the life of the process.
 - The presence lock (`Wellbeing.presence`) is held from `open` to `close`; `App` merges before `close`. `presence == null` marks a standalone `Wellbeing` that never joined the shared state (tests, `rex wellbeing print`): it records timer statistics at once, since no other writer can race it.
 - Strings in `Wellbeing.option` (prompts, display icons) are borrowed from `App.config_arena`. On reload `App` frees the old arena, takes the new one and calls `applyOption` with the new options; nothing reads the options in between.
-- The overlay's instance buffers are allocated with `App`'s allocator and freed by `Overlay.deinit`.
 - Lock and data files are opened per operation and closed before it returns, except the presence file.
 
 ## Errors
@@ -183,4 +181,3 @@ All tests are in `wellbeing_test.zig`. The shared-state tests run two `Wellbeing
 - A button press in one window that races a phase end recorded by another is dropped.
 - Two windows that both count time within the same poll second can each show the screen-limit alert.
 - Per-app time reads `/proc/<pgrp>/comm`, which exists only on Linux.
-- The overlay builds on the provisional `src/ui/`, which allocates per frame and will be redesigned.
