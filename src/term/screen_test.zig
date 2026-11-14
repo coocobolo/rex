@@ -628,7 +628,7 @@ test "displayLineAttr: after eraseDisplay ED 2, all rows are .normal" {
         s.cursor.row = @intCast(r);
         s.setLineAttr(.double_width);
     }
-    s.eraseDisplay(2);
+    s.eraseDisplay(.all);
 
     for (0..s.active_rows) |r| {
         try testing.expectEqual(LineAttr.normal, s.displayLineAttr(r));
@@ -1212,7 +1212,7 @@ test "eraseDisplay: (0) cursor at (0,0) erases entire screen" {
 
     s.cursor.row = 0;
     s.cursor.col = 0;
-    s.eraseDisplay(0);
+    s.eraseDisplay(.to_end);
 
     const blank = Cell{ .style = s.cursor.attr.blank_id };
     for (0..s.active_rows) |r|
@@ -1230,7 +1230,7 @@ test "eraseDisplay: (0) erases from cursor col to end of row, and all rows below
 
     s.cursor.row = 2;
     s.cursor.col = 5;
-    s.eraseDisplay(0);
+    s.eraseDisplay(.to_end);
 
     const blank = Cell{ .style = s.cursor.attr.blank_id };
 
@@ -1259,7 +1259,7 @@ test "eraseDisplay: (0) cursor at last row last col erases only that cell" {
 
     s.cursor.row = @intCast(s.active_rows - 1);
     s.cursor.col = @intCast(s.active_cols - 1);
-    s.eraseDisplay(0);
+    s.eraseDisplay(.to_end);
 
     const blank = Cell{ .style = s.cursor.attr.blank_id };
 
@@ -1288,7 +1288,7 @@ test "eraseDisplay: (0) resets line_attrs only for rows below cursor" {
     // Cursor at row 4, col 0.
     s.cursor.row = 4;
     s.cursor.col = 0;
-    s.eraseDisplay(0);
+    s.eraseDisplay(.to_end);
 
     // Rows 5..active_rows-1 must be reset.
     for (5..s.active_rows) |r| {
@@ -1312,7 +1312,7 @@ test "eraseDisplay: (1) cursor at (0,0) erases only that cell" {
 
     s.cursor.row = 0;
     s.cursor.col = 0;
-    s.eraseDisplay(1);
+    s.eraseDisplay(.to_start);
 
     const blank = Cell{ .style = s.cursor.attr.blank_id };
 
@@ -1334,7 +1334,7 @@ test "eraseDisplay: (1) erases rows above and cursor row up to cursor col (inclu
 
     s.cursor.row = 3;
     s.cursor.col = 6;
-    s.eraseDisplay(1);
+    s.eraseDisplay(.to_start);
 
     const blank = Cell{ .style = s.cursor.attr.blank_id };
 
@@ -1366,7 +1366,7 @@ test "eraseDisplay: (1) resets line_attrs only for rows above cursors" {
     // Cursor at row 6, col 10.
     s.cursor.row = 6;
     s.cursor.col = 10;
-    s.eraseDisplay(1);
+    s.eraseDisplay(.to_start);
 
     // Rows 0..5 must be reset.
     for (0..6) |r| {
@@ -1390,7 +1390,7 @@ test "eraseDisplay: (2) erases entire active area" {
 
     s.cursor.row = 5;
     s.cursor.col = 10;
-    s.eraseDisplay(2);
+    s.eraseDisplay(.all);
 
     const blank = Cell{ .style = s.cursor.attr.blank_id };
     for (0..s.active_rows) |r|
@@ -1405,7 +1405,7 @@ test "eraseDisplay: (2) cursor position unchanged" {
 
     s.cursor.row = 5;
     s.cursor.col = 10;
-    s.eraseDisplay(2);
+    s.eraseDisplay(.all);
 
     try testing.expectEqual(5, s.cursor.row);
     try testing.expectEqual(10, s.cursor.col);
@@ -1424,7 +1424,7 @@ test "eraseDisplay: (2) resets all line_attrs to normal" {
 
     s.cursor.row = 3;
     s.cursor.col = 5;
-    s.eraseDisplay(2);
+    s.eraseDisplay(.all);
 
     for (0..s.active_rows) |r| {
         try testing.expectEqual(
@@ -1445,7 +1445,7 @@ test "eraseDisplay: (3) primary screen resets scrollback_used and viewport_offse
     s.scrollback_used = 5;
     s.viewport_offset = 3;
 
-    s.eraseDisplay(3);
+    s.eraseDisplay(.scrollback);
 
     try testing.expectEqual(0, s.scrollback_used);
     try testing.expectEqual(0, s.viewport_offset);
@@ -1460,7 +1460,7 @@ test "eraseDisplay: (3) primary screen active area untouched" {
     fillScreen(&s, marker);
 
     s.scrollback_used = 4;
-    s.eraseDisplay(3);
+    s.eraseDisplay(.scrollback);
 
     // Active area is unchanged
     for (0..s.active_rows) |r|
@@ -1479,7 +1479,7 @@ test "eraseDisplay: (3) alternate screen is a no-op (comptime guard)" {
     fillScreen(&s, marker);
     const gen = s.generation;
 
-    s.eraseDisplay(3);
+    s.eraseDisplay(.scrollback);
 
     // Active area untouched
     for (0..s.active_rows) |r|
@@ -1502,7 +1502,7 @@ test "eraseDisplay: (3) does not touch line_attrs" {
         s.setLineAttr(.double_width);
     }
     s.cursor.row = 0;
-    s.eraseDisplay(3);
+    s.eraseDisplay(.scrollback);
 
     // All line_attrs unchanged.
     for (0..s.active_rows) |r| {
@@ -1513,7 +1513,7 @@ test "eraseDisplay: (3) does not touch line_attrs" {
 test "eraseDisplay: generation bumped for modes 0, 1, 2, 3" {
     const alloc = testing.allocator;
 
-    for ([_]u16{ 0, 1, 2, 3 }) |mode| {
+    for ([_]screen.EraseDisplay{ .to_end, .to_start, .all, .scrollback }) |mode| {
         var s = try altScreen(alloc);
         defer s.deinit(alloc);
 
@@ -1523,30 +1523,10 @@ test "eraseDisplay: generation bumped for modes 0, 1, 2, 3" {
     }
 }
 
-test "eraseDisplay: unknown mode returns early, generation NOT bumped" {
-    const alloc = testing.allocator;
-    var s = try altScreen(alloc);
-    defer s.deinit(alloc);
-
-    const marker: Cell = .{ .codepoint = 'X', .kind = .narrow };
-    fillScreen(&s, marker);
-    const gen = s.generation;
-
-    s.eraseDisplay(99);
-
-    // No state change
-    for (0..s.active_rows) |r|
-        for (0..s.active_cols) |c|
-            try testing.expectEqualDeep(marker, s.cellAt(r, c));
-
-    // No bump
-    try testing.expectEqual(gen, s.generation);
-}
-
 test "eraseDisplay: modes 0, 1, 2 clear wrap_pending" {
     const alloc = testing.allocator;
 
-    for ([_]u16{ 0, 1, 2 }) |mode| {
+    for ([_]screen.EraseDisplay{ .to_end, .to_start, .all }) |mode| {
         var s = try altScreen(alloc);
         defer s.deinit(alloc);
 
@@ -1566,7 +1546,7 @@ test "eraseDisplay: modes 3 does NOT clear wrap_pending" {
     defer s.deinit(alloc);
 
     s.cursor.wrap_pending = true;
-    s.eraseDisplay(3);
+    s.eraseDisplay(.scrollback);
 
     try testing.expect(s.cursor.wrap_pending);
 }
@@ -1586,7 +1566,7 @@ test "eraseLine: (0) cursor to end of line, before cursor untouched" {
 
     s.cursor.row = 3;
     s.cursor.col = 5;
-    s.eraseLine(0);
+    s.eraseLine(.to_end);
 
     const blank = Cell{ .style = s.cursor.attr.blank_id };
 
@@ -1604,7 +1584,7 @@ test "eraseLine: (0) cursor at col 0 erases entire line" {
     fillRow(&s, 0, .{ .codepoint = 'X', .kind = .narrow });
     s.cursor.row = 0;
     s.cursor.col = 0;
-    s.eraseLine(0);
+    s.eraseLine(.to_end);
 
     const blank = Cell{ .style = s.cursor.attr.blank_id };
     for (0..s.active_cols) |c| try testing.expectEqualDeep(blank, s.cellAt(0, c));
@@ -1619,7 +1599,7 @@ test "eraseLine: (0) keeps line_attr (partial erase)" {
     s.setLineAttr(.double_width);
 
     s.cursor.col = 4;
-    s.eraseLine(0);
+    s.eraseLine(.to_end);
 
     try testing.expectEqual(LineAttr.double_width, s.line_attrs[s.physRow(5)]);
 }
@@ -1634,7 +1614,7 @@ test "eraseLine: (1) start of line to cursor inclusive, after cursor untouched" 
 
     s.cursor.row = 2;
     s.cursor.col = 7;
-    s.eraseLine(1);
+    s.eraseLine(.to_start);
 
     const blank = Cell{ .style = s.cursor.attr.blank_id };
 
@@ -1653,7 +1633,7 @@ test "eraseLine: (1) keeps line_attr (partial erase)" {
     s.setLineAttr(.double_top);
 
     s.cursor.col = 10;
-    s.eraseLine(1);
+    s.eraseLine(.to_start);
 
     try testing.expectEqual(LineAttr.double_top, s.line_attrs[s.physRow(2)]);
 }
@@ -1666,7 +1646,7 @@ test "eraseLine: (2) entire line erased" {
     fillRow(&s, 5, .{ .codepoint = 'Z', .kind = .narrow });
     s.cursor.row = 5;
     s.cursor.col = 10;
-    s.eraseLine(2);
+    s.eraseLine(.all);
 
     const blank = Cell{ .style = s.cursor.attr.blank_id };
     for (0..s.active_cols) |c| try testing.expectEqualDeep(blank, s.cellAt(5, c));
@@ -1681,7 +1661,7 @@ test "eraseLine: (2) resets line_attr for current row" {
     s.setLineAttr(.double_bottom);
 
     s.cursor.col = 0;
-    s.eraseLine(2);
+    s.eraseLine(.all);
 
     try testing.expectEqual(LineAttr.normal, s.line_attrs[s.physRow(3)]);
 }
@@ -1699,7 +1679,7 @@ test "eraseLine: (2) does NOT affect other rows" {
     // Erase only row 4.
     s.cursor.row = 4;
     s.cursor.col = 0;
-    s.eraseLine(2);
+    s.eraseLine(.all);
 
     try testing.expectEqual(LineAttr.normal, s.line_attrs[s.physRow(4)]);
     try testing.expectEqual(LineAttr.double_width, s.line_attrs[s.physRow(3)]);
@@ -1716,7 +1696,7 @@ test "eraseLine: other rows are untouched" {
 
     s.cursor.row = 4;
     s.cursor.col = 0;
-    s.eraseLine(2); // erase entire row 4
+    s.eraseLine(.all); // erase entire row 4
 
     // All other rows untouched
     for (0..s.active_rows) |r| {
@@ -1733,7 +1713,7 @@ test "eraseLine: cursor position unchanged after erase" {
 
     s.cursor.row = 6;
     s.cursor.col = 11;
-    s.eraseLine(0);
+    s.eraseLine(.to_end);
 
     try testing.expectEqual(6, s.cursor.row);
     try testing.expectEqual(11, s.cursor.col);
@@ -1742,7 +1722,7 @@ test "eraseLine: cursor position unchanged after erase" {
 test "eraseLine: generation bumped for modes 0, 1, 2" {
     const alloc = testing.allocator;
 
-    for ([_]u16{ 0, 1, 2 }) |mode| {
+    for ([_]screen.EraseLine{ .to_end, .to_start, .all }) |mode| {
         var s = try altScreen(alloc);
         defer s.deinit(alloc);
 
@@ -1752,28 +1732,10 @@ test "eraseLine: generation bumped for modes 0, 1, 2" {
     }
 }
 
-test "eraseLine: unknown mode returns early, generation NOT bumped" {
-    const alloc = testing.allocator;
-    var s = try altScreen(alloc);
-    defer s.deinit(alloc);
-
-    const marker: Cell = .{ .codepoint = 'X', .kind = .narrow };
-    fillScreen(&s, marker);
-    const gen = s.generation;
-
-    s.eraseLine(99);
-
-    for (0..s.active_rows) |r|
-        for (0..s.active_cols) |c|
-            try testing.expectEqualDeep(marker, s.cellAt(r, c));
-
-    try testing.expectEqual(gen, s.generation);
-}
-
 test "eraseLine: (0, 1, 2) clear wrap_pending" {
     const alloc = testing.allocator;
 
-    for ([_]u16{ 0, 1, 2 }) |mode| {
+    for ([_]screen.EraseLine{ .to_end, .to_start, .all }) |mode| {
         var s = try altScreen(alloc);
         defer s.deinit(alloc);
 
@@ -3601,7 +3563,7 @@ test "dirty_rows: eraseDisplay mode 2 marks all rows dirty" {
     defer s.deinit(alloc);
 
     s.dirty_rows = .empty;
-    s.eraseDisplay(2);
+    s.eraseDisplay(.all);
 
     for (0..s.active_rows) |r| try testing.expect(s.dirty_rows.isSet(r));
 }
@@ -3613,7 +3575,7 @@ test "dirty_rows: eraseLine marks only cursor row dirty" {
 
     s.cursor.row = 5;
     s.dirty_rows = .empty;
-    s.eraseLine(2);
+    s.eraseLine(.all);
 
     try testing.expect(s.dirty_rows.isSet(5));
     try testing.expect(!s.dirty_rows.isSet(4));
@@ -4899,7 +4861,7 @@ test "tabForward: no tab stop ahead, stops at last column" {
     defer s.deinit(alloc);
 
     // Clear all tab stops so there's nothing to the right
-    s.clearTabStop(3);
+    s.clearTabStop(.all);
     s.cursor.col = 5;
     s.tabForward(1);
     try testing.expectEqual(test_max_cols - 1, s.cursor.col);
@@ -4953,7 +4915,7 @@ test "tabForward: custom tab stop is respected" {
     defer s.deinit(alloc);
 
     // Clear all stops, set one at column 5
-    s.clearTabStop(3);
+    s.clearTabStop(.all);
     s.cursor.col = 5;
     s.setTabStop();
     s.cursor.col = 0;
@@ -4967,7 +4929,7 @@ test "setTabStop: sets bit at cursor column" {
     var s = try altScreen(alloc);
     defer s.deinit(alloc);
 
-    s.clearTabStop(3); // clear all first
+    s.clearTabStop(.all); // clear all first
     s.cursor.col = 5;
     s.setTabStop();
     try testing.expect(s.tab_stops.isSet(5));
@@ -5001,7 +4963,7 @@ test "clearTabStop mode 0: clears stop at cursor column" {
 
     s.cursor.col = 8; // default tab stop
     try testing.expect(s.tab_stops.isSet(8));
-    s.clearTabStop(0);
+    s.clearTabStop(.at_cursor);
     try testing.expect(!s.tab_stops.isSet(8));
 }
 
@@ -5011,7 +4973,7 @@ test "clearTabStop mode 0: other stops unaffected" {
     defer s.deinit(alloc);
 
     s.cursor.col = 11;
-    s.clearTabStop(0);
+    s.clearTabStop(.at_cursor);
     // Column 8 should still be set
     try testing.expect(s.tab_stops.isSet(8));
 }
@@ -5021,7 +4983,7 @@ test "clearTabStop mode 3: clears all stops" {
     var s = try altScreen(alloc);
     defer s.deinit(alloc);
 
-    s.clearTabStop(3);
+    s.clearTabStop(.all);
     // No bits should be set
     try testing.expectEqual(0, s.tab_stops.count());
 }
@@ -5031,21 +4993,10 @@ test "clearTabStop mode 3: tabForward goes to last column after clear" {
     var s = try altScreen(alloc);
     defer s.deinit(alloc);
 
-    s.clearTabStop(3);
+    s.clearTabStop(.all);
     s.cursor.col = 0;
     s.tabForward(1);
     try testing.expectEqual(test_max_cols - 1, s.cursor.col);
-}
-
-test "clearTabStop unknown mode: no-op" {
-    const alloc = testing.allocator;
-    var s = try altScreen(alloc);
-    defer s.deinit(alloc);
-
-    const before = s.tab_stops;
-    s.clearTabStop(99);
-    // tab_stops unchanged — compare count as a proxy
-    try testing.expectEqual(before.count(), s.tab_stops.count());
 }
 
 test "clearTabStop: does NOT bump generation" {
@@ -5054,8 +5005,8 @@ test "clearTabStop: does NOT bump generation" {
     defer s.deinit(alloc);
 
     const gen = s.generation;
-    s.clearTabStop(0);
-    s.clearTabStop(3);
+    s.clearTabStop(.at_cursor);
+    s.clearTabStop(.all);
     try testing.expectEqual(gen, s.generation);
 }
 
@@ -5064,7 +5015,7 @@ test "tab round-trip: clear all, set custom, tabForward uses them" {
     var s = try altScreen(alloc);
     defer s.deinit(alloc);
 
-    s.clearTabStop(3);
+    s.clearTabStop(.all);
     // Set stops at 3, 7, 15
     s.cursor.col = 3;
     s.setTabStop();
@@ -5096,7 +5047,7 @@ test "resetTabStops restores defaults after clearTabStop 3" {
     var s = try altScreen(alloc);
     defer s.deinit(alloc);
 
-    s.clearTabStop(3);
+    s.clearTabStop(.all);
     try testing.expectEqual(0, s.tab_stops.count());
 
     s.resetTabStops();

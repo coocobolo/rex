@@ -4725,3 +4725,92 @@ test "csi: DECRQM 1048 reports whether the active screen holds a saved cursor" {
     t.feed("\x1b[?47l\x1bc\x1b[?1048$p"); // RIS clears it
     try testing.expectEqualStrings("\x1b[?1048;2$y", t.response.slice());
 }
+
+test "csi: unknown modes for ED, EL, TBC and SM/RM are ignored cleanly" {
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
+
+    t.feed("ABC");
+    const gen_before = t.active().generation;
+    const tabs_before = t.active().tab_stops.count();
+
+    // Unknown mode values in one feed: `feed` itself calls `bump()` once at
+    // finish, while none of the unknown dispatches call `bump()`.
+    t.feed("\x1b[99J\x1b[99K\x1b[99g\x1b[99h\x1b[99l");
+
+    try testing.expectEqual(gen_before + 1, t.active().generation);
+    try testing.expectEqual(tabs_before, t.active().tab_stops.count());
+    try testing.expect(!t.active().mode.insert);
+    try testing.expect(!t.mode.linefeed);
+    try testing.expectEqual(@as(u21, 'A'), t.active().cellAt(0, 0).codepoint);
+    try testing.expectEqual(@as(u21, 'B'), t.active().cellAt(0, 1).codepoint);
+    try testing.expectEqual(@as(u21, 'C'), t.active().cellAt(0, 2).codepoint);
+}
+
+test "escape: extra or unexpected intermediates are ignored on remapped sequences" {
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
+
+    // Extra intermediate on S7C1T / S8C1T (ESC SP F/G).
+    t.control_format = .s7c1t;
+    t.feed("\x1b #G");
+    try testing.expectEqual(.s7c1t, t.control_format);
+    t.feed("\x1b G");
+    try testing.expectEqual(.s8c1t, t.control_format);
+    t.feed("\x1b #F");
+    try testing.expectEqual(.s8c1t, t.control_format);
+
+    // Extra intermediate on DEC line attributes & DECALN (ESC # 3..6, 8).
+    t.feed("\x1b#$3\x1b#$4\x1b#$6\x1b#$8");
+    try testing.expectEqual(.normal, t.active().line_attrs[t.active().physRow(0)]);
+    try testing.expectEqual(@as(u21, 0), t.active().cellAt(0, 0).codepoint);
+
+    // Extra intermediate on coding system selection (ESC % @ / G).
+    t.feed("\x1b%$@\x1b%$G");
+    try testing.expectEqual(.utf8, t.input.encoding);
+    t.feed("\x1b%@");
+    try testing.expectEqual(.latin1, t.input.encoding);
+    t.feed("\x1b%$G");
+    try testing.expectEqual(.latin1, t.input.encoding);
+
+    // Extra intermediate on 96-set designation (ESC - . /).
+    t.feed("\x1b-%0\x1b.%0\x1b/%0");
+    try testing.expectEqual(.ascii, t.active().cursor.charset.g1);
+    try testing.expectEqual(.ascii, t.active().cursor.charset.g2);
+    try testing.expectEqual(.ascii, t.active().cursor.charset.g3);
+}
+
+test "csi: extra or unexpected intermediates are ignored on remapped sequences" {
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
+    t.control_format = .s7c1t;
+
+    // SM/RM with unexpected intermediate must not toggle insert/linefeed.
+    t.feed("\x1b[$4h\x1b[$20h");
+    try testing.expect(!t.active().mode.insert);
+    try testing.expect(!t.mode.linefeed);
+
+    // DECSCUSR, DECSTR, DECSCL, DECRQM (ANSI) with extra intermediate.
+    t.feed("\x1b[2 $q");
+    try testing.expectEqual(Cursor.Style.default, t.active().cursor.style);
+    t.feed("\x1b[65;1\"$p");
+    try testing.expectEqual(.level3, t.conformance_level);
+    t.feed("\x1b[4$!p");
+    try testing.expect(t.response.isEmpty());
+
+    t.active().cursor.row = 3;
+    t.feed("\x1b[!$p");
+    try testing.expectEqual(@as(u16, 3), t.active().cursor.row);
+
+    // DA2, XTMODKEYS, XTVERSION with extra intermediate.
+    t.feed("\x1b[>$c\x1b[>$0q");
+    try testing.expect(t.response.isEmpty());
+    t.feed("\x1b[>4;$2m");
+    try testing.expectEqual(.off, t.mode.modify_other_keys);
+
+    // DECSET/DECRST, DECXCPR, DEC DECRQM with wrong/extra intermediate.
+    t.feed("\x1b[?$25l");
+    try testing.expect(t.active().mode.cursor_visibility);
+    t.feed("\x1b[?$6n\x1b[?!$p");
+    try testing.expect(t.response.isEmpty());
+}

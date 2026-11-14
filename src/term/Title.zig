@@ -23,6 +23,7 @@ pub const Part = enum(u2) {
     icon_name = 1,
     title = 2,
 
+    /// True when `self` includes `part` (either directly or via `.both`).
     pub fn has(self: Part, part: enum { title, icon_name }) bool {
         return switch (part) {
             .title => self != .icon_name,

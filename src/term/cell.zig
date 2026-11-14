@@ -50,19 +50,6 @@ pub const AttrFlags = packed struct(u12) {
     strikethrough: bool = false, // SGR 9
     overline: bool = false, // SGR 53
     underline: UnderlineStyle = .none, // SGR 4 / 4:[0-5] (3 bits)
-
-    pub const default: AttrFlags = .{
-        .bold = false,
-        .dim = false,
-        .italic = false,
-        .blink = false,
-        .blink_rapid = false,
-        .reverse = false,
-        .invisible = false,
-        .strikethrough = false,
-        .overline = false,
-        .underline = .none,
-    };
 };
 
 comptime {
@@ -105,11 +92,10 @@ pub const Kind = enum(u3) {
     grapheme = 4,
     /// 2-col ZWJ/grapheme sequence ID, wide
     grapheme_wide = 5,
-    /// TODO reserved future HarfBuzz shaped run
-    shaped = 6,
 
-    // 7 = reserved
+    // 6..7 = reserved
 
+    /// Number of grid columns this cell kind occupies (0 for trailing half).
     pub fn columnSpan(self: Kind) u2 {
         return switch (self) {
             .empty => 1, // occupies 1 column (blank)
@@ -117,7 +103,6 @@ pub const Kind = enum(u3) {
             .grapheme => 1,
             .wide_left, .grapheme_wide => 2,
             .wide_right => 0, // placeholder, caller must guard against infinite loop
-            .shaped => unreachable, // shaped cells carry their own span
         };
     }
 
@@ -126,6 +111,7 @@ pub const Kind = enum(u3) {
         return self == .grapheme or self == .grapheme_wide;
     }
 
+    /// True when this cell is the leading half of a 2-column character or cluster.
     pub inline fn isWideLeft(self: Kind) bool {
         return self == .wide_left or self == .grapheme_wide;
     }
@@ -139,7 +125,7 @@ pub const Cell = packed struct(u64) {
 
     /// What the current cell kind codepoint
     kind: Kind = .empty,
-    flags: AttrFlags = .default,
+    flags: AttrFlags = .{},
 
     /// Colors, as an ID into the screen's `Style.Table` (0 = default).
     /// The ID keeps its colors while any cell holds it (ADR 0005).
@@ -153,6 +139,12 @@ pub const Cell = packed struct(u64) {
     wrapped: bool = false,
 
     pub const empty: Cell = .{};
+
+    /// The trailing placeholder after a wide character `self`: keeps `style`
+    /// and `flags`, clears `codepoint` and `wrapped`.
+    pub fn rightHalf(self: Cell) Cell {
+        return .{ .kind = .wide_right, .style = self.style, .flags = self.flags };
+    }
 };
 
 comptime {
@@ -182,7 +174,7 @@ test "UnderlineStyle: variants and bit sizes" {
 }
 
 test "AttrFlags: default values and bit size" {
-    const f = AttrFlags.default;
+    const f: AttrFlags = .{};
     try std.testing.expect(!f.bold);
     try std.testing.expect(!f.dim);
     try std.testing.expect(!f.italic);
@@ -219,4 +211,20 @@ test "Kind: column spans and predicates" {
     try std.testing.expect(Kind.wide_left.isWideLeft());
     try std.testing.expect(Kind.grapheme_wide.isWideLeft());
     try std.testing.expect(!Kind.narrow.isWideLeft());
+}
+
+test "Cell: rightHalf preserves style and flags" {
+    const left: Cell = .{
+        .codepoint = '界',
+        .kind = .wide_left,
+        .flags = .{ .bold = true, .italic = true },
+        .style = 42,
+        .wrapped = true,
+    };
+    const right = left.rightHalf();
+    try std.testing.expectEqual(Kind.wide_right, right.kind);
+    try std.testing.expectEqual(@as(u32, 0), right.codepoint);
+    try std.testing.expectEqual(@as(Style.Id, 42), right.style);
+    try std.testing.expectEqual(left.flags, right.flags);
+    try std.testing.expect(!right.wrapped);
 }

@@ -19,6 +19,7 @@ const Option = term.Option;
 const Theme = term.Theme;
 const Cell = term.cell.Cell;
 const MouseButton = term.term.MouseButton;
+const MouseInput = term.term.MouseInput;
 const HeldButtons = term.term.HeldButtons;
 
 const termio = @import("../termio/root.zig");
@@ -198,22 +199,26 @@ pub fn Driver(comptime option: Option) type {
                 },
                 .reply => |bytes| try self.sendReply(bytes),
                 .mouse_button => |ev| {
-                    self.terminal.sendMouse(ev.col, ev.row, ev.button, ev.mods, ev.press);
-                    self.drainAndWriteReplies();
+                    if (std.enums.fromInt(MouseButton, ev.button)) |button| {
+                        const input: MouseInput = if (ev.press) .{ .press = button } else .{ .release = button };
+                        self.terminal.sendMouse(ev.col, ev.row, input, .fromByte(ev.mods));
+                        self.drainAndWriteReplies();
+                    }
                 },
                 .mouse_motion => |ev| {
                     const held_button: ?MouseButton = if (ev.button) |b|
-                        @enumFromInt(b)
+                        std.enums.fromInt(MouseButton, b)
                     else
                         null;
-                    self.terminal.sendMouseMotion(ev.col, ev.row, held_button, ev.mods);
+                    self.terminal.sendMouseMotion(ev.col, ev.row, held_button, .fromByte(ev.mods));
                     self.drainAndWriteReplies();
                 },
                 .mouse_scroll => |ev| {
                     if (self.terminal.mode.mouse_tracking.reportsWheel()) {
+                        const dir: MouseInput.Wheel = if (ev.button == 64) .up else .down;
                         var i: u16 = 0;
                         while (i < ev.steps) : (i += 1) {
-                            self.terminal.sendMouse(ev.col, ev.row, ev.button, 0, true);
+                            self.terminal.sendMouse(ev.col, ev.row, .{ .wheel = dir }, .none);
                             self.drainAndWriteReplies();
                         }
                     } else if (self.terminal.active_buffer == .alternate and self.terminal.mode.alt_scroll) {

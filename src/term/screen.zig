@@ -23,18 +23,8 @@ const Option = @import("term.zig").Option;
 const wc = @import("../unicode/wcwidth.zig");
 const Classifier = @import("../unicode/Classifier.zig");
 
-// extern fn memset(dest: ?*anyopaque, c: c_int, n: usize) ?*anyopaque;
-// extern fn memmove(dest: ?*anyopaque, src: ?*const anyopaque, n: usize) ?*anyopaque;
-
-// With enum(u8), the backing type matches the storage size exactly.
-// @memset(self.line_attrs[start..end], .normal) now clearly maps to
-// memset(ptr, 0, count), so the compiler can `emit rep stosb` or a
-// vectorized zero-fill.
-//
-// enum(u8) is the idiomatic choice when each element occupies a full
-// byte anyway. enum(u2) only saves memory in a packed struct;
-// in a plain array it still uses 1 byte per element, so the u2
-// backing type gives no benefit and only confuses the compiler.
+/// Per-row width/height attribute (DECDWL / DECDHL).
+/// Backed by `u8` so `[ring_rows]LineAttr` elements zero-fill via `@memset`.
 pub const LineAttr = enum(u8) {
     normal = 0, // single-width, single-height (default)
     double_width = 1, // ESC # 6 — DECDWL
@@ -52,6 +42,27 @@ pub const Mode = packed struct(u8) {
     _pad: u3 = 0,
 };
 
+/// Scope of an Erase Display (`ED`, CSI Ps J) operation.
+pub const EraseDisplay = enum(u2) {
+    to_end = 0,
+    to_start = 1,
+    all = 2,
+    scrollback = 3,
+};
+
+/// Scope of an Erase Line (`EL`, CSI Ps K) operation.
+pub const EraseLine = enum(u2) {
+    to_end = 0,
+    to_start = 1,
+    all = 2,
+};
+
+/// Scope of a Tab Clear (`TBC`, CSI Ps g) operation.
+pub const TabClear = enum(u2) {
+    at_cursor = 0,
+    all = 3,
+};
+
 /// Sets `n` cells at `dest` to `Cell{}`, the blank with default colors.
 /// `Cell{}` is all zero bits (see the assert below), so this is a byte
 /// fill, which lowers to a `memset` call: in Rex's executables that is
@@ -67,41 +78,14 @@ comptime {
     std.debug.assert(@as(u64, @bitCast(Cell{})) == 0);
 }
 
-/// The placeholder after a wide character `left`: same style and flags,
-/// no codepoint, whatever kind of wide cell `left` is.
-fn rightHalf(left: Cell) Cell {
-    return .{ .kind = .wide_right, .style = left.style, .flags = left.flags };
-}
-
-/// A terminal screen backed bya ring-buffer cell grid with scrollback history.
-///
-/// [Memory Layout]
-///
-/// Cells are stored in a flat heap-allocated array of `ring_rows * max_cols`
-/// elements, where `ring_rows` is `max_rows + max_scrollback` rounded up to
-/// a power of two. The array is treated as a circular buffer: logical row
-/// `r` maps to physical index `(scroll_offset + r) % ring_rows`.
-///
-/// [Scrollback]
-///
-/// On a full-screen scroll-up, `scroll_offset` advances by one in O(1).
-/// The row that "falls off" the top is preserved in the ring buffer as
-/// scrollback history. `scrollback_used` tracks how many lines are available
-/// (capped at `max_scrollback`)..
-///
-/// `viewport_offset = 0` -> live view (normal terminal operation).
-/// `viewport_offset = N` -> user has scrolled back N lines.
-///
-/// [Comptime Parameters]
-/// `max_rows` / `max_cols` are capacity bounds. The actual active dimensions
-/// are `active_rows` / `active_cols` (runtime, <= the comptime maxima).
-///
-/// `max_cols` stays comptime because the atlas glyph cache and the renderer
-/// instance buffer are sized from it at compile time.
-///
-/// Maximum scrollback lines retained above the active area.
-/// Increase this for more history; each line costs `max_cols * @sizeOf(Cell)` bytes.
+/// A terminal screen backed by a power-of-two ring buffer of cells with
+/// optional scrollback history, sized by `option`.
 pub fn Screen(comptime option: Option) type {
+    // `max_rows` and `max_cols` are compile-time capacity bounds (`active_rows` /
+    // `active_cols` hold the runtime dimensions <= them); `max_cols` stays comptime
+    // because the atlas cache and renderer instance buffer size from it.
+    // `ring_rows` rounds `max_rows + max_scrollback` up to a power of two; each row
+    // costs `max_cols * @sizeOf(Cell)` bytes and logical `r` maps via `(scroll_offset + r) & ring_mask`.
     const max_rows = option.max_rows;
     const max_cols = option.max_cols;
     const tab_width = option.tab_width;
@@ -330,10 +314,10 @@ pub fn Screen(comptime option: Option) type {
         /// anchors caputred earlier.
         total_lines_scrolled: i64 = 0,
 
-        // FIXME
-        // For max_scrollback = 10_000 and max_cols = 500:
-        // So, `10_500 rows × 500 cols × @sizeOf(Cell) bytes = ?`
-        pub fn init(gpa: std.mem.Allocator) !Self {
+        // FIXME: large configs such as max_scrollback = 10_000 and max_cols = 500
+        // allocate huge cell rings (`rows * cols * @sizeOf(Cell)`).
+        /// Allocates cell rings, `row_map`, and style/grapheme tables. Release with `deinit`.
+        pub fn init(gpa: std.mem.Allocator) std.mem.Allocator.Error!Self {
             const cells = try gpa.alignedAlloc(Cell, .@"64", ring_rows * max_cols);
             @memset(cells, Cell{});
             errdefer gpa.free(cells);
@@ -363,10 +347,11 @@ pub fn Screen(comptime option: Option) type {
                 .grapheme_arena = std.heap.ArenaAllocator.init(gpa),
                 .grapheme_table = .init(gpa),
                 .grapheme_reverse = .init(gpa),
-                .next_grapheme_id = 0x110000,
+                .next_grapheme_id = first_grapheme_id,
             };
         }
 
+        /// Frees all cell rings, `row_map`, and style/grapheme tables allocated by `init`.
         pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
             allocator.free(self.cells);
             if (comptime is_scrollback_used) allocator.free(self.scratch_cells);
@@ -407,6 +392,7 @@ pub fn Screen(comptime option: Option) type {
             screen: *const Self,
             index: usize = 0,
 
+            /// Returns the next live row slice, or null when exhausted.
             pub fn next(it: *LiveRows) ?[]const Cell {
                 const s = it.screen;
                 const history: usize = if (comptime is_scrollback_used) s.scrollback_used else 0;
@@ -556,6 +542,7 @@ pub fn Screen(comptime option: Option) type {
             self.cursor.charset.setSlot(slot, cs);
         }
 
+        /// Sets the line-width/height attribute (`ESC # 3..6`) for the cursor row.
         pub fn setLineAttr(self: *Self, attr: LineAttr) void {
             const phys = self.physRow(self.cursor.row);
             self.line_attrs[phys] = attr;
@@ -580,7 +567,7 @@ pub fn Screen(comptime option: Option) type {
 
         /// Called by when Terminal.flushGrapheme() for multi-codepoint cluster (ZWJ sequences).
         /// Interns the sequences, assigns a synthetic ID > 0x10FFFF, stores it in the cell.
-        pub fn putGrapheme(self: *Self, cps: []const u21, kind: CellKind) !void {
+        pub fn putGrapheme(self: *Self, cps: []const u21, kind: CellKind) std.mem.Allocator.Error!void {
             const grapheme_id = try self.internGrapheme(cps);
             const stored_kind: CellKind = switch (kind) {
                 .wide_left => .grapheme_wide,
@@ -588,6 +575,10 @@ pub fn Screen(comptime option: Option) type {
             };
             self.writeChar(self.penCell(stored_kind, grapheme_id));
         }
+
+        /// First synthetic ID assigned to interned grapheme clusters (one above
+        /// Unicode's U+10FFFF maximum).
+        const first_grapheme_id: u32 = 0x110000;
 
         /// Smallest intern table size at which compaction runs.
         pub const grapheme_compact_min: u32 = 4096;
@@ -604,7 +595,7 @@ pub fn Screen(comptime option: Option) type {
         ///
         /// Table growth is bounded by `compactGraphemes`, which runs here
         /// before a new entry once the table reaches `grapheme_compact_at`.
-        fn internGrapheme(self: *Self, cps: []const u21) !u32 {
+        fn internGrapheme(self: *Self, cps: []const u21) std.mem.Allocator.Error!u32 {
             if (self.grapheme_table.count() >= self.grapheme_compact_at) self.compactGraphemes();
             const gop = try self.grapheme_reverse.getOrPut(graphemeKey(cps));
             if (gop.found_existing) {
@@ -636,7 +627,7 @@ pub fn Screen(comptime option: Option) type {
             self.grapheme_compact_at = @max(grapheme_compact_min, self.grapheme_table.count() *| 2);
         }
 
-        fn rebuildGraphemes(self: *Self) !void {
+        fn rebuildGraphemes(self: *Self) std.mem.Allocator.Error!void {
             const gpa = self.grapheme_table.allocator;
             var arena = std.heap.ArenaAllocator.init(self.grapheme_arena.child_allocator);
             errdefer arena.deinit();
@@ -665,7 +656,7 @@ pub fn Screen(comptime option: Option) type {
         }
 
         /// Stores a copy of `cps` under a fresh ID, without a reverse entry.
-        fn addGrapheme(self: *Self, cps: []const u21) !u32 {
+        fn addGrapheme(self: *Self, cps: []const u21) std.mem.Allocator.Error!u32 {
             const owned = try self.grapheme_arena.allocator().dupe(u21, cps);
             const id = self.next_grapheme_id;
             try self.grapheme_table.put(id, owned);
@@ -717,6 +708,7 @@ pub fn Screen(comptime option: Option) type {
             _ = self.styles.sweep(&in_use);
         }
 
+        /// Returns the interned code point sequence for synthetic `id`, or null if absent.
         pub fn getGrapheme(self: *const Self, id: u32) ?[]const u21 {
             std.debug.assert(id > 0x10FFFF); // synthetic IDs only
             return self.grapheme_table.get(id);
@@ -761,13 +753,15 @@ pub fn Screen(comptime option: Option) type {
                     @memcpy(buf[0..cps.len], cps);
                     len = cps.len;
                 },
-                .empty, .wide_right, .shaped => return,
+                .empty, .wide_right => return,
             }
-            if (len >= buf.len) return;
             buf[len] = cp;
             len += 1;
 
-            const id = self.internGrapheme(buf[0..len]) catch return;
+            const id = self.internGrapheme(buf[0..len]) catch |err| {
+                log.warn("attachCombining failed: {}", .{err});
+                return;
+            };
             prev.kind = if (prev.kind.isWideLeft()) .grapheme_wide else .grapheme;
             prev.codepoint = id;
             self.markDirty(self.cursor.row);
@@ -793,9 +787,6 @@ pub fn Screen(comptime option: Option) type {
                 // by returning a sentinel the caller special-cases, OR simply return
                 // the same class as blank so it never breaks a run on its own.
                 .wide_right => fallback,
-
-                // FIXME! Not yet implemented upstream, same gap as copySelectionToClipboard.
-                .shaped => fallback,
             };
         }
 
@@ -877,6 +868,7 @@ pub fn Screen(comptime option: Option) type {
             return self.cursor.charset.translate(cp, self.uk_pound);
         }
 
+        /// Writes a slice of 7-bit printable ASCII bytes, taking the SIMD bulk path when possible.
         pub inline fn putChars(self: *Self, bytes: []const u8) void {
             // Bulk path only valid when every byte maps 1:1 to a narrow ASCII cell:
             // charset identity, no pending single-shift, no insert-mode shifting.
@@ -1001,7 +993,7 @@ pub fn Screen(comptime option: Option) type {
             }
         }
 
-        // Called when width is already known (avoids wcwidth binary search)
+        /// Writes a printable code point whose `kind` (narrow or wide_left) is already known.
         pub inline fn putCharKind(self: *Self, cp: u21, kind: CellKind) void {
             const translated = self.translate(cp);
             // wc == 0 (combining) is impossible for CJK/ASCII callers, skip that branch
@@ -1107,7 +1099,7 @@ pub fn Screen(comptime option: Option) type {
                 // Re-fetch row_mut after potential scroll (ring buffer may have advanced).
                 const new_row_mut = self.rowMutBase(self.cursor.row, false);
                 new_row_mut[0] = cell;
-                new_row_mut[1] = rightHalf(cell);
+                new_row_mut[1] = cell.rightHalf();
                 // Column 1 may have held the left half of a pair; its right
                 // half at column 2 is now alone. A one- or two-column row
                 // has no column 2 (on one column, 1 is the parked half).
@@ -1148,7 +1140,7 @@ pub fn Screen(comptime option: Option) type {
             self.dirty_rows.set(self.cursor.row);
 
             if (is_wide) {
-                row_mut[cursor_col + 1] = rightHalf(cell);
+                row_mut[cursor_col + 1] = cell.rightHalf();
             }
             if (self.mode.insert) {
                 const cells = row_mut[0..self.active_cols];
@@ -1767,16 +1759,14 @@ pub fn Screen(comptime option: Option) type {
         /// Erase display (ED / CSI Ps J).
         ///
         ///   0 = cursor to end of screen
-        ///   1 = start of screen to cursor
-        ///   2 = entire screen (cursor stays)
-        ///   3 = erase scrollback (xterm extension, CSI 3 J)
+        /// Erase display (`ED`, CSI Ps J).
         ///
-        /// Clears `wrap_pending`.
-        pub fn eraseDisplay(self: *Self, mode: u16) void {
+        /// Clears `wrap_pending` for active-area erases (all scopes except `scrollback`).
+        pub fn eraseDisplay(self: *Self, mode: EraseDisplay) void {
             const blank = self.blankCell();
 
             switch (mode) {
-                0 => { // cursor to end
+                .to_end => {
                     // Cursor row: partial erase; keep its line_attr.
                     const cells = self.rowMut(self.cursor.row)[0..self.active_cols];
                     @memset(cells[self.cursor.col..], blank);
@@ -1789,7 +1779,7 @@ pub fn Screen(comptime option: Option) type {
                         self.line_attrs[self.physRow(r)] = .normal;
                     }
                 },
-                1 => { // start to cursor
+                .to_start => {
                     // Rows above cursor: fully erased; reset line_attrs.
                     var r: usize = 0;
                     while (r < self.cursor.row) : (r += 1) {
@@ -1802,7 +1792,7 @@ pub fn Screen(comptime option: Option) type {
                     @memset(cells[0 .. @as(usize, self.cursor.col) + 1], blank);
                     self.repairWideBoundary(cells, @as(usize, self.cursor.col) + 1);
                 },
-                2 => {
+                .all => {
                     // Entire active area erased; reset ALL line_attrs.
                     self.dirty_rows = .full;
                     var r: usize = 0;
@@ -1814,7 +1804,7 @@ pub fn Screen(comptime option: Option) type {
                     // The intern table is not reset here: scrollback cells
                     // still reference it. `compactGraphemes` reclaims it.
                 },
-                3 => {
+                .scrollback => {
                     // Erase scrollback history without touching the active area.
                     // Both screens share one type, so this clears the alternate
                     // screen's scrollback too when it is active.
@@ -1825,43 +1815,37 @@ pub fn Screen(comptime option: Option) type {
                         // No line_attr reset, scrollback rows have no line attrs
                     }
                 },
-                else => return, // Unknown mode; no state change, no bump.
             }
 
-            if (mode != 3) self.cursor.wrap_pending = false;
+            if (mode != .scrollback) self.cursor.wrap_pending = false;
             // Content was dropped, so a full style table may free a lot.
-            if (mode >= 2) self.styles.requestSweep();
+            if (mode == .all or mode == .scrollback) self.styles.requestSweep();
             self.bump();
         }
 
-        /// Erase line (EL / CSI Ps K).
+        /// Erase line (`EL`, CSI Ps K).
         ///
-        ///   0 = cursor to end of line   (most common — used by shells on every prompt)
-        ///   1 = start of line to cursor (inclusive)
-        ///   2 = entire line
-        ///
-        /// The cursor position is not changed by any mode.
+        /// The cursor position is not changed by any scope.
         /// Does not interact with scrollback. Clears `wrap_pending`.
-        pub fn eraseLine(self: *Self, mode: u16) void {
+        pub fn eraseLine(self: *Self, mode: EraseLine) void {
             const blank = self.blankCell();
             const r = @as(usize, self.cursor.row);
             const c = @as(usize, self.cursor.col);
             switch (mode) {
-                0 => { // partial; keep line_attr
+                .to_end => { // partial; keep line_attr
                     const cells = self.rowMut(r)[0..self.active_cols];
                     @memset(cells[c..], blank);
                     self.repairWideBoundary(cells, c);
                 },
-                1 => { // partial; keep line_attr
+                .to_start => { // partial; keep line_attr
                     const cells = self.rowMut(r)[0..self.active_cols];
                     @memset(cells[0 .. c + 1], blank);
                     self.repairWideBoundary(cells, c + 1);
                 },
-                2 => { // full erase; reset line_attr
+                .all => { // full erase; reset line_attr
                     @memset(self.rowMut(r)[0..self.active_cols], blank);
                     self.line_attrs[self.physRow(r)] = .normal;
                 },
-                else => return, // Unknown mode; no state change, no bump.
             }
             self.cursor.wrap_pending = false;
             self.bump();
@@ -1957,7 +1941,7 @@ pub fn Screen(comptime option: Option) type {
                 if (new_cols > old_cols) {
                     const parked = old_cols > 0 and cells[old_cols - 1].kind.isWideLeft();
                     @memset(cells[old_cols..new_cols], Cell{});
-                    if (parked) cells[old_cols] = rightHalf(cells[old_cols - 1]);
+                    if (parked) cells[old_cols] = cells[old_cols - 1].rightHalf();
                 }
                 self.repairWideBoundary(cells[0..new_cols], new_cols);
             }
@@ -2122,7 +2106,7 @@ pub fn Screen(comptime option: Option) type {
                     if (is_wide) {
                         right_half_row = dst_row;
                         right_half_col = dst_col + 1;
-                        scratch[(dst_row & ring_mask) * max_cols + dst_col + 1] = rightHalf(c);
+                        scratch[(dst_row & ring_mask) * max_cols + dst_col + 1] = c.rightHalf();
                     }
 
                     dst_col += span;
@@ -2215,6 +2199,7 @@ pub fn Screen(comptime option: Option) type {
             self.bump();
         }
 
+        /// Restores hardware tab stops to every `tab_width` columns.
         pub fn resetTabStops(self: *Self) void {
             self.tab_stops = comptime defaultTabStops();
         }
@@ -2234,6 +2219,7 @@ pub fn Screen(comptime option: Option) type {
             };
         }
 
+        /// True when any rows have scrolled into scrollback history.
         pub fn scrollbackIsUsed(self: *const Self) bool {
             comptime requireScrollback();
             return self.scrollback_used > 0;
@@ -2303,6 +2289,7 @@ pub fn Screen(comptime option: Option) type {
             return true;
         }
 
+        /// True when the viewport is pinned to `position` (`.top` or `.bottom`).
         pub inline fn isAt(self: *const Self, comptime position: ViewportPosition) bool {
             comptime requireScrollback();
             return switch (position) {
@@ -2335,6 +2322,7 @@ pub fn Screen(comptime option: Option) type {
             self.cursor.wrap_pending = false;
         }
 
+        /// Moves cursor to 0-based `(row_pos, col_pos)`, respecting origin mode (`DECOM`) and clearing `wrap_pending`.
         pub fn cursorPos(self: *Self, row_pos: usize, col_pos: usize) void {
             // in origin mode, cursorPos(0, 0) moves to scroll_topm not row 0.
             // The effectiveTop() called handles this. top + row where top = scroll_top mode is on.
@@ -2365,8 +2353,7 @@ pub fn Screen(comptime option: Option) type {
             self.markDirty(self.cursor.row);
         }
 
-        // cursorRow: move to absolute row (0-based), clamp to active_rows-1
-        // Does NOT respect DECOM — VPA is always absolute.
+        /// Moves cursor to absolute 0-based row `n` (`VPA`, ignores `DECOM`), clamped to `active_rows - 1`.
         pub fn cursorRow(self: *Self, n: u16) void {
             self.setCursorRow(@min(n, self.active_rows - 1));
             self.bump();
@@ -2862,16 +2849,13 @@ pub fn Screen(comptime option: Option) type {
 
         /// Clear tab stops (TBC / CSI Ps g).
         ///
-        ///    0 = clear the tab stop at the current cursor column.
-        ///    3 = clear all tab stops (reset to empty).
+        /// Clear Tab Stop (`TBC`, CSI Ps g).
         ///
-        /// Other values are silently ignored. Tab stops do not affect visible
-        /// cell content, no bump is emmited.
-        pub fn clearTabStop(self: *Self, mode: u16) void {
+        /// Tab stops do not affect visible cell content, so no bump is emitted.
+        pub fn clearTabStop(self: *Self, mode: TabClear) void {
             switch (mode) {
-                0 => self.tab_stops.unset(@as(usize, self.cursor.col)),
-                3 => self.tab_stops = .empty,
-                else => {},
+                .at_cursor => self.tab_stops.unset(@as(usize, self.cursor.col)),
+                .all => self.tab_stops = .empty,
             }
         }
 
@@ -2957,7 +2941,7 @@ pub fn Screen(comptime option: Option) type {
 
             self.grapheme_table.clearRetainingCapacity();
             self.grapheme_reverse.clearRetainingCapacity();
-            self.next_grapheme_id = 0x110000;
+            self.next_grapheme_id = first_grapheme_id;
             self.grapheme_compact_at = grapheme_compact_min;
             _ = self.grapheme_arena.reset(.retain_capacity);
 
@@ -3013,7 +2997,7 @@ pub fn Screen(comptime option: Option) type {
             _ = self.grapheme_arena.reset(.retain_capacity);
             self.grapheme_table.clearRetainingCapacity();
             self.grapheme_reverse.clearRetainingCapacity();
-            self.next_grapheme_id = 0x110000;
+            self.next_grapheme_id = first_grapheme_id;
             self.grapheme_compact_at = grapheme_compact_min;
 
             if (comptime is_scrollback_used) {

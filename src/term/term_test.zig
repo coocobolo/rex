@@ -315,7 +315,7 @@ test "reply: a mouse report queues after pending replies" {
     defer t.deinit(alloc);
 
     t.feed("\x1b[?1000h\x1b[?1006h\x1b[6n");
-    t.sendMouse(2, 3, 0, 0, true);
+    t.sendMouse(2, 3, .{ .press = .left }, .none);
     try testing.expectEqualStrings("\x1b[1;1R\x1b[<0;3;4M", t.response.slice());
 }
 
@@ -325,8 +325,8 @@ test "mouse 1000: normal tracking reports press and release with modifiers" {
 
     t.feed("\x1b[?1000h");
     try testing.expectEqual(.normal, t.mode.mouse_tracking);
-    t.sendMouse(0, 0, 0, 4, true); // shift + left press
-    t.sendMouse(0, 0, 0, 4, false);
+    t.sendMouse(0, 0, .{ .press = .left }, .{ .shift = true }); // shift + left press
+    t.sendMouse(0, 0, .{ .release = .left }, .{ .shift = true });
     try testing.expectEqualStrings("\x1b[M\x24!!\x1b[M\x23!!", t.response.slice());
 }
 
@@ -336,7 +336,7 @@ test "mouse 1000: wheel is reported" {
 
     t.feed("\x1b[?1000h\x1b[?1006h");
     try testing.expect(t.mode.mouse_tracking.reportsWheel());
-    t.sendMouse(1, 1, 64, 0, true);
+    t.sendMouse(1, 1, .{ .wheel = .up }, .none);
     try testing.expectEqualStrings("\x1b[<64;2;2M", t.response.slice());
 }
 
@@ -347,9 +347,9 @@ test "mouse 9: x10 tracking reports presses of buttons 0 to 2 only, without modi
     t.feed("\x1b[?9h");
     try testing.expectEqual(.x10, t.mode.mouse_tracking);
     try testing.expect(!t.mode.mouse_tracking.reportsWheel());
-    t.sendMouse(0, 0, 2, 16, true); // ctrl + right press
-    t.sendMouse(0, 0, 2, 16, false);
-    t.sendMouse(0, 0, 64, 0, true);
+    t.sendMouse(0, 0, .{ .press = .right }, .{ .ctrl = true }); // ctrl + right press
+    t.sendMouse(0, 0, .{ .release = .right }, .{ .ctrl = true });
+    t.sendMouse(0, 0, .{ .wheel = .up }, .none);
     try testing.expectEqualStrings("\x1b[M\x22!!", t.response.slice());
 }
 
@@ -371,7 +371,7 @@ test "mouse tracking: resetting any mode turns tracking off, as xterm does" {
 
     t.feed("\x1b[?1002h\x1b[?1000l");
     try testing.expectEqual(.off, t.mode.mouse_tracking);
-    t.sendMouse(0, 0, 0, 0, true);
+    t.sendMouse(0, 0, .{ .press = .left }, .none);
     try testing.expect(t.response.isEmpty());
 }
 
@@ -392,11 +392,11 @@ test "mouse 1002: a drag reports the held button plus 32" {
     defer t.deinit(alloc);
 
     t.feed("\x1b[?1002h\x1b[?1006h");
-    t.sendMouseMotion(1, 1, null, 0);
+    t.sendMouseMotion(1, 1, null, .none);
     try testing.expect(t.response.isEmpty());
-    t.sendMouseMotion(1, 1, .left, 0);
-    t.sendMouseMotion(2, 1, .middle, 0);
-    t.sendMouseMotion(3, 1, .right, 4);
+    t.sendMouseMotion(1, 1, .left, .none);
+    t.sendMouseMotion(2, 1, .middle, .none);
+    t.sendMouseMotion(3, 1, .right, .{ .shift = true });
     try testing.expectEqualStrings(
         "\x1b[<32;2;2M\x1b[<33;3;2M\x1b[<38;4;2M",
         t.response.slice(),
@@ -408,8 +408,8 @@ test "mouse 1003: motion with no button held reports 3 plus 32" {
     defer t.deinit(alloc);
 
     t.feed("\x1b[?1003h");
-    t.sendMouseMotion(0, 0, null, 0);
-    t.sendMouseMotion(0, 0, .right, 0);
+    t.sendMouseMotion(0, 0, null, .none);
+    t.sendMouseMotion(0, 0, .right, .none);
     try testing.expectEqualStrings("\x1b[M\x43!!\x1b[M\x42!!", t.response.slice());
 }
 
@@ -418,7 +418,7 @@ test "mouse 1000: motion is not reported" {
     defer t.deinit(alloc);
 
     t.feed("\x1b[?1000h");
-    t.sendMouseMotion(0, 0, .left, 0);
+    t.sendMouseMotion(0, 0, .left, .none);
     try testing.expect(t.response.isEmpty());
 }
 

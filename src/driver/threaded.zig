@@ -28,6 +28,7 @@ const Option = term.Option;
 const Theme = term.Theme;
 const Cell = term.cell.Cell;
 const MouseButton = term.term.MouseButton;
+const MouseInput = term.term.MouseInput;
 const HeldButtons = term.term.HeldButtons;
 
 const termio = @import("../termio/root.zig");
@@ -495,19 +496,23 @@ pub fn Driver(comptime option: Option) type {
                     }
                 },
                 .mouse_button => |mev| {
-                    terminal.sendMouse(mev.col, mev.row, mev.button, mev.mods, mev.press);
-                    self.drainRepliesToPty(terminal, reply_buf, out);
+                    if (std.enums.fromInt(MouseButton, mev.button)) |button| {
+                        const input: MouseInput = if (mev.press) .{ .press = button } else .{ .release = button };
+                        terminal.sendMouse(mev.col, mev.row, input, .fromByte(mev.mods));
+                        self.drainRepliesToPty(terminal, reply_buf, out);
+                    }
                 },
                 .mouse_motion => |mev| {
-                    const held_button: ?MouseButton = if (mev.button) |b| @enumFromInt(b) else null;
-                    terminal.sendMouseMotion(mev.col, mev.row, held_button, mev.mods);
+                    const held_button: ?MouseButton = if (mev.button) |b| std.enums.fromInt(MouseButton, b) else null;
+                    terminal.sendMouseMotion(mev.col, mev.row, held_button, .fromByte(mev.mods));
                     self.drainRepliesToPty(terminal, reply_buf, out);
                 },
                 .mouse_scroll => |mev| {
                     if (terminal.mode.mouse_tracking.reportsWheel()) {
+                        const dir: MouseInput.Wheel = if (mev.button == 64) .up else .down;
                         var i: u16 = 0;
                         while (i < mev.steps) : (i += 1) {
-                            terminal.sendMouse(mev.col, mev.row, mev.button, 0, true);
+                            terminal.sendMouse(mev.col, mev.row, .{ .wheel = dir }, .none);
                             self.drainRepliesToPty(terminal, reply_buf, out);
                         }
                     } else if (terminal.active_buffer == .alternate and terminal.mode.alt_scroll) {

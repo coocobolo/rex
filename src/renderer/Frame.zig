@@ -1016,7 +1016,7 @@ fn cellGlyph(
 ) ?Atlas.Metric {
     const face = faceKindFromCell(cell.flags);
     const span: Rasterizer.Span = switch (cell.kind) {
-        .empty, .wide_right, .shaped => return null, // shaped needs HarfBuzz
+        .empty, .wide_right => return null,
         .narrow, .grapheme => .single,
         .wide_left, .grapheme_wide => .double,
     };

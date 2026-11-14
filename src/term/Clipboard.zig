@@ -23,6 +23,7 @@ pub const Targets = packed struct(u8) {
     primary: bool = false,
     _pad: u6 = 0,
 
+    /// True when either the clipboard or primary selection target is selected.
     pub fn any(self: Targets) bool {
         return self.clipboard or self.primary;
     }
@@ -76,6 +77,7 @@ pub fn init(gpa: std.mem.Allocator, max_len: usize) std.mem.Allocator.Error!Clip
     return .{ .buf = try gpa.alloc(u8, max_len) };
 }
 
+/// Frees the OSC 52 staging buffer allocated by `init`.
 pub fn deinit(self: *Clipboard, gpa: std.mem.Allocator) void {
     gpa.free(self.buf);
     self.* = undefined;

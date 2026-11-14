@@ -289,14 +289,17 @@ pub const Mapping = packed struct(u32) {
         }
     }
 
+    /// True when a single-shift (SS2/SS3) is pending for the next graphic character.
     pub fn hasSingleShift(self: Mapping) bool {
         return self.ss != no_shift;
     }
 
+    /// Clears any pending single-shift without changing `GL` or `GR`.
     pub fn clearSingleShift(self: *Mapping) void {
         self.ss = no_shift;
     }
 
+    /// True when no single-shift is pending and `GL` points to an ASCII slot.
     pub fn isIdentity(self: Mapping) bool {
         // No single-shift pending AND the active GL slot is ASCII
         return self.ss == no_shift and self.slot(self.gl) == .ascii;

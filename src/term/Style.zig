@@ -32,18 +32,22 @@ comptime {
     std.debug.assert(@alignOf(Style) == 4);
 }
 
+/// Encodes foreground, background, and underline colors into a `Style`.
 pub fn init(fg: Color, bg: Color, underline: Color) Style {
     return .{ .fg = encode(fg), .bg = encode(bg), .underline = encode(underline) };
 }
 
+/// True when all three color keys match `other`.
 pub fn eql(self: Style, other: Style) bool {
     return self.fg == other.fg and self.bg == other.bg and self.underline == other.underline;
 }
 
+/// True when all three colors use their terminal defaults.
 pub fn isDefault(self: Style) bool {
     return self.eql(default);
 }
 
+/// Encodes a `Color` into its 32-bit packed `Key` representation.
 pub fn encode(color: Color) Key {
     return switch (color) {
         .default => default_key,
@@ -141,6 +145,7 @@ pub const Table = struct {
     /// does not change it. Wraps.
     generation: u32 = 0,
 
+    /// Allocates the style entry table, hash index, and free list. Release with `deinit`.
     pub fn init(gpa: Allocator) Allocator.Error!Table {
         const entries = try gpa.create([capacity]Style);
         errdefer gpa.destroy(entries);
@@ -152,6 +157,7 @@ pub const Table = struct {
         return .{ .entries = entries, .index = index, .free = free };
     }
 
+    /// Frees the entry table, hash index, and free list allocated by `init`.
     pub fn deinit(self: *Table, gpa: Allocator) void {
         gpa.destroy(self.entries);
         gpa.destroy(self.index);

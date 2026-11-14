@@ -1,5 +1,13 @@
 //! Terminal state: both screens, modes, the parser and the reply queue.
 //! It does no I/O and must not import renderer/.
+//!
+//! Host input policy: unrecognized escape/CSI/OSC/DCS sequences, invalid
+//! or out-of-range parameters, malformed UTF-8, standalone combining marks,
+//! and oversized OSC/DCS strings or reply-queue overflows are ignored or
+//! dropped deterministically without raising errors. Allocation failures are
+//! not host input: allocating public APIs return `Allocator.Error`, and
+//! parser-driven paths (`InputEngine`, `Screen.attachCombining`) log and
+//! fall back rather than dropping silently.
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -113,6 +121,7 @@ pub const DecModeReport = enum(u3) {
     permanently_set = 3,
     permanently_reset = 4,
 
+    /// Maps a boolean mode flag to its `.set` / `.reset` DECRPM report value.
     pub fn of(is_set: bool) DecModeReport {
         return if (is_set) .set else .reset;
     }
@@ -198,6 +207,42 @@ pub const MouseButton = enum(u2) {
     right = 2,
 };
 
+/// Modifier keys encoded into xterm mouse reports (Shift=4, Alt=8, Ctrl=16).
+pub const MouseModifiers = packed struct(u3) {
+    shift: bool = false,
+    alt: bool = false,
+    ctrl: bool = false,
+
+    pub const none: MouseModifiers = .{};
+
+    /// Encodes as the xterm button-modifier bits (bits 2..4).
+    pub fn bits(self: MouseModifiers) u8 {
+        return @as(u8, @as(u3, @bitCast(self))) << 2;
+    }
+
+    /// Decodes from a raw xterm modifier byte (`shift=4, alt=8, ctrl=16`).
+    pub fn fromByte(byte: u8) MouseModifiers {
+        return @bitCast(@as(u3, @truncate(byte >> 2)));
+    }
+};
+
+/// A host-reportable mouse event: button press or release, motion, or wheel step.
+pub const MouseInput = union(enum) {
+    press: MouseButton,
+    release: MouseButton,
+    motion: ?MouseButton,
+    wheel: Wheel,
+
+    /// Direction of a mouse wheel scroll step.
+    pub const Wheel = enum(u1) { up = 0, down = 1 };
+};
+
+/// ANSI modes (`SM`/`RM`, CSI Ps h/l) implemented by `Terminal`.
+pub const AnsiMode = enum(u16) {
+    insert = 4,
+    linefeed = 20,
+};
+
 /// The mouse buttons held down, so motion reports can name the one
 /// being dragged.
 pub const HeldButtons = struct {
@@ -273,7 +318,8 @@ pub const Option = struct {
     /// fills a power of two.
     pub fn optimized(max_rows: usize, max_cols: usize, min_scrollback: usize) Option {
         const target_logical = max_rows + min_scrollback;
-        const ring_rows = std.math.ceilPowerOfTwo(usize, target_logical) catch target_logical;
+        // A screen ring exceeding the largest `usize` power of two cannot fit in memory.
+        const ring_rows = std.math.ceilPowerOfTwo(usize, target_logical) catch unreachable;
 
         return .{
             .max_rows = max_rows,
@@ -494,6 +540,7 @@ pub const TermName = struct {
         return result;
     }
 
+    /// Returns the stored TERM name bytes.
     pub fn slice(self: *const TermName) []const u8 {
         return self.buf[0..self.len];
     }
@@ -591,7 +638,7 @@ const termcap_entries = blk: {
     break :blk entries;
 };
 
-/// The longest capability name, which sizes `parseTermcapName`'s buffer.
+/// The longest capability name, which sizes `TermcapName.parse`'s buffer.
 const max_termcap_name_len = blk: {
     var max: usize = 0;
     for (termcap_entries) |entry| max = @max(max, entry[0].len);
@@ -607,20 +654,23 @@ const termcap_names: std.StaticStringMap(Termcap) = .initComptime(termcap_entrie
 /// capability it names. `cap` is null when the digits are odd in number,
 /// the run ends on something other than `;` or the end of the request,
 /// or the name is not one Rex answers.
-const TermcapName = struct { hex: []const u8, cap: ?Termcap };
+const TermcapName = struct {
+    hex: []const u8,
+    cap: ?Termcap,
 
-fn parseTermcapName(request: []const u8) TermcapName {
-    var end: usize = 0;
-    while (end < request.len and std.ascii.isHex(request[end])) end += 1;
-    const hex = request[0..end];
-    const terminated = end == request.len or request[end] == ';';
-    var buf: [max_termcap_name_len]u8 = undefined;
-    if (!terminated or hex.len == 0 or hex.len % 2 != 0 or hex.len / 2 > buf.len) {
-        return .{ .hex = hex, .cap = null };
+    fn parse(request: []const u8) TermcapName {
+        var end: usize = 0;
+        while (end < request.len and std.ascii.isHex(request[end])) end += 1;
+        const hex = request[0..end];
+        const terminated = end == request.len or request[end] == ';';
+        var buf: [max_termcap_name_len]u8 = undefined;
+        if (!terminated or hex.len == 0 or hex.len % 2 != 0 or hex.len / 2 > buf.len) {
+            return .{ .hex = hex, .cap = null };
+        }
+        const name = std.fmt.hexToBytes(&buf, hex) catch unreachable; // even, hex, fits
+        return .{ .hex = hex, .cap = termcap_names.get(name) };
     }
-    const name = std.fmt.hexToBytes(&buf, hex) catch unreachable; // even, hex, fits
-    return .{ .hex = hex, .cap = termcap_names.get(name) };
-}
+};
 
 /// A terminal: feed it pty output, then read `active()` and `events`.
 ///
@@ -692,7 +742,7 @@ pub fn Terminal(comptime option: Option) type {
 
         /// Allocates both screens and the clipboard buffer. Release with
         /// `deinit`.
-        pub fn init(alloc: std.mem.Allocator) !Self {
+        pub fn init(alloc: std.mem.Allocator) std.mem.Allocator.Error!Self {
             var primary: ScreenType = try .init(alloc);
             errdefer primary.deinit(alloc);
             var alternate: ScreenType = try .init(alloc);
@@ -913,6 +963,7 @@ pub fn Terminal(comptime option: Option) type {
 
         // Parser callbacks, from here to `unhook`.
 
+        /// Parser callback: prints a single byte (ASCII or 8-bit GR graphic).
         pub inline fn printByte(self: *Self, byte: u8) void {
             // 0xA0..0xFF is an 8-bit GR graphic. UTF-8 never reaches here
             // with a decoded codepoint; those go through putChar.
@@ -924,28 +975,34 @@ pub fn Terminal(comptime option: Option) type {
             }
         }
 
+        /// Parser callback: prints a run of 7-bit printable ASCII bytes.
         pub inline fn print(self: *Self, bytes: []const u8) void {
             self.active().putChars(bytes);
         }
 
+        /// Parser callback: dispatches a C0/DEL or C1 control byte.
         pub inline fn execute(self: *Self, byte: u8) void {
             dispatcher.C0.dispatch(option, self, byte);
         }
 
+        /// Parser callback: dispatches a completed ESC sequence.
         pub inline fn escDispatch(self: *Self, final: u8, intermediates: []const u8) void {
             dispatcher.Escape.dispatch(option, self, final, intermediates);
         }
 
+        /// Parser callback: dispatches a completed CSI sequence.
         pub inline fn csiDispatch(self: *Self, final: u8, intermediates: []const u8, params: []const Parameter) void {
             dispatcher.Csi.dispatch(option, self, final, intermediates, params);
         }
 
+        /// Parser callback: begins collecting an OSC string.
         pub fn oscStart(self: *Self) void {
             self.osc_mode = .collect;
             self.osc_len = 0;
             self.osc_overflow = false;
         }
 
+        /// Parser callback: appends one payload byte to the active OSC string.
         pub fn oscPut(self: *Self, byte: u8) void {
             switch (self.osc_mode) {
                 .clipboard => return self.clipboard.put(&.{byte}),
@@ -970,6 +1027,7 @@ pub fn Terminal(comptime option: Option) type {
         /// OSC 52 data goes to the clipboard decoder instead of `osc_buf`.
         const osc52_prefix = "52;";
 
+        /// Parser callback: appends a byte slice to the active OSC string.
         pub fn oscPutSlice(self: *Self, bytes: []const u8) void {
             var rest = bytes;
             // The first bytes decide whether this is OSC 52.
@@ -996,6 +1054,7 @@ pub fn Terminal(comptime option: Option) type {
             if (n < bytes.len) self.osc_overflow = true;
         }
 
+        /// Parser callback: finalizes and dispatches the collected OSC string.
         pub fn oscEnd(self: *Self) void {
             switch (self.osc_mode) {
                 .clipboard => {
@@ -1025,6 +1084,7 @@ pub fn Terminal(comptime option: Option) type {
             dispatcher.Osc.dispatch(option, self, code, payload);
         }
 
+        /// Parser callback: starts a DCS string identified by intermediates and final byte.
         pub fn hook(self: *Self, final: u8, intermediates: []const u8, params: []const Parameter) void {
             _ = params;
             // Identify the DCS type by intermediate + final
@@ -1042,6 +1102,7 @@ pub fn Terminal(comptime option: Option) type {
             self.dcs_overflow = false;
         }
 
+        /// Parser callback: appends one data byte to the active DCS string.
         pub fn dcsPut(self: *Self, byte: u8) void {
             if (self.dcs_overflow) return;
             if (self.dcs_len == self.dcs_buf.len) {
@@ -1053,6 +1114,7 @@ pub fn Terminal(comptime option: Option) type {
             self.dcs_len += 1;
         }
 
+        /// Parser callback: appends a data slice to the active DCS string.
         pub fn dcsPutSlice(self: *Self, bytes: []const u8) void {
             if (self.dcs_overflow) return;
 
@@ -1064,6 +1126,7 @@ pub fn Terminal(comptime option: Option) type {
             if (n < bytes.len) self.dcs_overflow = true;
         }
 
+        /// Parser callback: finalizes and handles the collected DCS string.
         pub fn unhook(self: *Self) void {
             if (!self.dcs_overflow) {
                 switch (self.dcs_kind) {
@@ -1192,12 +1255,11 @@ pub fn Terminal(comptime option: Option) type {
             self.events.set(.selection_reset);
         }
 
-        /// SM (CSI h) and RM (CSI l). Unknown modes are ignored.
-        pub fn setMode(self: *Self, mode: u16, set: bool) void {
+        /// SM (CSI h) and RM (CSI l).
+        pub fn setMode(self: *Self, mode: AnsiMode, set: bool) void {
             switch (mode) {
-                4 => self.active().mode.insert = set,
-                20 => self.mode.linefeed = set,
-                else => {},
+                .insert => self.active().mode.insert = set,
+                .linefeed => self.mode.linefeed = set,
             }
         }
 
@@ -1271,7 +1333,7 @@ pub fn Terminal(comptime option: Option) type {
                     self.resize(self.active().active_rows, new_cols);
 
                     // DECCOLM always clears the screen and homes the cursor (VT spec)
-                    self.active().eraseDisplay(2);
+                    self.active().eraseDisplay(.all);
                     self.active().cursorPos(0, 0);
 
                     // Reset scroll region to full active area (setActive already does this,
@@ -1459,6 +1521,8 @@ pub fn Terminal(comptime option: Option) type {
             return all;
         }
 
+        /// Copies visible screen state, styles, and grapheme clusters into `target`;
+        /// returns false when nothing changed since the previous snapshot.
         pub fn snapshot(self: *Self, target: *FrameType) bool {
             const scr = self.active();
             const max_cols = option.max_cols;
@@ -1501,8 +1565,7 @@ pub fn Terminal(comptime option: Option) type {
                     target.dirty_rows.setRangeValue(.{ .start = scr.active_rows, .end = option.max_rows }, false);
                 }
 
-                var r: usize = 0;
-                while (r < scr.active_rows) : (r += 1) {
+                for (0..scr.active_rows) |r| {
                     const src_row = scr.displayRow(r);
                     const dst_row = target.cells[r * max_cols ..];
                     @memcpy(dst_row[0..scr.active_cols], src_row[0..scr.active_cols]);
@@ -1681,7 +1744,7 @@ pub fn Terminal(comptime option: Option) type {
         fn writeTermcap(self: *const Self, w: *std.Io.Writer, request: []const u8) std.Io.Writer.Error!void {
             var rest = request;
             var key_buf: [key_encoder.max_len]u8 = undefined;
-            var name = parseTermcapName(rest);
+            var name = TermcapName.parse(rest);
             var value = self.termcapValue(name.cap, &key_buf);
             try w.writeAll(seqIntroducer(.dcs, self.control_format));
             try w.writeAll(if (value != null) "1+r" else "0+r");
@@ -1695,13 +1758,12 @@ pub fn Terminal(comptime option: Option) type {
                 if (rest.len == 0) break;
                 try w.writeByte(';');
                 rest = rest[1..];
-                name = parseTermcapName(rest);
+                name = TermcapName.parse(rest);
                 value = self.termcapValue(name.cap, &key_buf);
             }
             try w.writeAll(seqIntroducer(.st, self.control_format));
         }
 
-        /// The plain value of `cap`, or null when Rex has none to report.
         /// The value of `cap`, or null when Rex has none. A key's value
         /// is written to `key_buf`.
         fn termcapValue(self: *const Self, cap: ?Termcap, key_buf: *[key_encoder.max_len]u8) ?[]const u8 {
@@ -1811,44 +1873,53 @@ pub fn Terminal(comptime option: Option) type {
         }
 
         /// Queues a mouse report in the active tracking mode and encoding.
-        /// When off, it queues nothing. X10 mode sends only presses of buttons
-        /// 0 to 2, while the caller filters motion by mode.
-        pub fn sendMouse(self: *Self, col: u16, row: u16, button: u8, mods: u8, press: bool) void {
+        /// When off, it queues nothing. X10 mode sends only button presses,
+        /// while the caller filters motion by mode.
+        pub fn sendMouse(self: *Self, col: u16, row: u16, input: MouseInput, mods: MouseModifiers) void {
             const mode = self.mode;
+            const raw_button: u8 = switch (input) {
+                .press, .release => |b| @intFromEnum(b),
+                .motion => |held| (if (held) |b| @intFromEnum(b) else @as(u8, 3)) + mouse_motion_flag,
+                .wheel => |dir| mouse_wheel_base + @intFromEnum(dir),
+            };
             const code = switch (mode.mouse_tracking) {
                 .off => return,
-                .x10 => if (press and button <= 2) button else return,
-                .normal, .button_motion, .any_motion => button | mods,
+                .x10 => switch (input) {
+                    .press => raw_button,
+                    .release, .motion, .wheel => return,
+                },
+                .normal, .button_motion, .any_motion => raw_button | mods.bits(),
             };
 
+            const is_press = input != .release;
             const at: CellPosition = .{ .row = row, .col = col };
             if (mode.mouse_sgr) {
-                self.reply(.{ .mouse_sgr = .{ .code = code, .at = at, .press = press } });
+                self.reply(.{ .mouse_sgr = .{ .code = code, .at = at, .press = is_press } });
                 return;
             }
 
             // X10/normal encoding has no release button: 3 means "released".
             if (col >= option.max_cols or row >= option.max_rows) return;
-            self.reply(.{ .mouse_x10 = .{ .code = if (press) code else 3, .at = at } });
+            self.reply(.{ .mouse_x10 = .{ .code = if (is_press) code else 3, .at = at } });
         }
 
         /// Queues a motion report at `col`, `row`. Mode 1002 reports only
         /// while `held` is set, mode 1003 always; other modes queue
         /// nothing. The caller reports each cell once.
-        pub fn sendMouseMotion(self: *Self, col: u16, row: u16, held: ?MouseButton, mods: u8) void {
+        pub fn sendMouseMotion(self: *Self, col: u16, row: u16, held: ?MouseButton, mods: MouseModifiers) void {
             switch (self.mode.mouse_tracking) {
                 .button_motion => if (held == null) return,
                 .any_motion => {},
                 .off, .x10, .normal => return,
             }
-            // xterm ctlseqs: motion adds 32 to the button code, and 3
-            // stands for no button.
-            const button: u8 = if (held) |b| @intFromEnum(b) else 3;
-            self.sendMouse(col, row, button + mouse_motion_flag, mods, true);
+            self.sendMouse(col, row, .{ .motion = held }, mods);
         }
 
         /// Added to a button code in a motion report.
         pub const mouse_motion_flag: u8 = 32;
+
+        /// Base code for mouse wheel reports (64 = up, 65 = down).
+        const mouse_wheel_base: u8 = 64;
 
         /// OSC 10 to 19: sets the `target` colour from `data`, or replies
         /// with it when `data` is "?".

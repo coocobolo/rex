@@ -75,6 +75,7 @@ style: Style = .default,
 /// Active character set mapping state (G0-G3 slots and single-shift).
 charset: Mapping = .{},
 
+/// Returns `(row, col)` as a 0-based grid tuple.
 pub fn position(self: *const Cursor) struct { u16, u16 } {
     return .{ self.row, self.col };
 }

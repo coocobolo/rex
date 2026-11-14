@@ -120,7 +120,6 @@ pub fn extractText(screen: anytype, selection: anytype, buf: []u8) usize {
                         pos += len;
                     }
                 },
-                .shaped => {},
             }
         }
 

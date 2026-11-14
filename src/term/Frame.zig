@@ -37,6 +37,7 @@ pub const CursorSnapshot = struct {
     style: Cursor.Style = .default,
     visible: bool = true,
 
+    /// Returns `(row, col)` of the captured cursor.
     pub inline fn position(self: CursorSnapshot) struct { u16, u16 } {
         return .{ self.row, self.col };
     }
@@ -127,7 +128,7 @@ pub fn Frame(comptime option: Option) type {
         }
 
         /// Allocates cell memory with 64-byte alignment. Free with `deinit`.
-        pub fn init(allocator: Allocator) !Self {
+        pub fn init(allocator: Allocator) Allocator.Error!Self {
             const cells = try allocator.alignedAlloc(Cell, .@"64", max_cells);
             errdefer allocator.free(cells);
             @memset(cells, Cell{});
@@ -209,7 +210,6 @@ pub fn Frame(comptime option: Option) type {
                     }
                     break :blk ' ';
                 },
-                .shaped => ' ',
             };
         }
 
