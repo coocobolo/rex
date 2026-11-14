@@ -27,6 +27,8 @@ pub const Option = struct {
     decoration: Decoration.Option,
     scrollbar: Scrollbar.Option,
     selection: Selection.Option,
+    modal_blur: bool = false,
+    modal_blur_radius: u8 = 12,
 };
 
 pub fn Renderer(comptime option: TerminalOption) type {
@@ -50,6 +52,8 @@ pub fn Renderer(comptime option: TerminalOption) type {
 
         grayscale: f32 = 0.0,
         color_tint: [3]f32 = .{ 1.0, 1.0, 1.0 },
+        modal_blur: bool = false,
+        modal_blur_radius: u8 = 12,
 
         pub fn init(opt: Option) !Self {
             var background = try Background.init(max_cells, opt.background);
@@ -85,9 +89,20 @@ pub fn Renderer(comptime option: TerminalOption) type {
                 .ink_mask = .init(),
                 .scrollbar = scrollbar,
                 .selection = selection,
+                .modal_blur = opt.modal_blur,
+                .modal_blur_radius = opt.modal_blur_radius,
             };
             self.setFontMetrics(opt.font_metrics);
             return self;
+        }
+
+        /// Updates modal backdrop blur settings and invalidates any cached blur
+        /// pyramid when they change.
+        pub fn setModalBlur(self: *Self, enabled: bool, radius: u8) void {
+            if (self.modal_blur == enabled and self.modal_blur_radius == radius) return;
+            self.modal_blur = enabled;
+            self.modal_blur_radius = radius;
+            self.blur.invalidate();
         }
 
         /// Takes the cell size and baseline from the font, and resolves
@@ -127,7 +142,7 @@ pub fn Renderer(comptime option: TerminalOption) type {
                 blink_rapid_on: bool,
             },
         ) void {
-            const blur_active = frame.overlay_has_modal and frame.modal_blur;
+            const blur_active = frame.overlay_has_modal and self.modal_blur;
             const fb_w: u32 = @intFromFloat(frame_dimension.width);
             const fb_h: u32 = @intFromFloat(frame_dimension.height);
             const scene_key: Blur.SceneKey = .{
@@ -138,7 +153,7 @@ pub fn Renderer(comptime option: TerminalOption) type {
                 .grayscale = self.grayscale,
                 .scrollbar_alpha = self.scrollbar.last_alpha,
                 .selection_bg = selection_bg,
-                .blur_radius = frame.modal_blur_radius,
+                .blur_radius = self.modal_blur_radius,
                 .focused = focused,
                 .scrollbar_hover = self.scrollbar.hover,
                 .blink_rapid_on = cursor_state.blink_rapid_on,
@@ -154,7 +169,7 @@ pub fn Renderer(comptime option: TerminalOption) type {
                     gl.ONE,
                     gl.ONE_MINUS_SRC_ALPHA,
                 );
-                self.blur.compositeCached(fb_w, fb_h, frame.modal_blur_radius, 0, scrimColor(background_color));
+                self.blur.compositeCached(fb_w, fb_h, self.modal_blur_radius, 0, scrimColor(background_color));
                 return;
             }
             if (blur_active) {
@@ -276,7 +291,7 @@ pub fn Renderer(comptime option: TerminalOption) type {
                 self.blur.renderBlur(
                     fb_w,
                     fb_h,
-                    frame.modal_blur_radius,
+                    self.modal_blur_radius,
                     0,
                     scrimColor(background_color),
                 );

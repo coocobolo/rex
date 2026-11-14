@@ -311,8 +311,6 @@ decoration_spliced_range: ?SplicedRange = null,
 
 /// Whether a modal scrim is active behind the UI kit overlay (drives backdrop blur).
 overlay_has_modal: bool = false,
-modal_blur: bool = false,
-modal_blur_radius: u8 = 12,
 
 /// Set by FrameBuilder when instance data changed since the last build.
 /// Renderer skips VBO re-upload when false, but always issues draw calls.

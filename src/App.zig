@@ -193,7 +193,6 @@ content_scale_pending: ?f32 = null,
 
 needs_redraw: bool = true,
 renderer_dirty: bool = false,
-quit_confirm_open: bool = false,
 quit_confirmed: bool = false,
 skip_next_char: bool = false,
 
@@ -552,6 +551,8 @@ pub fn init(
         .decoration = .{},
         .scrollbar = .default,
         .selection = .default,
+        .modal_blur = active_config.window.modal.blur,
+        .modal_blur_radius = active_config.window.modal.blur_radius,
     });
     errdefer renderer.deinit();
 
@@ -907,13 +908,7 @@ fn renderFrame(self: *App) !bool {
         if (kit.buildFrame(atlas, width / self.content_scale, height / self.content_scale, background)) {
             frame.dirty.overlay = true;
         }
-        // A dialog the kit could not build was dropped.
-        self.syncQuitPrompt();
-
-        const has_modal = kit.hasScrim();
-        frame.overlay_has_modal = has_modal;
-        frame.modal_blur = has_modal and self.config.window.modal.blur;
-        frame.modal_blur_radius = self.config.window.modal.blur_radius;
+        frame.overlay_has_modal = kit.hasScrim();
     }
 
     if (!frame.dirty.any() and !self.renderer_dirty) {
@@ -1486,6 +1481,7 @@ pub fn reloadConfig(self: *App) void {
         }
     }
     self.renderer.background.option.alpha = self.config.window.background.alpha;
+    self.renderer.setModalBlur(self.config.window.modal.blur, self.config.window.modal.blur_radius);
     self.driver.setTheme(self.config.theme);
     self.updateWindowTitle();
     self.frame_builder.last_generation = null;
@@ -1583,7 +1579,6 @@ fn handleAction(self: *App, action: rex.input.Action) void {
         },
         .wellbeing_dismiss => {
             self.wellbeing_state.dismissAlert();
-            self.quit_confirm_open = false;
             self.wellbeing_toast_serial = null;
             if (self.kit) |kit| {
                 _ = kit.dismissAll();
@@ -1940,12 +1935,11 @@ pub fn requestQuit(self: *App) void {
         self.confirmQuit();
         return;
     };
-    if (!ask or self.quit_confirm_open) {
+    if (!ask or self.quitDialogActive()) {
         self.confirmQuit();
         return;
     }
     self.window.setWindowShouldClose(false);
-    self.quit_confirm_open = true;
     // The body names the program that closing would end, and says
     // nothing of one when `ask` asks at an idle shell.
     var name_buf: [32]u8 = undefined;
@@ -2008,18 +2002,11 @@ fn applyDialogOutcome(self: *App, outcome: alert_dialog.Outcome) void {
         },
         .chosen => |action| if (action == quit_close) self.confirmQuit(),
     }
-    self.syncQuitPrompt();
 }
 
-/// Drops the quit prompt as soon as the kit's dialog stops taking input,
-/// which is when it starts to leave, not when it has faded out: a close
-/// request during the fade asks again instead of counting as the answer,
-/// and keys go back to the terminal at once.
-fn syncQuitPrompt(self: *App) void {
-    const kit = self.kit orelse return;
-    if (!self.quit_confirm_open or kit.dialogTakesInput()) return;
-    self.quit_confirm_open = false;
-    self.needs_redraw = true;
+fn quitDialogActive(self: *const App) bool {
+    const kit = self.kit orelse return false;
+    return kit.dialogTakesInput();
 }
 
 /// Whether a program other than the shell is in the terminal's foreground.
@@ -2032,7 +2019,6 @@ fn programRunning(self: *const App) bool {
 /// Marks the quit prompt as confirmed and signals the window to close on the next event loop iteration.
 pub fn confirmQuit(self: *App) void {
     self.quit_confirmed = true;
-    self.quit_confirm_open = false;
     self.window.setWindowShouldClose(true);
 }
 
@@ -2055,7 +2041,7 @@ fn unlockLockScreen(self: *App) void {
 fn routeKeyToUi(self: *App, maybe_key: ?rex.input.Key, mods: rex.input.Modifiers) bool {
     const k = maybe_key orelse return false;
 
-    if (self.quit_confirm_open) {
+    if (self.quitDialogActive()) {
         self.handleQuitModalKey(k, mods);
         return true;
     }
@@ -2124,7 +2110,7 @@ const charCb: c.GLFWcharfun = struct {
             app.skip_next_char = false;
             return;
         }
-        if (app.quit_confirm_open or app.wellbeing_state.input_locked) return;
+        if (app.quitDialogActive() or app.wellbeing_state.input_locked) return;
         app.wellbeing_state.recordActivity();
         app.selection = .empty;
         app.needs_redraw = true;
