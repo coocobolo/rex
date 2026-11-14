@@ -88,8 +88,8 @@ pub fn pageForSection(section: keys.Section) ?Page {
 }
 
 comptime {
-    for (keys.table, 0..) |key, i| {
-        if (!keys.isList(@intCast(i)) and pageForSection(key.section) == null) {
+    for (keys.table) |key| {
+        if (pageForSection(key.section) == null) {
             @compileError("unmapped config section in settings: " ++ @tagName(key.section));
         }
     }
@@ -463,7 +463,9 @@ fn inputPlaceholder(comptime key: keys.Key) []const u8 {
     }
     return switch (key.kind) {
         .path => "/path/to/font.ttf",
+        .font_fallback => "Add fallback font path...",
         .program_path => "/bin/zsh",
+        .shell_argument => "Add argument...",
         .directory_path => "~/projects",
         .duration => "e.g. 25m",
         .time_of_day => "e.g. 22:00",
@@ -577,6 +579,7 @@ const ControlKind = enum {
     stepper,
     select,
     enum_set,
+    list,
     text_input,
 };
 
@@ -584,6 +587,7 @@ fn controlKind(comptime key: keys.Key) ControlKind {
     if (key.kind == .theme or key.kind == .font_weight) return .select;
     if (key.kind == .fraction) return .slider;
     if (key.kind == .duration) return .duration;
+    if (key.kind == .font_fallback or key.kind == .shell_argument) return .list;
     const T = keys.FieldType(Config, key.field);
     if (key.kind == .set) return .enum_set;
     return switch (@typeInfo(T)) {
@@ -609,6 +613,10 @@ pub const Target = union(enum) {
     key_input: u16,
     stepper_dec: u16,
     stepper_inc: u16,
+    list_add: u16,
+    list_up: struct { key: u16, item: u16 },
+    list_down: struct { key: u16, item: u16 },
+    list_remove: struct { key: u16, item: u16 },
     layer,
 };
 
@@ -646,6 +654,22 @@ fn inputId(idx: u16) Id {
     return Id.of("settings.input").item(idx);
 }
 
+fn listAddId(idx: u16) Id {
+    return Id.of("settings.list_add").item(idx);
+}
+
+fn listUpId(idx: u16, item: usize) Id {
+    return Id.of("settings.list_up").item(@as(u32, idx) * 256 + @as(u32, @intCast(item)));
+}
+
+fn listDownId(idx: u16, item: usize) Id {
+    return Id.of("settings.list_dn").item(@as(u32, idx) * 256 + @as(u32, @intCast(item)));
+}
+
+fn listRemoveId(idx: u16, item: usize) Id {
+    return Id.of("settings.list_rm").item(@as(u32, idx) * 256 + @as(u32, @intCast(item)));
+}
+
 pub const State = struct {
     gpa: Allocator,
     io: std.Io,
@@ -667,6 +691,7 @@ pub const State = struct {
     dragging_slider: ?u16 = null,
     open_select: ?struct { key: u16, highlight: usize } = null,
     inputs: [keys.table.len]input.State = [_]input.State{.{}} ** keys.table.len,
+    list_items: [keys.table.len]std.ArrayListUnmanaged([]u8) = [_]std.ArrayListUnmanaged([]u8){.empty} ** keys.table.len,
     duration_units: [keys.table.len]DurationUnit = [_]DurationUnit{.ms} ** keys.table.len,
     slider_values: [keys.table.len]f32 = [_]f32{0} ** keys.table.len,
     dirty: [keys.table.len]bool = [_]bool{false} ** keys.table.len,
@@ -696,8 +721,17 @@ pub fn init(context: host.Context) !State {
 
 pub fn deinit(state: *State) void {
     for (&state.inputs) |*inp| inp.deinit(state.gpa);
+    for (&state.list_items) |*list| {
+        for (list.items) |item| state.gpa.free(item);
+        list.deinit(state.gpa);
+    }
     state.error_msg.deinit(state.gpa);
     if (state.loaded) |*l| l.deinit(state.gpa);
+}
+
+fn clearListItems(gpa: Allocator, list: *std.ArrayListUnmanaged([]u8)) void {
+    for (list.items) |item| gpa.free(item);
+    list.clearRetainingCapacity();
 }
 
 fn syncInputs(state: *State) Allocator.Error!void {
@@ -705,25 +739,35 @@ fn syncInputs(state: *State) Allocator.Error!void {
     const cfg = state.activeConfig();
     var buf: [512]u8 = undefined;
     inline for (keys.table, 0..) |key, i| {
-        if (!keys.isList(@intCast(i))) {
-            switch (comptime controlKind(key)) {
-                .text_input, .stepper => if (!state.dirty[i]) {
-                    const text = formatInputValue(key, cfg, &buf);
-                    try state.inputs[i].setText(state.gpa, text);
-                },
-                .duration => if (!state.dirty[i]) {
-                    const parsed = splitDurationValue(key, cfg, &buf);
-                    state.duration_units[i] = parsed.unit;
-                    try state.inputs[i].setText(state.gpa, parsed.text);
-                },
-                .slider => {
-                    if (state.dragging_slider != @as(u16, @intCast(i))) {
-                        const val = keys.fieldValue(Config, key.field, cfg);
-                        state.slider_values[i] = std.math.clamp(@as(f32, @floatCast(val)), 0.0, 1.0);
+        switch (comptime controlKind(key)) {
+            .text_input, .stepper => if (!state.dirty[i]) {
+                const text = formatInputValue(key, cfg, &buf);
+                try state.inputs[i].setText(state.gpa, text);
+            },
+            .duration => if (!state.dirty[i]) {
+                const parsed = splitDurationValue(key, cfg, &buf);
+                state.duration_units[i] = parsed.unit;
+                try state.inputs[i].setText(state.gpa, parsed.text);
+            },
+            .slider => {
+                if (state.dragging_slider != @as(u16, @intCast(i))) {
+                    const val = keys.fieldValue(Config, key.field, cfg);
+                    state.slider_values[i] = std.math.clamp(@as(f32, @floatCast(val)), 0.0, 1.0);
+                }
+            },
+            .list => if (!state.dirty[i]) {
+                clearListItems(state.gpa, &state.list_items[i]);
+                if (key.kind == .font_fallback) {
+                    for (cfg.font.faces.fallbacks) |face| {
+                        try state.list_items[i].append(state.gpa, try state.gpa.dupe(u8, std.mem.span(face.path)));
                     }
-                },
-                else => {},
-            }
+                } else if (key.kind == .shell_argument) {
+                    for (cfg.shell.arguments) |arg| {
+                        try state.list_items[i].append(state.gpa, try state.gpa.dupe(u8, arg));
+                    }
+                }
+            },
+            else => {},
         }
     }
 }
@@ -744,7 +788,7 @@ pub fn update(state: *State, event: host.Event) bool {
                 return updateSliderFromPointer(state, idx, pointer.x);
             }
             const sb = state.frame.update(page_count, .{ .pointer = sidebar.hit(pointer.id, page_count) });
-            const next_hover = over(pointer.id);
+            const next_hover = over(state, pointer.id);
             const h_changed = !std.meta.eql(state.hover, next_hover);
             state.hover = next_hover;
             if (state.open_select) |*sel| {
@@ -764,7 +808,7 @@ pub fn update(state: *State, event: host.Event) bool {
                 state.pressed = .none;
                 return true;
             }
-            const target = over(id);
+            const target = over(state, id);
             if (target == .key_slider) {
                 const idx = target.key_slider;
                 blurFocused(state);
@@ -846,6 +890,7 @@ fn handleKey(state: *State, press: host.KeyPress) bool {
                 state.open_select = null;
                 return true;
             },
+            .tab => return cycleFocus(state, press.mods.shift),
             else => return false,
         }
     }
@@ -923,9 +968,14 @@ fn handleKey(state: *State, press: host.KeyPress) bool {
                 return true;
             } else return false,
             .enter => {
-                commitInput(state, idx);
+                if (keys.isList(idx)) {
+                    addListItem(state, idx);
+                } else {
+                    commitInput(state, idx);
+                }
                 return true;
             },
+            .tab => return cycleFocus(state, press.mods.shift),
             .escape => {
                 state.dirty[idx] = false;
                 syncInputs(state) catch {};
@@ -934,6 +984,30 @@ fn handleKey(state: *State, press: host.KeyPress) bool {
             },
             else => return false,
         }
+    }
+
+    if (press.key == .tab) {
+        return cycleFocus(state, press.mods.shift);
+    }
+
+    switch (state.focused) {
+        .key_switch => |idx| switch (press.key) {
+            .enter, .space => return activate(state, .{ .key_switch = idx }),
+            .escape => {
+                state.focused = .none;
+                return true;
+            },
+            else => {},
+        },
+        .key_select => |idx| switch (press.key) {
+            .enter, .space, .down => return activate(state, .{ .key_select = idx }),
+            .escape => {
+                state.focused = .none;
+                return true;
+            },
+            else => {},
+        },
+        else => {},
     }
 
     const prev_page = state.frame.current;
@@ -948,8 +1022,72 @@ fn handleKey(state: *State, press: host.KeyPress) bool {
     if (state.frame.current != prev_page) {
         state.scroll = 0;
         state.scroll_max = 0;
+        state.focused = .none;
     }
     return moved;
+}
+
+fn pageFocusTargets(page: Page, out: *[keys.table.len * 2]Target) usize {
+    @setEvalBranchQuota(keys.eval_branch_quota);
+    var count: usize = 0;
+    inline for (keys.table, 0..) |key, i| {
+        const idx: u16 = @intCast(i);
+        if (keys.availableHere(idx) and pageForSection(key.section) == page) {
+            switch (comptime controlKind(key)) {
+                .toggle => {
+                    out[count] = .{ .key_switch = idx };
+                    count += 1;
+                },
+                .slider => {
+                    out[count] = .{ .key_slider = idx };
+                    count += 1;
+                },
+                .select, .enum_set => {
+                    out[count] = .{ .key_select = idx };
+                    count += 1;
+                },
+                .duration => {
+                    out[count] = .{ .key_input = idx };
+                    count += 1;
+                    out[count] = .{ .key_select = idx };
+                    count += 1;
+                },
+                .stepper, .text_input, .list => {
+                    out[count] = .{ .key_input = idx };
+                    count += 1;
+                },
+            }
+        }
+    }
+    return count;
+}
+
+fn cycleFocus(state: *State, reverse: bool) bool {
+    const page: Page = @enumFromInt(state.frame.current);
+    var targets: [keys.table.len * 2]Target = undefined;
+    const count = pageFocusTargets(page, &targets);
+    if (count == 0) return false;
+
+    state.open_select = null;
+
+    var found: ?usize = null;
+    for (targets[0..count], 0..) |t, i| {
+        if (std.meta.eql(t, state.focused)) {
+            found = i;
+            break;
+        }
+    }
+
+    const next_idx: usize = if (found) |cur|
+        if (reverse) (if (cur == 0) count - 1 else cur - 1) else (cur + 1) % count
+    else if (reverse)
+        count - 1
+    else
+        0;
+
+    blurFocused(state);
+    state.focused = targets[next_idx];
+    return true;
 }
 
 fn copySelection(state: *State, inp: *const input.State) void {
@@ -963,7 +1101,7 @@ fn copySelection(state: *State, inp: *const input.State) void {
 fn blurFocused(state: *State) void {
     if (state.focused == .key_input) {
         const idx = state.focused.key_input;
-        if (state.dirty[idx]) commitInput(state, idx);
+        if (!keys.isList(idx) and state.dirty[idx]) commitInput(state, idx);
     }
     state.focused = .none;
 }
@@ -1031,10 +1169,29 @@ fn activate(state: *State, target: Target) bool {
             stepNumber(state, idx, 1);
             return true;
         },
+        .list_add => |idx| {
+            addListItem(state, idx);
+            return true;
+        },
+        .list_up => |it| {
+            blurFocused(state);
+            moveListItem(state, it.key, it.item, -1);
+            return true;
+        },
+        .list_down => |it| {
+            blurFocused(state);
+            moveListItem(state, it.key, it.item, 1);
+            return true;
+        },
+        .list_remove => |it| {
+            blurFocused(state);
+            removeListItem(state, it.key, it.item);
+            return true;
+        },
     }
 }
 
-fn over(id: Id) Target {
+fn over(state: *const State, id: Id) Target {
     if (id == .none) return .none;
     if (id == layer_id) return .layer;
     for (0..32) |choice_idx| {
@@ -1055,6 +1212,16 @@ fn over(id: Id) Target {
                 if (id == inputId(idx)) return .{ .key_input = idx };
                 if (id == decId(idx)) return .{ .stepper_dec = idx };
                 if (id == incId(idx)) return .{ .stepper_inc = idx };
+            },
+            .list => {
+                if (id == inputId(idx)) return .{ .key_input = idx };
+                if (id == listAddId(idx)) return .{ .list_add = idx };
+                for (0..state.list_items[idx].items.len) |item_i| {
+                    const item_u16: u16 = @intCast(item_i);
+                    if (id == listUpId(idx, item_i)) return .{ .list_up = .{ .key = idx, .item = item_u16 } };
+                    if (id == listDownId(idx, item_i)) return .{ .list_down = .{ .key = idx, .item = item_u16 } };
+                    if (id == listRemoveId(idx, item_i)) return .{ .list_remove = .{ .key = idx, .item = item_u16 } };
+                }
             },
             .text_input => if (id == inputId(idx)) return .{ .key_input = idx },
             .enum_set => if (id == selectId(idx)) return .{ .key_select = idx },
@@ -1299,6 +1466,104 @@ fn commitValue(state: *State, idx: u16, token: []const u8) void {
         return;
     };
 
+    reloadAfterWrite(state, idx);
+}
+
+fn formatListToken(gpa: Allocator, kind: keys.Kind, raw: []const u8) Allocator.Error![]u8 {
+    if (kind != .shell_argument) return gpa.dupe(u8, raw);
+
+    const needs_quotes = std.mem.eql(u8, raw, "none") or
+        std.mem.eql(u8, raw, "default") or
+        for (raw) |ch| {
+            if (ch == ' ' or ch == '\t' or ch == '"' or ch == '\\' or ch == '#' or ch == '=') break true;
+        } else false;
+    if (!needs_quotes) return gpa.dupe(u8, raw);
+
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    errdefer out.deinit(gpa);
+    try out.append(gpa, '"');
+    for (raw) |ch| {
+        if (ch == '"' or ch == '\\') try out.append(gpa, '\\');
+        try out.append(gpa, ch);
+    }
+    try out.append(gpa, '"');
+    return out.toOwnedSlice(gpa);
+}
+
+fn commitList(state: *State, idx: u16) void {
+    const key = keys.table[idx];
+    if (state.config_path.len == 0) return;
+
+    const items = state.list_items[idx].items;
+    const owned_tokens = state.gpa.alloc([]u8, items.len) catch {
+        setError(state, idx, "OutOfMemory");
+        return;
+    };
+    var built: usize = 0;
+    defer {
+        for (owned_tokens[0..built]) |tok| state.gpa.free(tok);
+        state.gpa.free(owned_tokens);
+    }
+    for (items) |item| {
+        owned_tokens[built] = formatListToken(state.gpa, key.kind, item) catch {
+            setError(state, idx, "OutOfMemory");
+            return;
+        };
+        built += 1;
+    }
+
+    config_writer.writeList(state.gpa, state.io, state.config_path, key.section, key.name, owned_tokens) catch |err| {
+        setError(state, idx, @errorName(err));
+        return;
+    };
+
+    reloadAfterWrite(state, idx);
+}
+
+fn addListItem(state: *State, idx: u16) void {
+    const trimmed = std.mem.trim(u8, state.inputs[idx].text(), " \t");
+    if (trimmed.len == 0) return;
+    for (trimmed) |ch| {
+        if (ch == '\r' or ch == '\n') {
+            setError(state, idx, "Value cannot contain newlines");
+            return;
+        }
+    }
+    const copy = state.gpa.dupe(u8, trimmed) catch {
+        setError(state, idx, "OutOfMemory");
+        return;
+    };
+    state.list_items[idx].append(state.gpa, copy) catch {
+        state.gpa.free(copy);
+        setError(state, idx, "OutOfMemory");
+        return;
+    };
+    state.inputs[idx].setText(state.gpa, "") catch {};
+    state.dirty[idx] = false;
+    commitList(state, idx);
+}
+
+fn removeListItem(state: *State, idx: u16, item_idx: u16) void {
+    if (item_idx >= state.list_items[idx].items.len) return;
+    const removed = state.list_items[idx].orderedRemove(item_idx);
+    state.gpa.free(removed);
+    commitList(state, idx);
+}
+
+fn moveListItem(state: *State, idx: u16, item_idx: u16, delta: i2) void {
+    const len = state.list_items[idx].items.len;
+    if (item_idx >= len) return;
+    const next_signed: isize = @as(isize, item_idx) + delta;
+    if (next_signed < 0 or next_signed >= @as(isize, @intCast(len))) return;
+    const next: usize = @intCast(next_signed);
+    const items = state.list_items[idx].items;
+    const tmp = items[item_idx];
+    items[item_idx] = items[next];
+    items[next] = tmp;
+    commitList(state, idx);
+}
+
+fn reloadAfterWrite(state: *State, idx: u16) void {
     var reloaded = Loaded.load(
         state.gpa,
         state.io,
@@ -1446,7 +1711,7 @@ fn viewPage(state: *const State, tree: *Tree, theme: *const Theme, page: Page) k
 
     inline for (keys.table, 0..) |key, i| {
         const idx: u16 = @intCast(i);
-        if (!keys.isList(idx) and keys.availableHere(idx) and pageForSection(key.section) == page) {
+        if (keys.availableHere(idx) and pageForSection(key.section) == page) {
             if (current_section == null or current_section.? != key.section) {
                 if (section_open) |open_box| tree.close(open_box);
                 current_section = key.section;
@@ -1849,6 +2114,157 @@ fn viewKeyRow(
                 .open = is_open,
                 .focused = std.meta.eql(state.focused, Target{ .key_select = idx }),
             });
+        },
+        .list => {
+            const items = state.list_items[idx].items;
+            const list_col = try tree.open(.{
+                .axis = .column,
+                .width = control_width,
+                .gap = 6,
+            });
+            for (items, 0..) |item, item_i| {
+                const item_u16: u16 = @intCast(item_i);
+                const item_pad = try tree.open(.{
+                    .width = .fill,
+                    .padding = .symmetric(Theme.ring_width, 0),
+                });
+                const item_row = try tree.open(.{
+                    .axis = .row,
+                    .width = .fill,
+                    .height = .{ .fixed = Theme.control_sm },
+                    .padding = .{ .left = 10, .right = 2 },
+                    .gap = 2,
+                    .cross = .center,
+                    .fill = theme.background,
+                    .border = theme.input,
+                    .border_width = Theme.border_width,
+                    .radius = Theme.radius_md,
+                });
+                const text_clip = try tree.open(.{
+                    .axis = .row,
+                    .width = .fill,
+                    .cross = .center,
+                    .overflow = .clip,
+                });
+                _ = try tree.text(item, .{
+                    .color = theme.foreground,
+                    .style = .sm,
+                });
+                tree.close(text_clip);
+
+                const up_disabled = item_i == 0;
+                const up_hovered = std.meta.eql(state.hover, Target{ .list_up = .{ .key = idx, .item = item_u16 } });
+                const up_btn = try tree.open(.{
+                    .id = listUpId(idx, item_i),
+                    .axis = .row,
+                    .width = .{ .fixed = 24 },
+                    .height = .{ .fixed = 24 },
+                    .main = .center,
+                    .cross = .center,
+                    .pointer = if (up_disabled) .arrow else .hand,
+                    .fill = if (up_hovered and !up_disabled) theme.accent else .transparent,
+                    .radius = Theme.radius_md - 4,
+                });
+                _ = try tree.text("↑", .{
+                    .color = if (up_disabled) theme.muted_foreground.fade(0.4) else theme.muted_foreground,
+                    .style = .xs,
+                });
+                tree.close(up_btn);
+
+                const dn_disabled = item_i + 1 >= items.len;
+                const dn_hovered = std.meta.eql(state.hover, Target{ .list_down = .{ .key = idx, .item = item_u16 } });
+                const dn_btn = try tree.open(.{
+                    .id = listDownId(idx, item_i),
+                    .axis = .row,
+                    .width = .{ .fixed = 24 },
+                    .height = .{ .fixed = 24 },
+                    .main = .center,
+                    .cross = .center,
+                    .pointer = if (dn_disabled) .arrow else .hand,
+                    .fill = if (dn_hovered and !dn_disabled) theme.accent else .transparent,
+                    .radius = Theme.radius_md - 4,
+                });
+                _ = try tree.text("↓", .{
+                    .color = if (dn_disabled) theme.muted_foreground.fade(0.4) else theme.muted_foreground,
+                    .style = .xs,
+                });
+                tree.close(dn_btn);
+
+                const rm_hovered = std.meta.eql(state.hover, Target{ .list_remove = .{ .key = idx, .item = item_u16 } });
+                const rm_btn = try tree.open(.{
+                    .id = listRemoveId(idx, item_i),
+                    .axis = .row,
+                    .width = .{ .fixed = 24 },
+                    .height = .{ .fixed = 24 },
+                    .main = .center,
+                    .cross = .center,
+                    .pointer = .hand,
+                    .fill = if (rm_hovered) theme.accent else .transparent,
+                    .radius = Theme.radius_md - 4,
+                });
+                _ = try tree.text("×", .{
+                    .color = if (rm_hovered) theme.destructive else theme.muted_foreground,
+                    .style = .sm,
+                });
+                tree.close(rm_btn);
+
+                tree.close(item_row);
+                tree.close(item_pad);
+            }
+
+            const inp = &state.inputs[idx];
+            const is_err = state.error_key == idx;
+            const input_focused = std.meta.eql(state.focused, Target{ .key_input = idx });
+            const input_hovered = std.meta.eql(state.hover, Target{ .key_input = idx });
+            const add_hovered = std.meta.eql(state.hover, Target{ .list_add = idx });
+            const colors = groupColors(theme, is_err, input_focused, input_hovered or add_hovered);
+
+            const ring = try tree.open(.{
+                .width = .fill,
+                .padding = .all(Theme.ring_width),
+                .border = colors.ring,
+                .border_width = Theme.ring_width,
+                .radius = Theme.radius_md + Theme.ring_width,
+            });
+            const compound = try tree.open(.{
+                .axis = .row,
+                .width = .fill,
+                .height = .{ .fixed = Theme.control_sm },
+                .padding = .all(Theme.border_width),
+                .cross = .center,
+                .fill = theme.background,
+                .border = colors.border,
+                .border_width = Theme.border_width,
+                .radius = Theme.radius_md,
+            });
+            try input.view(tree, theme, .{
+                .id = inputId(idx),
+                .value = inp.text(),
+                .placeholder = comptime inputPlaceholder(key),
+                .cursor = inp.cursor,
+                .anchor = inp.anchor,
+                .width = .fill,
+                .hovered = input_hovered,
+                .focused = input_focused,
+                .invalid = is_err,
+                .borderless = true,
+            });
+            _ = try tree.leaf(.{
+                .width = .{ .fixed = 1 },
+                .height = .fill,
+                .fill = theme.border,
+            });
+            const add_disabled = std.mem.trim(u8, inp.text(), " \t").len == 0;
+            try stepperSegment(tree, theme, .{
+                .id = listAddId(idx),
+                .edge = .right,
+                .label = "+",
+                .hovered = add_hovered,
+                .disabled = add_disabled,
+            });
+            tree.close(compound);
+            tree.close(ring);
+            tree.close(list_col);
         },
         .text_input => {
             const inp = &state.inputs[idx];

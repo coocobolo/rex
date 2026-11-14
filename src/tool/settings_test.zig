@@ -163,3 +163,97 @@ test "settings: clipboard copy, cut, and paste in focused text input" {
     try testing.expect(settings.update(&state, .{ .key = .{ .key = .v, .mods = .{ .ctrl = true } } }));
     try testing.expectEqualStrings(clip.buf[0..clip.len], state.inputs[size_idx].text());
 }
+
+test "settings: list key add, reorder, remove, and reload" {
+    const gpa = testing.allocator;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const cfg_path = try std.fmt.allocPrint(gpa, ".zig-cache/tmp/{s}/config", .{tmp.sub_path});
+    defer gpa.free(cfg_path);
+
+    const cfg = config_defaults.default;
+    var state = try settings.init(.{
+        .gpa = gpa,
+        .io = testing.io,
+        .config = &cfg,
+        .config_path = cfg_path,
+        .state_dir = "",
+        .wake_loop = struct {
+            fn wake() void {}
+        }.wake,
+    });
+    defer settings.deinit(&state);
+
+    const arg_idx = keyIndex(.shell, "argument");
+    const arg_input_id = Id.of("settings.input").item(arg_idx);
+    _ = settings.update(&state, .{ .pointer = .{ .id = arg_input_id } });
+    _ = settings.update(&state, .{ .press = arg_input_id });
+    _ = settings.update(&state, .release);
+
+    for ("--login") |ch| {
+        try testing.expect(settings.update(&state, .{ .char = ch }));
+    }
+    try testing.expect(settings.update(&state, .{ .key = .{ .key = .enter } }));
+    try testing.expectEqual(@as(usize, 1), state.activeConfig().shell.arguments.len);
+    try testing.expectEqualStrings("--login", state.activeConfig().shell.arguments[0]);
+
+    for ("none") |ch| {
+        try testing.expect(settings.update(&state, .{ .char = ch }));
+    }
+    const add_id = Id.of("settings.list_add").item(arg_idx);
+    _ = settings.update(&state, .{ .pointer = .{ .id = add_id } });
+    _ = settings.update(&state, .{ .press = add_id });
+    _ = settings.update(&state, .release);
+    try testing.expectEqual(@as(usize, 2), state.activeConfig().shell.arguments.len);
+    try testing.expectEqualStrings("none", state.activeConfig().shell.arguments[1]);
+
+    // Move item 1 up -> ["none", "--login"].
+    const up_id = Id.of("settings.list_up").item(@as(u32, arg_idx) * 256 + 1);
+    _ = settings.update(&state, .{ .pointer = .{ .id = up_id } });
+    _ = settings.update(&state, .{ .press = up_id });
+    _ = settings.update(&state, .release);
+    try testing.expectEqualStrings("none", state.activeConfig().shell.arguments[0]);
+    try testing.expectEqualStrings("--login", state.activeConfig().shell.arguments[1]);
+
+    // Remove item 0 -> ["--login"].
+    const rm_id = Id.of("settings.list_rm").item(@as(u32, arg_idx) * 256 + 0);
+    _ = settings.update(&state, .{ .pointer = .{ .id = rm_id } });
+    _ = settings.update(&state, .{ .press = rm_id });
+    _ = settings.update(&state, .release);
+    try testing.expectEqual(@as(usize, 1), state.activeConfig().shell.arguments.len);
+    try testing.expectEqualStrings("--login", state.activeConfig().shell.arguments[0]);
+}
+
+test "settings: Tab and Shift+Tab cycle focus across page controls" {
+    const gpa = testing.allocator;
+    const cfg = config_defaults.default;
+    var state = try settings.init(.{
+        .gpa = gpa,
+        .io = testing.io,
+        .config = &cfg,
+        .state_dir = "",
+        .wake_loop = struct {
+            fn wake() void {}
+        }.wake,
+    });
+    defer settings.deinit(&state);
+
+    try testing.expectEqual(settings.Target.none, state.focused);
+    try testing.expect(settings.update(&state, .{ .key = .{ .key = .tab } }));
+    try testing.expect(state.focused != .none);
+    const first = state.focused;
+
+    try testing.expect(settings.update(&state, .{ .key = .{ .key = .tab } }));
+    try testing.expect(!std.meta.eql(first, state.focused));
+
+    try testing.expect(settings.update(&state, .{ .key = .{ .key = .tab, .mods = .{ .shift = true } } }));
+    try testing.expectEqual(first, state.focused);
+
+    // First control on Appearance is Color Theme select; Enter opens its popup.
+    try testing.expect(state.focused == .key_select);
+    try testing.expect(settings.update(&state, .{ .key = .{ .key = .enter } }));
+    try testing.expect(state.open_select != null);
+    try testing.expect(settings.update(&state, .{ .key = .{ .key = .escape } }));
+    try testing.expect(state.open_select == null);
+}

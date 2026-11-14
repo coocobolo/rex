@@ -245,3 +245,54 @@ test "writer: writeKey creates missing file and updates existing file atomically
     defer testing.allocator.free(unchanged);
     try testing.expectEqualStrings(second, unchanged);
 }
+
+test "writer: setListValues replaces existing rows, preserves comments, and writes none when empty" {
+    const src =
+        \\[font]
+        \\size = 13
+        \\fallback = /a.ttf
+        \\# keep comment
+        \\fallback = /b.ttf
+        \\weight = 400
+        \\
+    ;
+    const replaced = try writer.setListValues(testing.allocator, src, .font, "fallback", &.{ "/x.ttf", "/y.ttf" });
+    defer testing.allocator.free(replaced);
+
+    try testing.expectEqualStrings(
+        \\[font]
+        \\size = 13
+        \\fallback = /x.ttf
+        \\fallback = /y.ttf
+        \\# keep comment
+        \\weight = 400
+        \\
+    , replaced);
+
+    const cleared = try writer.setListValues(testing.allocator, replaced, .font, "fallback", &.{});
+    defer testing.allocator.free(cleared);
+
+    try testing.expectEqualStrings(
+        \\[font]
+        \\size = 13
+        \\fallback = none
+        \\# keep comment
+        \\weight = 400
+        \\
+    , cleared);
+}
+
+test "writer: setListValues inserts new section when missing" {
+    const out = try writer.setListValues(testing.allocator, "[ui]\ncolor_scheme = dark\n", .shell, "argument", &.{ "--login", "-i" });
+    defer testing.allocator.free(out);
+
+    try testing.expectEqualStrings(
+        \\[ui]
+        \\color_scheme = dark
+        \\
+        \\[shell]
+        \\argument = --login
+        \\argument = -i
+        \\
+    , out);
+}

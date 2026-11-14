@@ -37,17 +37,51 @@ pub fn writeKey(
     if (!isValidKey(key)) return error.InvalidKey;
     if (!isValidValue(new_value)) return error.InvalidValue;
 
-    const cwd = Io.Dir.cwd();
-    const existing: []u8 = cwd.readFileAlloc(io, path, gpa, .limited(Loaded.max_bytes)) catch |err| switch (err) {
-        error.FileNotFound => try gpa.dupe(u8, ""),
-        error.StreamTooLong => return error.FileTooBig,
-        else => |e| return e,
-    };
+    const existing = try readOrEmpty(gpa, io, path);
     defer gpa.free(existing);
 
     const updated = try setValue(gpa, existing, section, key, new_value);
     defer gpa.free(updated);
 
+    try writeAtomic(io, path, updated);
+}
+
+/// Reads the user config file at `path` (creating parent directories and
+/// starting from an empty file when missing), replaces all occurrences of
+/// `key` under `section` with one line per item in `values` (or `key = none`
+/// when `values` is empty), and writes the file atomically.
+pub fn writeList(
+    gpa: Allocator,
+    io: Io,
+    path: []const u8,
+    section: keys.Section,
+    key: []const u8,
+    values: []const []const u8,
+) WriteError!void {
+    if (!isValidKey(key)) return error.InvalidKey;
+    for (values) |v| {
+        if (!isValidValue(v)) return error.InvalidValue;
+    }
+
+    const existing = try readOrEmpty(gpa, io, path);
+    defer gpa.free(existing);
+
+    const updated = try setListValues(gpa, existing, section, key, values);
+    defer gpa.free(updated);
+
+    try writeAtomic(io, path, updated);
+}
+
+fn readOrEmpty(gpa: Allocator, io: Io, path: []const u8) WriteError![]u8 {
+    return Io.Dir.cwd().readFileAlloc(io, path, gpa, .limited(Loaded.max_bytes)) catch |err| switch (err) {
+        error.FileNotFound => try gpa.dupe(u8, ""),
+        error.StreamTooLong => return error.FileTooBig,
+        else => |e| return e,
+    };
+}
+
+fn writeAtomic(io: Io, path: []const u8, data: []const u8) WriteError!void {
+    const cwd = Io.Dir.cwd();
     const dir_path = std.fs.path.dirname(path) orelse ".";
     const filename = std.fs.path.basename(path);
     const dir = try cwd.createDirPathOpen(io, dir_path, .{});
@@ -55,7 +89,7 @@ pub fn writeKey(
 
     var atomic = try dir.createFileAtomic(io, filename, .{ .replace = true });
     defer atomic.deinit(io);
-    try atomic.file.writePositionalAll(io, updated, 0);
+    try atomic.file.writePositionalAll(io, data, 0);
     try atomic.replace(io);
 }
 
@@ -124,28 +158,162 @@ pub fn setValue(
         return insertParts(gpa, source, line.next_start, &.{ eol, key, " = ", new_value, eol });
     }
 
-    if (section == .root) {
-        if (first_section_token) |tok| {
-            const line_start = lineStartBefore(source, spans[tok].start);
-            return insertParts(gpa, source, line_start, &.{ key, " = ", new_value, eol, eol });
-        }
-        if (source.len == 0 or endsWithLineBreak(source)) {
-            return insertParts(gpa, source, source.len, &.{ key, " = ", new_value, eol });
-        }
-        return insertParts(gpa, source, source.len, &.{ eol, key, " = ", new_value, eol });
+    return insertNewSectionBlock(gpa, source, section, eol, if (first_section_token) |tok| spans[tok].start else null, &.{ key, " = ", new_value, eol });
+}
+
+/// Returns an owned copy of `source` with all occurrences of `key` under
+/// `section` replaced by one line per item in `values` (or `key = none` when
+/// empty). Caller owns the returned slice and frees it with `gpa`.
+pub fn setListValues(
+    gpa: Allocator,
+    source: []const u8,
+    section: keys.Section,
+    key: []const u8,
+    values: []const []const u8,
+) SetError![]u8 {
+    if (!isValidKey(key)) return error.InvalidKey;
+    for (values) |v| {
+        if (!isValidValue(v)) return error.InvalidValue;
     }
 
-    const section_name = @tagName(section);
-    if (source.len == 0) {
-        return insertParts(gpa, source, 0, &.{ "[", section_name, "]", eol, key, " = ", new_value, eol });
+    var tree = try Ast.parse(gpa, source);
+    defer tree.deinit(gpa);
+
+    const eol = detectEol(source);
+    const spans = tree.tokens.items(.span);
+
+    var current_section: ?keys.Section = .root;
+    var matches: std.ArrayListUnmanaged(Ast.Entry) = .empty;
+    defer matches.deinit(gpa);
+    var last_section_token: ?Ast.TokenIndex = null;
+    var first_section_token: ?Ast.TokenIndex = null;
+
+    for (tree.entries) |entry| {
+        const name = tree.tokenSlice(entry.name);
+        switch (entry.tag) {
+            .section => {
+                if (first_section_token == null) first_section_token = entry.name;
+                current_section = sectionFromName(name);
+                if (current_section == section) {
+                    last_section_token = entry.name;
+                }
+            },
+            .assignment => {
+                const active = current_section orelse continue;
+                if (active == section) {
+                    last_section_token = entry.name;
+                    if (std.mem.eql(u8, name, key)) {
+                        try matches.append(gpa, entry);
+                    }
+                }
+            },
+        }
     }
-    if (endsWithBlankLine(source)) {
-        return insertParts(gpa, source, source.len, &.{ "[", section_name, "]", eol, key, " = ", new_value, eol });
+
+    var block: std.ArrayListUnmanaged(u8) = .empty;
+    defer block.deinit(gpa);
+    if (values.len == 0) {
+        try block.appendSlice(gpa, key);
+        try block.appendSlice(gpa, " = none");
+        try block.appendSlice(gpa, eol);
+    } else {
+        for (values) |v| {
+            try block.appendSlice(gpa, key);
+            try block.appendSlice(gpa, " = ");
+            try block.appendSlice(gpa, v);
+            try block.appendSlice(gpa, eol);
+        }
     }
-    if (endsWithLineBreak(source)) {
-        return insertParts(gpa, source, source.len, &.{ eol, "[", section_name, "]", eol, key, " = ", new_value, eol });
+
+    if (matches.items.len > 0) {
+        var out: std.ArrayListUnmanaged(u8) = .empty;
+        errdefer out.deinit(gpa);
+        var pos: usize = 0;
+        for (matches.items, 0..) |entry, i| {
+            const line_start = lineStartBefore(source, spans[entry.name].start);
+            const end_tok = entry.value orelse (entry.name + 1);
+            const line_end = lineBoundsAfter(source, spans[end_tok].end).next_start;
+            if (line_start > pos) {
+                try out.appendSlice(gpa, source[pos..line_start]);
+            }
+            if (i == 0) {
+                try out.appendSlice(gpa, block.items);
+            }
+            pos = line_end;
+        }
+        if (pos < source.len) {
+            try out.appendSlice(gpa, source[pos..]);
+        }
+        return out.toOwnedSlice(gpa);
     }
-    return insertParts(gpa, source, source.len, &.{ eol, eol, "[", section_name, "]", eol, key, " = ", new_value, eol });
+
+    if (last_section_token) |tok| {
+        const line = lineBoundsAfter(source, spans[tok].end);
+        if (line.has_eol) {
+            return insertParts(gpa, source, line.next_start, &.{block.items});
+        }
+        return insertParts(gpa, source, line.next_start, &.{ eol, block.items });
+    }
+
+    return insertNewSectionBlock(gpa, source, section, eol, if (first_section_token) |tok| spans[tok].start else null, &.{block.items});
+}
+
+fn insertNewSectionBlock(
+    gpa: Allocator,
+    source: []const u8,
+    section: keys.Section,
+    eol: []const u8,
+    first_section_start: ?usize,
+    block_parts: []const []const u8,
+) Allocator.Error![]u8 {
+    var prefix: [6][]const u8 = undefined;
+    var prefix_len: usize = 0;
+    var suffix_eol = false;
+    var at: usize = source.len;
+
+    if (section == .root) {
+        if (first_section_start) |start| {
+            at = lineStartBefore(source, start);
+            suffix_eol = true;
+        } else if (source.len > 0 and !endsWithLineBreak(source)) {
+            prefix[prefix_len] = eol;
+            prefix_len += 1;
+        }
+    } else {
+        const section_name = @tagName(section);
+        if (source.len == 0 or endsWithBlankLine(source)) {
+            if (source.len == 0) at = 0;
+        } else if (endsWithLineBreak(source)) {
+            prefix[prefix_len] = eol;
+            prefix_len += 1;
+        } else {
+            prefix[prefix_len] = eol;
+            prefix_len += 1;
+            prefix[prefix_len] = eol;
+            prefix_len += 1;
+        }
+        prefix[prefix_len] = "[";
+        prefix[prefix_len + 1] = section_name;
+        prefix[prefix_len + 2] = "]";
+        prefix[prefix_len + 3] = eol;
+        prefix_len += 4;
+    }
+
+    var all: [11][]const u8 = undefined;
+    var total: usize = 0;
+    for (prefix[0..prefix_len]) |p| {
+        all[total] = p;
+        total += 1;
+    }
+    for (block_parts) |p| {
+        all[total] = p;
+        total += 1;
+    }
+    if (suffix_eol) {
+        all[total] = eol;
+        total += 1;
+    }
+    return insertParts(gpa, source, at, all[0..total]);
 }
 
 fn sectionFromName(name: []const u8) ?keys.Section {
