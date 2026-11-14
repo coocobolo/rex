@@ -44,12 +44,6 @@ pub const Tone = enum(u8) {
     }
 };
 
-pub const ButtonTouch = enum(u8) {
-    normal,
-    hovered,
-    pressed,
-};
-
 pub const Request = struct {
     tone: Tone = .healthy,
     title: []const u8,
@@ -67,7 +61,7 @@ pub const Request = struct {
 pub const State = struct {
     phase: dialog.Phase = .closed,
     tone: Tone = .healthy,
-    touch: ButtonTouch = .normal,
+    touch: button.State = .normal,
     focused: bool = false,
     motion: motion_zig.Mode = .full,
     scrim_alpha: u8 = 128,
@@ -192,11 +186,7 @@ fn sync(self: *State, req: Request) Outcome {
         std.mem.eql(u8, self.subtitle(), req.subtitle[0..new_sub_len]) and
         std.mem.eql(u8, self.prompt(), req.prompt[0..new_prompt_len]);
 
-    const entered = if (self.motion == .none) blk: {
-        const was_open = self.phase.acceptsInput();
-        self.phase = .open;
-        break :blk !was_open;
-    } else self.phase.enter(self.motion);
+    const entered = self.phase.enterImmediate(self.motion);
     if (entered) {
         self.touch = .normal;
         self.focused = req.focus;
@@ -226,18 +216,13 @@ fn sync(self: *State, req: Request) Outcome {
 
 fn beginLeave(self: *State) bool {
     self.touch = .normal;
-    if (self.motion == .none) {
-        const was_open = self.phase != .closed;
-        self.phase = .closed;
-        return was_open;
-    }
-    return self.phase.leave(self.motion);
+    return self.phase.leaveImmediate(self.motion);
 }
 
 fn hoverAt(self: *State, over: Pointer) Outcome {
     if (!self.phase.acceptsInput()) return .quiet;
     if (self.touch == .pressed) return .quiet;
-    const next: ButtonTouch = switch (over) {
+    const next: button.State = switch (over) {
         .unlock => .hovered,
         .away => .normal,
     };
@@ -279,8 +264,12 @@ fn blur(self: *State) Outcome {
     return .redraw;
 }
 
+/// Fixed UI labels rendered outside the caller-provided strings:
+/// `"Remaining"`, `time_bytes` (`<= 16` bytes), unlock label, and key cap.
+const chrome_line_max = 1 + (@sizeOf(@FieldType(State, "time_bytes")) + 1) + 2;
+
 /// Lines of wrapped text one view needs at most.
-pub const line_max = title_capacity + 1 + subtitle_capacity + 1 + prompt_capacity + 1 + 64;
+pub const line_max = title_capacity + 1 + subtitle_capacity + 1 + prompt_capacity + 1 + chrome_line_max;
 
 /// Most nodes one view writes.
 pub const node_max = dialog.node_max + 9 + steps_max + chart.progress_nodes + button.node_max;
@@ -360,18 +349,13 @@ pub fn view(state: *const State, tree: *Tree, theme: *const Theme) tree_zig.Erro
     tree.close(prog);
 
     const footer = try dialog.footer(tree);
-    const btn_state: button.State = switch (state.touch) {
-        .normal => .normal,
-        .hovered => .hovered,
-        .pressed => .pressed,
-    };
     try button.view(tree, theme, .{
         .id = unlock_id,
         .label = "Unlock early",
         .key_cap = "Ctrl+Shift+D",
         .variant = .outline,
         .size = .sm,
-        .state = btn_state,
+        .state = state.touch,
         .focused = state.focused,
         .presence = presence,
     });

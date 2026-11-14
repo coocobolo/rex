@@ -58,12 +58,6 @@ pub const Kind = enum(u8) {
     }
 };
 
-pub const ButtonTouch = enum(u8) {
-    normal,
-    hovered,
-    pressed,
-};
-
 pub const Request = struct {
     kind: Kind = .err,
     /// Copied; cut at `title_capacity` bytes on a code point boundary.
@@ -75,7 +69,7 @@ pub const Request = struct {
 pub const State = struct {
     phase: dialog.Phase = .closed,
     kind: Kind = .err,
-    touch: ButtonTouch = .normal,
+    touch: button.State = .normal,
     motion: motion_zig.Mode = .full,
     title_len: u8 = 0,
     description_len: u16 = 0,
@@ -155,28 +149,19 @@ fn show(self: *State, req: Request) bool {
     @memcpy(self.description_bytes[0..new_desc_len], req.description[0..new_desc_len]);
     self.touch = .normal;
 
-    const entered = if (self.motion == .none) blk: {
-        const was_open = self.phase.acceptsInput();
-        self.phase = .open;
-        break :blk !was_open;
-    } else self.phase.enter(self.motion);
+    const entered = self.phase.enterImmediate(self.motion);
     return entered or !content_same;
 }
 
 fn beginLeave(self: *State) bool {
     self.touch = .normal;
-    if (self.motion == .none) {
-        const was_open = self.phase != .closed;
-        self.phase = .closed;
-        return was_open;
-    }
-    return self.phase.leave(self.motion);
+    return self.phase.leaveImmediate(self.motion);
 }
 
 fn hoverAt(self: *State, over: Pointer) bool {
     if (!self.phase.acceptsInput()) return false;
     if (self.touch == .pressed) return false;
-    const next: ButtonTouch = switch (over) {
+    const next: button.State = switch (over) {
         .close => .hovered,
         .away => .normal,
     };
@@ -260,18 +245,13 @@ pub fn view(state: *const State, tree: *Tree, theme: *const Theme) tree_zig.Erro
     }
     tree.close(body);
 
-    const close_state: button.State = switch (state.touch) {
-        .normal => .normal,
-        .hovered => .hovered,
-        .pressed => .pressed,
-    };
     try button.view(tree, theme, .{
         .id = close_id,
         .label = "",
         .icon = icons.x,
         .variant = .ghost,
         .size = .sm,
-        .state = close_state,
+        .state = state.touch,
         .presence = presence,
     });
 

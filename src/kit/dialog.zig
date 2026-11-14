@@ -70,6 +70,16 @@ pub const Phase = union(enum) {
         return true;
     }
 
+    /// Starts fading in, or jumps straight to `.open` when `mode` has zero duration.
+    pub fn enterImmediate(self: *Phase, mode: motion.Mode) bool {
+        if (mode == .none) {
+            const was_open = self.acceptsInput();
+            self.* = .open;
+            return !was_open;
+        }
+        return self.enter(mode);
+    }
+
     /// Starts fading out, from as far as it had faded in. Returns false,
     /// changing nothing, when it is already leaving or closed.
     pub fn leave(self: *Phase, mode: motion.Mode) bool {
@@ -80,6 +90,16 @@ pub const Phase = union(enum) {
             .open => .{ .leaving = 0 },
         };
         return true;
+    }
+
+    /// Starts fading out, or jumps straight to `.closed` when `mode` has zero duration.
+    pub fn leaveImmediate(self: *Phase, mode: motion.Mode) bool {
+        if (mode == .none) {
+            const was_open = self.* != .closed;
+            self.* = .closed;
+            return was_open;
+        }
+        return self.leave(mode);
     }
 
     pub const Step = enum {

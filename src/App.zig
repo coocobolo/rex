@@ -1163,13 +1163,20 @@ fn syncWellbeingKit(self: *App, new_alert_fired: bool) void {
             if (kit.dismissToast(serial)) self.needs_redraw = true;
             self.wellbeing_toast_serial = null;
         }
-        const is_paused = wb.isFocusPausedByAlert() or
-            wb.focus_state.phase == .task or
-            (wb.focus_state.phase != .short_break and wb.focus_state.phase != .long_break) or
-            wb.focus_state.paused;
+        const in_break = wb.focus_state.phase == .short_break or wb.focus_state.phase == .long_break;
+        const is_paused = wb.isFocusPausedByAlert() or !in_break or wb.focus_state.paused;
         const tone: kit_lock_screen.Tone = if (is_paused) .warning else .healthy;
-        const header_text: []const u8 = if (is_paused) "BREAK PAUSED" else "BREAK IN PROGRESS";
-        const subtitle_text: []const u8 = if (is_paused)
+        const header_text: []const u8 = if (!in_break)
+            "HEALTH REMINDER"
+        else if (is_paused)
+            "BREAK PAUSED"
+        else
+            "BREAK IN PROGRESS";
+        const subtitle_text: []const u8 = if (wb.focus_state.phase == .task)
+            "Focus paused for a health reminder."
+        else if (!in_break)
+            "Take a brief pause before continuing."
+        else if (is_paused)
             "A health alert temporarily interrupted your break."
         else switch (wb.focus_state.phase) {
             .short_break => "Short Rest Break",
