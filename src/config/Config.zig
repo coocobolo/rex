@@ -11,6 +11,7 @@ const font_config = @import("font.zig");
 const Binding = @import("../input/binding.zig").Binding;
 const WellbeingOption = @import("wellbeing.zig").Wellbeing;
 const Theme = @import("../color/Theme.zig");
+const Rgb = @import("../color/Rgb.zig");
 const Classifier = @import("../unicode/Classifier.zig");
 const PlainVar = @import("../env/root.zig").PlainVar;
 const Motion = @import("../kit/motion.zig").Mode;
@@ -22,6 +23,7 @@ wellbeing: WellbeingOption = .{},
 shell: Shell = .{},
 ui: Ui = .{},
 theme: Theme,
+colors: Colors = .{},
 window: Window,
 scroll: struct {
     /// Lines moved by the scroll_up and scroll_down actions.
@@ -33,6 +35,51 @@ selection: Selection,
 clipboard: Clipboard = .{},
 /// Stores list of plain environment variable using "KEY=VALUE" format
 environments: []const PlainVar,
+
+/// Returns `theme` with any non-null `[colors]` overrides layered on top.
+pub fn resolvedTheme(self: *const @This()) Theme {
+    return self.colors.resolve(self.theme);
+}
+
+/// Optional per-slot overrides layered over `theme` (`[colors]`).
+pub const Colors = struct {
+    background: ?Rgb = null,
+    foreground: ?Rgb = null,
+    selection_background: ?Rgb = null,
+    selection_foreground: ?Rgb = null,
+    accent: ?Rgb = null,
+    color0: ?Rgb = null,
+    color1: ?Rgb = null,
+    color2: ?Rgb = null,
+    color3: ?Rgb = null,
+    color4: ?Rgb = null,
+    color5: ?Rgb = null,
+    color6: ?Rgb = null,
+    color7: ?Rgb = null,
+    color8: ?Rgb = null,
+    color9: ?Rgb = null,
+    color10: ?Rgb = null,
+    color11: ?Rgb = null,
+    color12: ?Rgb = null,
+    color13: ?Rgb = null,
+    color14: ?Rgb = null,
+    color15: ?Rgb = null,
+
+    /// Applies any overridden fields onto `base` without mutating it.
+    pub fn resolve(self: Colors, base: Theme) Theme {
+        var out = base;
+        if (self.background) |c| out.background = c;
+        if (self.foreground) |c| out.foreground = c;
+        if (self.selection_background) |c| out.selection_background = c;
+        if (self.selection_foreground) |c| out.selection_foreground = c;
+        if (self.accent) |c| out.accent = c;
+        inline for (0..16) |i| {
+            const name = @import("std").fmt.comptimePrint("color{d}", .{i});
+            if (@field(self, name)) |c| out.ansi[i] = c;
+        }
+        return out;
+    }
+};
 
 /// What programs may do with the clipboard through OSC 52 (ADR 0006).
 pub const Clipboard = struct {

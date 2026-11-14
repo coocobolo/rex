@@ -263,6 +263,43 @@ test "apply: theme is a preset name" {
     try std.testing.expectError(error.InvalidValue, applyText(&config, .root, "theme", "dark"));
 }
 
+test "apply: [colors] parses specs, inherit, and layers over resolvedTheme" {
+    const Rgb = @import("../color/Rgb.zig");
+    var config = testConfig();
+    try applyText(&config, .root, "theme", "nord");
+    try applyText(&config, .colors, "background", "#112233");
+    try applyText(&config, .colors, "foreground", "\"#abcdef\"");
+    try applyText(&config, .colors, "selection_background", "#f0a");
+    try applyText(&config, .colors, "selection_foreground", "rgb:10/20/30");
+    try applyText(&config, .colors, "accent", "red");
+    try applyText(&config, .colors, "color0", "\"light blue\"");
+    try applyText(&config, .colors, "color15", "#ffffff");
+
+    try std.testing.expectEqual(Rgb{ .r = 0x11, .g = 0x22, .b = 0x33 }, config.colors.background.?);
+    try std.testing.expectEqual(Rgb{ .r = 0xAB, .g = 0xCD, .b = 0xEF }, config.colors.foreground.?);
+    try std.testing.expectEqual(Rgb{ .r = 0xFF, .g = 0x00, .b = 0xAA }, config.colors.selection_background.?);
+    try std.testing.expectEqual(Rgb{ .r = 0x10, .g = 0x20, .b = 0x30 }, config.colors.selection_foreground.?);
+    try std.testing.expectEqual(Rgb{ .r = 0xFF, .g = 0x00, .b = 0x00 }, config.colors.accent.?);
+    try std.testing.expectEqual(Rgb{ .r = 0xAD, .g = 0xD8, .b = 0xE6 }, config.colors.color0.?);
+    try std.testing.expectEqual(Rgb{ .r = 0xFF, .g = 0xFF, .b = 0xFF }, config.colors.color15.?);
+
+    const resolved = config.resolvedTheme();
+    try std.testing.expectEqual(config.colors.background.?, resolved.background);
+    try std.testing.expectEqual(config.colors.color0.?, resolved.ansi[0]);
+    try std.testing.expectEqual(@import("../color/presets.zig").nord.ansi[1], resolved.ansi[1]);
+
+    // Clearing back to inherit restores the active preset color.
+    try applyText(&config, .colors, "background", "inherit");
+    try std.testing.expectEqual(@as(?Rgb, null), config.colors.background);
+    try std.testing.expectEqual(@import("../color/presets.zig").nord.background, config.resolvedTheme().background);
+    try applyText(&config, .colors, "color0", "default");
+    try std.testing.expectEqual(@as(?Rgb, null), config.colors.color0);
+
+    for ([_][]const u8{ "", "#12345", "#zzzzzz", "notacolor", "none" }) |bad| {
+        try std.testing.expectError(error.InvalidValue, applyText(&config, .colors, "background", bad));
+    }
+}
+
 test "apply: font file resolves its path" {
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena.deinit();
@@ -444,7 +481,7 @@ test "table: every row's field resolves and qualified names are unique" {
 }
 
 test "exposure: every Config field is a key, a section or listed as internal" {
-    @setEvalBranchQuota(100_000);
+    @setEvalBranchQuota(200_000);
     const leaves = comptime keys.leafPaths(Config);
     var uncovered: usize = 0;
     for (leaves) |leaf| {
@@ -464,7 +501,7 @@ test "exposure: every Config field is a key, a section or listed as internal" {
 }
 
 test "exposure: every internal entry names a Config field" {
-    @setEvalBranchQuota(100_000);
+    @setEvalBranchQuota(200_000);
     const leaves = comptime keys.leafPaths(Config);
     for (keys.internal) |prefix| {
         const exists = for (leaves) |leaf| {

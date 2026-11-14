@@ -29,7 +29,7 @@ pub const Error = struct {
     pub const Tag = enum {
         /// `[name]` that isn't a section; its keys are skipped. Token: the name.
         unknown_section,
-        /// A section reserved for a future version (`[terminal]`, `[colors]`,
+        /// A section reserved for a future version (`[terminal]`,
         /// `[profile.*]`); its keys are skipped. Token: the name.
         reserved_section,
         /// Token: the key name.
@@ -257,7 +257,7 @@ fn sectionFromName(name: []const u8) ?keys.Section {
 }
 
 fn isReservedSection(name: []const u8) bool {
-    for ([_][]const u8{ "terminal", "colors", "profile" }) |reserved| {
+    for ([_][]const u8{ "terminal", "profile" }) |reserved| {
         if (std.mem.eql(u8, name, reserved)) return true;
     }
     return std.mem.startsWith(u8, name, "profile.");

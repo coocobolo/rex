@@ -14,9 +14,11 @@ const config_defaults = @import("../config/default.zig");
 const config_paths = @import("../config/paths.zig");
 const config_writer = @import("../config/writer.zig");
 const config_font = @import("../config/font.zig");
+const Rgb = @import("../color/Rgb.zig");
 const ThemePreset = @import("../color/Theme.zig");
 const theme_presets = @import("../color/presets.zig");
 
+const button = kit.button;
 const sidebar = kit.sidebar;
 const popup = kit.popup;
 const switch_control = kit.switch_control;
@@ -38,6 +40,7 @@ const popup_max_items: usize = 10;
 
 pub const Page = enum(u8) {
     appearance,
+    colors,
     window_shell,
     overlays,
     wellbeing,
@@ -48,6 +51,7 @@ pub const Page = enum(u8) {
 const groups = [_]sidebar.Group{
     .{ .label = "Terminal", .items = &.{
         .{ .label = "Appearance" },
+        .{ .label = "Colors" },
         .{ .label = "Window & Shell" },
         .{ .label = "Overlays" },
     } },
@@ -61,6 +65,7 @@ const page_count = sidebar.itemCount(&groups);
 
 const page_titles = [_][]const u8{
     "Appearance",
+    "Colors",
     "Window & Shell",
     "Overlays",
     "Screen Time & Privacy",
@@ -70,6 +75,7 @@ const page_titles = [_][]const u8{
 
 const page_descriptions = [_][]const u8{
     "Theme, UI motion, color scheme, and font configuration.",
+    "Custom color palette and theme overrides.",
     "Window behavior, bell, scrolling, selection, clipboard, and shell.",
     "Toasts, banners, and modal dialogs.",
     "Wellbeing tracking, daily screen time limits, and dashboard charts.",
@@ -80,6 +86,7 @@ const page_descriptions = [_][]const u8{
 pub fn pageForSection(section: keys.Section) ?Page {
     return switch (section) {
         .root, .font, .ui => .appearance,
+        .colors => .colors,
         .window, .bell, .scroll, .selection, .clipboard, .shell => .window_shell,
         .toast, .banner, .modal, .@"modal.blur" => .overlays,
         .wellbeing, .@"wellbeing.screen_time", .@"wellbeing.privacy", .@"wellbeing.dashboard" => .wellbeing,
@@ -99,6 +106,7 @@ comptime {
 
 const section_titles = std.EnumArray(keys.Section, []const u8).init(.{
     .root = "General",
+    .colors = "Theme Overrides",
     .font = "Font",
     .window = "Window",
     .bell = "Bell",
@@ -335,8 +343,58 @@ fn keyMeta(comptime section: keys.Section, comptime key_name: []const u8) KeyMet
 
         .@"wellbeing.eyesight" => reminderMeta("Eyesight", key_name),
         .@"wellbeing.movement" => reminderMeta("Movement", key_name),
+        .colors => colorMeta(key_name),
         else => @compileError("unmapped section in keyMeta: " ++ @tagName(section)),
     };
+}
+
+const ansi_color_names = [16][]const u8{
+    "Black",
+    "Red",
+    "Green",
+    "Yellow",
+    "Blue",
+    "Magenta",
+    "Cyan",
+    "White",
+    "Bright Black",
+    "Bright Red",
+    "Bright Green",
+    "Bright Yellow",
+    "Bright Blue",
+    "Bright Magenta",
+    "Bright Cyan",
+    "Bright White",
+};
+
+fn colorMeta(comptime key_name: []const u8) KeyMeta {
+    if (std.mem.eql(u8, key_name, "background")) return .{
+        .label = "Background",
+        .description = "Default terminal background color, or inherit from the active theme.",
+    };
+    if (std.mem.eql(u8, key_name, "foreground")) return .{
+        .label = "Foreground",
+        .description = "Default terminal text color, or inherit from the active theme.",
+    };
+    if (std.mem.eql(u8, key_name, "selection_background")) return .{
+        .label = "Selection Background",
+        .description = "Background color of selected text, or inherit from the active theme.",
+    };
+    if (std.mem.eql(u8, key_name, "selection_foreground")) return .{
+        .label = "Selection Foreground",
+        .description = "Foreground color of selected text, or inherit from the active theme.",
+    };
+    if (std.mem.eql(u8, key_name, "accent")) return .{
+        .label = "Accent",
+        .description = "Cursor and accent color, or inherit from the active theme.",
+    };
+    inline for (ansi_color_names, 0..) |color_name, i| {
+        if (std.mem.eql(u8, key_name, std.fmt.comptimePrint("color{d}", .{i}))) return .{
+            .label = std.fmt.comptimePrint("Color {d} · {s}", .{ i, color_name }),
+            .description = std.fmt.comptimePrint("ANSI color slot {d} ({s}), or inherit from the active theme.", .{ i, color_name }),
+        };
+    }
+    @compileError("unmapped colors key: " ++ key_name);
 }
 
 fn overlayMeta(comptime section: keys.Section, comptime key_name: []const u8) KeyMeta {
@@ -523,6 +581,7 @@ const ControlKind = enum {
     select,
     enum_set,
     list,
+    color,
     text_input,
 };
 
@@ -531,6 +590,7 @@ fn controlKind(comptime key: keys.Key) ControlKind {
     if (key.kind == .fraction) return .slider;
     if (key.kind == .duration) return .duration;
     if (key.kind == .font_fallback or key.kind == .shell_argument) return .list;
+    if (key.kind == .color) return .color;
     const T = keys.FieldType(Config, key.field);
     if (key.kind == .set) return .enum_set;
     return switch (@typeInfo(T)) {
@@ -555,6 +615,7 @@ pub const Target = union(enum) {
     select_choice: usize,
     key_checkbox: struct { key: u16, bit: u8 },
     key_input: u16,
+    color_reset: u16,
     stepper_dec: u16,
     stepper_inc: u16,
     list_add: u16,
@@ -615,6 +676,30 @@ fn listRemoveId(idx: u16, item: usize) Id {
     return Id.of("settings.list_rm").item(@as(u32, idx) * 256 + @as(u32, @intCast(item)));
 }
 
+fn colorResetId(idx: u16) Id {
+    return Id.of("settings.color_reset").item(idx);
+}
+
+const color_slot_count: usize = blk: {
+    var n: usize = 0;
+    for (keys.table) |key| {
+        if (key.kind == .color) n += 1;
+    }
+    break :blk n;
+};
+
+const color_slot_index: [keys.table.len]?u8 = blk: {
+    var map: [keys.table.len]?u8 = .{null} ** keys.table.len;
+    var slot: u8 = 0;
+    for (keys.table, 0..) |key, i| {
+        if (key.kind == .color) {
+            map[i] = slot;
+            slot += 1;
+        }
+    }
+    break :blk map;
+};
+
 pub const State = struct {
     gpa: Allocator,
     io: std.Io,
@@ -636,6 +721,7 @@ pub const State = struct {
     dragging_slider: ?u16 = null,
     open_select: ?struct { key: u16, highlight: usize, top: usize = 0 } = null,
     inputs: [keys.table.len]input.State = [_]input.State{.{}} ** keys.table.len,
+    color_placeholders: [color_slot_count][7]u8 = [_][7]u8{.{ '#', '0', '0', '0', '0', '0', '0' }} ** color_slot_count,
     list_items: [keys.table.len]std.ArrayListUnmanaged([]u8) = [_]std.ArrayListUnmanaged([]u8){.empty} ** keys.table.len,
     duration_units: [keys.table.len]DurationUnit = [_]DurationUnit{.ms} ** keys.table.len,
     slider_values: [keys.table.len]f32 = [_]f32{0} ** keys.table.len,
@@ -713,10 +799,50 @@ fn formatTime(hour: u8, minute: u8, buf: []u8) []const u8 {
     return std.fmt.bufPrint(buf, "{d:0>2}:{d:0>2}", .{ hour, minute }) catch "";
 }
 
+fn formatHexRgb(rgb: Rgb, buf: []u8) []const u8 {
+    return std.fmt.bufPrint(buf, "#{x:0>2}{x:0>2}{x:0>2}", .{ rgb.r, rgb.g, rgb.b }) catch "";
+}
+
+fn resolvedColorSlot(comptime key_name: []const u8, theme: ThemePreset) Rgb {
+    if (comptime std.mem.eql(u8, key_name, "background")) return theme.background;
+    if (comptime std.mem.eql(u8, key_name, "foreground")) return theme.foreground;
+    if (comptime std.mem.eql(u8, key_name, "selection_background")) return theme.selection_background;
+    if (comptime std.mem.eql(u8, key_name, "selection_foreground")) return theme.selection_foreground;
+    if (comptime std.mem.eql(u8, key_name, "accent")) return theme.accent;
+    inline for (0..16) |n| {
+        if (comptime std.mem.eql(u8, key_name, std.fmt.comptimePrint("color{d}", .{n}))) {
+            return theme.ansi[n];
+        }
+    }
+    @compileError("unmapped color slot: " ++ key_name);
+}
+
+const ColorInfo = struct {
+    resolved: Rgb,
+    overridden: bool,
+};
+
+fn colorInfo(idx: u16, cfg: *const Config) ColorInfo {
+    @setEvalBranchQuota(keys.eval_branch_quota);
+    const theme = cfg.resolvedTheme();
+    inline for (keys.table, 0..) |key, i| {
+        if (comptime key.kind == .color) {
+            if (i == idx) {
+                const override = keys.fieldValue(Config, key.field, cfg);
+                return .{
+                    .resolved = resolvedColorSlot(key.name, theme),
+                    .overridden = override != null,
+                };
+            }
+        }
+    }
+    return .{ .resolved = .{ .r = 0, .g = 0, .b = 0 }, .overridden = false };
+}
+
 fn readInputValue(idx: u16, cfg: *const Config, buf: []u8) []const u8 {
     @setEvalBranchQuota(keys.eval_branch_quota);
     inline for (keys.table, 0..) |key, i| {
-        if (comptime controlKind(key) == .text_input or controlKind(key) == .stepper) {
+        if (comptime controlKind(key) == .text_input or controlKind(key) == .stepper or controlKind(key) == .color) {
             if (i == idx) {
                 const val = keys.fieldValue(Config, key.field, cfg);
                 return formatInputField(key.kind, @TypeOf(val), val, buf);
@@ -735,6 +861,7 @@ fn formatInputField(comptime kind: keys.Kind, comptime T: type, val: T, buf: []u
 }
 
 fn formatInputNonOptional(comptime kind: keys.Kind, comptime T: type, val: T, buf: []u8) []const u8 {
+    if (kind == .color) return formatHexRgb(val, buf);
     if (kind == .time_of_day) return formatTime(val.hour, val.minute, buf);
     if (kind == .path or kind == .program_path or kind == .directory_path) {
         if (T == config_font.Face) return std.mem.span(val.path);
@@ -758,9 +885,16 @@ fn syncInputs(state: *State) Allocator.Error!void {
     for (row_infos, 0..) |info, i| {
         const idx: u16 = @intCast(i);
         switch (info.kind) {
-            .text_input, .stepper => if (!state.dirty[i]) {
-                const text = readInputValue(idx, cfg, &buf);
-                try state.inputs[i].setText(state.gpa, text);
+            .text_input, .stepper, .color => {
+                if (info.kind == .color) {
+                    if (color_slot_index[i]) |slot| {
+                        _ = formatHexRgb(colorInfo(idx, cfg).resolved, &state.color_placeholders[slot]);
+                    }
+                }
+                if (!state.dirty[i]) {
+                    const text = readInputValue(idx, cfg, &buf);
+                    try state.inputs[i].setText(state.gpa, text);
+                }
             },
             .duration => if (!state.dirty[i]) {
                 const parsed = splitDurationMs(durationMs(idx, cfg), &buf);
@@ -1110,7 +1244,7 @@ fn pageFocusTargets(page: Page, out: []Target) usize {
                     out[count] = .{ .key_select = idx };
                     count += 1;
                 },
-                .stepper, .text_input, .list => {
+                .stepper, .text_input, .list, .color => {
                     out[count] = .{ .key_input = idx };
                     count += 1;
                 },
@@ -1168,6 +1302,7 @@ fn targetId(target: Target) ?Id {
         .key_slider => |idx| sliderId(idx),
         .key_select => |idx| selectId(idx),
         .key_input => |idx| inputId(idx),
+        .color_reset => |idx| colorResetId(idx),
         .stepper_dec => |idx| decId(idx),
         .stepper_inc => |idx| incId(idx),
         .list_add => |idx| listAddId(idx),
@@ -1261,6 +1396,16 @@ fn activate(state: *State, target: Target) bool {
             }
             return true;
         },
+        .color_reset => |idx| {
+            if (!colorInfo(idx, state.activeConfig()).overridden) return false;
+            if (state.focused == .key_input and state.focused.key_input == idx) {
+                state.dirty[idx] = false;
+            }
+            blurFocused(state);
+            state.dirty[idx] = false;
+            commitValue(state, idx, "inherit");
+            return true;
+        },
         .stepper_dec => |idx| {
             blurFocused(state);
             stepNumber(state, idx, -1);
@@ -1327,6 +1472,12 @@ fn over(state: *const State, id: Id) Target {
                 }
             },
             .text_input => if (id == inputId(idx)) return .{ .key_input = idx },
+            .color => {
+                if (id == inputId(idx)) return .{ .key_input = idx };
+                if (id == colorResetId(idx) and colorInfo(idx, state.activeConfig()).overridden) {
+                    return .{ .color_reset = idx };
+                }
+            },
             .enum_set => if (id == selectId(idx)) return .{ .key_select = idx },
         }
     }
@@ -1485,6 +1636,34 @@ fn formatForWrite(info: RowInfo, raw: []const u8, buf: []u8) ?[]const u8 {
         if (info.null_keyword) |kw| return kw;
     }
     switch (info.key_kind) {
+        .color => {
+            const trimmed = std.mem.trim(u8, raw, " \t");
+            if (trimmed.len == 0 or std.mem.eql(u8, trimmed, "inherit")) return "inherit";
+            const needs_quotes = for (trimmed) |ch| {
+                if (ch == ' ' or ch == '\t' or ch == '"' or ch == '\\') break true;
+            } else false;
+            if (!needs_quotes) return trimmed;
+            var pos: usize = 0;
+            if (pos >= buf.len) return null;
+            buf[pos] = '"';
+            pos += 1;
+            for (trimmed) |c| {
+                if (c == '"' or c == '\\') {
+                    if (pos + 2 > buf.len) return null;
+                    buf[pos] = '\\';
+                    buf[pos + 1] = c;
+                    pos += 2;
+                } else {
+                    if (pos + 1 > buf.len) return null;
+                    buf[pos] = c;
+                    pos += 1;
+                }
+            }
+            if (pos >= buf.len) return null;
+            buf[pos] = '"';
+            pos += 1;
+            return buf[0..pos];
+        },
         .path, .program_path, .directory_path, .text, .word_characters => {
             if (info.null_keyword) |kw| {
                 if (std.mem.eql(u8, raw, kw)) return raw;
@@ -2473,6 +2652,60 @@ fn viewKeyRow(
             tree.close(compound);
             tree.close(ring);
             tree.close(list_col);
+        },
+        .color => {
+            const inp = &state.inputs[idx];
+            const is_err = state.error_key == idx;
+            const ci = colorInfo(idx, cfg);
+            const swatch: Theme.Color = .{ .r = ci.resolved.r, .g = ci.resolved.g, .b = ci.resolved.b };
+            const placeholder: []const u8 = if (color_slot_index[idx]) |slot|
+                &state.color_placeholders[slot]
+            else
+                info.placeholder;
+            const reset_hovered = std.meta.eql(state.hover, Target{ .color_reset = idx });
+            const reset_pressed = std.meta.eql(state.pressed, Target{ .color_reset = idx });
+            const reset_state: button.State = if (!ci.overridden)
+                .disabled
+            else if (reset_pressed and reset_hovered)
+                .pressed
+            else if (reset_hovered)
+                .hovered
+            else
+                .normal;
+
+            const color_row = try tree.open(.{
+                .axis = .row,
+                .width = control_width,
+                .gap = 8,
+                .cross = .center,
+            });
+            _ = try tree.leaf(.{
+                .width = .{ .fixed = 24 },
+                .height = .{ .fixed = 24 },
+                .fill = swatch,
+                .border = theme.border,
+                .border_width = Theme.border_width,
+                .radius = Theme.radius_sm,
+            });
+            try input.view(tree, theme, .{
+                .id = inputId(idx),
+                .value = inp.text(),
+                .placeholder = placeholder,
+                .cursor = inp.cursor,
+                .anchor = inp.anchor,
+                .width = .fill,
+                .hovered = std.meta.eql(state.hover, Target{ .key_input = idx }),
+                .focused = std.meta.eql(state.focused, Target{ .key_input = idx }),
+                .invalid = is_err,
+            });
+            try button.view(tree, theme, .{
+                .id = colorResetId(idx),
+                .label = "Reset",
+                .variant = .outline,
+                .size = .sm,
+                .state = reset_state,
+            });
+            tree.close(color_row);
         },
         .text_input => {
             const inp = &state.inputs[idx];

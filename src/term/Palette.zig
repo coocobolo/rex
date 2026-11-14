@@ -58,15 +58,23 @@ pub fn reset(self: *Palette) void {
     self.indexed = self.indexed_default;
 }
 
-/// Applies a theme. Called once at startup; OSC 4/10/11 can still
-/// override on top.
+/// Applies a theme at startup or on live config reload.
+///
+/// Updates un-overridden ANSI slots 0–15 and the OSC 104 reset table,
+/// while preserving any active OSC 4 overrides on 0–15 (`indexed[i] !=
+/// indexed_default[i]`), OSC 10/11 (`foreground`/`background`), and
+/// OSC 17/19 (`selection_*` on Terminal).
 pub fn setTheme(self: *Palette, theme: Theme) void {
     self.builtin_background = theme.background;
     self.builtin_foreground = theme.foreground;
     self.builtin_selection_background = theme.selection_background;
     self.builtin_selection_foreground = theme.selection_foreground;
+    for (theme.ansi, 0..) |c, i| {
+        if (self.indexed[i].eql(self.indexed_default[i])) {
+            self.indexed[i] = c;
+        }
+    }
     self.indexed_default[0..16].* = theme.ansi;
-    self.indexed[0..16].* = theme.ansi;
 }
 
 /// Resolves an encoded color (`Style.Key`) to RGBA packed as 0xRRGGBBAA.

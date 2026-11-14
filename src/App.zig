@@ -582,8 +582,9 @@ pub fn init(
         log.warn("TERM is longer than {d} bytes; XTGETTCAP will not report it", .{rex.terminal.term.max_term_name_len});
         break :blk .empty;
     };
+    const resolved_theme = active_config.resolvedTheme();
     const driver_options: rex.driver.Options = .{
-        .theme = active_config.theme,
+        .theme = resolved_theme,
         .sync_output_timeout_ms = sync_output_timeout_ms,
         .term_name = term_name,
     };
@@ -596,7 +597,7 @@ pub fn init(
 
     driver.setWakeupFn(Window.glfwPostEmptyEvent);
 
-    const background_color = active_config.theme.background;
+    const background_color = resolved_theme.background;
     const background_alpha = active_config.window.background.alpha;
 
     const classifier = try unicode.Classifier.init(active_config.selection.classifier);
@@ -1042,15 +1043,16 @@ fn buildSelectionState(self: *App, frame: *const FrameType) ?SelectionState {
     // On the alternate buffer, apps manage their own selection highlighting.
     // Only apply the theme selection color on the primary buffer.
 
+    const sel_theme = self.config.resolvedTheme();
     const foreground = blk: {
         if (frame.selection_foreground) |fg| break :blk fg;
-        if (is_primary) break :blk self.config.theme.selection_foreground.toArray();
+        if (is_primary) break :blk sel_theme.selection_foreground.toArray();
         break :blk null;
     };
 
     const background = blk: {
         if (frame.selection_background) |bg| break :blk bg;
-        if (is_primary) break :blk self.config.theme.selection_background.toArray();
+        if (is_primary) break :blk sel_theme.selection_background.toArray();
         break :blk null;
     };
 
@@ -1478,7 +1480,8 @@ pub fn reloadConfig(self: *App) void {
     self.config = new_config;
 
     // Live update renderer background color, alpha, and terminal theme
-    const bg = self.config.theme.background;
+    const resolved_theme = self.config.resolvedTheme();
+    const bg = resolved_theme.background;
     self.background_color = .{ bg.r, bg.g, bg.b, self.config.window.background.alpha };
     if (self.kit) |kit| {
         kit.configure(self.config.ui);
@@ -1488,7 +1491,7 @@ pub fn reloadConfig(self: *App) void {
     }
     self.renderer.background.option.alpha = self.config.window.background.alpha;
     self.renderer.setModalBlur(self.config.window.modal.blur, self.config.window.modal.blur_radius);
-    self.driver.setTheme(self.config.theme);
+    self.driver.setTheme(resolved_theme);
     self.updateWindowTitle();
     self.frame_builder.last_generation = null;
 

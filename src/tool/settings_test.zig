@@ -1,6 +1,7 @@
 const std = @import("std");
 const testing = std.testing;
 
+const Rgb = @import("../color/Rgb.zig");
 const kit = @import("../kit/root.zig");
 const config_defaults = @import("../config/default.zig");
 const keys = @import("../config/keys.zig");
@@ -39,7 +40,7 @@ test "settings: every page fits node_max and line_max at narrow and wide sizes" 
 
     for ([_][2]f32{ .{ 420, 500 }, .{ 960, 720 } }) |sz| {
         _ = settings.update(&state, .{ .size = .{ .width = sz[0], .height = sz[1] } });
-        for (0..6) |page_idx| {
+        for (0..@typeInfo(settings.Page).@"enum".fields.len) |page_idx| {
             state.frame.current = @intCast(page_idx);
             var tree = kit.tree.Tree.init(&nodes, &lines);
             try settings.view(&state, &tree, &kit.Theme.dark);
@@ -367,4 +368,82 @@ test "settings: theme select popup windows long list and saves selection" {
     try testing.expect(settings.update(&state, .{ .key = .{ .key = .enter } }));
     try testing.expect(state.open_select == null);
     try testing.expect(!std.meta.eql(state.activeConfig().theme, cfg.theme));
+}
+
+test "settings: colors page edits, validates, and resets slot overrides" {
+    const gpa = testing.allocator;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const dir_path = try std.fs.path.join(gpa, &.{ ".zig-cache", "tmp", &tmp.sub_path });
+    defer gpa.free(dir_path);
+    const cfg_path = try std.fs.path.join(gpa, &.{ dir_path, "config" });
+    defer gpa.free(cfg_path);
+
+    const cfg = config_defaults.default;
+    var state = try settings.init(.{
+        .gpa = gpa,
+        .io = testing.io,
+        .config = &cfg,
+        .state_dir = dir_path,
+        .config_path = cfg_path,
+        .home_dir = dir_path,
+        .wake_loop = struct {
+            fn wake() void {}
+        }.wake,
+    });
+    defer settings.deinit(&state);
+
+    state.frame.current = @intFromEnum(settings.Page.colors);
+
+    const bg_idx = keyIndex(.colors, "background");
+    const bg_input_id = Id.of("settings.input").item(bg_idx);
+    const bg_reset_id = Id.of("settings.color_reset").item(bg_idx);
+
+    // Valid hex override updates colors.background and resolvedTheme().
+    _ = settings.update(&state, .{ .pointer = .{ .id = bg_input_id } });
+    _ = settings.update(&state, .{ .press = bg_input_id });
+    _ = settings.update(&state, .release);
+    for ("#ff5500") |ch| {
+        try testing.expect(settings.update(&state, .{ .char = ch }));
+    }
+    try testing.expect(settings.update(&state, .{ .key = .{ .key = .enter } }));
+    try testing.expectEqual(@as(?u16, null), state.error_key);
+    try testing.expectEqual(@as(?Rgb, .{ .r = 255, .g = 85, .b = 0 }), state.activeConfig().colors.background);
+    try testing.expectEqual(Rgb{ .r = 255, .g = 85, .b = 0 }, state.activeConfig().resolvedTheme().background);
+    try testing.expectEqualStrings("#ff5500", state.inputs[bg_idx].text());
+
+    // Invalid color sets inline error_key and preserves previous config.
+    try testing.expect(settings.update(&state, .{ .key = .{ .key = .a, .mods = .{ .ctrl = true } } }));
+    for ("badcolor") |ch| {
+        try testing.expect(settings.update(&state, .{ .char = ch }));
+    }
+    try testing.expect(settings.update(&state, .{ .key = .{ .key = .enter } }));
+    try testing.expectEqual(@as(?u16, bg_idx), state.error_key);
+    try testing.expect(state.error_msg.items.len > 0);
+    try testing.expectEqual(@as(?Rgb, .{ .r = 255, .g = 85, .b = 0 }), state.activeConfig().colors.background);
+
+    // Clicking Reset clears dirty invalid input, writes inherit, and restores null.
+    _ = settings.update(&state, .{ .pointer = .{ .id = bg_reset_id } });
+    _ = settings.update(&state, .{ .press = bg_reset_id });
+    try testing.expect(settings.update(&state, .release));
+    try testing.expectEqual(@as(?u16, null), state.error_key);
+    try testing.expectEqual(@as(?Rgb, null), state.activeConfig().colors.background);
+    try testing.expectEqual(cfg.theme.background, state.activeConfig().resolvedTheme().background);
+    try testing.expectEqualStrings("", state.inputs[bg_idx].text());
+
+    // Named X11 color canonicalizes to #rrggbb in the input box after reload.
+    const c1_idx = keyIndex(.colors, "color1");
+    const c1_input_id = Id.of("settings.input").item(c1_idx);
+    _ = settings.update(&state, .{ .pointer = .{ .id = c1_input_id } });
+    _ = settings.update(&state, .{ .press = c1_input_id });
+    _ = settings.update(&state, .release);
+    for ("red") |ch| {
+        try testing.expect(settings.update(&state, .{ .char = ch }));
+    }
+    try testing.expect(settings.update(&state, .{ .key = .{ .key = .enter } }));
+    try testing.expectEqual(@as(?u16, null), state.error_key);
+    try testing.expectEqual(@as(?Rgb, .{ .r = 255, .g = 0, .b = 0 }), state.activeConfig().colors.color1);
+    try testing.expectEqual(Rgb{ .r = 255, .g = 0, .b = 0 }, state.activeConfig().resolvedTheme().ansi[1]);
+    try testing.expectEqualStrings("#ff0000", state.inputs[c1_idx].text());
 }

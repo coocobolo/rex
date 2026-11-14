@@ -16,6 +16,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 const Config = @import("Config.zig");
+const Rgb = @import("../color/Rgb.zig");
 const Theme = @import("../color/Theme.zig");
 const color_presets = @import("../color/presets.zig");
 const Face = @import("font.zig").Face;
@@ -24,6 +25,7 @@ const TimeOfDay = @import("wellbeing.zig").TimeOfDay;
 /// Section headers as users write them; dotted names are subsections (`[modal.blur]`).
 pub const Section = enum {
     root,
+    colors,
     font,
     window,
     bell,
@@ -69,6 +71,8 @@ pub const Kind = enum {
     font_weight,
     /// A theme preset name.
     theme,
+    /// A terminal color specification (#RGB, #RRGGBB, #RRRRGGGGBBBB, rgb:R/G/B, or X11 name).
+    color,
     /// A list of fallback font files, one path per line (F2): the first line
     /// in a file replaces the lower layer's list, `none` empties it and
     /// `default` restores the base list. Paths resolve like `path`.
@@ -180,8 +184,14 @@ const at_least_one: Bounds = .{ .min = 1 };
 /// driver and the display scale.
 const font_size: Bounds = .{ .min = 1, .max = 1000 };
 
-pub const table = [_]Key{
+const base_table = [_]Key{
     .{ .section = .root, .name = "theme", .field = "theme", .kind = .theme },
+
+    .{ .section = .colors, .name = "background", .field = "colors.background", .kind = .color, .null_keyword = .inherit },
+    .{ .section = .colors, .name = "foreground", .field = "colors.foreground", .kind = .color, .null_keyword = .inherit },
+    .{ .section = .colors, .name = "selection_background", .field = "colors.selection_background", .kind = .color, .null_keyword = .inherit },
+    .{ .section = .colors, .name = "selection_foreground", .field = "colors.selection_foreground", .kind = .color, .null_keyword = .inherit },
+    .{ .section = .colors, .name = "accent", .field = "colors.accent", .kind = .color, .null_keyword = .inherit },
 
     // One file per style; a style without one takes the next in
     // `Faces.face`'s order (naming doc §9, superseding F16 for fonts).
@@ -271,6 +281,23 @@ pub const table = [_]Key{
     .{ .section = .shell, .name = "argument", .field = "shell.arguments", .kind = .shell_argument, .reload = .restart },
     .{ .section = .shell, .name = "working_directory", .field = "shell.working_directory", .kind = .directory_path, .null_keyword = .inherit, .reload = .restart },
 };
+
+const ansi_color_rows: [16]Key = blk: {
+    var rows: [16]Key = undefined;
+    for (0..16) |i| {
+        const name = std.fmt.comptimePrint("color{d}", .{i});
+        rows[i] = .{
+            .section = .colors,
+            .name = name,
+            .field = "colors." ++ name,
+            .kind = .color,
+            .null_keyword = .inherit,
+        };
+    }
+    break :blk rows;
+};
+
+pub const table: [base_table.len + ansi_color_rows.len]Key = base_table ++ ansi_color_rows;
 
 /// A key that existed in a released version and is gone or renamed; Sema
 /// reports it instead of "unknown key".
@@ -426,6 +453,7 @@ fn writeExpectedKey(comptime key: Key, w: *std.Io.Writer) std.Io.Writer.Error!vo
         },
         .font_weight => try w.print("a whole number from {d} to {d}", .{ key.bounds.min, key.bounds.max }),
         .theme => try w.writeAll("a built-in theme name, like \"nord\""),
+        .color => try w.writeAll("a color like \"#1e1e2e\" or \"red\""),
         .font_fallback => try w.writeAll("a path to a font file, one per line, or none"),
         .path => try w.writeAll("a path to a font file"),
         .program_path => try w.writeAll("an absolute path to a program, ~/ allowed"),
@@ -592,6 +620,11 @@ fn applyKey(comptime key: Key, config: *Config, ctx: Context, text: []const u8) 
         fieldPtr(Config, key.field, config).* = try resolvePath(ctx, path);
         return;
     }
+    if (key.kind == .color) {
+        const spec = try unquote(ctx.arena, text);
+        fieldPtr(Config, key.field, config).* = Rgb.parseSpec(spec) orelse return error.InvalidValue;
+        return;
+    }
     fieldPtr(Config, key.field, config).* = try parseValue(key, Value, text);
 }
 
@@ -676,6 +709,7 @@ fn checkRow(comptime key: Key, comptime T: type) void {
         .set => isEnumSet(Value) and !@hasField(Value.Key, "none") and !@hasField(Value.Key, "default"),
         .font_weight => @typeInfo(Value) == .float,
         .theme => Value == Theme,
+        .color => Value == Rgb,
         .font_fallback => Value == []const Face,
         .path => Value == [*:0]const u8 or Value == Face,
         .program_path, .directory_path, .text => Value == [:0]const u8,
@@ -709,7 +743,7 @@ fn parseValue(comptime key: Key, comptime V: type, text: []const u8) Error!V {
         },
         .theme => return theme_presets.get(text) orelse error.InvalidValue,
         .font_fallback, .shell_argument => unreachable, // Sema handles list rows
-        .path, .program_path, .directory_path, .word_characters, .text => unreachable, // applyKey handles them
+        .color, .path, .program_path, .directory_path, .word_characters, .text => unreachable, // applyKey handles them
     }
 }
 

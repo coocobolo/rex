@@ -111,3 +111,30 @@ const test_theme: Theme = blk: {
     for (&t.ansi, 0..) |*c, n| c.* = .{ .r = @intCast(n), .g = 0x42, .b = 0x24 };
     break :blk t;
 };
+
+test "setTheme: preserves active OSC 4/10/11 overrides across reload and updates reset targets" {
+    var p: Palette = .empty;
+    p.setTheme(Theme.default);
+
+    const osc4_override: Rgb = .{ .r = 0xAB, .g = 0xCD, .b = 0xEF };
+    const osc10_override: Rgb = .{ .r = 0x11, .g = 0x22, .b = 0x33 };
+    const osc11_override: Rgb = .{ .r = 0x44, .g = 0x55, .b = 0x66 };
+    p.setIndexed(1, osc4_override);
+    p.set(.foreground, osc10_override);
+    p.set(.background, osc11_override);
+
+    p.setTheme(test_theme);
+
+    // Overridden slot 1 and OSC 10/11 stay active; un-overridden slot 2 updates.
+    try testing.expectEqual(osc4_override, p.getIndexed(1));
+    try testing.expectEqual(test_theme.ansi[2], p.getIndexed(2));
+    try testing.expectEqual(osc10_override, p.get(.foreground));
+    try testing.expectEqual(osc11_override, p.get(.background));
+
+    // OSC 104 / reset now restore to the reloaded theme.
+    p.resetIndexed(1);
+    try testing.expectEqual(test_theme.ansi[1], p.getIndexed(1));
+    p.reset();
+    try testing.expectEqual(test_theme.foreground, p.get(.foreground));
+    try testing.expectEqual(test_theme.background, p.get(.background));
+}
