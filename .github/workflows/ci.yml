@@ -5,6 +5,12 @@ on:
     branches: [master, develop]
   pull_request:
     branches: [master, develop]
+  # Weekly full optimization matrix off the push critical path. GitHub
+  # Actions runs scheduled workflows from the default branch; offset from
+  # fuzz.yml.
+  schedule:
+    - cron: "0 3 * * 0"
+  workflow_dispatch:
 
 jobs:
   test:
@@ -12,6 +18,16 @@ jobs:
     # A green run takes about 2 minutes; without a limit a hang holds the
     # runner for GitHub's default of 6 hours.
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - optimize: Debug
+            flags: ""
+            check_fmt: true
+          - optimize: ReleaseFast
+            flags: "-Doptimize=ReleaseFast -Dstrip=true"
+            check_fmt: false
     steps:
       - uses: actions/checkout@v7
 
@@ -29,11 +45,12 @@ jobs:
       # Zig global cache between runs.
       - uses: mlugg/setup-zig@v2.2.1
 
-      - run: zig fmt --check .
-      - run: zig build
+      - if: matrix.check_fmt
+        run: zig fmt --check .
+      - run: zig build ${{ matrix.flags }}
       # GL tests need a display; Xvfb plus Mesa gives a software one.
       # --test-timeout kills a test that hangs, names it and goes on.
-      - run: xvfb-run -a zig build test --test-timeout 2m
+      - run: xvfb-run -a zig build test ${{ matrix.flags }} --test-timeout 2m
 
   macos:
     runs-on: macos-latest
@@ -55,3 +72,51 @@ jobs:
       # tests of the main suite; its GL tests need a display.
       - run: zig build test-term --test-timeout 2m
       - run: zig build test -Dtest-filter=termio. -Dtest-filter=driver. --test-timeout 2m
+
+  # Remaining stripped optimization modes and macOS ReleaseFast build run on
+  # master, weekly schedule or manual dispatch so branch/PR feedback stays
+  # fast.
+  optimize-matrix:
+    if: >-
+      github.ref == 'refs/heads/master' ||
+      github.event_name == 'schedule' ||
+      github.event_name == 'workflow_dispatch'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            optimize: ReleaseSafe
+          - os: ubuntu-latest
+            optimize: ReleaseSmall
+          - os: macos-latest
+            optimize: ReleaseFast
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install system libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libx11-dev libxrandr-dev libxi-dev libxcursor-dev \
+            libxinerama-dev libxext-dev libgl-dev libegl-dev \
+            libwayland-dev libwayland-bin libxkbcommon-dev \
+            libpng-dev zlib1g-dev \
+            xvfb libgl1-mesa-dri
+
+      - name: Install libpng
+        if: runner.os == 'macOS'
+        run: brew install libpng pkgconf
+
+      - uses: mlugg/setup-zig@v2.2.1
+
+      - run: zig build -Doptimize=${{ matrix.optimize }} -Dstrip=true
+      - if: runner.os == 'Linux'
+        run: xvfb-run -a zig build test -Doptimize=${{ matrix.optimize }} -Dstrip=true --test-timeout 2m
+      - if: runner.os == 'macOS'
+        run: zig build test-term -Doptimize=${{ matrix.optimize }} -Dstrip=true --test-timeout 2m
+      - if: runner.os == 'macOS'
+        run: zig build test -Dtest-filter=termio. -Dtest-filter=driver. -Doptimize=${{ matrix.optimize }} -Dstrip=true --test-timeout 2m
