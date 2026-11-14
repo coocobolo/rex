@@ -165,7 +165,10 @@ const focus_nodes = 1 + 1 + 3 + 6 + 1 + 3 * button.node_max + popup.node_max + p
 /// The Today page: its column, the card row and four stat cards (box,
 /// title, value, bar or spacer, note), the lower row and its two slots,
 /// the week card and the programs card.
-const today_nodes = 1 + card_rows_nodes + 4 * (4 + chart.progress_nodes) + 1 + 2 + week_nodes + programs_nodes + choices_nodes;
+/// A stat card: box, title, value, bar or spacer, and the note, or the
+/// note's row with the delta and the note.
+const stat_card_nodes = 4 + chart.progress_nodes + 2;
+const today_nodes = 1 + card_rows_nodes + 4 * stat_card_nodes + 1 + 2 + week_nodes + programs_nodes + choices_nodes;
 /// Card, header row, title, spacer, two legend items (row, swatch, text),
 /// the chart's column, the bars, and the label row with a box and text
 /// per day.
@@ -178,7 +181,7 @@ fn daysNodes(comptime count: usize) usize {
 }
 /// The History page: like Today with cards of three nodes and no bar, two
 /// weeks of days, and the tooltip (card, column, three lines).
-const history_nodes = 1 + card_rows_nodes + 4 * 4 + 1 + 2 + daysNodes(history_days) + programs_nodes + 5;
+const history_nodes = 1 + card_rows_nodes + 4 * stat_card_nodes + 1 + 2 + daysNodes(history_days) + programs_nodes + 5;
 /// Card, title, the chart's box and the larger mark, the list and a row
 /// per program (row, swatch, name, time, share box and share); or one
 /// line when there are none.
@@ -317,11 +320,19 @@ const TodayKey = struct {
 
 pub const Card = struct {
     value: Label(16) = .{},
+    /// "↓ 34m": the change from the period before, drawn before `note` in
+    /// the color of `trend`. Empty for none.
+    delta: Label(16) = .{},
     note: Label(40) = .{},
     /// Of the bar under the value, 0 to 1; negative for no bar.
     fraction: f32 = -1,
+    /// Past the daily limit: the value and its bar turn `destructive`.
     over: bool = false,
+    trend: Trend = .even,
 };
+
+/// Whether a change is good news: less screen time, more focus.
+pub const Trend = enum(u8) { better, worse, even };
 
 pub const DaySummary = struct {
     screen_s: u32 = 0,
@@ -793,7 +804,11 @@ fn statCard(tree: *Tree, theme: *const Theme, card_title: []const u8, card: *con
     // `fill` across the row: every card in a row is as tall as the tallest.
     const box = try tree.open(cardBox(theme, .fill, if (with_bar) 6 else 4));
     _ = try tree.text(card_title, .{ .color = theme.muted_foreground, .style = .xs });
-    _ = try tree.text(card.value.slice(), .{ .color = theme.foreground, .style = .xl_semibold, .figures = .tabular });
+    _ = try tree.text(card.value.slice(), .{
+        .color = if (card.over) theme.destructive else theme.foreground,
+        .style = .xl_semibold,
+        .figures = .tabular,
+    });
     if (with_bar) {
         if (card.fraction < 0) {
             _ = try tree.leaf(.{ .height = .{ .fixed = card_bar } });
@@ -801,7 +816,22 @@ fn statCard(tree: *Tree, theme: *const Theme, card_title: []const u8, card: *con
             try chart.progress(tree, theme, .bar, card.fraction, fill, card_bar);
         }
     }
-    _ = try tree.text(card.note.slice(), .{ .color = theme.muted_foreground, .style = .xs });
+    if (card.delta.len == 0) {
+        _ = try tree.text(card.note.slice(), .{ .color = theme.muted_foreground, .style = .xs });
+    } else {
+        const line = try tree.open(.{ .axis = .row, .gap = 4, .cross = .center });
+        _ = try tree.text(card.delta.slice(), .{
+            .color = switch (card.trend) {
+                .better => theme.success,
+                .worse => theme.destructive,
+                .even => theme.muted_foreground,
+            },
+            .style = .sm_medium,
+            .figures = .tabular,
+        });
+        _ = try tree.text(card.note.slice(), .{ .color = theme.muted_foreground, .style = .xs });
+        tree.close(line);
+    }
     tree.close(box);
 }
 
@@ -1249,8 +1279,12 @@ pub fn computeHistory(history: *History, data: *const wellbeing.storage.Persiste
 
     const screen = &history.cards[0];
     screen.value.duration(now.screen_s);
+    screen.delta.len = 0;
+    screen.over = false;
     if (before) |earlier| {
-        change(&screen.note, now.screen_s, earlier.screen_s, "", "from the week before");
+        change(screen, now.screen_s, earlier.screen_s, false, "from the week before");
+    } else if (period == .week) {
+        screen.note.set("No earlier week to compare yet", .{});
     } else {
         screen.note.set("over {d} {s} with screen time", .{ now.days, if (now.days == 1) "day" else "days" });
     }
@@ -1258,16 +1292,18 @@ pub fn computeHistory(history: *History, data: *const wellbeing.storage.Persiste
     const focused = &history.cards[1];
     focused.value.duration(now.focus_s);
     const share: u32 = if (now.screen_s == 0) 0 else @intFromFloat(@round(@as(f32, @floatFromInt(now.focus_s)) * 100 / @as(f32, @floatFromInt(now.screen_s))));
+    focused.delta.len = 0;
     if (before) |earlier| {
         var share_text: Label(24) = .{};
-        share_text.set("{d}% of screen time", .{share});
-        change(&focused.note, now.focus_s, earlier.focus_s, "", share_text.slice());
+        share_text.set("\u{00b7} {d}% of screen time", .{share});
+        change(focused, now.focus_s, earlier.focus_s, true, share_text.slice());
     } else {
         focused.note.set("{d}% of screen time", .{share});
     }
 
     const limit_s = limitSeconds(option);
     const over_card = &history.cards[2];
+    over_card.over = false;
     if (limit_s == 0) {
         over_card.value.set("\u{2013}", .{});
         over_card.note.set("No daily limit", .{});
@@ -1280,6 +1316,7 @@ pub fn computeHistory(history: *History, data: *const wellbeing.storage.Persiste
             if (worst == null or entry.screen_s > shown[worst.?].screen_s) worst = index;
         }
         over_card.value.set("{d} {s}", .{ days_over, if (days_over == 1) "day" else "days" });
+        over_card.over = days_over > 0;
         if (worst) |index| {
             var by: Label(12) = .{};
             by.duration(shown[index].screen_s - limit_s);
@@ -1310,7 +1347,7 @@ pub fn computeHistory(history: *History, data: *const wellbeing.storage.Persiste
         } else {
             screen_text.duration(screen_s);
         }
-        breaks_card.note.set("{d} {s} in {s} of screen time", .{ breaks, if (breaks == 1) "break" else "breaks", screen_text.slice() });
+        breaks_card.note.set("{d} {s} in {s}", .{ breaks, if (breaks == 1) "break" else "breaks", screen_text.slice() });
     }
 
     var names: [history_days * wellbeing.storage.max_top_apps]wellbeing.storage.AppUsage = undefined;
@@ -1351,12 +1388,19 @@ fn average(days: []const DaySummary) Average {
 }
 
 /// "↓ 34m from the week before", or "↑ 12m · 34% of screen time".
-fn change(note: *Label(40), now: u32, earlier: u32, comptime prefix: []const u8, tail: []const u8) void {
+/// The card's delta ("↑ 12m") and whether it is good news, then `tail`
+/// as its note. `more_is_better` is true for focus, false for screen time.
+fn change(card: *Card, now: u32, earlier: u32, more_is_better: bool, tail: []const u8) void {
     var amount: Label(12) = .{};
     amount.duration(if (now > earlier) now - earlier else earlier - now);
-    const arrow = if (now > earlier) "\u{2191}" else if (now < earlier) "\u{2193}" else "=";
-    const separator = if (std.mem.startsWith(u8, tail, "from")) " " else " \u{00b7} ";
-    note.set(prefix ++ "{s} {s}{s}{s}", .{ arrow, amount.slice(), separator, tail });
+    if (amount.len == 0 or std.mem.eql(u8, amount.slice(), "0m")) {
+        card.delta.set("=", .{});
+        card.trend = .even;
+    } else {
+        card.delta.set("{s} {s}", .{ if (now > earlier) "\u{2191}" else "\u{2193}", amount.slice() });
+        card.trend = if ((now > earlier) == more_is_better) .better else .worse;
+    }
+    card.note.set("{s}", .{tail});
 }
 
 /// A day's record from the file, or an empty one when none was kept.

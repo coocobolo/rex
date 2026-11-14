@@ -356,17 +356,30 @@ test "history: averages skip days off, and the week compares with the one before
     data.today = .{ .day = 206, .active_screen_s = 4 * 3600, .focus_s = 3600, .movement_breaks = 1 };
     const week = history(&data, &option("unused"), 206, .week);
 
+    // More screen time is worse news, more focus better.
     try testing.expectEqualStrings("3h", week.cards[0].value.slice());
-    try testing.expectEqualStrings("\u{2191} 2h from the week before", week.cards[0].note.slice());
+    try testing.expectEqualStrings("\u{2191} 2h", week.cards[0].delta.slice());
+    try testing.expectEqual(dashboard.Trend.worse, week.cards[0].trend);
+    try testing.expectEqualStrings("from the week before", week.cards[0].note.slice());
     try testing.expectEqualStrings("45m", week.cards[1].value.slice());
-    try testing.expectEqualStrings("\u{2191} 35m \u{00b7} 25% of screen time", week.cards[1].note.slice());
+    try testing.expectEqualStrings("\u{2191} 35m", week.cards[1].delta.slice());
+    try testing.expectEqual(dashboard.Trend.better, week.cards[1].trend);
+    try testing.expectEqualStrings("\u{00b7} 25% of screen time", week.cards[1].note.slice());
     try testing.expectEqualStrings("0.5 an hour", week.cards[3].value.slice());
-    try testing.expectEqualStrings("3 breaks in 6h of screen time", week.cards[3].note.slice());
+    try testing.expectEqualStrings("3 breaks in 6h", week.cards[3].note.slice());
 
     // Fourteen days have nothing before them in the file to compare with.
     const fortnight = history(&data, &option("unused"), 206, .fortnight);
     try testing.expectEqualStrings("2h", fortnight.cards[0].value.slice());
+    try testing.expectEqual(0, fortnight.cards[0].delta.len);
     try testing.expectEqualStrings("over 4 days with screen time", fortnight.cards[0].note.slice());
+
+    // A first week has no week before it: say so.
+    var fresh: storage.PersistentData = .{};
+    fresh.today = .{ .day = 206, .active_screen_s = 3600 };
+    const first = history(&fresh, &option("unused"), 206, .week);
+    try testing.expectEqual(0, first.cards[0].delta.len);
+    try testing.expectEqualStrings("No earlier week to compare yet", first.cards[0].note.slice());
 }
 
 test "history: the day furthest over the limit is named by its weekday" {
@@ -380,6 +393,7 @@ test "history: the day furthest over the limit is named by its weekday" {
     wb_option.screen_time.daily_limit_ms = 6 * std.time.ms_per_hour;
     const week = history(&data, &wb_option, 106, .week);
     try testing.expectEqualStrings("2 days", week.cards[2].value.slice());
+    try testing.expect(week.cards[2].over);
     try testing.expectEqualStrings("of 7 \u{00b7} most on Thursday, by 1h", week.cards[2].note.slice());
 
     wb_option.screen_time.daily_limit_ms = null;
