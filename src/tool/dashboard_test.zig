@@ -528,3 +528,47 @@ test "dashboard: stat cards in a row are as tall as the tallest" {
     try testing.expectEqual(cards[0].y, cards[1].y);
     try testing.expectEqual(cards[0].h, cards[1].h);
 }
+
+test "dashboard: a narrow page scrolls within what the host reports, and a new page starts at the top" {
+    var tmp: StateTmp = .init();
+    defer tmp.deinit();
+    const dir = try tmp.path();
+    const config = configWith(dir);
+    var state = try openDashboard(&config, dir);
+    defer dashboard.deinit(&state);
+    _ = dashboard.update(&state, .{ .size = .{ .width = 400, .height = 300 } });
+
+    try testing.expect(dashboard.update(&state, .{ .scroll = .{ .dy = 100, .max = 250 } }));
+    try testing.expectEqual(100, state.scroll);
+    try testing.expect(dashboard.update(&state, .{ .scroll = .{ .dy = 400, .max = 250 } }));
+    try testing.expectEqual(250, state.scroll);
+    // Already at the end: nothing changes, no redraw.
+    try testing.expect(!dashboard.update(&state, .{ .scroll = .{ .dy = 48, .max = 250 } }));
+
+    var nodes: [dashboard.node_max]kit.tree.Node = undefined;
+    var lines: [dashboard.line_max]kit.text.Line = undefined;
+    var tree = kit.tree.Tree.init(&nodes, &lines);
+    try dashboard.view(&state, &tree, &kit.Theme.dark);
+    var no_state: u8 = 0;
+    try kit.layout.layout(&tree, .{ .context = &no_state, .widthFn = fixedWidth }, 400, 300);
+    try testing.expect(tree.scroll_index != kit.tree.none);
+    try testing.expect(tree.scroll_max > 0);
+
+    _ = dashboard.update(&state, .{ .key = .{ .key = .tab, .mods = .{ .ctrl = true } } });
+    try testing.expectEqual(0, state.scroll);
+}
+
+test "dashboard: a wide page has no scroll region" {
+    var tmp: StateTmp = .init();
+    defer tmp.deinit();
+    const dir = try tmp.path();
+    const config = configWith(dir);
+    var state = try openDashboard(&config, dir);
+    defer dashboard.deinit(&state);
+    _ = dashboard.update(&state, .{ .size = .{ .width = 960, .height = 600 } });
+    var nodes: [dashboard.node_max]kit.tree.Node = undefined;
+    var lines: [dashboard.line_max]kit.text.Line = undefined;
+    var tree = kit.tree.Tree.init(&nodes, &lines);
+    try dashboard.view(&state, &tree, &kit.Theme.dark);
+    try testing.expectEqual(kit.tree.none, tree.scroll_index);
+}

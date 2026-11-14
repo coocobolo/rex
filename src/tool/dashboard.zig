@@ -59,7 +59,8 @@ const ColorScheme = @FieldType(@import("../config/Config.zig").Ui, "color_scheme
 const scheme_labels = [_][]const u8{ "Auto", "Dark", "Light" };
 
 /// Below this width the four cards take two rows; below `narrow_width` the
-/// timer chip hides.
+/// timer chip hides and the page scrolls, the chart and programs cards one
+/// over the other at their own heights.
 const compact_width = 720;
 const narrow_width = 560;
 
@@ -206,6 +207,9 @@ pub const State = struct {
     scheme: ColorScheme,
     /// In logical pixels, from the last `size` event.
     width: f32 = 0,
+    /// How far a narrow page is scrolled, 0 to the last `max` the host
+    /// sent; 0 again on another page.
+    scroll: f32 = 0,
     /// What `refresh` last computed from the timer.
     shown: Shown = .{},
     /// What `refresh` last computed from the day's records.
@@ -464,6 +468,7 @@ pub fn update(state: *State, event: host.Event) bool {
     const period = state.period;
     const charts = state.charts;
     const width = state.width;
+    const scrolled = state.scroll;
     const timer_changed = switch (event) {
         .size => |size| blk: {
             state.width = size.width;
@@ -490,9 +495,14 @@ pub fn update(state: *State, event: host.Event) bool {
             break :blk std.meta.eql(target, state.hover) and act(state, target);
         },
         .key => |press| key(state, press),
+        .scroll => |wheel| blk: {
+            state.scroll = std.math.clamp(state.scroll + wheel.dy, 0, wheel.max);
+            break :blk false;
+        },
     };
+    if (state.page != page) state.scroll = 0;
     return timer_changed or state.page != page or state.period != period or
-        !std.meta.eql(state.charts, charts) or state.width != width or
+        !std.meta.eql(state.charts, charts) or state.width != width or state.scroll != scrolled or
         !std.meta.eql(state.hover, hover) or !std.meta.eql(state.pressed, pressed) or state.menu != menu;
 }
 
@@ -614,12 +624,7 @@ fn cardBox(theme: *const Theme, height: kit.tree.Size, gap: u8) kit.tree.Box {
 }
 
 fn todayPage(state: *const State, tree: *Tree, theme: *const Theme) kit.tree.Error!void {
-    const page = try tree.open(.{
-        .width = .fill,
-        .height = .fill,
-        .padding = .{ .left = 24, .right = 24, .top = 4, .bottom = 24 },
-        .gap = card_gap,
-    });
+    const page = try pageBox(state, tree);
     var rows = try CardRows.begin(tree, state.width);
     for (&state.today.cards, card_titles, 0..) |*card, card_title, index| {
         const fill = switch (index) {
@@ -630,16 +635,17 @@ fn todayPage(state: *const State, tree: *Tree, theme: *const Theme) kit.tree.Err
         try statCard(tree, theme, card_title, card, fill, true);
     }
     rows.end(tree);
-    var lower = try LowerRow.begin(tree);
+    var lower = try LowerRow.begin(tree, isNarrow(state.width));
     try daysCard(tree, theme, .{
         .card_title = "This week",
+        .height = lower.chartHeight(),
         .days = &state.today.week,
         .weekday = state.today.weekday,
         .limit_s = state.today.limit_s,
         .limit_label = state.today.limit_label.slice(),
     });
     try lower.middle(tree);
-    try programsCard(state, tree, theme, "Programs today", state.today.programs[0..state.today.program_count]);
+    try programsCard(state, tree, theme, "Programs today", state.today.programs[0..state.today.program_count], lower.programsHeight());
     lower.end(tree);
     tree.close(page);
 }
@@ -668,30 +674,71 @@ const CardRows = struct {
     }
 };
 
-/// The chart card and the programs card, three fifths and two fifths side
-/// by side. The gap is padding inside the first slot, so the fractions add
-/// up.
+/// The chart card and the programs card: three fifths and two fifths side
+/// by side, or, on a narrow page that scrolls, one over the other at their
+/// own heights. Side by side, the gap is padding inside the first slot, so
+/// the fractions add up.
 const LowerRow = struct {
     outer: kit.tree.Index,
     first: kit.tree.Index,
     second: kit.tree.Index = kit.tree.none,
+    stacked: bool,
 
-    fn begin(tree: *Tree) kit.tree.Error!LowerRow {
-        const outer = try tree.open(.{ .axis = .row, .width = .fill, .height = .fill });
-        const first = try tree.open(.{ .width = .{ .fraction = 0.6 }, .height = .fill, .padding = .{ .right = card_gap } });
-        return .{ .outer = outer, .first = first };
+    fn begin(tree: *Tree, stacked: bool) kit.tree.Error!LowerRow {
+        const outer = try tree.open(if (stacked)
+            .{ .width = .fill, .gap = card_gap }
+        else
+            .{ .axis = .row, .width = .fill, .height = .fill });
+        const first = try tree.open(if (stacked)
+            .{ .width = .fill }
+        else
+            .{ .width = .{ .fraction = 0.6 }, .height = .fill, .padding = .{ .right = card_gap } });
+        return .{ .outer = outer, .first = first, .stacked = stacked };
     }
 
     fn middle(self: *LowerRow, tree: *Tree) kit.tree.Error!void {
         tree.close(self.first);
-        self.second = try tree.open(.{ .width = .{ .fraction = 0.4 }, .height = .fill });
+        self.second = try tree.open(if (self.stacked)
+            .{ .width = .fill }
+        else
+            .{ .width = .{ .fraction = 0.4 }, .height = .fill });
     }
 
     fn end(self: *const LowerRow, tree: *Tree) void {
         tree.close(self.second);
         tree.close(self.outer);
     }
+
+    /// The chart card's height: the slot's, or its own when stacked.
+    fn chartHeight(self: *const LowerRow) kit.tree.Size {
+        return if (self.stacked) .{ .fixed = stacked_chart_height } else .fill;
+    }
+
+    fn programsHeight(self: *const LowerRow) kit.tree.Size {
+        return if (self.stacked) .fit else .fill;
+    }
 };
+
+/// The chart card's height when the cards stack.
+const stacked_chart_height = 280;
+
+/// A page's column under the header. A narrow one is the scroll region.
+fn pageBox(state: *const State, tree: *Tree) kit.tree.Error!kit.tree.Index {
+    const narrow = isNarrow(state.width);
+    const page = try tree.open(.{
+        .width = .fill,
+        .height = .fill,
+        .padding = .{ .left = 24, .right = 24, .top = 4, .bottom = 24 },
+        .gap = card_gap,
+        .overflow = if (narrow) .clip else .visible,
+    });
+    if (narrow) tree.scrollRegion(page, state.scroll);
+    return page;
+}
+
+fn isNarrow(width: f32) bool {
+    return width > 0 and width < narrow_width;
+}
 
 /// With `[wellbeing] enabled = false`: one message, nothing that writes.
 fn offPage(tree: *Tree, theme: *const Theme) kit.tree.Error!void {
@@ -782,6 +829,7 @@ fn screenFill(theme: *const Theme) Theme.Color {
 /// with the limit and, on History, the day under the pointer.
 const DayChart = struct {
     card_title: []const u8,
+    height: kit.tree.Size,
     days: []const DaySummary,
     /// Today's day of the week, 0 for Sunday.
     weekday: u8,
@@ -797,7 +845,7 @@ fn isHovered(hovered: ?u8, index: usize) bool {
 }
 
 fn daysCard(tree: *Tree, theme: *const Theme, options: DayChart) kit.tree.Error!void {
-    const box = try tree.open(cardBox(theme, .fill, 12));
+    const box = try tree.open(cardBox(theme, options.height, 12));
     const head = try tree.open(.{ .axis = .row, .width = .fill, .gap = 12, .cross = .center });
     _ = try tree.text(options.card_title, .{ .color = theme.foreground, .style = .sm_medium });
     _ = try tree.leaf(.{ .width = .fill });
@@ -840,8 +888,8 @@ fn daysCard(tree: *Tree, theme: *const Theme, options: DayChart) kit.tree.Error!
     tree.close(box);
 }
 
-fn programsCard(state: *const State, tree: *Tree, theme: *const Theme, card_title: []const u8, rows: []const Program) kit.tree.Error!void {
-    const box = try tree.open(cardBox(theme, .fill, 12));
+fn programsCard(state: *const State, tree: *Tree, theme: *const Theme, card_title: []const u8, rows: []const Program, height: kit.tree.Size) kit.tree.Error!void {
+    const box = try tree.open(cardBox(theme, height, 12));
     _ = try tree.text(card_title, .{ .color = theme.foreground, .style = .sm_medium });
     if (rows.len == 0) {
         const empty = if (state.wb.option.screen_time.track_foreground_apps) "No programs recorded yet" else "Program tracking is off";
@@ -878,22 +926,18 @@ fn programsCard(state: *const State, tree: *Tree, theme: *const Theme, card_titl
 
 fn historyPage(state: *const State, tree: *Tree, theme: *const Theme) kit.tree.Error!void {
     const history = &state.history;
-    const page = try tree.open(.{
-        .width = .fill,
-        .height = .fill,
-        .padding = .{ .left = 24, .right = 24, .top = 4, .bottom = 24 },
-        .gap = card_gap,
-    });
+    const page = try pageBox(state, tree);
     var rows = try CardRows.begin(tree, state.width);
     for (&history.cards, history_card_titles, 0..) |*card, card_title, index| {
         try rows.next(tree, index);
         try statCard(tree, theme, card_title, card, theme.info, false);
     }
     rows.end(tree);
-    var lower = try LowerRow.begin(tree);
+    var lower = try LowerRow.begin(tree, isNarrow(state.width));
     const count = state.period.days();
     try daysCard(tree, theme, .{
         .card_title = "Each day",
+        .height = lower.chartHeight(),
         .days = history.days[history_days - count ..],
         .weekday = history.weekday,
         .limit_s = state.today.limit_s,
@@ -905,7 +949,7 @@ fn historyPage(state: *const State, tree: *Tree, theme: *const Theme) kit.tree.E
         },
     });
     try lower.middle(tree);
-    try programsCard(state, tree, theme, "Where the time went", history.programs[0..history.program_count]);
+    try programsCard(state, tree, theme, "Where the time went", history.programs[0..history.program_count], lower.programsHeight());
     lower.end(tree);
     tree.close(page);
 }

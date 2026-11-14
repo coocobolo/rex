@@ -54,6 +54,8 @@ pub fn layout(tree: *Tree, measurer: text.Measurer, viewport_width: f32, viewpor
         fit(nodes, range, .vertical, measurer);
         distribute(nodes, range, .vertical, viewport_height);
         place(nodes, range);
+        // Before later roots anchor to nodes inside the region.
+        if (tree.scroll_index >= range.start and tree.scroll_index < range.end) scroll(tree, nodes);
         if (target) |rect| {
             const at = anchorPosition(nodes[root].rect, rect, viewport_width, viewport_height);
             tree.translate(root, at.x, at.y);
@@ -272,6 +274,19 @@ fn distributeAlong(nodes: []Node, index: usize, comptime dimension: Dimension, i
             child_extent.* = @max(0, child_extent.* - (used - inner));
         }
     }
+}
+
+/// Moves the scroll region's content up by its offset, capped at what the
+/// content has beyond the region, and records that cap. The region clips,
+/// so the content kept its own height in `distribute`.
+fn scroll(tree: *Tree, nodes: []Node) void {
+    const index = tree.scroll_index;
+    const region = &nodes[index];
+    tree.scroll_max = @max(0, contentExtent(nodes, index, .vertical) - region.rect.h);
+    const moved = std.math.clamp(tree.scroll_offset, 0, tree.scroll_max);
+    // Also false for a NaN offset.
+    if (!(moved > 0)) return;
+    for (nodes[index + 1 .. region.end]) |*node| node.rect.y -= moved;
 }
 
 /// Wraps every text to the width it was given and sets its height.

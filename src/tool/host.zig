@@ -66,7 +66,14 @@ pub const Event = union(enum) {
     /// The left button was let go, wherever the pointer is.
     release,
     key: KeyPress,
+    /// The wheel turned: `dy` logical pixels down (negative: up). `max` is
+    /// how far the view's scroll region could move up when last laid out
+    /// (`Tree.scroll_max`), so the tool can keep its offset in 0..max.
+    scroll: struct { dy: f32, max: f32 },
 };
+
+/// Logical pixels one wheel notch scrolls.
+pub const scroll_step = 48;
 
 /// What a tool's `init` receives. Everything borrowed lives until the
 /// tool's `deinit` returns.
@@ -220,6 +227,7 @@ fn Host(comptime Tool: type) type {
             self.window.setCursorEnterCallback(onEnter);
             self.window.setMouseButtonCallback(onMouse);
             self.window.setKeyCallback(onKey);
+            self.window.setScrollCallback(onScroll);
             return self;
         }
 
@@ -370,12 +378,23 @@ fn Host(comptime Tool: type) type {
             }
         }
 
+        fn onScroll(window: ?*c.GLFWwindow, _: f64, y: f64) callconv(.c) void {
+            const self = fromWindow(window);
+            self.send(.{ .scroll = .{ .dy = scrollDelta(y), .max = self.tree.scroll_max } });
+        }
+
         fn onKey(window: ?*c.GLFWwindow, code: c_int, _: c_int, action: c_int, mods: c_int) callconv(.c) void {
             if (action == c.GLFW_RELEASE) return;
             const key = glfw_key.key(code) orelse return;
             fromWindow(window).send(.{ .key = .{ .key = key, .mods = glfw_key.modifiers(mods) } });
         }
     };
+}
+
+/// GLFW reports notches up as positive; content moves up when the wheel
+/// turns down. A touchpad sends fractions of a notch.
+pub fn scrollDelta(y_offset: f64) f32 {
+    return @floatCast(-y_offset * scroll_step);
 }
 
 /// What the host itself takes from the config: the theme from `[ui]

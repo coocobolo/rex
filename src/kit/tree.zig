@@ -225,8 +225,16 @@ pub const Tree = struct {
     /// The innermost open box; new nodes become its children.
     current: Index = none,
     anchor_len: u8 = 0,
+    /// The one box whose content scrolls (`scrollRegion`), or `none`.
+    scroll_index: Index = none,
     lines: text_zig.Lines,
     anchors: [anchor_max]Anchor = undefined,
+    /// How far the region's content moves up, as the surface asks; layout
+    /// caps it at `scroll_max`.
+    scroll_offset: f32 = 0,
+    /// Set by layout: how much taller the region's content is than the
+    /// region, so how far it can move up. 0 without a region.
+    scroll_max: f32 = 0,
 
     /// `nodes` and `lines` are the caller's and bound how much one view
     /// can hold.
@@ -241,6 +249,20 @@ pub const Tree = struct {
         self.current = none;
         self.anchor_len = 0;
         self.lines.len = 0;
+        self.scroll_index = none;
+        self.scroll_offset = 0;
+        self.scroll_max = 0;
+    }
+
+    /// Makes the clipping box `index` scroll: its content keeps its own
+    /// height and moves up by `offset` logical pixels, which layout caps
+    /// at what the content has beyond the box (`scroll_max`). One region
+    /// per tree.
+    pub fn scrollRegion(self: *Tree, index: Index, offset: f32) void {
+        assert(self.nodes[index].content == .box and self.nodes[index].box.overflow == .clip);
+        assert(self.scroll_index == none);
+        self.scroll_index = index;
+        self.scroll_offset = offset;
     }
 
     /// Places the root `index` against the node with id `target` (see

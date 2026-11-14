@@ -378,7 +378,7 @@ test "sizes of the kit's types" {
     try testing.expectEqual(40, @sizeOf(tree_zig.Content));
     try testing.expectEqual(16, @sizeOf(tree_zig.Rect));
     try testing.expectEqual(8, @sizeOf(tree_zig.Size));
-    try testing.expectEqual(80, @sizeOf(Tree));
+    try testing.expectEqual(88, @sizeOf(Tree));
 }
 
 test "tree: a node a clipping ancestor cuts away is not hit there" {
@@ -396,4 +396,48 @@ test "tree: a node a clipping ancestor cuts away is not hit there" {
 
     tree.nodes[box].box.overflow = .visible;
     try testing.expectEqual(inner, tree.hitTest(100, 10));
+}
+
+/// A 100-high clipping region over three rows of 60: 80 of content below.
+fn scrolled(fixture: *Fixture, offset: f32) !Tree {
+    var tree = fixture.tree();
+    const region = try tree.open(.{ .width = .{ .fixed = 50 }, .height = .{ .fixed = 100 }, .overflow = .clip });
+    tree.scrollRegion(region, offset);
+    for (0..3) |index| {
+        _ = try tree.leaf(.{ .id = Id.of("row").item(@intCast(index)), .width = .fill, .height = .{ .fixed = 60 } });
+    }
+    tree.close(region);
+    try layout(&tree, measurer, 400, 400);
+    return tree;
+}
+
+test "layout: a scroll region moves its content up, capped at what is below" {
+    var fixture: Fixture = .{};
+    var tree = try scrolled(&fixture, 50);
+    try testing.expectEqual(80, tree.scroll_max);
+    try expectRect(&tree, 0, 0, 0, 50, 100);
+    try expectRect(&tree, 1, 0, -50, 50, 60);
+    try expectRect(&tree, 3, 0, 70, 50, 60);
+    // The first row is cut at the region's top edge: no hit above it.
+    try testing.expectEqual(Id.of("row").item(0), tree.hitTest(10, 5));
+    try testing.expectEqual(Id.none, tree.hitTest(10, -20));
+
+    tree = try scrolled(&fixture, 500);
+    try expectRect(&tree, 1, 0, -80, 50, 60);
+    tree = try scrolled(&fixture, -10);
+    try expectRect(&tree, 1, 0, 0, 50, 60);
+}
+
+test "layout: content shorter than its region does not scroll" {
+    var fixture: Fixture = .{};
+    var tree = fixture.tree();
+    const region = try tree.open(.{ .width = .{ .fixed = 50 }, .height = .{ .fixed = 100 }, .overflow = .clip });
+    tree.scrollRegion(region, 30);
+    _ = try tree.leaf(.{ .width = .fill, .height = .{ .fixed = 60 } });
+    tree.close(region);
+    try layout(&tree, measurer, 400, 400);
+    try testing.expectEqual(0, tree.scroll_max);
+    try expectRect(&tree, 1, 0, 0, 50, 60);
+    tree.reset();
+    try testing.expectEqual(tree_zig.none, tree.scroll_index);
 }

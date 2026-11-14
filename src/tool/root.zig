@@ -9,4 +9,5 @@ test {
     _ = placeholder;
     _ = @import("dashboard_test.zig");
     _ = @import("file_watch_test.zig");
+    _ = @import("host_test.zig");
 }
