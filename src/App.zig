@@ -45,6 +45,7 @@ const FrameBuilder = renderer_mod.Frame.Builder;
 const kit_alert = @import("kit/alert.zig");
 const kit_lock_screen = @import("kit/lock_screen.zig");
 const kit_toast = @import("kit/toast.zig");
+const kit_widget = @import("kit/wellbeing_widget.zig");
 
 const Freetype = rex.FreeType;
 const Rasterizer = rex.FreeType.Rasterizer;
@@ -1234,6 +1235,12 @@ fn syncWellbeingKit(self: *App, new_alert_fired: bool) void {
         if (kit.closeLockScreen()) self.needs_redraw = true;
     }
 
+    if (!wb.option.enabled) {
+        if (kit.hideWellbeingWidget()) self.needs_redraw = true;
+    } else if (kit.wellbeingWidgetShown()) {
+        if (kit.syncWellbeingWidget(wellbeingWidgetSnapshot(wb))) self.needs_redraw = true;
+    }
+
     if (wb.current_alert.kind == .none) {
         if (self.wellbeing_toast_serial) |serial| {
             if (kit.dismissToast(serial)) self.needs_redraw = true;
@@ -1268,6 +1275,48 @@ fn syncWellbeingKit(self: *App, new_alert_fired: bool) void {
         self.wellbeing_toast_serial = tracked.serial;
         if (tracked.changed) self.needs_redraw = true;
     }
+}
+
+fn wellbeingWidgetSnapshot(wb: *const wellbeing.Wellbeing) kit_widget.Snapshot {
+    const timer = wb.timer();
+    const view_now = wb.focus_state;
+    const option = wb.option.focus;
+    const phase: wellbeing.focus.Phase = switch (timer.run) {
+        .waiting => switch (timer.phase) {
+            .idle => .idle,
+            .task => if (timer.tasks_in_cycle + 1 >= option.tasks_before_long_break) .long_break else .short_break,
+            .short_break, .long_break => .task,
+        },
+        .running, .paused => timer.phase,
+    };
+    const duration_ms = view_now.getDuration(if (phase == .idle) .task else phase);
+    const started = timer.phase != .idle and timer.run != .waiting;
+    const left_ms = if (started) @min(view_now.remaining_ms, duration_ms) else duration_ms;
+    const fraction: f32 = if (started and duration_ms > 0)
+        1.0 - @as(f32, @floatFromInt(left_ms)) / @as(f32, @floatFromInt(duration_ms))
+    else
+        0.0;
+    const seconds: u64 = switch (option.timer) {
+        .countdown => left_ms / std.time.ms_per_s + @intFromBool(left_ms % std.time.ms_per_s != 0),
+        .countup => (duration_ms - left_ms) / std.time.ms_per_s,
+    };
+    return .{
+        .phase = switch (phase) {
+            .idle => .idle,
+            .task => .task,
+            .short_break => .short_break,
+            .long_break => .long_break,
+        },
+        .run = switch (timer.run) {
+            .paused => .paused,
+            .running => .running,
+            .waiting => .waiting,
+        },
+        .fraction = fraction,
+        .seconds = seconds,
+        .tasks_in_cycle = timer.tasks_in_cycle,
+        .tasks_before_long_break = option.tasks_before_long_break,
+    };
 }
 
 /// Linux only: wakes the loop when another process saves the wellbeing
@@ -1653,9 +1702,11 @@ fn handleAction(self: *App, action: rex.input.Action) void {
         .focus_toggle => {
             self.wellbeing_state.toggleFocus(self.wallMs());
             self.ringBell();
+            self.syncWellbeingKit(false);
         },
         .focus_reset => {
             self.wellbeing_state.resetFocus(self.wallMs());
+            self.syncWellbeingKit(false);
         },
         .focus_skip => {
             self.wellbeing_state.skipFocus(self.wallMs());
@@ -1667,6 +1718,12 @@ fn handleAction(self: *App, action: rex.input.Action) void {
         },
         .wellbeing_dashboard => if (self.wellbeing_state.option.enabled) {
             self.openToolWindow("wellbeing", "wellbeing dashboard");
+        },
+        .wellbeing_widget => if (self.wellbeing_state.option.enabled) {
+            if (self.kit) |kit| {
+                if (kit.toggleWellbeingWidget()) self.needs_redraw = true;
+                self.syncWellbeingKit(false);
+            }
         },
         .wellbeing_clear => {
             if (self.purgeWellbeingHistory()) {
@@ -2864,6 +2921,22 @@ const mouseButtonCb: c.GLFWmousebuttonfun = struct {
                             .redraw => app.needs_redraw = true,
                             .dialog => |outcome| app.applyDialogOutcome(outcome),
                             .lock_unlocked => app.unlockLockScreen(),
+                            .wellbeing_widget => |act| {
+                                switch (act) {
+                                    .toggle => {
+                                        app.wellbeing_state.toggleFocus(app.wallMs());
+                                        app.ringBell();
+                                    },
+                                    .skip => {
+                                        app.wellbeing_state.skipFocus(app.wallMs());
+                                        app.ringBell();
+                                    },
+                                    .reset => app.wellbeing_state.resetFocus(app.wallMs()),
+                                    .close => _ = kit.hideWellbeingWidget(),
+                                }
+                                app.needs_redraw = true;
+                                app.syncWellbeingKit(false);
+                            },
                         }
                         return;
                     }
@@ -3068,6 +3141,7 @@ const cursorPosCb: c.GLFWcursorposfun = struct {
         app.mouse_y = @floatCast(ypos);
         if (app.kit) |kit| {
             if (kit.pointerMoved(app.mouse_x / app.content_scale, app.mouse_y / app.content_scale)) app.needs_redraw = true;
+            if (kit.holdsPress()) return;
         }
 
         // update scrollbar hover detection

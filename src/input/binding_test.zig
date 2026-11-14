@@ -19,4 +19,5 @@ test "matchBinding: the key and the exact modifiers must match" {
 
 test "default_keymap: ctrl+shift+comma opens settings" {
     try testing.expectEqual(Action.open_settings, matchBinding(default_keymap, .comma, .{ .ctrl = true, .shift = true }).?);
+    try testing.expectEqual(Action.wellbeing_widget, matchBinding(default_keymap, .t, .{ .ctrl = true, .shift = true }).?);
 }

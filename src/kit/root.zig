@@ -18,6 +18,7 @@ pub const toast = @import("toast.zig");
 pub const alert = @import("alert.zig");
 pub const alert_dialog = @import("alert_dialog.zig");
 pub const lock_screen = @import("lock_screen.zig");
+pub const wellbeing_widget = @import("wellbeing_widget.zig");
 pub const sidebar = @import("sidebar.zig");
 pub const popup = @import("popup.zig");
 pub const tabs = @import("tabs.zig");
@@ -37,6 +38,7 @@ test {
     _ = @import("alert_test.zig");
     _ = @import("alert_dialog_test.zig");
     _ = @import("lock_screen_test.zig");
+    _ = @import("wellbeing_widget_test.zig");
     _ = @import("button_test.zig");
     _ = @import("sidebar_test.zig");
     _ = @import("popup_test.zig");

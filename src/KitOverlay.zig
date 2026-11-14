@@ -28,20 +28,21 @@ const alert_dialog = @import("kit/alert_dialog.zig");
 const lock_mod = @import("kit/lock_screen.zig");
 const toast = @import("kit/toast.zig");
 const tree_zig = @import("kit/tree.zig");
+const widget_mod = @import("kit/wellbeing_widget.zig");
 const Ui = @import("config/Config.zig").Ui;
 
 const log = std.log.scoped(.kit_overlay);
 
 /// Nodes and lines of wrapped text one frame can hold: enough for the worst
-/// combination of simultaneously visible surfaces (alert banner + toast stack,
-/// or modal dialog / lock screen).
-const node_capacity = @max(@max(alert_mod.node_max + toast.node_max, alert_dialog.node_max), lock_mod.node_max);
-const line_capacity = @max(@max(alert_mod.line_max + toast.line_max, alert_dialog.line_max), lock_mod.line_max);
+/// combination of simultaneously visible surfaces (alert banner + toast stack +
+/// wellbeing widget, or modal dialog / lock screen).
+const node_capacity = @max(@max(alert_mod.node_max + toast.node_max + widget_mod.node_max, alert_dialog.node_max), lock_mod.node_max);
+const line_capacity = @max(@max(alert_mod.line_max + toast.line_max + widget_mod.line_max, alert_dialog.line_max), lock_mod.line_max);
 
 font: KitFont,
 painter: KitPainter,
 /// Lock screen and modal dialogs take the full frame under a scrim; alert
-/// banner and toast stack share non-scrim frames.
+/// banner, toast stack and wellbeing widget share non-scrim frames.
 nodes: [node_capacity]tree_zig.Node = undefined,
 lines: [line_capacity]text.Line = undefined,
 /// The last built frame, for hit-testing. Empty after `skipFrame`.
@@ -50,6 +51,7 @@ toasts: toast.State = .empty,
 alert: alert_mod.State = .empty,
 dialog: alert_dialog.State = .empty,
 lock_screen: lock_mod.State = .empty,
+wellbeing_widget: widget_mod.State = .empty,
 /// Where each toast was last drawn.
 table: memory.Table = .empty,
 /// Milliseconds ticked since the last built frame while a toast was
@@ -127,6 +129,7 @@ pub fn syncLockScreen(self: *KitOverlay, request: lock_mod.Request) bool {
     if (outcome != .redraw) return false;
     _ = toast.update(&self.toasts, .{ .pointer = .away });
     _ = alert_mod.update(&self.alert, .{ .pointer = .away });
+    _ = widget_mod.update(&self.wellbeing_widget, .leave);
     return true;
 }
 
@@ -184,10 +187,28 @@ pub fn openDialog(self: *KitOverlay, request: alert_dialog.Request) bool {
     // The scrim is between the pointer and the stack/banner now.
     _ = toast.update(&self.toasts, .{ .pointer = .away });
     _ = alert_mod.update(&self.alert, .{ .pointer = .away });
+    _ = widget_mod.update(&self.wellbeing_widget, .leave);
     return true;
 }
 
-/// Sends the dialog an event the caller made from a key or a click, and
+/// Toggles the floating wellbeing focus widget. Returns whether a redraw is due.
+pub fn toggleWellbeingWidget(self: *KitOverlay) bool {
+    return widget_mod.update(&self.wellbeing_widget, .toggle_visible) != .quiet;
+}
+
+/// Hides the floating wellbeing focus widget. Returns whether a redraw is due.
+pub fn hideWellbeingWidget(self: *KitOverlay) bool {
+    return widget_mod.update(&self.wellbeing_widget, .hide) != .quiet;
+}
+
+pub fn wellbeingWidgetShown(self: *const KitOverlay) bool {
+    return self.wellbeing_widget.visible;
+}
+
+/// Updates the floating wellbeing widget's timer snapshot. Returns whether a redraw is due.
+pub fn syncWellbeingWidget(self: *KitOverlay, snapshot: widget_mod.Snapshot) bool {
+    return widget_mod.update(&self.wellbeing_widget, .{ .sync = snapshot }) != .quiet;
+}
 /// returns what it did: on `.chosen` the caller does what that action
 /// stands for.
 pub fn dialogInput(self: *KitOverlay, event: alert_dialog.Event) alert_dialog.Outcome {
@@ -253,20 +274,33 @@ pub fn pointerMoved(self: *KitOverlay, x: f32, y: f32) bool {
         };
         return alert_dialog.update(&self.dialog, .{ .pointer = over }) == .redraw;
     }
+    if (self.wellbeing_widget.holdsPress()) {
+        return widget_mod.update(&self.wellbeing_widget, .{ .pointer = .{
+            .over = self.wellbeing_widget.hit(id),
+            .x = x,
+            .y = y,
+        } }) != .quiet;
+    }
+    const widget_changed = widget_mod.update(&self.wellbeing_widget, .{ .pointer = .{
+        .over = self.wellbeing_widget.hit(id),
+        .x = x,
+        .y = y,
+    } }) != .quiet;
     const alert_over: alert_mod.Pointer = if (self.alert.hit(id) == .close) .close else .away;
     const alert_changed = alert_mod.update(&self.alert, .{ .pointer = alert_over });
     const over = self.toasts.hit(id) != .none;
     _ = toast.update(&self.toasts, .{ .pointer = if (over) .over else .away });
-    return alert_changed;
+    return widget_changed or alert_changed;
 }
 
 /// The pointer left the window. Returns whether a redraw is due.
 pub fn pointerLeft(self: *KitOverlay) bool {
     _ = toast.update(&self.toasts, .{ .pointer = .away });
+    const widget_changed = widget_mod.update(&self.wellbeing_widget, .leave) != .quiet;
     const alert_changed = alert_mod.update(&self.alert, .{ .pointer = .away });
     const dialog_changed = alert_dialog.update(&self.dialog, .{ .pointer = alert_dialog.no_action }) == .redraw;
     const lock_changed = lock_mod.update(&self.lock_screen, .{ .pointer = .away }) == .redraw;
-    return alert_changed or dialog_changed or lock_changed;
+    return widget_changed or alert_changed or dialog_changed or lock_changed;
 }
 
 pub const Press = union(enum) {
@@ -286,6 +320,7 @@ pub const Release = union(enum) {
     redraw,
     dialog: alert_dialog.Outcome,
     lock_unlocked,
+    wellbeing_widget: widget_mod.Action,
 };
 
 /// The left button went down at `x`, `y` in logical pixels. Buttons only look
@@ -311,18 +346,25 @@ pub fn press(self: *KitOverlay, x: f32, y: f32) Press {
         .none => {},
     }
     switch (self.toasts.hit(id)) {
-        .none => return .outside,
+        .none => {},
         .toast => return .taken,
         .close => |serial| return if (toast.update(&self.toasts, .{ .dismiss = serial })) .changed else .taken,
     }
+    const widget_hit = self.wellbeing_widget.hit(id);
+    if (widget_hit == .none) return .outside;
+    return switch (widget_mod.update(&self.wellbeing_widget, .{ .press = .{ .hit = widget_hit, .x = x, .y = y } })) {
+        .quiet => .taken,
+        .redraw, .action => .changed,
+    };
 }
 
-/// Whether the left button went down on a kit button and has not been
-/// let go: its release is the kit's, wherever the pointer is by then.
+/// Whether the left button went down on a kit surface and has not been
+/// let go: its moves and release belong to the kit, wherever the pointer is.
 pub fn holdsPress(self: *const KitOverlay) bool {
     return self.lock_screen.touch == .pressed or
         self.dialog.pressed != alert_dialog.no_action or
-        self.alert.touch == .pressed;
+        self.alert.touch == .pressed or
+        self.wellbeing_widget.holdsPress();
 }
 
 /// The left button was let go after a press the kit holds at `(x, y)`.
@@ -343,6 +385,14 @@ pub fn release(self: *KitOverlay, x: f32, y: f32) Release {
     }
     if (self.dialog.pressed != alert_dialog.no_action) {
         return .{ .dialog = alert_dialog.update(&self.dialog, .release) };
+    }
+    if (self.wellbeing_widget.holdsPress()) {
+        const over = self.wellbeing_widget.hit(self.tree.hitTest(x, y));
+        return switch (widget_mod.update(&self.wellbeing_widget, .{ .release = over })) {
+            .quiet => .quiet,
+            .redraw => .redraw,
+            .action => |act| .{ .wellbeing_widget = act },
+        };
     }
     return .quiet;
 }
@@ -393,6 +443,7 @@ pub fn buildFrame(self: *KitOverlay, atlas: *Atlas, width: f32, height: f32, bac
             log.err("cannot show overlays ({d} toasts), dropping them: {t}", .{ self.toasts.len, err });
             self.alert = .empty;
             self.toasts = .empty;
+            self.wellbeing_widget.visible = false;
         }
         _ = self.skipFrame();
     };
@@ -415,9 +466,11 @@ fn build(self: *KitOverlay, atlas: *Atlas, width: f32, height: f32, theme: *cons
         try self.painter.paint(&self.tree, &self.font, atlas);
         return;
     }
+    const widget_root = try widget_mod.view(&self.wellbeing_widget, &self.tree, theme);
     const banner = try alert_mod.view(&self.alert, &self.tree, theme);
     const stack = try toast.view(&self.toasts, &self.tree, theme);
     try layout.layout(&self.tree, self.font.measurer(), width, height);
+    widget_mod.place(&self.wellbeing_widget, &self.tree, widget_root, width, height);
     alert_mod.place(&self.alert, &self.tree, banner);
     self.motion = try toast.place(&self.toasts, &self.tree, stack, &self.table, dt_ms);
     try self.painter.paint(&self.tree, &self.font, atlas);

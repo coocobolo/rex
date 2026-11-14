@@ -29,6 +29,7 @@ test "keybind: actions are tag names without an argument" {
     try std.testing.expectEqual(.copy_selection, try keybind.parseAction("copy_selection"));
     try std.testing.expectEqual(.reload_config, try keybind.parseAction("reload_config"));
     try std.testing.expectEqual(.open_settings, try keybind.parseAction("open_settings"));
+    try std.testing.expectEqual(.wellbeing_widget, try keybind.parseAction("wellbeing_widget"));
     for ([_][]const u8{ "copy", "paste", "zoom_in", "close", "config_reload", "Quit", "send_to_pty", "" }) |text| {
         errdefer std.debug.print("accepted: '{s}'\n", .{text});
         try std.testing.expectError(error.InvalidAction, keybind.parseAction(text));
@@ -43,6 +44,9 @@ test "keybind: a binding needs a valid chord and action" {
     try std.testing.expectEqual(.comma, settings.key);
     try std.testing.expect(settings.mods.ctrl and settings.mods.shift and !settings.mods.alt and !settings.mods.super);
     try std.testing.expectEqual(.open_settings, settings.action);
+    const widget = try keybind.parseBinding("ctrl+shift+t", "wellbeing_widget");
+    try std.testing.expectEqual(.t, widget.key);
+    try std.testing.expectEqual(.wellbeing_widget, widget.action);
     try std.testing.expectError(error.InvalidChord, keybind.parseBinding("ctrl+f13", "quit"));
     try std.testing.expectError(error.InvalidAction, keybind.parseBinding("ctrl+q", "close"));
 }

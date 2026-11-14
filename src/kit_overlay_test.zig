@@ -13,6 +13,7 @@ const alert_dialog = @import("kit/alert_dialog.zig");
 const dialog = @import("kit/dialog.zig");
 const lock_screen = @import("kit/lock_screen.zig");
 const toast = @import("kit/toast.zig");
+const wellbeing_widget = @import("kit/wellbeing_widget.zig");
 const Theme = @import("kit/Theme.zig");
 const motion = @import("kit/motion.zig");
 const Id = @import("kit/tree.zig").Id;
@@ -398,10 +399,10 @@ test "KitOverlay: its size" {
     // Reported in the ticket. Nearly all of it is two tables: the font's
     // kerning pairs, and the painter's 2048 instances of 52 bytes with its
     // glyph position cache.
-    try testing.expectEqual(305632, @sizeOf(KitOverlay));
+    try testing.expectEqual(311368, @sizeOf(KitOverlay));
     try testing.expectEqual(131864, @sizeOf(@FieldType(KitOverlay, "painter")));
     try testing.expectEqual(152496, @sizeOf(@FieldType(KitOverlay, "font")));
-    try testing.expectEqual(3952, @sizeOf(@FieldType(KitOverlay, "nodes")));
+    try testing.expectEqual(9568, @sizeOf(@FieldType(KitOverlay, "nodes")));
 }
 
 test "KitOverlay: configure applies surface options and resets toast glide table on position change" {
@@ -435,4 +436,37 @@ test "KitOverlay: configure applies surface options and resets toast glide table
         .toast = .{ .width = 320, .position = .top_left },
     });
     try testing.expectEqual(@as(usize, 0), kit.table.len);
+}
+
+test "KitOverlay: wellbeing widget toggles, drags, resizes and fires control actions" {
+    var fixture: Fixture = try .init(1);
+    defer fixture.deinit();
+    const kit = fixture.kit;
+
+    try testing.expect(!kit.wellbeingWidgetShown());
+    try testing.expect(kit.toggleWellbeingWidget());
+    try testing.expect(kit.syncWellbeingWidget(.{ .phase = .task, .run = .running, .fraction = 0.4, .seconds = 900 }));
+    try testing.expect(fixture.frame());
+
+    const card = centerOf(kit, wellbeing_widget.card_id).?;
+    const orig_x = kit.wellbeing_widget.x;
+    const orig_y = kit.wellbeing_widget.y;
+
+    // Drag the card body left and down.
+    try testing.expectEqual(KitOverlay.Press.taken, kit.press(card[0], card[1]));
+    try testing.expect(kit.holdsPress());
+    try testing.expect(kit.pointerMoved(card[0] - 80, card[1] + 50));
+    try testing.expectEqual(KitOverlay.Release.redraw, kit.release(card[0] - 80, card[1] + 50));
+    try testing.expect(!kit.holdsPress());
+    try testing.expectEqual(orig_x - 80, kit.wellbeing_widget.x);
+    try testing.expectEqual(orig_y + 50, kit.wellbeing_widget.y);
+    try testing.expect(fixture.frame());
+
+    // Clicking the play/pause button fires toggle action.
+    const play = centerOf(kit, wellbeing_widget.play_pause_id).?;
+    try testing.expectEqual(KitOverlay.Press.changed, kit.press(play[0], play[1]));
+    try testing.expectEqual(KitOverlay.Release{ .wellbeing_widget = .toggle }, kit.release(play[0], play[1]));
+    try testing.expect(kit.hideWellbeingWidget());
+    try testing.expect(fixture.frame());
+    try testing.expect(!fixture.frame());
 }

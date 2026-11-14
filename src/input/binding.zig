@@ -19,6 +19,7 @@ pub const Action = union(enum) {
     focus_skip, // skip to next phase (work to break or break to work)
     focus_toggle_phase_end, // switch on_phase_end between wait and start_next
     wellbeing_dashboard, // show Digital Wellbeing dashboard
+    wellbeing_widget, // toggle floating wellbeing focus widget
     wellbeing_clear, // clear Digital Wellbeing history
     wellbeing_dismiss, // dismiss active wellbeing alert / unlock input
 
@@ -58,6 +59,7 @@ pub const default_keymap: []const Binding = &.{
     .{ .key = .q, .mods = .{ .ctrl = true, .shift = true }, .action = .quit },
     .{ .key = .f5, .mods = .{ .ctrl = true, .shift = true }, .action = .reload_config },
     .{ .key = .right_bracket, .mods = .{ .ctrl = true, .shift = true }, .action = .focus_skip },
+    .{ .key = .t, .mods = .{ .ctrl = true, .shift = true }, .action = .wellbeing_widget },
     .{ .key = .v, .mods = .{ .ctrl = true, .shift = true }, .action = .paste_clipboard },
     .{ .key = .w, .mods = .{ .ctrl = true, .shift = true }, .action = .wellbeing_dashboard },
 };
