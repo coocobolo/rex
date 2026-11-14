@@ -292,12 +292,12 @@ const tail_rows = [_]Key{
     .{ .section = .scroll, .name = "wheel_lines", .field = "scroll.wheel_lines", .bounds = at_least_one },
 
     .{ .section = .selection, .name = "extra_word_characters", .field = "selection.classifier.extra_word_chars", .kind = .word_characters },
-    .{ .section = .selection, .name = "opacity", .field = "selection.opacity", .kind = .fraction, .reload = .restart },
-    .{ .section = .selection, .name = "border_color", .field = "selection.border_color", .kind = .color, .reload = .restart },
-    .{ .section = .selection, .name = "border_opacity", .field = "selection.border_opacity", .kind = .fraction, .reload = .restart },
-    .{ .section = .selection, .name = "border_width", .field = "selection.border_width", .bounds = .{ .min = 0, .max = 20 }, .reload = .restart },
-    .{ .section = .selection, .name = "border_style", .field = "selection.border_style", .reload = .restart },
-    .{ .section = .selection, .name = "radius", .field = "selection.radius", .bounds = .{ .min = 0, .max = 20 }, .reload = .restart },
+    .{ .section = .selection, .name = "opacity", .field = "selection.opacity", .kind = .fraction },
+    .{ .section = .selection, .name = "border_color", .field = "selection.border_color", .kind = .color },
+    .{ .section = .selection, .name = "border_opacity", .field = "selection.border_opacity", .kind = .fraction },
+    .{ .section = .selection, .name = "border_width", .field = "selection.border_width", .bounds = .{ .min = 0, .max = 20 } },
+    .{ .section = .selection, .name = "border_style", .field = "selection.border_style" },
+    .{ .section = .selection, .name = "radius", .field = "selection.radius", .bounds = .{ .min = 0, .max = 20 } },
 
     .{ .section = .clipboard, .name = "osc52_write", .field = "clipboard.osc52_write" },
     .{ .section = .clipboard, .name = "osc52_read", .field = "clipboard.osc52_read" },

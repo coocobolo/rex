@@ -1481,6 +1481,7 @@ pub fn reloadConfig(self: *App) void {
     // Live update renderer background color, alpha, and terminal theme
     const resolved_theme = self.config.resolvedTheme();
     self.background_color = normalizedBackground(resolved_theme.background, self.config.window.background.alpha);
+    self.renderer.selection.option = rendererSelectionOption(self.config.selection);
     if (self.kit) |kit| {
         kit.configure(self.config.ui);
         if (!self.config.window.banner.enabled) {
