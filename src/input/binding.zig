@@ -31,6 +31,7 @@ pub const Action = union(enum) {
 
     // Configuration
     reload_config,
+    open_settings,
 
     send_to_pty: []const u8, // for custom sequences
 };
@@ -46,6 +47,7 @@ pub const default_keymap: []const Binding = &.{
     .{ .key = .a, .mods = .{ .ctrl = true, .shift = true }, .action = .focus_toggle_phase_end },
     .{ .key = .backspace, .mods = .{ .ctrl = true, .shift = true }, .action = .focus_reset },
     .{ .key = .c, .mods = .{ .ctrl = true, .shift = true }, .action = .copy_selection },
+    .{ .key = .comma, .mods = .{ .ctrl = true, .shift = true }, .action = .open_settings },
     .{ .key = .d, .mods = .{ .ctrl = true, .shift = true }, .action = .wellbeing_dismiss },
     .{ .key = .equal, .mods = .{ .ctrl = true }, .action = .increase_font_size },
     .{ .key = .j, .mods = .{ .ctrl = true, .shift = true }, .action = .scroll_down },

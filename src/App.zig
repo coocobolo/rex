@@ -1666,7 +1666,7 @@ fn handleAction(self: *App, action: rex.input.Action) void {
             self.wellbeing_state.toggleFocusPhaseEnd();
         },
         .wellbeing_dashboard => if (self.wellbeing_state.option.enabled) {
-            self.openWellbeingDashboard();
+            self.openToolWindow("wellbeing", "wellbeing dashboard");
         },
         .wellbeing_clear => {
             if (self.purgeWellbeingHistory()) {
@@ -1713,6 +1713,7 @@ fn handleAction(self: *App, action: rex.input.Action) void {
             }
         },
         .reload_config => self.reloadConfig(),
+        .open_settings => self.openToolWindow("settings", "settings window"),
         .send_to_pty => |seq| {
             self.driver.sendBytes(seq) catch |err| {
                 log.err("handleAction: send to pty write failed: {}", .{err});
@@ -1731,16 +1732,16 @@ fn resolveExe(self: *const App, buf: *[std.fs.max_path_bytes]u8, label: []const 
     return buf[0..len];
 }
 
-/// Starts the wellbeing dashboard as a separate process. A second start
-/// hits the tool's lock and exits; `reapChild` collects it.
-fn openWellbeingDashboard(self: *App) void {
+/// Starts a tool window (`rex <subcommand>`) as a separate process. A second
+/// start hits the tool's lock and exits; `reapDetached` collects it.
+fn openToolWindow(self: *App, subcommand: []const u8, label: []const u8) void {
     var exe_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const exe = self.resolveExe(&exe_buf, "wellbeing dashboard");
-    const child = spawnDetached(self.io, &.{ exe, "wellbeing" }, .inherit) catch |err| {
-        log.err("wellbeing dashboard: cannot start {s}: {}", .{ exe, err });
+    const exe = self.resolveExe(&exe_buf, label);
+    const child = spawnDetached(self.io, &.{ exe, subcommand }, .inherit) catch |err| {
+        log.err("{s}: cannot start {s}: {}", .{ label, exe, err });
         return;
     };
-    reapDetached(child, "wellbeing dashboard");
+    reapDetached(child, label);
 }
 
 /// Starts another rex as a separate process in the shell's working

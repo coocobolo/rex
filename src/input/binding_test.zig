@@ -3,6 +3,7 @@ const testing = std.testing;
 
 const Action = @import("binding.zig").Action;
 const Binding = @import("binding.zig").Binding;
+const default_keymap = @import("binding.zig").default_keymap;
 const matchBinding = @import("binding.zig").matchBinding;
 
 test "matchBinding: the key and the exact modifiers must match" {
@@ -14,4 +15,8 @@ test "matchBinding: the key and the exact modifiers must match" {
     try testing.expectEqual(Action.copy_selection, matchBinding(bindings, .c, .{ .ctrl = true, .shift = true }).?);
     try testing.expectEqual(null, matchBinding(bindings, .q, .{}));
     try testing.expectEqual(null, matchBinding(bindings, .q, .{ .ctrl = true }));
+}
+
+test "default_keymap: ctrl+shift+comma opens settings" {
+    try testing.expectEqual(Action.open_settings, matchBinding(default_keymap, .comma, .{ .ctrl = true, .shift = true }).?);
 }
