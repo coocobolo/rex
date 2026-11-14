@@ -156,11 +156,11 @@ const card_rows_nodes = 3;
 /// The gear's popup: layer and card, the column, three groups (box,
 /// label, tabs), the rule, the settings row (row, text, icon) and the note.
 const choices_nodes = popup.node_max + 1 + 2 * (2 + tabs.nodeMax(2)) + (2 + tabs.nodeMax(scheme_labels.len)) + 1 + 3 + 1;
-/// The Focus page: its column, the timer block (label, time, task line and
+/// The Focus page: its column, the timer block (badge, label, time, task line and
 /// the larger of the two marks: a bar, or a ring in its square under an
 /// overlaid column), the button row and three buttons, and the popup with
 /// its one item.
-const focus_nodes = 1 + 1 + 3 + 6 + 1 + 3 * button.node_max + popup.node_max + popup.item_node_max;
+const focus_nodes = 1 + 1 + 4 + 6 + 1 + 3 * button.node_max + popup.node_max + popup.item_node_max;
 
 /// The Today page: its column, the card row and four stat cards (box,
 /// title, value, bar or spacer, note), the lower row and its two slots,
@@ -1119,8 +1119,28 @@ fn focusPage(state: *const State, tree: *Tree, theme: *const Theme) kit.tree.Err
 
 /// The phase over the time.
 fn timerText(state: *const State, tree: *Tree, theme: *const Theme, style: kit.text.Style) kit.tree.Error!void {
-    _ = try tree.text(phaseLabel(state.shown.phase), .{ .color = phaseTextColor(theme, state.shown.phase), .style = .sm_medium });
-    _ = try tree.text(state.clock(), .{ .color = theme.foreground, .style = style, .figures = .tabular });
+    const phase = state.shown.phase;
+
+    const badge = try tree.open(.{
+        .height = .{ .fixed = 24 },
+        .padding = .symmetric(12, 0),
+        .cross = .center,
+        .main = .center,
+        .width = .fit,
+        .fill = phaseColor(theme, phase).alpha(15),
+        .radius = Theme.radius_md,
+    });
+
+    _ = try tree.text(phaseLabel(phase), .{
+        .color = phaseTextColor(theme, phase),
+        .style = .sm_medium,
+    });
+    tree.close(badge);
+    _ = try tree.text(state.clock(), .{
+        .color = theme.foreground,
+        .style = style,
+        .figures = .tabular,
+    });
 }
 
 fn timerButtons(state: *const State, tree: *Tree, theme: *const Theme) kit.tree.Error!void {
