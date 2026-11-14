@@ -551,7 +551,7 @@ pub fn init(
         .cursor = .default,
         .decoration = .{},
         .scrollbar = .default,
-        .selection = .default,
+        .selection = rendererSelectionOption(active_config.selection),
         .modal_blur = active_config.window.modal.blur,
         .modal_blur_radius = active_config.window.modal.blur_radius,
     });
@@ -3429,6 +3429,17 @@ test "App: a config reload starts from the defaults, in its own arena" {
     try testing.expectEqual(base.keymap.ptr, second.config.keymap.ptr);
 }
 
+/// Maps `Config.Selection` into the renderer's `Selection.Option`.
+fn rendererSelectionOption(sel: Config.Selection) renderer_mod.Selection.Option {
+    var out: renderer_mod.Selection.Option = .default;
+    out.fill_color[3] = sel.opacity;
+    out.border_color = normalizedBackground(sel.border_color, sel.border_opacity);
+    out.border_width = sel.border_width;
+    out.border_style = sel.border_style;
+    out.radius = sel.radius;
+    return out;
+}
+
 fn normalizedBackground(rgb: rex.color.Rgb, alpha: f32) [4]f32 {
     return .{
         @as(f32, @floatFromInt(rgb.r)) / 255.0,
@@ -3436,6 +3447,31 @@ fn normalizedBackground(rgb: rex.color.Rgb, alpha: f32) [4]f32 {
         @as(f32, @floatFromInt(rgb.b)) / 255.0,
         alpha,
     };
+}
+
+test "rendererSelectionOption: maps Config.Selection onto renderer Selection.Option" {
+    const testing = std.testing;
+    const def = rendererSelectionOption(.default);
+    try testing.expectEqual(renderer_mod.Selection.Option.default, def);
+
+    const custom: Config.Selection = .{
+        .classifier = .default,
+        .opacity = 0.75,
+        .border_color = .{ .r = 0xFF, .g = 0x80, .b = 0x00 },
+        .border_opacity = 0.5,
+        .border_width = 2.0,
+        .border_style = .per_row,
+        .radius = 6.0,
+    };
+    const mapped = rendererSelectionOption(custom);
+    try testing.expectApproxEqAbs(@as(f32, 0.75), mapped.fill_color[3], 1e-6);
+    try testing.expectApproxEqAbs(@as(f32, 1.0), mapped.border_color[0], 1e-6);
+    try testing.expectApproxEqAbs(@as(f32, 128.0 / 255.0), mapped.border_color[1], 1e-6);
+    try testing.expectApproxEqAbs(@as(f32, 0.0), mapped.border_color[2], 1e-6);
+    try testing.expectApproxEqAbs(@as(f32, 0.5), mapped.border_color[3], 1e-6);
+    try testing.expectApproxEqAbs(@as(f32, 2.0), mapped.border_width, 1e-6);
+    try testing.expectEqual(renderer_mod.Selection.BorderStyle.per_row, mapped.border_style);
+    try testing.expectApproxEqAbs(@as(f32, 6.0), mapped.radius, 1e-6);
 }
 
 test "normalizedBackground: scales 0..255 Rgb channels into 0..1 GL clearColor floats" {

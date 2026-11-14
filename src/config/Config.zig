@@ -6,6 +6,7 @@
 //! into the arena that applying the files allocated from.
 
 const window_types = @import("window.zig");
+const selection_types = @import("selection.zig");
 const overlay = @import("overlay.zig");
 const font_config = @import("font.zig");
 const Binding = @import("../input/binding.zig").Binding;
@@ -152,10 +153,16 @@ pub const Shell = struct {
     working_directory: ?[:0]const u8 = null,
 };
 
-/// How selecting text behaves.
+/// How selecting text behaves and renders.
 pub const Selection = struct {
     mouse_double_click_interval_ms: u32 = 500,
     classifier: Classifier.Option,
+    opacity: f32 = 1.0,
+    border_opacity: f32 = 1.0,
+    border_width: f32 = 1.5,
+    radius: f32 = 3.0,
+    border_color: Rgb = .{ .r = 0x66, .g = 0x66, .b = 0x66 },
+    border_style: selection_types.BorderStyle = .unified,
 
     pub const default: Selection = .{ .classifier = .default };
 };

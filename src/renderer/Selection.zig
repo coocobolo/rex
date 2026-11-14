@@ -112,12 +112,7 @@ comptime {
 
 pub const Selection = @This();
 
-pub const BorderStyle = enum(u1) {
-    /// Each row gets its own full border rectangle.
-    per_row = 0,
-    /// All rows share a single outer perimeter, with no internal row dividers.
-    unified = 1,
-};
+pub const BorderStyle = @import("../config/selection.zig").BorderStyle;
 
 pub const Option = struct {
     /// RGBA fill color, 0.0 to 1.0. The RGB part is replaced by the

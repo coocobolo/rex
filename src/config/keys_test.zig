@@ -415,6 +415,7 @@ const enum_names = [_]struct { []const u8, []const []const u8 }{
     .{ "ui.color_scheme", &.{ "auto", "dark", "light" } },
     .{ "clipboard.osc52_write", &.{ "allow", "deny" } },
     .{ "clipboard.osc52_read", &.{ "allow", "deny" } },
+    .{ "selection.border_style", &.{ "per_row", "unified" } },
     .{ "modal.on_outside_click", &.{ "close", "ignore" } },
     .{ "wellbeing.screen_time.on_limit", &.{ "grayscale", "lock_input", "animation" } },
     .{ "wellbeing.focus.timer", &.{ "countdown", "countup" } },
@@ -510,4 +511,31 @@ test "exposure: every internal entry names a Config field" {
         errdefer std.debug.print("stale internal entry: {s}\n", .{prefix});
         try std.testing.expect(exists);
     }
+}
+
+test "apply: [selection] appearance keys parse, validate bounds, and reset to defaults" {
+    const Rgb = @import("../color/Rgb.zig");
+    var config = testConfig();
+    try applyText(&config, .selection, "opacity", "0.6");
+    try applyText(&config, .selection, "border_color", "#abcdef");
+    try applyText(&config, .selection, "border_opacity", "0.5");
+    try applyText(&config, .selection, "border_width", "2.5");
+    try applyText(&config, .selection, "border_style", "per_row");
+    try applyText(&config, .selection, "radius", "4.0");
+
+    try std.testing.expectApproxEqAbs(@as(f32, 0.6), config.selection.opacity, 1e-6);
+    try std.testing.expectEqual(Rgb{ .r = 0xAB, .g = 0xCD, .b = 0xEF }, config.selection.border_color);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.5), config.selection.border_opacity, 1e-6);
+    try std.testing.expectApproxEqAbs(@as(f32, 2.5), config.selection.border_width, 1e-6);
+    try std.testing.expectEqual(@import("selection.zig").BorderStyle.per_row, config.selection.border_style);
+    try std.testing.expectApproxEqAbs(@as(f32, 4.0), config.selection.radius, 1e-6);
+
+    try std.testing.expectError(error.OutOfRange, applyText(&config, .selection, "opacity", "1.5"));
+    try std.testing.expectError(error.OutOfRange, applyText(&config, .selection, "border_width", "25"));
+    try std.testing.expectError(error.OutOfRange, applyText(&config, .selection, "radius", "21"));
+    try std.testing.expectError(error.InvalidValue, applyText(&config, .selection, "border_style", "rounded"));
+    try std.testing.expectError(error.InvalidValue, applyText(&config, .selection, "border_color", "inherit"));
+
+    try applyText(&config, .selection, "border_color", "default");
+    try std.testing.expectEqual(Config.Selection.default.border_color, config.selection.border_color);
 }

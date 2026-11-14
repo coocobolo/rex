@@ -519,3 +519,74 @@ test "settings: ANSI palette collapsible hides color0..15 by default and updates
     try testing.expect(settings.update(&state, .{ .key = .{ .key = .space } }));
     try testing.expect(!state.ansi_colors_open);
 }
+
+test "settings: selection appearance keys edit and reset on Window & Shell" {
+    const gpa = testing.allocator;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const dir_path = try std.fs.path.join(gpa, &.{ ".zig-cache", "tmp", &tmp.sub_path });
+    defer gpa.free(dir_path);
+    const cfg_path = try std.fs.path.join(gpa, &.{ dir_path, "config" });
+    defer gpa.free(cfg_path);
+
+    const cfg = config_defaults.default;
+    var state = try settings.init(.{
+        .gpa = gpa,
+        .io = testing.io,
+        .config = &cfg,
+        .state_dir = dir_path,
+        .config_path = cfg_path,
+        .home_dir = dir_path,
+        .wake_loop = struct {
+            fn wake() void {}
+        }.wake,
+    });
+    defer settings.deinit(&state);
+
+    state.frame.current = @intFromEnum(settings.Page.window_shell);
+
+    const bc_idx = keyIndex(.selection, "border_color");
+    const bc_input_id = Id.of("settings.input").item(bc_idx);
+    const bc_reset_id = Id.of("settings.color_reset").item(bc_idx);
+    try testing.expectEqualStrings("#666666", state.inputs[bc_idx].text());
+
+    // Edit non-optional border_color, verify persisted value, then Reset back to default.
+    _ = settings.update(&state, .{ .pointer = .{ .id = bc_input_id } });
+    _ = settings.update(&state, .{ .press = bc_input_id });
+    _ = settings.update(&state, .release);
+    try testing.expect(settings.update(&state, .{ .key = .{ .key = .a, .mods = .{ .ctrl = true } } }));
+    for ("#ff8800") |ch| {
+        try testing.expect(settings.update(&state, .{ .char = ch }));
+    }
+    try testing.expect(settings.update(&state, .{ .key = .{ .key = .enter } }));
+    try testing.expectEqual(@as(?u16, null), state.error_key);
+    try testing.expectEqual(Rgb{ .r = 0xFF, .g = 0x88, .b = 0x00 }, state.activeConfig().selection.border_color);
+
+    _ = settings.update(&state, .{ .pointer = .{ .id = bc_reset_id } });
+    _ = settings.update(&state, .{ .press = bc_reset_id });
+    try testing.expect(settings.update(&state, .release));
+    try testing.expectEqual(cfg.selection.border_color, state.activeConfig().selection.border_color);
+    try testing.expectEqualStrings("#666666", state.inputs[bc_idx].text());
+
+    // Step border_width up (+1.0 from 1.5 -> 2.5) and select border_style = per_row.
+    const bw_idx = keyIndex(.selection, "border_width");
+    const inc_id = Id.of("settings.inc").item(bw_idx);
+    _ = settings.update(&state, .{ .pointer = .{ .id = inc_id } });
+    _ = settings.update(&state, .{ .press = inc_id });
+    try testing.expect(settings.update(&state, .release));
+    try testing.expectApproxEqAbs(@as(f32, 2.5), state.activeConfig().selection.border_width, 1e-6);
+
+    const bs_idx = keyIndex(.selection, "border_style");
+    const bs_select_id = Id.of("settings.select").item(bs_idx);
+    _ = settings.update(&state, .{ .pointer = .{ .id = bs_select_id } });
+    _ = settings.update(&state, .{ .press = bs_select_id });
+    _ = settings.update(&state, .release);
+    const per_row_id = Id.of("settings.choice").item(0);
+    _ = settings.update(&state, .{ .pointer = .{ .id = per_row_id } });
+    _ = settings.update(&state, .{ .press = per_row_id });
+    try testing.expect(settings.update(&state, .release));
+    const BorderStyle = @import("../config/selection.zig").BorderStyle;
+    try testing.expectEqual(BorderStyle.unified, cfg.selection.border_style);
+    try testing.expectEqual(BorderStyle.per_row, state.activeConfig().selection.border_style);
+}

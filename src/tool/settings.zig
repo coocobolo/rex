@@ -227,6 +227,24 @@ fn keyMeta(comptime section: keys.Section, comptime key_name: []const u8) KeyMet
         .selection => if (std.mem.eql(u8, key_name, "extra_word_characters")) .{
             .label = "Extra Word Characters",
             .description = "Additional ASCII symbols treated as part of a word on double-click.",
+        } else if (std.mem.eql(u8, key_name, "opacity")) .{
+            .label = "Selection Opacity",
+            .description = "Fill opacity of the selection highlight (0.0–1.0).",
+        } else if (std.mem.eql(u8, key_name, "border_color")) .{
+            .label = "Border Color",
+            .description = "Outline color drawn around selected text.",
+        } else if (std.mem.eql(u8, key_name, "border_opacity")) .{
+            .label = "Border Opacity",
+            .description = "Opacity of the selection outline (0.0–1.0).",
+        } else if (std.mem.eql(u8, key_name, "border_width")) .{
+            .label = "Border Width",
+            .description = "Outline thickness in logical pixels (0 hides the border).",
+        } else if (std.mem.eql(u8, key_name, "border_style")) .{
+            .label = "Border Style",
+            .description = "Outline multi-line selections as one perimeter or per row.",
+        } else if (std.mem.eql(u8, key_name, "radius")) .{
+            .label = "Corner Radius",
+            .description = "Corner radius of selection highlights in pixels (0 for sharp corners).",
         } else @compileError("unmapped selection key: " ++ key_name),
 
         .clipboard => if (std.mem.eql(u8, key_name, "osc52_write")) .{
@@ -818,6 +836,7 @@ fn resolvedColorSlot(comptime key_name: []const u8, theme: ThemePreset) Rgb {
 const ColorInfo = struct {
     resolved: Rgb,
     overridden: bool,
+    reset_token: []const u8,
 };
 
 fn colorInfo(idx: u16, cfg: *const Config) ColorInfo {
@@ -826,15 +845,24 @@ fn colorInfo(idx: u16, cfg: *const Config) ColorInfo {
     inline for (keys.table, 0..) |key, i| {
         if (comptime key.kind == .color) {
             if (i == idx) {
-                const override = keys.fieldValue(Config, key.field, cfg);
+                const val = keys.fieldValue(Config, key.field, cfg);
+                if (@typeInfo(@TypeOf(val)) == .optional) {
+                    return .{
+                        .resolved = resolvedColorSlot(key.name, theme),
+                        .overridden = val != null,
+                        .reset_token = "inherit",
+                    };
+                }
+                const default_val = keys.fieldValue(Config, key.field, &config_defaults.default);
                 return .{
-                    .resolved = resolvedColorSlot(key.name, theme),
-                    .overridden = override != null,
+                    .resolved = val,
+                    .overridden = !std.meta.eql(val, default_val),
+                    .reset_token = "default",
                 };
             }
         }
     }
-    return .{ .resolved = .{ .r = 0, .g = 0, .b = 0 }, .overridden = false };
+    return .{ .resolved = .{ .r = 0, .g = 0, .b = 0 }, .overridden = false, .reset_token = "inherit" };
 }
 
 fn readInputValue(idx: u16, cfg: *const Config, buf: []u8) []const u8 {
@@ -1413,13 +1441,14 @@ fn activate(state: *State, target: Target) bool {
             return true;
         },
         .color_reset => |idx| {
-            if (!colorInfo(idx, state.activeConfig()).overridden) return false;
+            const ci = colorInfo(idx, state.activeConfig());
+            if (!ci.overridden) return false;
             if (state.focused == .key_input and state.focused.key_input == idx) {
                 state.dirty[idx] = false;
             }
             blurFocused(state);
             state.dirty[idx] = false;
-            commitValue(state, idx, "inherit");
+            commitValue(state, idx, ci.reset_token);
             return true;
         },
         .stepper_dec => |idx| {
