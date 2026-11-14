@@ -23,9 +23,10 @@ inotify: linux.fd_t,
 stop_r: linux.fd_t,
 stop_w: linux.fd_t,
 thread: std.Thread,
-/// Borrowed; must outlive the watch.
-name: []const u8,
 notify: *const fn () void,
+/// A copy: the caller's string may go with a config reload.
+name_buf: [std.fs.max_name_bytes]u8,
+name_len: u16,
 /// Set by the thread before `notify`, cleared by the reader.
 changed: std.atomic.Value(bool) = .init(false),
 alive: std.atomic.Value(bool) = .init(true),
@@ -46,10 +47,11 @@ pub const Error = Allocator.Error || pipe.Error || std.Thread.SpawnError || erro
 /// (`IN_MOVED_TO`). The directory going away ends the watch.
 const mask: u32 = linux.IN.CLOSE_WRITE | linux.IN.MOVED_TO | linux.IN.DELETE_SELF | linux.IN.MOVE_SELF | linux.IN.ONLYDIR;
 
-/// Watches `dir` for saves of `name`. `name` is borrowed.
+/// Watches `dir` for saves of `name`. Both are copied.
 pub fn create(gpa: Allocator, dir: []const u8, name: []const u8, notify: *const fn () void) Error!*FileWatch {
     var path_buf: [std.fs.max_path_bytes]u8 = undefined;
     if (dir.len >= path_buf.len) return error.NameTooLong;
+    if (name.len > std.fs.max_name_bytes) return error.NameTooLong;
     @memcpy(path_buf[0..dir.len], dir);
     path_buf[dir.len] = 0;
 
@@ -87,9 +89,11 @@ pub fn create(gpa: Allocator, dir: []const u8, name: []const u8, notify: *const 
         .stop_r = stop_fds[0],
         .stop_w = stop_fds[1],
         .thread = undefined,
-        .name = name,
         .notify = notify,
+        .name_buf = undefined,
+        .name_len = @intCast(name.len),
     };
+    @memcpy(self.name_buf[0..name.len], name);
     self.thread = try std.Thread.spawn(.{}, loop, .{self});
     return self;
 }
@@ -150,7 +154,7 @@ fn loop(self: *FileWatch) void {
             .INTR => continue,
             else => |e| return self.end("read failed", e),
         }
-        const scan = scanEvents(buf[0..rc], self.name);
+        const scan = scanEvents(buf[0..rc], self.name_buf[0..self.name_len]);
         if (scan.saved) {
             self.changed.store(true, .release);
             self.notify();

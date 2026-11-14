@@ -75,6 +75,7 @@ const Response = rex.terminal.Response;
 
 const wellbeing = rex.builtin.wellbeing;
 const WellbeingOverlay = @import("builtin/wellbeing/overlay.zig");
+const FileWatch = @import("tool/FileWatch.zig");
 
 /// Largest selection copied to the clipboard, in bytes.
 const max_copy_size: usize = std.math.maxInt(u16) - 1;
@@ -155,6 +156,9 @@ word_classifier: unicode.Classifier,
 
 // Wellbeing & Focus state
 wellbeing_state: wellbeing.Wellbeing,
+/// Owned, destroyed in `deinit` and restarted on a config reload; see
+/// `startWellbeingWatch`.
+wellbeing_watch: ?*FileWatch = null,
 local_clock: wellbeing.localtime.Clock = .{},
 wellbeing_overlay: WellbeingOverlay.Overlay = .{},
 toast_queue: Toast.Queue = .{},
@@ -568,6 +572,8 @@ pub fn init(
     wellbeing_state.open(io, dirs.state, open_ms) catch |err| {
         log.warn("cannot read wellbeing state in {s}: {t}; starting empty", .{ wellbeing_state.stateDir(dirs.state), err });
     };
+    const wellbeing_watch = startWellbeingWatch(gpa, &wellbeing_state, dirs.state);
+    errdefer if (wellbeing_watch) |watch| watch.destroy(gpa);
 
     // Created before the driver, which writes to it, and destroyed after it.
     const latency: latency_trace.Handle = if (latency_trace.enabled) try latency_trace.Trace.create(gpa) else {};
@@ -652,6 +658,7 @@ pub fn init(
         .font_size = active_config.font.size,
         .content_scale = content_scale,
         .wellbeing_state = wellbeing_state,
+        .wellbeing_watch = wellbeing_watch,
         // Its options and tokens come with every `build`.
         .wellbeing_overlay = .{},
         .toast_queue = .{},
@@ -667,6 +674,9 @@ pub fn init(
 }
 
 pub fn deinit(self: *App, gpa: std.mem.Allocator) void {
+    // First: its thread wakes GLFW, which the window's deinit ends.
+    if (self.wellbeing_watch) |watch| watch.destroy(gpa);
+    self.wellbeing_watch = null;
     if (self.config_watcher) |*w| w.deinit();
     gpa.free(self.config_path);
     gpa.free(self.home_dir);
@@ -1267,11 +1277,28 @@ pub fn notifyToast(self: *App, req: Toast.Request) u64 {
     return id;
 }
 
+/// Linux only: wakes the loop when another process saves the wellbeing
+/// state, so a press in the wellbeing window shows here at once rather
+/// than at the next once-a-second poll. Null elsewhere, while wellbeing is
+/// disabled, or when the watch cannot start; the poll runs either way.
+fn startWellbeingWatch(gpa: std.mem.Allocator, state: *const wellbeing.Wellbeing, default_state_dir: []const u8) ?*FileWatch {
+    if (comptime builtin.os.tag != .linux) return null;
+    if (!state.option.enabled) return null;
+    const dir = state.stateDir(default_state_dir);
+    return FileWatch.create(gpa, dir, state.option.privacy.state_filename, Window.glfwPostEmptyEvent) catch |err| {
+        log.warn("not watching {s} for wellbeing changes ({t}); checking once a second", .{ dir, err });
+        return null;
+    };
+}
+
 /// Polls the shared wellbeing state (at most once a second, see
-/// `Wellbeing.sync`). A failure is reported when it starts or changes, not
-/// on every retry, and the return to working is reported too.
+/// `Wellbeing.sync`), or reads it at once after the watch saw a save. A
+/// failure is reported when it starts or changes, not on every retry, and
+/// the return to working is reported too.
 fn syncWellbeing(self: *App, utc_s: i64) void {
-    if (self.wellbeing_state.sync(self.io, self.dirs.state, utc_s, .poll)) |_| {
+    const saved_elsewhere = if (self.wellbeing_watch) |watch| watch.takeChanged() else false;
+    const mode: wellbeing.Wellbeing.SyncMode = if (saved_elsewhere) .changed else .poll;
+    if (self.wellbeing_state.sync(self.io, self.dirs.state, utc_s, mode)) |_| {
         if (self.wellbeing_sync_error != null) {
             log.info("wellbeing state in {s} is saved again", .{self.wellbeing_state.stateDir(self.dirs.state)});
             self.notifySimple("Wellbeing data", "Saved again", .success);
@@ -1534,6 +1561,9 @@ pub fn reloadConfig(self: *App) void {
     }
 
     self.wellbeing_state.applyOption(self.config.wellbeing);
+    // The state directory, file name or `enabled` may have changed.
+    if (self.wellbeing_watch) |watch| watch.destroy(self.allocator);
+    self.wellbeing_watch = startWellbeingWatch(self.allocator, &self.wellbeing_state, self.dirs.state);
     // The keys accept only ASCII, so this fails only on a broken invariant;
     // keep the previous classifier then rather than lose word selection.
     if (unicode.Classifier.init(self.config.selection.classifier)) |classifier| {
