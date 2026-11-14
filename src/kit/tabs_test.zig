@@ -79,7 +79,8 @@ test "tabs: the track is 32 tall and each face sits in the 3 px inset" {
 test "tabs: the current tab is raised, and hover only recolors the label" {
     var fixture: Fixture = .{};
     const dark = try show(&fixture, &Theme.dark, .{ .tabs = &labels, .current = 1, .hovered = 0 });
-    try testing.expectEqual(Theme.dark.input.alpha(30), face(&dark, 1).box.fill);
+    // 30% of `input`'s 15%: alpha 11 of 255, not white at 30%.
+    try testing.expectEqual(Theme.Color{ .r = 255, .g = 255, .b = 255, .a = 11 }, face(&dark, 1).box.fill);
     try testing.expectEqual(Theme.dark.input, face(&dark, 1).box.border);
     try testing.expectEqual(Theme.Color.transparent, face(&dark, 0).box.fill);
     try testing.expectEqual(Theme.dark.foreground, label(&dark, 1).content.text.color);

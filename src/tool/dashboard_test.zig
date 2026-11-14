@@ -115,3 +115,142 @@ test "dashboard: a pause is visible to a second window" {
     try reader.wb.sync(testing.io, dir, 8, .poll);
     try testing.expectEqual(focus.Run.paused, reader.wb.timer().run);
 }
+
+fn buildView(state: *const dashboard.State) !void {
+    var nodes: [dashboard.node_max]kit.tree.Node = undefined;
+    var lines: [dashboard.line_max]kit.text.Line = undefined;
+    var tree = kit.tree.Tree.init(&nodes, &lines);
+    try dashboard.view(state, &tree, &kit.Theme.dark);
+}
+
+fn waitingTask(tasks_in_cycle: u8) @import("../builtin/wellbeing/storage.zig").Timer {
+    return .{ .phase = @intFromEnum(focus.Phase.task), .run = @intFromEnum(focus.Run.waiting), .tasks_in_cycle = tasks_in_cycle };
+}
+
+test "dashboard: every page fits node_max, with either timer mark and the menu open" {
+    var tmp: StateTmp = .init();
+    defer tmp.deinit();
+    const dir = try tmp.path();
+    for ([_]WellbeingOption.TimerChart{ .bar, .ring }) |mark| {
+        var config = configWith(dir);
+        config.wellbeing.dashboard.timer_chart = mark;
+        var state = try openDashboard(&config, dir);
+        defer dashboard.deinit(&state);
+        // A running timer shows the chip on the other pages.
+        state.wb.toggleFocus(1_000);
+        dashboard.refreshAt(&state, 2_000);
+        for ([_]dashboard.Page{ .today, .focus, .history }) |page| {
+            state.page = page;
+            try buildView(&state);
+        }
+        state.page = .focus;
+        state.menu = .open;
+        try buildView(&state);
+    }
+}
+
+test "dashboard: a waiting timer shows the next phase in full" {
+    var tmp: StateTmp = .init();
+    defer tmp.deinit();
+    const dir = try tmp.path();
+    const config = configWith(dir);
+    var state = try openDashboard(&config, dir);
+    defer dashboard.deinit(&state);
+
+    // Task 2 of 4 ended: a five-minute short break is next.
+    state.wb.data.timer = waitingTask(1);
+    dashboard.refreshAt(&state, 10_000);
+    try testing.expectEqualStrings("05:00", state.clock());
+    try testing.expectEqual(focus.Phase.short_break, state.shown.phase);
+    try testing.expectEqualStrings("1 of 4 tasks done", state.taskLine());
+    try testing.expectEqual(0, state.shown.fraction);
+
+    // The fourth task ended: the long break is next.
+    state.wb.data.timer = waitingTask(3);
+    dashboard.refreshAt(&state, 10_000);
+    try testing.expectEqual(focus.Phase.long_break, state.shown.phase);
+}
+
+test "dashboard: a running phase at its end does not spin" {
+    var tmp: StateTmp = .init();
+    defer tmp.deinit();
+    const dir = try tmp.path();
+    const config = configWith(dir);
+    var state = try openDashboard(&config, dir);
+    defer dashboard.deinit(&state);
+    state.wb.toggleFocus(1_000);
+    // A minute later the task is over, but only a terminal ends it.
+    const wait = dashboard.waitAt(&state, 61_000);
+    if (state.watch != null) {
+        try testing.expectEqual(@as(?f64, null), wait);
+    } else {
+        try testing.expectEqual(@as(?f64, 1), wait);
+    }
+}
+
+test "dashboard: Ctrl+Tab cycles the pages, Escape closes the menu" {
+    var tmp: StateTmp = .init();
+    defer tmp.deinit();
+    const dir = try tmp.path();
+    const config = configWith(dir);
+    var state = try openDashboard(&config, dir);
+    defer dashboard.deinit(&state);
+
+    try testing.expectEqual(dashboard.Page.today, state.page);
+    try testing.expect(dashboard.update(&state, .{ .key = .{ .key = .tab, .mods = .{ .ctrl = true } } }));
+    try testing.expectEqual(dashboard.Page.focus, state.page);
+    try testing.expect(dashboard.update(&state, .{ .key = .{ .key = .tab, .mods = .{ .ctrl = true, .shift = true } } }));
+    try testing.expect(dashboard.update(&state, .{ .key = .{ .key = .tab, .mods = .{ .ctrl = true, .shift = true } } }));
+    try testing.expectEqual(dashboard.Page.history, state.page);
+    // Tab alone does nothing.
+    try testing.expect(!dashboard.update(&state, .{ .key = .{ .key = .tab } }));
+
+    state.menu = .open;
+    try testing.expect(dashboard.update(&state, .{ .key = .{ .key = .escape } }));
+    try testing.expectEqual(.closed, state.menu);
+}
+
+test "dashboard: a click on a tab switches to it; the menu opens and closes" {
+    var tmp: StateTmp = .init();
+    defer tmp.deinit();
+    const dir = try tmp.path();
+    const config = configWith(dir);
+    var state = try openDashboard(&config, dir);
+    defer dashboard.deinit(&state);
+
+    const history_tab = kit.tree.Id.of("wellbeing.tab").item(2);
+    _ = dashboard.update(&state, .{ .pointer = history_tab });
+    _ = dashboard.update(&state, .{ .press = history_tab });
+    try testing.expect(dashboard.update(&state, .release));
+    try testing.expectEqual(dashboard.Page.history, state.page);
+
+    // A release away from where the press went down does nothing.
+    state.page = .focus;
+    const more = kit.tree.Id.of("wellbeing.more");
+    _ = dashboard.update(&state, .{ .pointer = more });
+    _ = dashboard.update(&state, .{ .press = more });
+    _ = dashboard.update(&state, .{ .pointer = .none });
+    _ = dashboard.update(&state, .release);
+    try testing.expectEqual(.closed, state.menu);
+
+    _ = dashboard.update(&state, .{ .pointer = more });
+    _ = dashboard.update(&state, .{ .press = more });
+    _ = dashboard.update(&state, .release);
+    try testing.expectEqual(.open, state.menu);
+    try testing.expect(dashboard.update(&state, .{ .press = kit.tree.Id.of("wellbeing.layer") }));
+    try testing.expectEqual(.closed, state.menu);
+}
+
+test "dashboard: Space starts the timer and the press is saved" {
+    var tmp: StateTmp = .init();
+    defer tmp.deinit();
+    const dir = try tmp.path();
+    const config = configWith(dir);
+    var state = try openDashboard(&config, dir);
+    defer dashboard.deinit(&state);
+
+    try testing.expect(dashboard.update(&state, .{ .key = .{ .key = .space } }));
+    try testing.expectEqual(focus.Run.running, state.wb.timer().run);
+    const file = try @import("../builtin/wellbeing/storage.zig").load(testing.io, dir, "wb.bin");
+    try testing.expectEqual(@intFromEnum(focus.Run.running), file.timer.run);
+}

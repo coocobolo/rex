@@ -82,10 +82,10 @@ pub fn view(tree: *Tree, theme: *const Theme, options: Options) tree_zig.Error!v
     tree.close(track);
 }
 
-/// Light: the window background on the muted track. Dark: `input` at 30%,
-/// the active tab in the nova list.
+/// Light: the window background on the muted track. Dark: `input` at 30%
+/// of its own opacity (white at 4.5%), the active tab in the nova list.
 fn raisedFill(theme: *const Theme) Color {
-    return if (theme == &Theme.dark) theme.input.alpha(30) else theme.background;
+    return if (theme == &Theme.dark) theme.input.fade(0.3) else theme.background;
 }
 
 fn border(theme: *const Theme, current: bool, focused: bool) Color {
