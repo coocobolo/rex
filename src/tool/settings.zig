@@ -621,6 +621,7 @@ pub const Target = union(enum) {
 };
 
 const layer_id = Id.of("settings.layer");
+const scroll_area_id = Id.of("settings.scroll_area");
 
 fn switchId(idx: u16) Id {
     return Id.of("settings.switch").item(idx);
@@ -1087,7 +1088,34 @@ fn cycleFocus(state: *State, reverse: bool) bool {
 
     blurFocused(state);
     state.focused = targets[next_idx];
+    ensureFocusedVisible(state);
     return true;
+}
+
+fn targetId(target: Target) ?Id {
+    return switch (target) {
+        .key_switch => |idx| switchId(idx),
+        .key_slider => |idx| sliderId(idx),
+        .key_select => |idx| selectId(idx),
+        .key_input => |idx| inputId(idx),
+        .stepper_dec => |idx| decId(idx),
+        .stepper_inc => |idx| incId(idx),
+        .list_add => |idx| listAddId(idx),
+        else => null,
+    };
+}
+
+fn ensureFocusedVisible(state: *State) void {
+    const id = targetId(state.focused) orelse return;
+    const area = state.node_rect.get(scroll_area_id) orelse return;
+    const rect = state.node_rect.get(id) orelse return;
+    const pad: f32 = 24;
+    if (rect.y < area.y + pad) {
+        state.scroll = @max(0.0, state.scroll - (area.y + pad - rect.y));
+    } else if (rect.y + rect.h > area.y + area.h - pad) {
+        const needed = state.scroll + (rect.y + rect.h - (area.y + area.h - pad));
+        state.scroll = if (state.scroll_max > 0) @min(state.scroll_max, needed) else needed;
+    }
 }
 
 fn copySelection(state: *State, inp: *const input.State) void {
@@ -1631,6 +1659,7 @@ pub fn view(state: *const State, tree: *Tree, theme: *const Theme) kit.tree.Erro
     });
 
     const scroll_area = try tree.open(.{
+        .id = scroll_area_id,
         .width = .fill,
         .height = .fill,
         .cross = .center,
@@ -1873,7 +1902,7 @@ fn viewKeyRow(
     const row = try tree.open(.{
         .axis = if (compact) .column else .row,
         .width = .fill,
-        .cross = if (compact) .start else .center,
+        .cross = if (compact or comptime controlKind(key) == .list) .start else .center,
         .gap = if (compact) 10 else 16,
     });
 

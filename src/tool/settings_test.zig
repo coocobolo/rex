@@ -257,3 +257,44 @@ test "settings: Tab and Shift+Tab cycle focus across page controls" {
     try testing.expect(settings.update(&state, .{ .key = .{ .key = .escape } }));
     try testing.expect(state.open_select == null);
 }
+
+test "settings: Tab scrolls viewport when moving to an offscreen control" {
+    const gpa = testing.allocator;
+    const cfg = config_defaults.default;
+    const Helper = struct {
+        var tree: kit.tree.Tree = undefined;
+        fn getRect(_: *const anyopaque, id: Id) ?kit.tree.Rect {
+            for (tree.nodes[0..tree.len]) |node| {
+                if (node.box.id == id) return node.rect;
+            }
+            return null;
+        }
+    };
+    var state = try settings.init(.{
+        .gpa = gpa,
+        .io = testing.io,
+        .config = &cfg,
+        .state_dir = "",
+        .node_rect = .{ .ctx = &dummy, .getFn = Helper.getRect },
+        .wake_loop = struct {
+            fn wake() void {}
+        }.wake,
+    });
+    defer settings.deinit(&state);
+
+    // Narrow viewport height so bottom controls on Appearance are offscreen.
+    _ = settings.update(&state, .{ .size = .{ .width = 1000, .height = 420 } });
+
+    var nodes: [settings.node_max]kit.tree.Node = undefined;
+    var lines: [settings.line_max]kit.text.Line = undefined;
+    const theme = kit.Theme.dark;
+    Helper.tree = .init(&nodes, &lines);
+    try settings.view(&state, &Helper.tree, &theme);
+    try kit.layout.layout(&Helper.tree, measurer, 1000, 420);
+
+    // Tab several times until focus moves past the bottom of the 420px viewport.
+    for (0..10) |_| {
+        try testing.expect(settings.update(&state, .{ .key = .{ .key = .tab } }));
+    }
+    try testing.expect(state.scroll > 0);
+}
