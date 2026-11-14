@@ -20,6 +20,10 @@ pub fn build(b: *std.Build) !void {
         }),
     });
 
+    const section_gc = target.result.os.tag == .linux;
+    glfw_lib.link_function_sections = section_gc;
+    glfw_lib.link_data_sections = section_gc;
+
     glfw_lib.root_module.addIncludePath(glfw_dep.path("src"));
     glfw_lib.root_module.addIncludePath(glfw_dep.path("include"));
 
@@ -44,6 +48,8 @@ pub fn build(b: *std.Build) !void {
         }),
     });
 
+    glad_lib.link_function_sections = section_gc;
+    glad_lib.link_data_sections = section_gc;
     glad_lib.root_module.addCSourceFile(.{ .file = glad_dir.path(b, "src/glad.c") });
     glad_lib.root_module.addIncludePath(glad_dir.path(b, "include"));
 
@@ -58,6 +64,8 @@ pub fn build(b: *std.Build) !void {
             .strip = strip,
         }),
     });
+    freetype_lib.link_function_sections = section_gc;
+    freetype_lib.link_data_sections = section_gc;
     freetype_lib.root_module.addCSourceFiles(.{
         .root = freetype_dep.path(""),
         .files = &freetype_base_srcs,
@@ -198,6 +206,9 @@ pub fn build(b: *std.Build) !void {
             .link_libc = true,
         }),
     });
+    exe.link_function_sections = section_gc;
+    exe.link_data_sections = section_gc;
+    exe.link_gc_sections = if (section_gc) true else null;
 
     b.installArtifact(exe);
 

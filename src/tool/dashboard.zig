@@ -1623,7 +1623,7 @@ fn computePrograms(programs: *[program_rows]Program, program_count: *u8, apps: [
             return list[a].seconds > list[b].seconds;
         }
     };
-    std.mem.sort(u8, order[0..count], apps, Less.less);
+    std.sort.insertion(u8, order[0..count], apps, Less.less);
 
     var rows: u8 = 0;
     var rest: u64 = 0;

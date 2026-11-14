@@ -684,34 +684,106 @@ fn clearListItems(gpa: Allocator, list: *std.ArrayListUnmanaged([]u8)) void {
     list.clearRetainingCapacity();
 }
 
-fn syncInputs(state: *State) Allocator.Error!void {
+fn sliderValue(idx: u16, cfg: *const Config) f32 {
     @setEvalBranchQuota(keys.eval_branch_quota);
+    inline for (keys.table, 0..) |key, i| {
+        if (comptime controlKind(key) == .slider) {
+            if (i == idx) return @floatCast(keys.fieldValue(Config, key.field, cfg));
+        }
+    }
+    return 0;
+}
+
+fn durationMs(idx: u16, cfg: *const Config) ?u64 {
+    @setEvalBranchQuota(keys.eval_branch_quota);
+    inline for (keys.table, 0..) |key, i| {
+        if (comptime controlKind(key) == .duration) {
+            if (i == idx) {
+                const val = keys.fieldValue(Config, key.field, cfg);
+                return switch (@typeInfo(@TypeOf(val))) {
+                    .optional => if (val) |v| @intCast(v) else null,
+                    else => @intCast(val),
+                };
+            }
+        }
+    }
+    return null;
+}
+
+fn formatSigned(val: i64, buf: []u8) []const u8 {
+    return std.fmt.bufPrint(buf, "{d}", .{val}) catch "";
+}
+
+fn formatTime(hour: u8, minute: u8, buf: []u8) []const u8 {
+    return std.fmt.bufPrint(buf, "{d:0>2}:{d:0>2}", .{ hour, minute }) catch "";
+}
+
+fn readInputValue(idx: u16, cfg: *const Config, buf: []u8) []const u8 {
+    @setEvalBranchQuota(keys.eval_branch_quota);
+    inline for (keys.table, 0..) |key, i| {
+        if (comptime controlKind(key) == .text_input or controlKind(key) == .stepper) {
+            if (i == idx) {
+                const val = keys.fieldValue(Config, key.field, cfg);
+                return formatInputField(key.kind, @TypeOf(val), val, buf);
+            }
+        }
+    }
+    return "";
+}
+
+fn formatInputField(comptime kind: keys.Kind, comptime T: type, val: T, buf: []u8) []const u8 {
+    if (@typeInfo(T) == .optional) {
+        const inner = val orelse return "";
+        return formatInputNonOptional(kind, @typeInfo(T).optional.child, inner, buf);
+    }
+    return formatInputNonOptional(kind, T, val, buf);
+}
+
+fn formatInputNonOptional(comptime kind: keys.Kind, comptime T: type, val: T, buf: []u8) []const u8 {
+    if (kind == .time_of_day) return formatTime(val.hour, val.minute, buf);
+    if (kind == .path or kind == .program_path or kind == .directory_path) {
+        if (T == config_font.Face) return std.mem.span(val.path);
+        if (T == [*:0]const u8) return std.mem.span(val);
+        return val;
+    }
+    if (kind == .text or kind == .word_characters) return val;
+
+    return switch (@typeInfo(T)) {
+        .bool => if (val) "true" else "false",
+        .@"enum" => @tagName(val),
+        .int => formatSigned(@intCast(val), buf),
+        .float => formatFloat(@floatCast(val), buf),
+        else => "",
+    };
+}
+
+fn syncInputs(state: *State) Allocator.Error!void {
     const cfg = state.activeConfig();
     var buf: [512]u8 = undefined;
-    inline for (keys.table, 0..) |key, i| {
-        switch (comptime controlKind(key)) {
+    for (row_infos, 0..) |info, i| {
+        const idx: u16 = @intCast(i);
+        switch (info.kind) {
             .text_input, .stepper => if (!state.dirty[i]) {
-                const text = formatInputValue(key, cfg, &buf);
+                const text = readInputValue(idx, cfg, &buf);
                 try state.inputs[i].setText(state.gpa, text);
             },
             .duration => if (!state.dirty[i]) {
-                const parsed = splitDurationValue(key, cfg, &buf);
+                const parsed = splitDurationMs(durationMs(idx, cfg), &buf);
                 state.duration_units[i] = parsed.unit;
                 try state.inputs[i].setText(state.gpa, parsed.text);
             },
             .slider => {
-                if (state.dragging_slider != @as(u16, @intCast(i))) {
-                    const val = keys.fieldValue(Config, key.field, cfg);
-                    state.slider_values[i] = std.math.clamp(@as(f32, @floatCast(val)), 0.0, 1.0);
+                if (state.dragging_slider != idx) {
+                    state.slider_values[i] = std.math.clamp(sliderValue(idx, cfg), 0.0, 1.0);
                 }
             },
             .list => if (!state.dirty[i]) {
                 clearListItems(state.gpa, &state.list_items[i]);
-                if (key.kind == .font_fallback) {
+                if (info.key_kind == .font_fallback) {
                     for (cfg.font.faces.fallbacks) |face| {
                         try state.list_items[i].append(state.gpa, try state.gpa.dupe(u8, std.mem.span(face.path)));
                     }
-                } else if (key.kind == .shell_argument) {
+                } else if (info.key_kind == .shell_argument) {
                     for (cfg.shell.arguments) |arg| {
                         try state.list_items[i].append(state.gpa, try state.gpa.dupe(u8, arg));
                     }
@@ -990,12 +1062,11 @@ fn handleKey(state: *State, press: host.KeyPress) bool {
 }
 
 fn pageFocusTargets(page: Page, out: []Target) usize {
-    @setEvalBranchQuota(keys.eval_branch_quota);
     var count: usize = 0;
-    inline for (keys.table, 0..) |key, i| {
+    for (row_infos, 0..) |info, i| {
         const idx: u16 = @intCast(i);
-        if (keys.availableHere(idx) and pageForSection(key.section) == page) {
-            switch (comptime controlKind(key)) {
+        if (keys.availableHere(idx) and info.page == page) {
+            switch (info.kind) {
                 .toggle => {
                     out[count] = .{ .key_switch = idx };
                     count += 1;
@@ -1200,10 +1271,9 @@ fn over(state: *const State, id: Id) Target {
     for (0..32) |choice_idx| {
         if (id == choiceId(choice_idx)) return .{ .select_choice = choice_idx };
     }
-    @setEvalBranchQuota(keys.eval_branch_quota);
-    inline for (keys.table, 0..) |key, i| {
+    for (row_infos, 0..) |info, i| {
         const idx: u16 = @intCast(i);
-        switch (comptime controlKind(key)) {
+        switch (info.kind) {
             .toggle => if (id == switchId(idx)) return .{ .key_switch = idx },
             .slider => if (id == sliderId(idx)) return .{ .key_slider = idx },
             .select => if (id == selectId(idx)) return .{ .key_select = idx },
@@ -1249,142 +1319,103 @@ fn commitSlider(state: *State, idx: u16) void {
 }
 
 fn isEnumSetKey(idx: u16) bool {
-    @setEvalBranchQuota(keys.eval_branch_quota);
-    inline for (keys.table, 0..) |key, i| {
-        if (i == idx) return comptime controlKind(key) == .enum_set;
-    }
-    return false;
+    return row_infos[idx].kind == .enum_set;
 }
 
 fn isStepperKey(idx: u16) bool {
-    @setEvalBranchQuota(keys.eval_branch_quota);
-    inline for (keys.table, 0..) |key, i| {
-        if (i == idx) return comptime controlKind(key) == .stepper;
-    }
-    return false;
+    return row_infos[idx].kind == .stepper;
 }
 
 fn stepNumber(state: *State, idx: u16, delta: f64) void {
-    @setEvalBranchQuota(keys.eval_branch_quota);
-    const cfg = state.activeConfig();
-    inline for (keys.table, 0..) |key, i| {
-        if (comptime controlKind(key) == .stepper) {
-            if (i == idx) {
-                const val = keys.fieldValue(Config, key.field, cfg);
-                const base: f64 = switch (@typeInfo(@TypeOf(val))) {
-                    .optional => if (val) |v| switch (@typeInfo(@TypeOf(v))) {
-                        .float => @as(f64, @floatCast(v)),
-                        .int => @as(f64, @floatFromInt(v)),
-                        else => 0,
-                    } else key.bounds.min,
-                    .float => @as(f64, @floatCast(val)),
-                    .int => @as(f64, @floatFromInt(val)),
-                    else => 0,
-                };
-                const stepped = std.math.clamp(base + delta, key.bounds.min, key.bounds.max);
-                var buf: [64]u8 = undefined;
-                const token = switch (@typeInfo(@TypeOf(val))) {
-                    .optional => |opt| switch (@typeInfo(opt.child)) {
-                        .int => std.fmt.bufPrint(&buf, "{d}", .{@as(i64, @intFromFloat(@round(stepped)))}) catch return,
-                        else => formatFloat(stepped, &buf),
-                    },
-                    .int => std.fmt.bufPrint(&buf, "{d}", .{@as(i64, @intFromFloat(@round(stepped)))}) catch return,
-                    else => formatFloat(stepped, &buf),
-                };
-                state.dirty[idx] = false;
-                commitValue(state, idx, token);
-                return;
-            }
-        }
-    }
+    const info = row_infos[idx];
+    if (info.kind != .stepper) return;
+    const base = stepperValue(idx, state.activeConfig()) orelse info.min;
+    const stepped = std.math.clamp(base + delta, info.min, info.max);
+    var buf: [64]u8 = undefined;
+    const token = if (info.stepper_is_int)
+        formatSigned(@intFromFloat(@round(stepped)), &buf)
+    else
+        formatFloat(stepped, &buf);
+    state.dirty[idx] = false;
+    commitValue(state, idx, token);
 }
 
 fn toggleSwitch(state: *State, idx: u16) void {
-    @setEvalBranchQuota(keys.eval_branch_quota);
-    const cfg = state.activeConfig();
-    inline for (keys.table, 0..) |key, i| {
-        if (comptime controlKind(key) == .toggle) {
-            if (i == idx) {
-                const cur = keys.fieldValue(Config, key.field, cfg);
-                commitValue(state, idx, if (cur) "false" else "true");
-                return;
-            }
-        }
-    }
+    if (row_infos[idx].kind != .toggle) return;
+    const cur = toggleValue(idx, state.activeConfig());
+    commitValue(state, idx, if (cur) "false" else "true");
 }
 
-fn toggleCheckbox(state: *State, idx: u16, bit: u8) void {
+fn enumSetMask(idx: u16, cfg: *const Config) u32 {
     @setEvalBranchQuota(keys.eval_branch_quota);
-    const cfg = state.activeConfig();
     inline for (keys.table, 0..) |key, i| {
         if (comptime controlKind(key) == .enum_set) {
             if (i == idx) {
-                var set = keys.fieldValue(Config, key.field, cfg);
-                const SetType = @TypeOf(set);
-                const E = SetType.Key;
+                const set = keys.fieldValue(Config, key.field, cfg);
+                const E = @TypeOf(set).Key;
                 const fields = @typeInfo(E).@"enum".fields;
-                if (bit < fields.len) {
-                    inline for (fields, 0..) |f, f_idx| {
-                        if (f_idx == bit) {
-                            const member: E = @enumFromInt(f.value);
-                            set.toggle(member);
-                        }
+                var mask: u32 = 0;
+                inline for (fields, 0..) |f, f_idx| {
+                    const member: E = @enumFromInt(f.value);
+                    if (set.contains(member)) {
+                        mask |= @as(u32, 1) << @intCast(f_idx);
                     }
                 }
-                var buf: [512]u8 = undefined;
-                const text = formatEnumSet(SetType, set, &buf);
-                commitValue(state, idx, text);
-                return;
+                return mask;
             }
         }
     }
+    return 0;
+}
+
+fn toggleCheckbox(state: *State, idx: u16, bit: u8) void {
+    const info = row_infos[idx];
+    if (info.kind != .enum_set or bit >= info.labels.len) return;
+    const mask = enumSetMask(idx, state.activeConfig()) ^ (@as(u32, 1) << @intCast(bit));
+    var buf: [512]u8 = undefined;
+    const text = formatEnumSetMask(info.labels, mask, &buf);
+    commitValue(state, idx, text);
 }
 
 fn chooseSelect(state: *State, idx: u16, choice: usize) void {
     state.open_select = null;
-    @setEvalBranchQuota(keys.eval_branch_quota);
-    inline for (keys.table, 0..) |key, i| {
-        if (i == idx) {
-            if (comptime controlKind(key) == .duration) {
-                const unit: DurationUnit = @enumFromInt(@as(u8, @intCast(choice)));
-                state.duration_units[idx] = unit;
-                if (unit == .none) {
-                    state.dirty[idx] = false;
-                    state.inputs[idx].setText(state.gpa, "") catch {};
-                    commitValue(state, idx, if (key.null_keyword) |kw| @tagName(kw) else "none");
-                } else {
-                    if (std.mem.trim(u8, state.inputs[idx].text(), " \t").len == 0) {
-                        const default_num = switch (unit) {
-                            .ms => "500",
-                            .s => "30",
-                            .m => "15",
-                            .h => "1",
-                            .none => "",
-                        };
-                        state.inputs[idx].setText(state.gpa, default_num) catch {};
-                    }
-                    commitDuration(state, idx, key);
-                }
-                return;
+    const info = row_infos[idx];
+    if (info.kind == .duration) {
+        const unit: DurationUnit = @enumFromInt(@as(u8, @intCast(choice)));
+        state.duration_units[idx] = unit;
+        if (unit == .none) {
+            state.dirty[idx] = false;
+            state.inputs[idx].setText(state.gpa, "") catch {};
+            commitValue(state, idx, info.null_keyword orelse "none");
+        } else {
+            if (std.mem.trim(u8, state.inputs[idx].text(), " \t").len == 0) {
+                const default_num = switch (unit) {
+                    .ms => "500",
+                    .s => "30",
+                    .m => "15",
+                    .h => "1",
+                    .none => "",
+                };
+                state.inputs[idx].setText(state.gpa, default_num) catch {};
             }
-            if (comptime controlKind(key) == .select) {
-                if (selectLabelAt(key, choice)) |label| {
-                    commitValue(state, idx, label);
-                }
-                return;
-            }
+            commitDuration(state, idx);
         }
+        return;
+    }
+    if (info.kind == .select and choice < info.labels.len) {
+        commitValue(state, idx, info.labels[choice]);
     }
 }
 
-fn commitDuration(state: *State, idx: u16, comptime key: keys.Key) void {
+fn commitDuration(state: *State, idx: u16) void {
+    const info = row_infos[idx];
     const unit = state.duration_units[idx];
     const trimmed = std.mem.trim(u8, state.inputs[idx].text(), " \t");
     if (unit == .none or trimmed.len == 0) {
-        if (key.null_keyword) |kw| {
+        if (info.null_keyword) |kw| {
             state.duration_units[idx] = .none;
             state.dirty[idx] = false;
-            commitValue(state, idx, @tagName(kw));
+            commitValue(state, idx, kw);
             return;
         }
         setError(state, idx, "enter a number");
@@ -1399,39 +1430,34 @@ fn commitDuration(state: *State, idx: u16, comptime key: keys.Key) void {
 }
 
 fn commitInput(state: *State, idx: u16) void {
-    @setEvalBranchQuota(keys.eval_branch_quota);
-    const raw = state.inputs[idx].text();
-    inline for (keys.table, 0..) |key, i| {
-        if (i == idx) {
-            if (comptime controlKind(key) == .duration) {
-                commitDuration(state, idx, key);
-                return;
-            }
-            if (key.null_keyword == null and std.mem.trim(u8, raw, " \t").len == 0 and
-                key.kind != .word_characters and key.kind != .text)
-            {
-                setError(state, idx, "this field is required");
-                return;
-            }
-            var qbuf: [1024]u8 = undefined;
-            const formatted = formatForWrite(key, raw, &qbuf) orelse {
-                setError(state, idx, "value is too long");
-                return;
-            };
-            commitValue(state, idx, formatted);
-            return;
-        }
+    const info = row_infos[idx];
+    if (info.kind == .duration) {
+        commitDuration(state, idx);
+        return;
     }
+    const raw = state.inputs[idx].text();
+    if (info.null_keyword == null and std.mem.trim(u8, raw, " \t").len == 0 and
+        info.key_kind != .word_characters and info.key_kind != .text)
+    {
+        setError(state, idx, "this field is required");
+        return;
+    }
+    var qbuf: [1024]u8 = undefined;
+    const formatted = formatForWrite(info, raw, &qbuf) orelse {
+        setError(state, idx, "value is too long");
+        return;
+    };
+    commitValue(state, idx, formatted);
 }
 
-fn formatForWrite(comptime key: keys.Key, raw: []const u8, buf: []u8) ?[]const u8 {
+fn formatForWrite(info: RowInfo, raw: []const u8, buf: []u8) ?[]const u8 {
     if (raw.len == 0) {
-        if (key.null_keyword) |kw| return @tagName(kw);
+        if (info.null_keyword) |kw| return kw;
     }
-    switch (key.kind) {
+    switch (info.key_kind) {
         .path, .program_path, .directory_path, .text, .word_characters => {
-            if (key.null_keyword) |kw| {
-                if (std.mem.eql(u8, raw, @tagName(kw))) return raw;
+            if (info.null_keyword) |kw| {
+                if (std.mem.eql(u8, raw, kw)) return raw;
             }
             if (std.mem.eql(u8, raw, "default")) return raw;
             if (raw.len >= 2 and raw[0] == '"' and raw[raw.len - 1] == '"') return raw;
@@ -1711,11 +1737,79 @@ const RowInfo = struct {
     page: ?Page,
     meta: KeyMeta,
     kind: ControlKind,
+    key_kind: keys.Kind,
+    null_keyword: ?[]const u8,
     placeholder: []const u8,
     restart_required: bool,
+    stepper_is_int: bool,
     min: f64,
     max: f64,
+    labels: []const []const u8,
+    display_labels: []const []const u8,
 };
+
+fn comptimeStepperIsInt(comptime key: keys.Key) bool {
+    const T = keys.FieldType(Config, key.field);
+    return switch (@typeInfo(T)) {
+        .int => true,
+        .optional => |opt| @typeInfo(opt.child) == .int,
+        else => false,
+    };
+}
+
+fn comptimeKeyLabels(comptime key: keys.Key, comptime display: bool) []const []const u8 {
+    const kind = comptime controlKind(key);
+    if (kind == .enum_set) {
+        const T = keys.FieldType(Config, key.field);
+        const fields = @typeInfo(T.Key).@"enum".fields;
+        comptime var list: [fields.len][]const u8 = undefined;
+        inline for (fields, 0..) |f, i| {
+            list[i] = if (display) comptime humanToken(f.name) else f.name;
+        }
+        const final = list;
+        return &final;
+    }
+    if (kind != .select) return &.{};
+    if (key.kind == .theme) {
+        comptime var list: [keys.theme_preset_list.len][]const u8 = undefined;
+        inline for (keys.theme_preset_list, 0..) |preset, i| {
+            list[i] = if (display) comptime humanToken(preset[0]) else preset[0];
+        }
+        const final = list;
+        return &final;
+    }
+    if (key.kind == .font_weight) {
+        comptime var list: [font_weight_presets.len][]const u8 = undefined;
+        inline for (font_weight_presets, 0..) |preset, i| {
+            list[i] = if (display) preset.label else preset.value;
+        }
+        const final = list;
+        return &final;
+    }
+    const T = keys.FieldType(Config, key.field);
+    switch (@typeInfo(T)) {
+        .@"enum" => |e| {
+            comptime var list: [e.fields.len][]const u8 = undefined;
+            inline for (e.fields, 0..) |f, i| {
+                list[i] = if (display) comptime humanToken(f.name) else f.name;
+            }
+            const final = list;
+            return &final;
+        },
+        .optional => |opt| {
+            const fields = @typeInfo(opt.child).@"enum".fields;
+            comptime var list: [fields.len + 1][]const u8 = undefined;
+            const kw = if (key.null_keyword) |k| @tagName(k) else "none";
+            list[0] = if (display) comptime humanToken(kw) else kw;
+            inline for (fields, 0..) |f, i| {
+                list[i + 1] = if (display) comptime humanToken(f.name) else f.name;
+            }
+            const final = list;
+            return &final;
+        },
+        else => return &.{},
+    }
+}
 
 const row_infos: [keys.table.len]RowInfo = blk: {
     @setEvalBranchQuota(keys.eval_branch_quota);
@@ -1726,10 +1820,15 @@ const row_infos: [keys.table.len]RowInfo = blk: {
             .page = pageForSection(key.section),
             .meta = keyMeta(key.section, key.name),
             .kind = controlKind(key),
+            .key_kind = key.kind,
+            .null_keyword = if (key.null_keyword) |kw| @tagName(kw) else null,
             .placeholder = inputPlaceholder(key),
             .restart_required = key.reload == .restart,
+            .stepper_is_int = comptimeStepperIsInt(key),
             .min = key.bounds.min,
             .max = key.bounds.max,
+            .labels = comptimeKeyLabels(key, false),
+            .display_labels = comptimeKeyLabels(key, true),
         };
     }
     break :blk table;
@@ -1913,23 +2012,30 @@ fn stepperValue(idx: u16, cfg: *const Config) ?f64 {
 }
 
 fn selectDisplayValue(idx: u16, cfg: *const Config) []const u8 {
-    @setEvalBranchQuota(keys.eval_branch_quota);
-    inline for (keys.table, 0..) |key, i| {
-        if (comptime controlKind(key) == .select) {
-            if (idx == i) return formatSelectDisplay(key, cfg);
-        }
+    const info = row_infos[idx];
+    if (info.kind != .select) return "";
+    if (currentSelectIndex(idx, cfg)) |s| {
+        if (s < info.display_labels.len) return info.display_labels[s];
     }
-    return "";
+    return "Custom";
 }
 
 fn enumSetSummaryValue(idx: u16, cfg: *const Config) []const u8 {
-    @setEvalBranchQuota(keys.eval_branch_quota);
-    inline for (keys.table, 0..) |key, i| {
-        if (comptime controlKind(key) == .enum_set) {
-            if (idx == i) return enumSetSummary(key, cfg);
+    const info = row_infos[idx];
+    if (info.kind != .enum_set) return "None";
+    const mask = enumSetMask(idx, cfg);
+    var count: usize = 0;
+    var single: []const u8 = "None";
+    for (info.display_labels, 0..) |lbl, bit| {
+        if ((mask & (@as(u32, 1) << @intCast(bit))) != 0) {
+            count += 1;
+            single = lbl;
         }
     }
-    return "None";
+    if (count == 0) return "None";
+    if (count == 1) return single;
+    if (count < selected_count_labels.len) return selected_count_labels[count];
+    return "Multiple selected";
 }
 
 fn viewKeyRow(
@@ -2373,143 +2479,57 @@ fn viewSelectPopup(
     key_idx: u16,
     highlight: usize,
 ) kit.tree.Error!void {
-    @setEvalBranchQuota(keys.eval_branch_quota);
     const cfg = state.activeConfig();
+    const info = row_infos[key_idx];
     const card = try popup.open(tree, theme, .{ .layer_id = layer_id, .anchor = selectId(key_idx) });
-    inline for (keys.table, 0..) |key, i| {
-        if (i == key_idx) {
-            if (comptime controlKind(key) == .duration) {
-                const selected_idx: usize = @intFromEnum(state.duration_units[key_idx]);
-                const count: usize = if (key.null_keyword != null) 5 else 4;
-                for (0..count) |c_idx| {
-                    const unit: DurationUnit = @enumFromInt(@as(u8, @intCast(c_idx)));
-                    try popup.item(tree, theme, .{
-                        .id = choiceId(c_idx),
-                        .label = unit.label(),
-                        .highlighted = c_idx == highlight,
-                        .selected = c_idx == selected_idx,
-                    });
-                }
-            } else if (comptime controlKind(key) == .enum_set) {
-                const set = keys.fieldValue(Config, key.field, cfg);
-                const E = @TypeOf(set).Key;
-                const fields = @typeInfo(E).@"enum".fields;
-                inline for (fields, 0..) |f, c_idx| {
-                    const member: E = @enumFromInt(f.value);
-                    try popup.item(tree, theme, .{
-                        .id = choiceId(c_idx),
-                        .label = comptime humanToken(f.name),
-                        .highlighted = c_idx == highlight,
-                        .selected = set.contains(member),
-                    });
-                }
-            } else if (comptime controlKind(key) == .select) {
-                const selected_idx = currentSelectIndex(key_idx, cfg);
-                const count = selectChoiceCount(key_idx);
-                for (0..count) |c_idx| {
-                    const label = selectDisplayLabelAt(key, c_idx) orelse "";
-                    try popup.item(tree, theme, .{
-                        .id = choiceId(c_idx),
-                        .label = label,
-                        .highlighted = c_idx == highlight,
-                        .selected = if (selected_idx) |s| c_idx == s else false,
-                    });
-                }
+    switch (info.kind) {
+        .duration => {
+            const selected_idx: usize = @intFromEnum(state.duration_units[key_idx]);
+            const count: usize = if (info.null_keyword != null) 5 else 4;
+            for (0..count) |c_idx| {
+                const unit: DurationUnit = @enumFromInt(@as(u8, @intCast(c_idx)));
+                try popup.item(tree, theme, .{
+                    .id = choiceId(c_idx),
+                    .label = unit.label(),
+                    .highlighted = c_idx == highlight,
+                    .selected = c_idx == selected_idx,
+                });
             }
-        }
+        },
+        .enum_set => {
+            const mask = enumSetMask(key_idx, cfg);
+            for (info.display_labels, 0..) |label, c_idx| {
+                try popup.item(tree, theme, .{
+                    .id = choiceId(c_idx),
+                    .label = label,
+                    .highlighted = c_idx == highlight,
+                    .selected = (mask & (@as(u32, 1) << @intCast(c_idx))) != 0,
+                });
+            }
+        },
+        .select => {
+            const selected_idx = currentSelectIndex(key_idx, cfg);
+            for (info.display_labels, 0..) |label, c_idx| {
+                try popup.item(tree, theme, .{
+                    .id = choiceId(c_idx),
+                    .label = label,
+                    .highlighted = c_idx == highlight,
+                    .selected = if (selected_idx) |s| c_idx == s else false,
+                });
+            }
+        },
+        else => {},
     }
     popup.close(tree, card);
 }
 
 fn selectChoiceCount(key_idx: u16) usize {
-    @setEvalBranchQuota(keys.eval_branch_quota);
-    inline for (keys.table, 0..) |key, i| {
-        if (i == key_idx) {
-            if (comptime controlKind(key) == .duration) {
-                return if (key.null_keyword != null) 5 else 4;
-            }
-            if (comptime controlKind(key) == .enum_set) {
-                const T = keys.FieldType(Config, key.field);
-                return @typeInfo(T.Key).@"enum".fields.len;
-            }
-            if (comptime controlKind(key) == .select) {
-                if (key.kind == .theme) return keys.theme_preset_list.len;
-                if (key.kind == .font_weight) return font_weight_presets.len;
-                const T = keys.FieldType(Config, key.field);
-                return switch (@typeInfo(T)) {
-                    .@"enum" => |e| e.fields.len,
-                    .optional => |opt| @typeInfo(opt.child).@"enum".fields.len + 1,
-                    else => 0,
-                };
-            }
-        }
-    }
-    return 0;
-}
-
-fn selectLabelAt(comptime key: keys.Key, choice: usize) ?[]const u8 {
-    if (key.kind == .theme) {
-        inline for (keys.theme_preset_list, 0..) |preset, i| {
-            if (i == choice) return preset[0];
-        }
-        return null;
-    }
-    if (key.kind == .font_weight) {
-        if (choice < font_weight_presets.len) return font_weight_presets[choice].value;
-        return null;
-    }
-    const T = keys.FieldType(Config, key.field);
-    switch (@typeInfo(T)) {
-        .@"enum" => |e| {
-            inline for (e.fields, 0..) |f, i| {
-                if (i == choice) return f.name;
-            }
-            return null;
-        },
-        .optional => |opt| {
-            if (choice == 0) return if (key.null_keyword) |kw| @tagName(kw) else "none";
-            const fields = @typeInfo(opt.child).@"enum".fields;
-            inline for (fields, 0..) |f, i| {
-                if (i + 1 == choice) return f.name;
-            }
-            return null;
-        },
-        else => return null,
-    }
-}
-
-fn selectDisplayLabelAt(comptime key: keys.Key, choice: usize) ?[]const u8 {
-    if (key.kind == .theme) {
-        inline for (keys.theme_preset_list, 0..) |preset, i| {
-            if (i == choice) return comptime humanToken(preset[0]);
-        }
-        return null;
-    }
-    if (key.kind == .font_weight) {
-        if (choice < font_weight_presets.len) return font_weight_presets[choice].label;
-        return null;
-    }
-    const T = keys.FieldType(Config, key.field);
-    switch (@typeInfo(T)) {
-        .@"enum" => |e| {
-            inline for (e.fields, 0..) |f, i| {
-                if (i == choice) return comptime humanToken(f.name);
-            }
-            return null;
-        },
-        .optional => |opt| {
-            if (choice == 0) {
-                const kw = if (key.null_keyword) |k| @tagName(k) else "none";
-                return comptime humanToken(kw);
-            }
-            const fields = @typeInfo(opt.child).@"enum".fields;
-            inline for (fields, 0..) |f, i| {
-                if (i + 1 == choice) return comptime humanToken(f.name);
-            }
-            return null;
-        },
-        else => return null,
-    }
+    const info = row_infos[key_idx];
+    return switch (info.kind) {
+        .duration => if (info.null_keyword != null) 5 else 4,
+        .enum_set, .select => info.display_labels.len,
+        else => 0,
+    };
 }
 
 fn currentSelectIndex(key_idx: u16, cfg: *const Config) ?usize {
@@ -2554,68 +2574,28 @@ fn currentSelectIndex(key_idx: u16, cfg: *const Config) ?usize {
     return null;
 }
 
-fn formatSelectDisplay(comptime key: keys.Key, cfg: *const Config) []const u8 {
-    const val = keys.fieldValue(Config, key.field, cfg);
-    if (key.kind == .theme) {
-        inline for (keys.theme_preset_list) |preset| {
-            if (std.meta.eql(val, preset[1])) return comptime humanToken(preset[0]);
-        }
-        return "Custom";
-    }
-    if (key.kind == .font_weight) {
-        for (font_weight_presets) |preset| {
-            if (@abs(val - preset.weight) < 0.5) return preset.label;
-        }
-        return "Custom";
-    }
-    const T = @TypeOf(val);
-    switch (@typeInfo(T)) {
-        .optional => |opt| {
-            if (val == null) {
-                const kw = if (key.null_keyword) |k| @tagName(k) else "none";
-                return comptime humanToken(kw);
-            }
-            inline for (@typeInfo(opt.child).@"enum".fields) |f| {
-                if (@intFromEnum(val.?) == f.value) return comptime humanToken(f.name);
-            }
-            return "Unknown";
-        },
-        .@"enum" => |e| {
-            inline for (e.fields) |f| {
-                if (@intFromEnum(val) == f.value) return comptime humanToken(f.name);
-            }
-            return "Unknown";
-        },
-        else => return "",
-    }
-}
-
-fn splitDurationValue(comptime key: keys.Key, cfg: *const Config, buf: []u8) struct { text: []const u8, unit: DurationUnit } {
-    const val = keys.fieldValue(Config, key.field, cfg);
-    const ms: u64 = switch (@typeInfo(@TypeOf(val))) {
-        .optional => if (val) |v| @intCast(v) else return .{ .text = "", .unit = .none },
-        else => @intCast(val),
-    };
+fn splitDurationMs(maybe_ms: ?u64, buf: []u8) struct { text: []const u8, unit: DurationUnit } {
+    const ms = maybe_ms orelse return .{ .text = "", .unit = .none };
     if (ms > 0 and ms % (60 * 60 * 1000) == 0) {
         return .{
-            .text = std.fmt.bufPrint(buf, "{d}", .{ms / (60 * 60 * 1000)}) catch "",
+            .text = formatSigned(@intCast(ms / (60 * 60 * 1000)), buf),
             .unit = .h,
         };
     }
     if (ms > 0 and ms % (60 * 1000) == 0) {
         return .{
-            .text = std.fmt.bufPrint(buf, "{d}", .{ms / (60 * 1000)}) catch "",
+            .text = formatSigned(@intCast(ms / (60 * 1000)), buf),
             .unit = .m,
         };
     }
     if (ms > 0 and ms % 1000 == 0) {
         return .{
-            .text = std.fmt.bufPrint(buf, "{d}", .{ms / 1000}) catch "",
+            .text = formatSigned(@intCast(ms / 1000), buf),
             .unit = .s,
         };
     }
     return .{
-        .text = std.fmt.bufPrint(buf, "{d}", .{ms}) catch "",
+        .text = formatSigned(@intCast(ms), buf),
         .unit = .ms,
     };
 }
@@ -2632,59 +2612,6 @@ const selected_count_labels = [_][]const u8{
     "8 selected",
 };
 
-fn enumSetSummary(comptime key: keys.Key, cfg: *const Config) []const u8 {
-    const set = keys.fieldValue(Config, key.field, cfg);
-    const E = @TypeOf(set).Key;
-    const fields = @typeInfo(E).@"enum".fields;
-    var count: usize = 0;
-    var single: []const u8 = "None";
-    inline for (fields) |f| {
-        const member: E = @enumFromInt(f.value);
-        if (set.contains(member)) {
-            count += 1;
-            single = comptime humanToken(f.name);
-        }
-    }
-    if (count == 0) return "None";
-    if (count == 1) return single;
-    if (count < selected_count_labels.len) return selected_count_labels[count];
-    return "Multiple selected";
-}
-
-fn formatInputValue(comptime key: keys.Key, cfg: *const Config, buf: []u8) []const u8 {
-    const val = keys.fieldValue(Config, key.field, cfg);
-    const T = @TypeOf(val);
-    switch (@typeInfo(T)) {
-        .optional => |opt| {
-            if (val == null) return "";
-            return formatNonOptional(key, opt.child, val.?, buf);
-        },
-        else => return formatNonOptional(key, T, val, buf),
-    }
-}
-
-fn formatNonOptional(comptime key: keys.Key, comptime T: type, val: T, buf: []u8) []const u8 {
-    if (key.kind == .set) return formatEnumSet(T, val, buf);
-    if (key.kind == .duration) return formatDuration(@intCast(val), buf);
-    if (key.kind == .time_of_day) {
-        return std.fmt.bufPrint(buf, "{d:0>2}:{d:0>2}", .{ val.hour, val.minute }) catch "";
-    }
-    if (key.kind == .path or key.kind == .program_path or key.kind == .directory_path) {
-        if (T == config_font.Face) return std.mem.span(val.path);
-        if (T == [*:0]const u8) return std.mem.span(val);
-        return val;
-    }
-    if (key.kind == .text or key.kind == .word_characters) return val;
-
-    return switch (@typeInfo(T)) {
-        .bool => if (val) "true" else "false",
-        .@"enum" => @tagName(val),
-        .int => std.fmt.bufPrint(buf, "{d}", .{val}) catch "",
-        .float => formatFloat(@floatCast(val), buf),
-        else => "",
-    };
-}
-
 fn formatFloat(val: f64, buf: []u8) []const u8 {
     const s = std.fmt.bufPrint(buf, "{d:.3}", .{val}) catch return "";
     var end = s.len;
@@ -2693,36 +2620,20 @@ fn formatFloat(val: f64, buf: []u8) []const u8 {
     return s[0..end];
 }
 
-fn formatDuration(ms: u64, buf: []u8) []const u8 {
-    if (ms > 0 and ms % (60 * 60 * 1000) == 0) {
-        return std.fmt.bufPrint(buf, "{d}h", .{ms / (60 * 60 * 1000)}) catch "";
-    }
-    if (ms > 0 and ms % (60 * 1000) == 0) {
-        return std.fmt.bufPrint(buf, "{d}m", .{ms / (60 * 1000)}) catch "";
-    }
-    if (ms > 0 and ms % 1000 == 0) {
-        return std.fmt.bufPrint(buf, "{d}s", .{ms / 1000}) catch "";
-    }
-    return std.fmt.bufPrint(buf, "{d}ms", .{ms}) catch "";
-}
-
-fn formatEnumSet(comptime SetType: type, set: SetType, buf: []u8) []const u8 {
-    const E = SetType.Key;
-    const fields = @typeInfo(E).@"enum".fields;
+fn formatEnumSetMask(labels: []const []const u8, mask: u32, buf: []u8) []const u8 {
     var pos: usize = 0;
     var any = false;
-    inline for (fields) |f| {
-        const member: E = @enumFromInt(f.value);
-        if (set.contains(member)) {
+    for (labels, 0..) |name_tok, bit| {
+        if ((mask & (@as(u32, 1) << @intCast(bit))) != 0) {
             if (any) {
                 if (pos + 2 <= buf.len) {
                     @memcpy(buf[pos .. pos + 2], ", ");
                     pos += 2;
                 }
             }
-            if (pos + f.name.len <= buf.len) {
-                @memcpy(buf[pos .. pos + f.name.len], f.name);
-                pos += f.name.len;
+            if (pos + name_tok.len <= buf.len) {
+                @memcpy(buf[pos .. pos + name_tok.len], name_tok);
+                pos += name_tok.len;
             }
             any = true;
         }

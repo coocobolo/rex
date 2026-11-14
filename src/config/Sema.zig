@@ -202,7 +202,7 @@ pub fn apply(gpa: Allocator, tree: *const Ast, config: *Config, ctx: keys.Contex
 
     // Errors were appended in source order except the cross-key checks, which
     // report at a token that may come earlier.
-    std.mem.sort(Error, errors.items, {}, struct {
+    std.sort.insertion(Error, errors.items, {}, struct {
         fn lessThan(_: void, a: Error, b: Error) bool {
             return a.token < b.token;
         }
