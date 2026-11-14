@@ -18,6 +18,7 @@ pub const font_files = @import("font_files.zig");
 
 pub const watcher = @import("watcher.zig");
 pub const Watcher = watcher.Watcher;
+pub const writer = @import("writer.zig");
 
 test {
     _ = @import("tokenizer_test.zig");
@@ -28,6 +29,7 @@ test {
     _ = @import("default_test.zig");
     _ = @import("diagnostics_test.zig");
     _ = @import("loaded_test.zig");
+    _ = @import("writer_test.zig");
     _ = @import("builtin_font.zig");
     _ = @import("font_files.zig");
     std.testing.refAllDecls(@This());

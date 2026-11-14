@@ -21,6 +21,7 @@ const Ast = @import("../config/Ast.zig");
 const Sema = @import("../config/Sema.zig");
 const keys = @import("../config/keys.zig");
 const Config = @import("../config/Config.zig");
+const writer = @import("../config/writer.zig");
 const test_config = @import("../config/test_fixtures.zig").test_config;
 
 var input_buf: [harness.max_input]u8 = undefined;
@@ -71,6 +72,14 @@ fn run(src: *Source) !void {
         var w: std.Io.Writer = .fixed(&buf);
         try Sema.renderError(&tree, err, &w);
     }
+
+    const section: keys.Section = if (src.chance("root_sec", 1, 4)) .root else .ui;
+    const key_name = if (src.chance("alt_key", 1, 2)) "color_scheme" else "theme";
+    const written = try writer.setValue(gpa, source, section, key_name, "light");
+    defer gpa.free(written);
+
+    var rewritten = try Ast.parse(gpa, written);
+    defer rewritten.deinit(gpa);
 }
 
 fn expectSetKeysInBounds(config: *const Config, result: *const Sema.Result) !void {
