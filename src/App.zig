@@ -2393,9 +2393,9 @@ const PendingClipboard = union(enum) {
 };
 
 const clipboard_actions = [_]alert_dialog.Action{
-    .{ .label = "Allow Once", .variant = .secondary },
-    .{ .label = "Always Allow" },
-    .{ .label = "Deny", .role = .dismiss, .key_cap = "Esc" },
+    .{ .label = "Allow Once" },
+    .{ .label = "Always Allow", .variant = .primary },
+    .{ .label = "Deny", .role = .dismiss, .variant = .destructive },
 };
 const clipboard_allow_once = 0;
 const clipboard_allow_always = 1;

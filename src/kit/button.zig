@@ -51,8 +51,6 @@ pub const Variant = enum(u8) {
     outline,
     /// Filled with `primary`: the action the surface suggests.
     primary,
-    /// Filled with `secondary`: a softer alternative to `primary`.
-    secondary,
     /// Neither border nor fill until the pointer is on it: an action that
     /// should not draw the eye.
     ghost,
@@ -124,15 +122,6 @@ fn look(theme: *const Theme, options: Options) Look {
             .fill = theme.primary.alpha(solid),
             .border = .transparent,
             .label = theme.primary_foreground,
-        },
-        .secondary => .{
-            .fill = theme.secondary.alpha(switch (options.state) {
-                .normal, .disabled => 100,
-                .hovered => 80,
-                .pressed => 60,
-            }),
-            .border = .transparent,
-            .label = theme.foreground,
         },
         .ghost => .{
             .fill = if (touched) theme.accent else .transparent,
