@@ -12,8 +12,11 @@
 //! The loop sleeps in `glfwWaitEvents` and draws only when `update` reports
 //! a change, the framebuffer is resized or the scale changes, so an idle
 //! window causes no wakeups. A tool may declare `wait(*const State) ?f64`,
-//! the most seconds to sleep (null: until an event), and
-//! `wake(*State) bool`, called after every sleep, true to redraw. One
+//! the most seconds to sleep (null: until an event),
+//! `wake(*State) bool`, called after every sleep, true to redraw, and
+//! `currentTheme(*const State) *const Theme` to resolve the window theme
+//! dynamically each frame instead of reading `[ui] color_scheme` once at
+//! startup. One
 //! instance of each tool runs at a time: a second start finds the lock
 //! taken and exits with a message.
 //!
@@ -178,7 +181,8 @@ fn Host(comptime Tool: type) type {
         redraw: bool = true,
         /// For the time to the first frame, logged once.
         started_ms: ?i64,
-        /// From `[ui] color_scheme`, read once at start.
+        /// Fallback when the tool has no `currentTheme` hook: from `[ui]
+        /// color_scheme`, read once at start.
         theme: *const Theme,
 
         fn create(gpa: Allocator, io: std.Io, argv0: []const u8, environ: *const std.process.Environ) !*Self {
@@ -329,10 +333,15 @@ fn Host(comptime Tool: type) type {
             }
         }
 
+        fn activeTheme(self: *const Self) *const Theme {
+            if (@hasDecl(Tool, "currentTheme")) return Tool.currentTheme(&self.state);
+            return self.theme;
+        }
+
         fn drawFrame(self: *Self) void {
             const fb = self.window.frameBufferSize(f32);
             const scale = self.content_scale;
-            const theme = self.theme;
+            const theme = self.activeTheme();
 
             self.painter.begin();
             self.build(theme, fb.width / scale, fb.height / scale) catch |err| {
@@ -502,7 +511,7 @@ const Settings = struct {
     platform: Window.Platform,
 
     fn of(config: *const Config) Settings {
-        const background = config.theme.background;
+        const background = config.resolvedTheme().background;
         return .{
             .theme = config.ui.color_scheme.variant(.{ background.r, background.g, background.b }).theme(),
             .platform = config.window.platform,

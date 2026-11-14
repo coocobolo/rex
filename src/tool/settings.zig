@@ -72,7 +72,7 @@ const page_titles = [_][]const u8{
 };
 
 const page_descriptions = [_][]const u8{
-    "Theme, custom color palette, UI motion, color scheme, and font configuration.",
+    "Terminal color themes, light or dark interface, motion, and typography.",
     "Window behavior, bell, scrolling, selection, clipboard, and shell.",
     "Toasts, banners, and modal dialogs.",
     "Wellbeing tracking, daily screen time limits, and dashboard charts.",
@@ -137,33 +137,33 @@ fn keyMeta(comptime section: keys.Section, comptime key_name: []const u8) KeyMet
     return switch (section) {
         .root => if (std.mem.eql(u8, key_name, "theme")) .{
             .label = "Color Theme",
-            .description = "Built-in terminal color palette preset.",
+            .description = "Choose the color palette used inside the terminal.",
         } else @compileError("unmapped root key: " ++ key_name),
 
         .font => if (std.mem.eql(u8, key_name, "file")) .{
             .label = "Regular Font",
-            .description = "Path to the primary monospace font file (or built-in default).",
+            .description = "Font file used for regular terminal text, or leave blank for the built-in font.",
         } else if (std.mem.eql(u8, key_name, "bold_file")) .{
             .label = "Bold Font",
-            .description = "Path to the bold font face, or none to synthesize from regular.",
+            .description = "Custom font file for bold text, or leave blank to thicken the regular font.",
         } else if (std.mem.eql(u8, key_name, "italic_file")) .{
             .label = "Italic Font",
-            .description = "Path to the italic font face, or none.",
+            .description = "Custom font file for italic text, or leave blank.",
         } else if (std.mem.eql(u8, key_name, "bold_italic_file")) .{
             .label = "Bold Italic Font",
-            .description = "Path to the bold italic font face, or none.",
+            .description = "Custom font file for bold italic text, or leave blank.",
         } else if (std.mem.eql(u8, key_name, "emoji_file")) .{
             .label = "Emoji Font",
-            .description = "Path to a color emoji font file, or none.",
+            .description = "Font file used for color emoji, or leave blank.",
         } else if (std.mem.eql(u8, key_name, "fallback")) .{
             .label = "Fallback Fonts",
-            .description = "Ordered list of fallback font files for missing glyphs.",
+            .description = "Extra font files checked in order when a character is missing.",
         } else if (std.mem.eql(u8, key_name, "size")) .{
             .label = "Font Size",
-            .description = "Default terminal font size in points.",
+            .description = "Base text size in points for new terminal windows.",
         } else if (std.mem.eql(u8, key_name, "size_step")) .{
             .label = "Zoom Step",
-            .description = "Amount added or subtracted when zooming text in or out.",
+            .description = "How much the font size changes each time you zoom in or out.",
         } else if (std.mem.eql(u8, key_name, "min_size")) .{
             .label = "Minimum Font Size",
             .description = "Smallest font size allowed when zooming out.",
@@ -172,32 +172,32 @@ fn keyMeta(comptime section: keys.Section, comptime key_name: []const u8) KeyMet
             .description = "Largest font size allowed when zooming in.",
         } else if (std.mem.eql(u8, key_name, "weight")) .{
             .label = "Regular Weight",
-            .description = "Variable font weight axis (wght) for regular text (1–1000).",
+            .description = "Thickness for regular text on variable fonts (1–1000).",
         } else if (std.mem.eql(u8, key_name, "bold_weight")) .{
             .label = "Bold Weight",
-            .description = "Variable font weight axis (wght) for bold text (1–1000).",
+            .description = "Thickness for bold text on variable fonts (1–1000).",
         } else @compileError("unmapped font key: " ++ key_name),
 
         .ui => if (std.mem.eql(u8, key_name, "motion")) .{
-            .label = "Interface Motion",
-            .description = "Animate UI transitions or switch immediately.",
+            .label = "Animations",
+            .description = "Play smooth transitions in menus and overlays, or switch immediately.",
         } else if (std.mem.eql(u8, key_name, "color_scheme")) .{
-            .label = "UI Color Scheme",
-            .description = "Light or dark appearance for tool windows and overlays.",
+            .label = "Interface Theme",
+            .description = "Light or dark look for settings, dialogs, and overlays (or match the terminal).",
         } else @compileError("unmapped ui key: " ++ key_name),
 
         .window => if (std.mem.eql(u8, key_name, "background_opacity")) .{
             .label = "Background Opacity",
-            .description = "Terminal background opacity from 0.0 (transparent) to 1.0 (solid).",
+            .description = "How solid the terminal background is, from 0.0 (see-through) to 1.0 (opaque).",
         } else if (std.mem.eql(u8, key_name, "dim_text_opacity")) .{
             .label = "Dim Text Opacity",
-            .description = "Opacity multiplier applied to SGR dim text (0.0–1.0).",
+            .description = "Brightness multiplier for dimmed terminal text (0.0–1.0).",
         } else if (std.mem.eql(u8, key_name, "on_close")) .{
             .label = "Close Behavior",
             .description = "Whether to confirm before closing when child processes are active.",
         } else if (std.mem.eql(u8, key_name, "platform")) .{
             .label = "Window Platform",
-            .description = "Display server backend to use on Linux (auto, Wayland, or X11).",
+            .description = "Window system to use on Linux (Automatic, Wayland, or X11).",
         } else if (std.mem.eql(u8, key_name, "width")) .{
             .label = "Initial Width",
             .description = "Default window width in logical pixels on startup.",
@@ -211,7 +211,7 @@ fn keyMeta(comptime section: keys.Section, comptime key_name: []const u8) KeyMet
 
         .bell => if (std.mem.eql(u8, key_name, "enabled")) .{
             .label = "Audible Bell",
-            .description = "Play a sound when the terminal receives a BEL character.",
+            .description = "Play a chime when a program triggers the terminal bell.",
         } else if (std.mem.eql(u8, key_name, "volume")) .{
             .label = "Bell Volume",
             .description = "Playback volume for the terminal bell (0.0–1.0).",
@@ -233,7 +233,7 @@ fn keyMeta(comptime section: keys.Section, comptime key_name: []const u8) KeyMet
             .description = "Fill opacity of the selection highlight (0.0–1.0).",
         } else if (std.mem.eql(u8, key_name, "foreground_opacity")) .{
             .label = "Foreground Opacity",
-            .description = "Blend strength of selection foreground over text colors (0.0 keeps original, 1.0 replaces).",
+            .description = "How strongly the selection text color tints selected characters (0 keeps text colors, 1 replaces them).",
         } else if (std.mem.eql(u8, key_name, "border_color")) .{
             .label = "Border Color",
             .description = "Outline color drawn around selected text.",
@@ -242,35 +242,35 @@ fn keyMeta(comptime section: keys.Section, comptime key_name: []const u8) KeyMet
             .description = "Opacity of the selection outline (0.0–1.0).",
         } else if (std.mem.eql(u8, key_name, "border_width")) .{
             .label = "Border Width",
-            .description = "Outline thickness in logical pixels (0 hides the border).",
+            .description = "Outline thickness around selected text (0 hides the outline).",
         } else if (std.mem.eql(u8, key_name, "border_style")) .{
             .label = "Border Style",
             .description = "Selection border appearance: unified perimeter, split rows, underline, or left bar.",
         } else if (std.mem.eql(u8, key_name, "radius")) .{
             .label = "Corner Radius",
-            .description = "Corner radius of selection highlights in pixels (0 for sharp corners).",
+            .description = "Roundness of selection corners in pixels (0 keeps corners sharp).",
         } else if (std.mem.eql(u8, key_name, "blur_radius")) .{
             .label = "Blur Radius",
-            .description = "Gaussian-like Dual Kawase blur radius for frosted selection glass (0 disables).",
+            .description = "Frosted glass blur strength behind selected text (0 turns blur off).",
         } else @compileError("unmapped selection key: " ++ key_name),
 
         .clipboard => if (std.mem.eql(u8, key_name, "osc52_write")) .{
-            .label = "OSC 52 Write",
-            .description = "Allow terminal programs to copy text to the system clipboard.",
+            .label = "Clipboard Write (OSC 52)",
+            .description = "Allow programs inside the terminal to copy text to your clipboard.",
         } else if (std.mem.eql(u8, key_name, "osc52_read")) .{
-            .label = "OSC 52 Read",
-            .description = "Allow terminal programs to read from the system clipboard.",
+            .label = "Clipboard Read (OSC 52)",
+            .description = "Allow programs inside the terminal to read text from your clipboard.",
         } else @compileError("unmapped clipboard key: " ++ key_name),
 
         .shell => if (std.mem.eql(u8, key_name, "program")) .{
             .label = "Shell Program",
-            .description = "Absolute or ~/ path to the shell executable, or auto for $SHELL.",
+            .description = "Path to your preferred shell executable, or Automatic for your default shell.",
         } else if (std.mem.eql(u8, key_name, "argument")) .{
             .label = "Shell Arguments",
             .description = "Arguments passed to the shell on startup.",
         } else if (std.mem.eql(u8, key_name, "working_directory")) .{
             .label = "Working Directory",
-            .description = "Starting directory for new shells, or inherit from the launcher.",
+            .description = "Starting folder for new shells, or inherit from where Rex was launched.",
         } else @compileError("unmapped shell key: " ++ key_name),
 
         .toast, .banner, .modal => overlayMeta(section, key_name),
@@ -390,28 +390,28 @@ const ansi_color_names = [16][]const u8{
 fn colorMeta(comptime key_name: []const u8) KeyMeta {
     if (std.mem.eql(u8, key_name, "background")) return .{
         .label = "Background",
-        .description = "Default terminal background color, or inherit from the active theme.",
+        .description = "Override the terminal background color, or keep the theme default.",
     };
     if (std.mem.eql(u8, key_name, "foreground")) return .{
         .label = "Foreground",
-        .description = "Default terminal text color, or inherit from the active theme.",
+        .description = "Override the default text color, or keep the theme default.",
     };
     if (std.mem.eql(u8, key_name, "selection_background")) return .{
         .label = "Selection Background",
-        .description = "Background color of selected text, or inherit from the active theme.",
+        .description = "Override the highlight color behind selected text, or keep the theme default.",
     };
     if (std.mem.eql(u8, key_name, "selection_foreground")) return .{
         .label = "Selection Foreground",
-        .description = "Foreground color of selected text, or inherit from the active theme.",
+        .description = "Override the color of selected text, or keep the theme default.",
     };
     if (std.mem.eql(u8, key_name, "accent")) return .{
         .label = "Accent",
-        .description = "Cursor and accent color, or inherit from the active theme.",
+        .description = "Override the cursor and accent color, or keep the theme default.",
     };
     inline for (ansi_color_names, 0..) |color_name, i| {
         if (std.mem.eql(u8, key_name, std.fmt.comptimePrint("color{d}", .{i}))) return .{
             .label = std.fmt.comptimePrint("Color {d} · {s}", .{ i, color_name }),
-            .description = std.fmt.comptimePrint("ANSI color slot {d} ({s}), or inherit from the active theme.", .{ i, color_name }),
+            .description = std.fmt.comptimePrint("Override ANSI color {d} ({s}), or keep the theme default.", .{ i, color_name }),
         };
     }
     @compileError("unmapped colors key: " ++ key_name);
@@ -421,9 +421,9 @@ fn overlayMeta(comptime section: keys.Section, comptime key_name: []const u8) Ke
     if (std.mem.eql(u8, key_name, "enabled")) return .{
         .label = if (section == .toast) "Enable Toasts" else "Enable Banners",
         .description = if (section == .toast)
-            "Show transient toast notifications inside the terminal."
+            "Show brief pop-up notifications inside the terminal."
         else
-            "Show persistent status banners inside the terminal.",
+            "Show status banners along the top of the terminal.",
     };
     if (std.mem.eql(u8, key_name, "duration")) return .{
         .label = "Display Duration",
@@ -764,6 +764,14 @@ pub const State = struct {
         return self.initial_config;
     }
 };
+
+/// Live UI kit theme for the settings window, tracking the active `[ui]
+/// color_scheme` and terminal background so light/dark switches immediately.
+pub fn currentTheme(state: *const State) *const Theme {
+    const cfg = state.activeConfig();
+    const background = cfg.resolvedTheme().background;
+    return cfg.ui.color_scheme.variant(.{ background.r, background.g, background.b }).theme();
+}
 
 pub fn init(context: host.Context) !State {
     var state: State = .{
@@ -1306,52 +1314,72 @@ fn pageSections(page: Page, out: *[max_section_count]keys.Section) []const keys.
     return out[0..count];
 }
 
+fn sectionRows(page: Page, sec: keys.Section, out: *[keys.table.len]u16) []const u16 {
+    var count: usize = 0;
+    // Show promoted segmented controls (Interface Theme) first inside their
+    // display section while preserving keys.table order everywhere else.
+    for (row_infos, 0..) |info, i| {
+        const idx: u16 = @intCast(i);
+        if (keys.availableHere(idx) and info.page == page and info.display_section == sec and info.kind == .segmented) {
+            out[count] = idx;
+            count += 1;
+        }
+    }
+    for (row_infos, 0..) |info, i| {
+        const idx: u16 = @intCast(i);
+        if (keys.availableHere(idx) and info.page == page and info.display_section == sec and info.kind != .segmented) {
+            out[count] = idx;
+            count += 1;
+        }
+    }
+    return out[0..count];
+}
+
 fn pageFocusTargets(page: Page, ansi_open: bool, out: []Target) usize {
     var count: usize = 0;
     var sec_buf: [max_section_count]keys.Section = undefined;
+    var row_buf: [keys.table.len]u16 = undefined;
     for (pageSections(page, &sec_buf)) |sec| {
         var ansi_toggle_added = false;
-        for (row_infos, 0..) |info, i| {
-            const idx: u16 = @intCast(i);
-            if (keys.availableHere(idx) and info.page == page and info.display_section == sec) {
-                if (info.is_ansi_color) {
-                    if (!ansi_toggle_added) {
-                        out[count] = .ansi_colors_toggle;
+        for (sectionRows(page, sec, &row_buf)) |idx| {
+            const info = row_infos[idx];
+            if (info.is_ansi_color) {
+                if (!ansi_toggle_added) {
+                    out[count] = .ansi_colors_toggle;
+                    count += 1;
+                    ansi_toggle_added = true;
+                }
+                if (!ansi_open) continue;
+            }
+            switch (info.kind) {
+                .toggle => {
+                    out[count] = .{ .key_switch = idx };
+                    count += 1;
+                },
+                .slider => {
+                    out[count] = .{ .key_slider = idx };
+                    count += 1;
+                },
+                .select, .enum_set => {
+                    out[count] = .{ .key_select = idx };
+                    count += 1;
+                },
+                .segmented => {
+                    for (0..info.display_labels.len) |seg_i| {
+                        out[count] = .{ .key_segment = .{ .key = idx, .idx = @intCast(seg_i) } };
                         count += 1;
-                        ansi_toggle_added = true;
                     }
-                    if (!ansi_open) continue;
-                }
-                switch (info.kind) {
-                    .toggle => {
-                        out[count] = .{ .key_switch = idx };
-                        count += 1;
-                    },
-                    .slider => {
-                        out[count] = .{ .key_slider = idx };
-                        count += 1;
-                    },
-                    .select, .enum_set => {
-                        out[count] = .{ .key_select = idx };
-                        count += 1;
-                    },
-                    .segmented => {
-                        for (0..info.display_labels.len) |seg_i| {
-                            out[count] = .{ .key_segment = .{ .key = idx, .idx = @intCast(seg_i) } };
-                            count += 1;
-                        }
-                    },
-                    .duration => {
-                        out[count] = .{ .key_input = idx };
-                        count += 1;
-                        out[count] = .{ .key_select = idx };
-                        count += 1;
-                    },
-                    .stepper, .text_input, .list, .color => {
-                        out[count] = .{ .key_input = idx };
-                        count += 1;
-                    },
-                }
+                },
+                .duration => {
+                    out[count] = .{ .key_input = idx };
+                    count += 1;
+                    out[count] = .{ .key_select = idx };
+                    count += 1;
+                },
+                .stepper, .text_input, .list, .color => {
+                    out[count] = .{ .key_input = idx };
+                    count += 1;
+                },
             }
         }
     }
@@ -2348,49 +2376,48 @@ fn viewAnsiCollapsible(
 fn viewPage(state: *const State, tree: *Tree, theme: *const Theme, page: Page) kit.tree.Error!void {
     const cfg = state.activeConfig();
     var sec_buf: [max_section_count]keys.Section = undefined;
+    var row_buf: [keys.table.len]u16 = undefined;
     for (pageSections(page, &sec_buf)) |sec| {
         var section_open: ?kit.tree.Index = null;
         var first_in_section = true;
         var ansi_drawn = false;
 
-        for (row_infos, 0..) |info, i| {
-            const idx: u16 = @intCast(i);
-            if (keys.availableHere(idx) and info.page == page and info.display_section == sec) {
-                if (info.is_ansi_color) {
-                    if (!ansi_drawn) {
-                        if (section_open) |open_box| {
-                            tree.close(open_box);
-                            section_open = null;
-                        }
-                        try viewAnsiCollapsible(state, tree, theme, cfg);
-                        ansi_drawn = true;
+        for (sectionRows(page, sec, &row_buf)) |idx| {
+            const info = row_infos[idx];
+            if (info.is_ansi_color) {
+                if (!ansi_drawn) {
+                    if (section_open) |open_box| {
+                        tree.close(open_box);
+                        section_open = null;
                     }
-                    continue;
+                    try viewAnsiCollapsible(state, tree, theme, cfg);
+                    ansi_drawn = true;
                 }
-                if (section_open == null) {
-                    _ = try tree.text(section_titles.get(sec), .{
-                        .color = theme.foreground,
-                        .style = .sm_medium,
-                    });
-                    section_open = try tree.open(.{
-                        .width = .fill,
-                        .padding = .all(14),
-                        .gap = 12,
-                        .fill = theme.card,
-                        .border = theme.border,
-                        .border_width = Theme.border_width,
-                        .radius = Theme.radius_md,
-                    });
-                } else if (!first_in_section) {
-                    _ = try tree.leaf(.{
-                        .width = .fill,
-                        .height = .{ .fixed = 1 },
-                        .fill = theme.border,
-                    });
-                }
-                first_in_section = false;
-                try viewKeyRow(state, tree, theme, info, idx, cfg);
+                continue;
             }
+            if (section_open == null) {
+                _ = try tree.text(section_titles.get(sec), .{
+                    .color = theme.foreground,
+                    .style = .sm_medium,
+                });
+                section_open = try tree.open(.{
+                    .width = .fill,
+                    .padding = .all(14),
+                    .gap = 12,
+                    .fill = theme.card,
+                    .border = theme.border,
+                    .border_width = Theme.border_width,
+                    .radius = Theme.radius_md,
+                });
+            } else if (!first_in_section) {
+                _ = try tree.leaf(.{
+                    .width = .fill,
+                    .height = .{ .fixed = 1 },
+                    .fill = theme.border,
+                });
+            }
+            first_in_section = false;
+            try viewKeyRow(state, tree, theme, info, idx, cfg);
         }
         if (section_open) |open_box| tree.close(open_box);
     }

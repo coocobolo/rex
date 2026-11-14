@@ -249,7 +249,7 @@ test "settings: Tab and Shift+Tab cycle focus across page controls" {
     try testing.expect(state.frame.focused);
 
     try testing.expect(settings.update(&state, .{ .key = .{ .key = .tab } }));
-    try testing.expect(state.focused == .key_select);
+    try testing.expect(state.focused == .key_segment);
     try testing.expect(!state.frame.focused);
     const first_control = state.focused;
 
@@ -260,7 +260,11 @@ test "settings: Tab and Shift+Tab cycle focus across page controls" {
     try testing.expect(settings.update(&state, .{ .key = .{ .key = .tab } }));
     try testing.expectEqual(first_control, state.focused);
 
-    // First control on Appearance is Color Theme select; Enter opens its popup.
+    // Tabbing past the three Interface Theme segments reaches Color Theme select; Enter opens its popup.
+    try testing.expect(settings.update(&state, .{ .key = .{ .key = .tab } }));
+    try testing.expect(settings.update(&state, .{ .key = .{ .key = .tab } }));
+    try testing.expect(settings.update(&state, .{ .key = .{ .key = .tab } }));
+    try testing.expect(state.focused == .key_select);
     try testing.expect(settings.update(&state, .{ .key = .{ .key = .enter } }));
     try testing.expect(state.open_select != null);
     try testing.expect(settings.update(&state, .{ .key = .{ .key = .escape } }));
@@ -648,7 +652,7 @@ test "settings: ui.color_scheme renders as three-icon segmented control under Ap
                     general_pos = i;
                 } else if (std.mem.eql(u8, txt.bytes, "Color Theme") and theme_pos == null) {
                     theme_pos = i;
-                } else if (std.mem.eql(u8, txt.bytes, "UI Color Scheme") and scheme_pos == null) {
+                } else if (std.mem.eql(u8, txt.bytes, "Interface Theme") and scheme_pos == null) {
                     scheme_pos = i;
                 } else if (std.mem.eql(u8, txt.bytes, "Theme Overrides") and overrides_pos == null) {
                     overrides_pos = i;
@@ -665,18 +669,19 @@ test "settings: ui.color_scheme renders as three-icon segmented control under Ap
         }
     }
     try testing.expectEqual(@as(usize, 1), general_count);
-    try testing.expect(general_pos.? < theme_pos.?);
-    try testing.expect(theme_pos.? < scheme_pos.?);
-    try testing.expect(scheme_pos.? < overrides_pos.?);
+    try testing.expect(general_pos.? < scheme_pos.?);
+    try testing.expect(scheme_pos.? < theme_pos.?);
+    try testing.expect(theme_pos.? < overrides_pos.?);
     try testing.expect(saw_monitor and saw_moon and saw_sun);
     try testing.expect(saw_dark_tooltip);
 
-    // Click Dark segment.
+    // Click Dark segment; live window theme switches to dark immediately.
     _ = settings.update(&state, .{ .press = dark_id });
     try testing.expect(settings.update(&state, .release));
     try testing.expectEqual(.dark, state.activeConfig().ui.color_scheme);
+    try testing.expectEqual(&kit.Theme.dark, settings.currentTheme(&state));
 
-    // Keyboard: focus Auto segment, Right twice -> Light segment, Enter -> .light, then Back/Click Auto -> .auto.
+    // Keyboard: focus Auto segment, Right twice -> Light segment, Enter -> .light; live theme is light.
     state.focused = .{ .key_segment = .{ .key = cs_idx, .idx = 0 } };
     try testing.expect(settings.update(&state, .{ .key = .{ .key = .right } }));
     try testing.expectEqual(settings.Target{ .key_segment = .{ .key = cs_idx, .idx = 1 } }, state.focused);
@@ -684,9 +689,12 @@ test "settings: ui.color_scheme renders as three-icon segmented control under Ap
     try testing.expectEqual(settings.Target{ .key_segment = .{ .key = cs_idx, .idx = 2 } }, state.focused);
     try testing.expect(settings.update(&state, .{ .key = .{ .key = .enter } }));
     try testing.expectEqual(.light, state.activeConfig().ui.color_scheme);
+    try testing.expectEqual(&kit.Theme.light, settings.currentTheme(&state));
 
     _ = settings.update(&state, .{ .pointer = .{ .id = auto_id } });
     _ = settings.update(&state, .{ .press = auto_id });
     try testing.expect(settings.update(&state, .release));
     try testing.expectEqual(.auto, state.activeConfig().ui.color_scheme);
+    // Default terminal background is dark, so Auto resolves to the dark UI theme.
+    try testing.expectEqual(&kit.Theme.dark, settings.currentTheme(&state));
 }
