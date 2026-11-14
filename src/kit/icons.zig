@@ -13,6 +13,7 @@ pub const x = 0xE1B2;
 pub const panel_left = 0xE12A;
 pub const check = 0xE06C;
 pub const chevron_down = 0xE06D;
+pub const chevron_right = 0xE06F;
 pub const settings = 0xE154;
 pub const play = 0xE13C;
 pub const pause = 0xE12E;

@@ -38,13 +38,16 @@ test "settings: every page fits node_max and line_max at narrow and wide sizes" 
     var nodes: [settings.node_max]kit.tree.Node = undefined;
     var lines: [settings.line_max]kit.text.Line = undefined;
 
-    for ([_][2]f32{ .{ 420, 500 }, .{ 960, 720 } }) |sz| {
-        _ = settings.update(&state, .{ .size = .{ .width = sz[0], .height = sz[1] } });
-        for (0..@typeInfo(settings.Page).@"enum".fields.len) |page_idx| {
-            state.frame.current = @intCast(page_idx);
-            var tree = kit.tree.Tree.init(&nodes, &lines);
-            try settings.view(&state, &tree, &kit.Theme.dark);
-            try kit.layout.layout(&tree, measurer, sz[0], sz[1]);
+    for ([_]bool{ false, true }) |ansi_open| {
+        state.ansi_colors_open = ansi_open;
+        for ([_][2]f32{ .{ 420, 500 }, .{ 960, 720 } }) |sz| {
+            _ = settings.update(&state, .{ .size = .{ .width = sz[0], .height = sz[1] } });
+            for (0..@typeInfo(settings.Page).@"enum".fields.len) |page_idx| {
+                state.frame.current = @intCast(page_idx);
+                var tree = kit.tree.Tree.init(&nodes, &lines);
+                try settings.view(&state, &tree, &kit.Theme.dark);
+                try kit.layout.layout(&tree, measurer, sz[0], sz[1]);
+            }
         }
     }
 }
@@ -432,9 +435,16 @@ test "settings: colors page edits, validates, and resets slot overrides" {
     try testing.expectEqual(cfg.theme.background, state.activeConfig().resolvedTheme().background);
     try testing.expectEqualStrings("", state.inputs[bg_idx].text());
 
-    // Named X11 color canonicalizes to #rrggbb in the input box after reload.
+    // Expand ANSI Palette collapsible, then set a named X11 color (red -> #ff0000).
+    const toggle_id = Id.of("settings.ansi_toggle");
     const c1_idx = keyIndex(.colors, "color1");
     const c1_input_id = Id.of("settings.input").item(c1_idx);
+    try testing.expect(!state.ansi_colors_open);
+    _ = settings.update(&state, .{ .pointer = .{ .id = toggle_id } });
+    _ = settings.update(&state, .{ .press = toggle_id });
+    try testing.expect(settings.update(&state, .release));
+    try testing.expect(state.ansi_colors_open);
+
     _ = settings.update(&state, .{ .pointer = .{ .id = c1_input_id } });
     _ = settings.update(&state, .{ .press = c1_input_id });
     _ = settings.update(&state, .release);
@@ -446,4 +456,65 @@ test "settings: colors page edits, validates, and resets slot overrides" {
     try testing.expectEqual(@as(?Rgb, .{ .r = 255, .g = 0, .b = 0 }), state.activeConfig().colors.color1);
     try testing.expectEqual(Rgb{ .r = 255, .g = 0, .b = 0 }, state.activeConfig().resolvedTheme().ansi[1]);
     try testing.expectEqualStrings("#ff0000", state.inputs[c1_idx].text());
+}
+
+test "settings: ANSI palette collapsible hides color0..15 by default and updates Tab focus" {
+    const gpa = testing.allocator;
+    const cfg = config_defaults.default;
+    var state = try settings.init(.{
+        .gpa = gpa,
+        .io = testing.io,
+        .config = &cfg,
+        .state_dir = "",
+        .wake_loop = struct {
+            fn wake() void {}
+        }.wake,
+    });
+    defer settings.deinit(&state);
+
+    state.frame.current = @intFromEnum(settings.Page.colors);
+    _ = settings.update(&state, .{ .size = .{ .width = 960, .height = 720 } });
+
+    const toggle_id = Id.of("settings.ansi_toggle");
+    const c0_idx = keyIndex(.colors, "color0");
+    const c0_input_id = Id.of("settings.input").item(c0_idx);
+
+    var nodes: [settings.node_max]kit.tree.Node = undefined;
+    var lines: [settings.line_max]kit.text.Line = undefined;
+
+    {
+        var tree = kit.tree.Tree.init(&nodes, &lines);
+        try settings.view(&state, &tree, &kit.Theme.dark);
+        try testing.expect(tree.find(toggle_id) != null);
+        try testing.expect(tree.find(c0_input_id) == null);
+    }
+
+    // Tab from accent lands on ansi_colors_toggle, then wraps back to sidebar when collapsed.
+    const accent_idx = keyIndex(.colors, "accent");
+    state.focused = .{ .key_input = accent_idx };
+    try testing.expect(settings.update(&state, .{ .key = .{ .key = .tab } }));
+    try testing.expectEqual(settings.Target.ansi_colors_toggle, state.focused);
+    try testing.expect(settings.update(&state, .{ .key = .{ .key = .tab } }));
+    try testing.expectEqual(settings.Target.sidebar, state.focused);
+
+    // Move back onto toggle and open via Enter; focus stays on the toggle and reveals color0.
+    try testing.expect(settings.update(&state, .{ .key = .{ .key = .tab, .mods = .{ .shift = true } } }));
+    try testing.expectEqual(settings.Target.ansi_colors_toggle, state.focused);
+    try testing.expect(settings.update(&state, .{ .key = .{ .key = .enter } }));
+    try testing.expect(state.ansi_colors_open);
+    try testing.expectEqual(settings.Target.ansi_colors_toggle, state.focused);
+
+    {
+        var tree = kit.tree.Tree.init(&nodes, &lines);
+        try settings.view(&state, &tree, &kit.Theme.dark);
+        try testing.expect(tree.find(c0_input_id) != null);
+    }
+
+    // Next Tab steps into color0; Shift+Tab returns to toggle, and Space closes it again.
+    try testing.expect(settings.update(&state, .{ .key = .{ .key = .tab } }));
+    try testing.expectEqual(settings.Target{ .key_input = c0_idx }, state.focused);
+    try testing.expect(settings.update(&state, .{ .key = .{ .key = .tab, .mods = .{ .shift = true } } }));
+    try testing.expectEqual(settings.Target.ansi_colors_toggle, state.focused);
+    try testing.expect(settings.update(&state, .{ .key = .{ .key = .space } }));
+    try testing.expect(!state.ansi_colors_open);
 }

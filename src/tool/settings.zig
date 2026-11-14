@@ -622,11 +622,13 @@ pub const Target = union(enum) {
     list_up: struct { key: u16, item: u16 },
     list_down: struct { key: u16, item: u16 },
     list_remove: struct { key: u16, item: u16 },
+    ansi_colors_toggle,
     layer,
 };
 
 const layer_id = Id.of("settings.layer");
 const scroll_area_id = Id.of("settings.scroll_area");
+const ansi_toggle_id = Id.of("settings.ansi_toggle");
 
 fn switchId(idx: u16) Id {
     return Id.of("settings.switch").item(idx);
@@ -726,6 +728,7 @@ pub const State = struct {
     duration_units: [keys.table.len]DurationUnit = [_]DurationUnit{.ms} ** keys.table.len,
     slider_values: [keys.table.len]f32 = [_]f32{0} ** keys.table.len,
     dirty: [keys.table.len]bool = [_]bool{false} ** keys.table.len,
+    ansi_colors_open: bool = false,
     error_key: ?u16 = null,
     error_msg: std.ArrayListUnmanaged(u8) = .empty,
 
@@ -1188,6 +1191,14 @@ fn handleKey(state: *State, press: host.KeyPress) bool {
             },
             else => {},
         },
+        .ansi_colors_toggle => switch (press.key) {
+            .enter, .space => return activate(state, .ansi_colors_toggle),
+            .escape => {
+                state.focused = .none;
+                return true;
+            },
+            else => {},
+        },
         .sidebar => switch (press.key) {
             .enter, .space => return cycleFocus(state, false),
             .escape => {
@@ -1220,11 +1231,20 @@ fn handleKey(state: *State, press: host.KeyPress) bool {
     return moved;
 }
 
-fn pageFocusTargets(page: Page, out: []Target) usize {
+fn pageFocusTargets(page: Page, ansi_open: bool, out: []Target) usize {
     var count: usize = 0;
+    var ansi_toggle_added = false;
     for (row_infos, 0..) |info, i| {
         const idx: u16 = @intCast(i);
         if (keys.availableHere(idx) and info.page == page) {
+            if (info.is_ansi_color) {
+                if (!ansi_toggle_added) {
+                    out[count] = .ansi_colors_toggle;
+                    count += 1;
+                    ansi_toggle_added = true;
+                }
+                if (!ansi_open) continue;
+            }
             switch (info.kind) {
                 .toggle => {
                     out[count] = .{ .key_switch = idx };
@@ -1256,13 +1276,13 @@ fn pageFocusTargets(page: Page, out: []Target) usize {
 
 fn cycleFocus(state: *State, reverse: bool) bool {
     const page: Page = @enumFromInt(state.frame.current);
-    var targets: [keys.table.len * 2 + 1]Target = undefined;
+    var targets: [keys.table.len * 2 + 2]Target = undefined;
     var count: usize = 0;
     if (state.frame.shown()) {
         targets[0] = .sidebar;
         count = 1;
     }
-    count += pageFocusTargets(page, targets[count..]);
+    count += pageFocusTargets(page, state.ansi_colors_open, targets[count..]);
     if (count == 0) return false;
 
     state.open_select = null;
@@ -1306,6 +1326,7 @@ fn targetId(target: Target) ?Id {
         .stepper_dec => |idx| decId(idx),
         .stepper_inc => |idx| incId(idx),
         .list_add => |idx| listAddId(idx),
+        .ansi_colors_toggle => ansi_toggle_id,
         else => null,
     };
 }
@@ -1435,12 +1456,18 @@ fn activate(state: *State, target: Target) bool {
             removeListItem(state, it.key, it.item);
             return true;
         },
+        .ansi_colors_toggle => {
+            if (state.focused != .ansi_colors_toggle) blurFocused(state);
+            state.ansi_colors_open = !state.ansi_colors_open;
+            return true;
+        },
     }
 }
 
 fn over(state: *const State, id: Id) Target {
     if (id == .none) return .none;
     if (id == layer_id) return .layer;
+    if (id == ansi_toggle_id) return .ansi_colors_toggle;
     if (state.open_select) |sel| {
         for (0..selectChoiceCount(sel.key)) |choice_idx| {
             if (id == choiceId(choice_idx)) return .{ .select_choice = choice_idx };
@@ -1854,6 +1881,7 @@ fn firstLayerError(idx: u16, loaded: *const Loaded, buf: []u8) ?[]const u8 {
 }
 
 fn setError(state: *State, idx: u16, msg: []const u8) void {
+    if (row_infos[idx].is_ansi_color) state.ansi_colors_open = true;
     state.error_key = idx;
     state.error_msg.clearRetainingCapacity();
     state.error_msg.appendSlice(state.gpa, msg) catch {};
@@ -1947,6 +1975,7 @@ const RowInfo = struct {
     meta: KeyMeta,
     kind: ControlKind,
     key_kind: keys.Kind,
+    is_ansi_color: bool,
     null_keyword: ?[]const u8,
     placeholder: []const u8,
     restart_required: bool,
@@ -2031,6 +2060,7 @@ const row_infos: [keys.table.len]RowInfo = blk: {
             .meta = keyMeta(key.section, key.name),
             .kind = controlKind(key),
             .key_kind = key.kind,
+            .is_ansi_color = key.section == .colors and std.mem.startsWith(u8, key.name, "color"),
             .null_keyword = if (key.null_keyword) |kw| @tagName(kw) else null,
             .placeholder = inputPlaceholder(key),
             .restart_required = key.reload == .restart,
@@ -2044,15 +2074,182 @@ const row_infos: [keys.table.len]RowInfo = blk: {
     break :blk table;
 };
 
+const ansi_overridden_labels: [17][]const u8 = blk: {
+    @setEvalBranchQuota(20000);
+    var labels: [17][]const u8 = undefined;
+    for (0..17) |i| {
+        labels[i] = std.fmt.comptimePrint("{d} overridden", .{i});
+    }
+    break :blk labels;
+};
+
+fn paneWidth(state: *const State) f32 {
+    return if (state.frame.shown() and !state.frame.narrow)
+        state.viewport_width - sidebar.width
+    else
+        state.viewport_width;
+}
+
+fn viewAnsiCollapsible(
+    state: *const State,
+    tree: *Tree,
+    theme: *const Theme,
+    cfg: *const Config,
+) kit.tree.Error!void {
+    const hovered = std.meta.eql(state.hover, Target.ansi_colors_toggle);
+    const focused = std.meta.eql(state.focused, Target.ansi_colors_toggle);
+    const ansi = cfg.resolvedTheme().ansi;
+
+    var overridden_count: usize = 0;
+    for (row_infos, 0..) |info, i| {
+        if (info.is_ansi_color and colorInfo(@intCast(i), cfg).overridden) {
+            overridden_count += 1;
+        }
+    }
+
+    const card = try tree.open(.{
+        .width = .fill,
+        .fill = theme.card,
+        .border = theme.border,
+        .border_width = Theme.border_width,
+        .radius = Theme.radius_md,
+    });
+
+    const ring_slot = try tree.open(.{
+        .id = ansi_toggle_id,
+        .pointer = .hand,
+        .width = .fill,
+        .padding = .all(Theme.ring_width),
+        .border = if (focused) theme.ring.alpha(Theme.ring_opacity) else .transparent,
+        .border_width = Theme.ring_width,
+        .radius = Theme.radius_md - Theme.border_width,
+    });
+
+    const header = try tree.open(.{
+        .axis = .row,
+        .width = .fill,
+        .padding = .symmetric(14 - Theme.ring_width, 10 - Theme.ring_width),
+        .gap = 12,
+        .cross = .center,
+        .fill = if (hovered) theme.accent else .transparent,
+        .border = if (focused) theme.ring else .transparent,
+        .border_width = Theme.border_width,
+        .radius = Theme.radius_sm,
+    });
+
+    const label_box = try tree.open(.{ .width = .fill, .gap = 2 });
+    const title_row = try tree.open(.{
+        .axis = .row,
+        .gap = 8,
+        .cross = .center,
+    });
+    _ = try tree.text("ANSI Palette", .{
+        .color = theme.foreground,
+        .style = .sm_medium,
+    });
+    if (overridden_count > 0) {
+        const badge = try tree.open(.{
+            .padding = .symmetric(6, 1),
+            .fill = theme.muted,
+            .radius = Theme.radius_sm,
+        });
+        _ = try tree.text(ansi_overridden_labels[@min(overridden_count, 16)], .{
+            .color = theme.muted_foreground,
+            .style = .xs,
+        });
+        tree.close(badge);
+    }
+    tree.close(title_row);
+    _ = try tree.text("Terminal palette colors 0–15", .{
+        .color = theme.muted_foreground,
+        .style = .xs,
+    });
+    tree.close(label_box);
+
+    if (paneWidth(state) >= 520) {
+        const strip = try tree.open(.{
+            .axis = .row,
+            .gap = 2,
+            .cross = .center,
+            .padding = .all(3),
+            .fill = theme.background,
+            .border = theme.border,
+            .border_width = Theme.border_width,
+            .radius = Theme.radius_sm,
+        });
+        for (ansi) |rgb| {
+            _ = try tree.leaf(.{
+                .width = .{ .fixed = 10 },
+                .height = .{ .fixed = 14 },
+                .fill = .{ .r = rgb.r, .g = rgb.g, .b = rgb.b },
+                .radius = 2,
+            });
+        }
+        tree.close(strip);
+    }
+
+    _ = try tree.icon(.{
+        .codepoint = if (state.ansi_colors_open) kit.icons.chevron_down else kit.icons.chevron_right,
+        .color = theme.muted_foreground,
+        .size = Theme.icon,
+    });
+
+    tree.close(header);
+    tree.close(ring_slot);
+
+    if (state.ansi_colors_open) {
+        _ = try tree.leaf(.{
+            .width = .fill,
+            .height = .{ .fixed = 1 },
+            .fill = theme.border,
+        });
+        const body = try tree.open(.{
+            .width = .fill,
+            .padding = .all(14),
+            .gap = 12,
+        });
+        var first = true;
+        for (row_infos, 0..) |info, i| {
+            const idx: u16 = @intCast(i);
+            if (keys.availableHere(idx) and info.is_ansi_color) {
+                if (!first) {
+                    _ = try tree.leaf(.{
+                        .width = .fill,
+                        .height = .{ .fixed = 1 },
+                        .fill = theme.border,
+                    });
+                }
+                first = false;
+                try viewKeyRow(state, tree, theme, info, idx, cfg);
+            }
+        }
+        tree.close(body);
+    }
+
+    tree.close(card);
+}
+
 fn viewPage(state: *const State, tree: *Tree, theme: *const Theme, page: Page) kit.tree.Error!void {
     const cfg = state.activeConfig();
     var current_section: ?keys.Section = null;
     var section_open: ?kit.tree.Index = null;
     var first_in_section = true;
+    var ansi_drawn = false;
 
     for (row_infos, 0..) |info, i| {
         const idx: u16 = @intCast(i);
         if (keys.availableHere(idx) and info.page == page) {
+            if (info.is_ansi_color) {
+                if (!ansi_drawn) {
+                    if (section_open) |open_box| {
+                        tree.close(open_box);
+                        section_open = null;
+                    }
+                    try viewAnsiCollapsible(state, tree, theme, cfg);
+                    ansi_drawn = true;
+                }
+                continue;
+            }
             if (current_section == null or current_section.? != info.section) {
                 if (section_open) |open_box| tree.close(open_box);
                 current_section = info.section;
@@ -2257,10 +2454,7 @@ fn viewKeyRow(
     cfg: *const Config,
 ) kit.tree.Error!void {
     const meta = info.meta;
-    const pane_w = if (state.frame.shown() and !state.frame.narrow)
-        state.viewport_width - sidebar.width
-    else
-        state.viewport_width;
+    const pane_w = paneWidth(state);
     const compact = pane_w < 540;
     const control_width: kit.tree.Size = if (compact)
         .fill
