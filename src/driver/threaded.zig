@@ -908,15 +908,16 @@ fn writeAllTest(fd: posix.fd_t, bytes: []const u8) !void {
     }
 }
 
-fn waitForTitle(comptime opt: Option, driver: *Driver(opt), want: []const u8) ![]const u8 {
-    var buf: [term.max_title_len:0]u8 = undefined;
+/// Polls `driver` until the copied title equals `want` or `test_wait_ms`
+/// elapses, returning the final copied slice backed by `buf`.
+fn waitForTitle(comptime opt: Option, driver: *Driver(opt), buf: *[term.max_title_len:0]u8, want: []const u8) ![:0]const u8 {
     var retries: usize = test_wait_ms;
     while (retries > 0) : (retries -= 1) {
         _ = try driver.pollAndDrain();
-        if (std.mem.eql(u8, driver.copyTitle(&buf), want)) break;
+        if (std.mem.eql(u8, driver.copyTitle(buf), want)) break;
         sleepNs(1_000_000);
     }
-    return driver.copyTitle(&buf);
+    return driver.copyTitle(buf);
 }
 
 test "ThreadedDriver: copyTitle returns the title a program set, and RIS empties it" {
@@ -935,10 +936,10 @@ test "ThreadedDriver: copyTitle returns the title a program set, and RIS empties
     try testing.expectEqualStrings("", driver.copyTitle(&buf));
 
     try writeAllTest(sv[1], "\x1b]2;vim notes.txt\x07");
-    try testing.expectEqualStrings("vim notes.txt", try waitForTitle(test_option, driver, "vim notes.txt"));
+    try testing.expectEqualStrings("vim notes.txt", try waitForTitle(test_option, driver, &buf, "vim notes.txt"));
 
     try writeAllTest(sv[1], "\x1bc"); // RIS
-    try testing.expectEqualStrings("", try waitForTitle(test_option, driver, ""));
+    try testing.expectEqualStrings("", try waitForTitle(test_option, driver, &buf, ""));
 }
 
 test "ThreadedDriver: copyTitle never returns a mix of two titles" {
@@ -1189,15 +1190,16 @@ test "ThreadedDriver: the wheel on the alternate screen follows mode 1007" {
     defer driver.destroy();
 
     // The title change is how the test knows the worker applied the modes.
+    var title_buf: [term.max_title_len:0]u8 = undefined;
     try writeAllTest(sv[1], "\x1b[?1049h\x1b[?1007l\x1b]2;off\x07");
-    try testing.expectEqualStrings("off", try waitForTitle(test_option, driver, "off"));
+    try testing.expectEqualStrings("off", try waitForTitle(test_option, driver, &title_buf, "off"));
     try testing.expect(driver.sendInput(.{ .mouse_scroll = .{ .col = 5, .row = 5, .button = 64, .steps = 2 } }));
     sleepNs(20_000_000);
     var read_buf: [32]u8 = undefined;
     try testing.expect(system.read(sv[1], &read_buf, read_buf.len) <= 0);
 
     try writeAllTest(sv[1], "\x1b[?1007h\x1b]2;on\x07");
-    try testing.expectEqualStrings("on", try waitForTitle(test_option, driver, "on"));
+    try testing.expectEqualStrings("on", try waitForTitle(test_option, driver, &title_buf, "on"));
     try testing.expect(driver.sendInput(.{ .mouse_scroll = .{ .col = 5, .row = 5, .button = 64, .steps = 1 } }));
     var n_read: isize = -1;
     var retries: usize = test_wait_ms;
