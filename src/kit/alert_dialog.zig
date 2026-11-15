@@ -22,7 +22,6 @@ const button = @import("button.zig");
 const dialog = @import("dialog.zig");
 const focus = @import("focus.zig");
 const icons = @import("icons.zig");
-const kbd = @import("kbd.zig");
 const motion = @import("motion.zig");
 const text = @import("text.zig");
 const Tree = @import("Tree.zig");
