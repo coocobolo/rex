@@ -700,7 +700,7 @@ fn hitIndex(self: *const Tree, x: f32, y: f32, stop: Index) ?Index {
 fn arcContains(arc_val: Arc, rect: Rect, x: f32, y: f32) bool {
     if (!(arc_val.radius > 0 and arc_val.thickness > 0 and arc_val.sweep > 0)) return false;
     const center_x = rect.x + rect.w / 2;
-    const center_y = rect.y + rect.w / 2;
+    const center_y = rect.y + rect.h / 2;
     const dx = x - center_x;
     const dy = y - center_y;
     const dist2 = dx * dx + dy * dy;

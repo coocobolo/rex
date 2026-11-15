@@ -442,6 +442,26 @@ test "tree: a node a clipping ancestor cuts away is not hit there" {
     try testing.expectEqual(inner, tree.hitTest(100, 10));
 }
 
+test "tree: hitTest centers arc testing vertically by rect.h rather than rect.w" {
+    var nodes: [4]Node = undefined;
+    var lines: [1]text.Line = undefined;
+    var tree = Tree.init(&nodes, &lines);
+    const id = Id.of("test.arc");
+    const root = try tree.open(.{ .width = .{ .fixed = 100 }, .height = .{ .fixed = 200 } });
+    // Rect is 100x200 so center is (50, 100), not (50, 50). Ring r in [15, 25].
+    _ = try tree.arc(
+        .{ .fill = Theme.dark.accent, .radius = 25, .thickness = 10, .sweep = std.math.tau },
+        .{ .id = id, .width = .{ .fixed = 100 }, .height = .{ .fixed = 200 } },
+    );
+    tree.close(root);
+    try tree.layout(measurer, 400, 400);
+
+    // Point on top of ring around (50, 100): y = 100 - 20 = 80.
+    try testing.expectEqual(id, tree.hitTest(50, 80));
+    // Point at y = 30 would be inside a ring centered at (50, 50), outside (50, 100).
+    try testing.expectEqual(Id.none, tree.hitTest(50, 30));
+}
+
 /// A 100-high clipping region over three rows of 60: 80 of content below.
 fn scrolled(fixture: *Fixture, offset: f32) !Tree {
     var tree = fixture.tree();
