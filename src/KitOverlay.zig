@@ -466,7 +466,7 @@ fn build(self: *KitOverlay, atlas: *Atlas, width: f32, height: f32, theme: *cons
         try self.painter.paint(&self.tree, &self.font, atlas);
         return;
     }
-    const widget_root = try widget_mod.view(&self.wellbeing_widget, &self.tree, theme);
+    const widget_root = try widget_mod.view(&self.wellbeing_widget, &self.tree, theme, width, height);
     const banner = try alert_mod.view(&self.alert, &self.tree, theme);
     const stack = try toast.view(&self.toasts, &self.tree, theme);
     try layout.layout(&self.tree, self.font.measurer(), width, height);

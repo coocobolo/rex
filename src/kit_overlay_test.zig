@@ -399,7 +399,7 @@ test "KitOverlay: its size" {
     // Reported in the ticket. Nearly all of it is two tables: the font's
     // kerning pairs, and the painter's 2048 instances of 52 bytes with its
     // glyph position cache.
-    try testing.expectEqual(311368, @sizeOf(KitOverlay));
+    try testing.expectEqual(311408, @sizeOf(KitOverlay));
     try testing.expectEqual(131864, @sizeOf(@FieldType(KitOverlay, "painter")));
     try testing.expectEqual(152496, @sizeOf(@FieldType(KitOverlay, "font")));
     try testing.expectEqual(9568, @sizeOf(@FieldType(KitOverlay, "nodes")));
@@ -460,6 +460,18 @@ test "KitOverlay: wellbeing widget toggles, drags, resizes and fires control act
     try testing.expect(!kit.holdsPress());
     try testing.expectEqual(orig_x - 80, kit.wellbeing_widget.x);
     try testing.expectEqual(orig_y + 50, kit.wellbeing_widget.y);
+    try testing.expect(fixture.frame());
+
+    // Drag the bottom-right corner grip inward to resize into mini/compact range.
+    const grip = centerOf(kit, wellbeing_widget.resize_id).?;
+    const start_w = kit.wellbeing_widget.width;
+    const start_h = kit.wellbeing_widget.height;
+    try testing.expectEqual(KitOverlay.Press.changed, kit.press(grip[0], grip[1]));
+    try testing.expect(kit.holdsPress());
+    try testing.expect(kit.pointerMoved(grip[0] - 110, grip[1] - 60));
+    try testing.expectEqual(KitOverlay.Release.redraw, kit.release(grip[0] - 110, grip[1] - 60));
+    try testing.expectEqual(start_w - 110, kit.wellbeing_widget.width);
+    try testing.expectEqual(start_h - 60, kit.wellbeing_widget.height);
     try testing.expect(fixture.frame());
 
     // Clicking the play/pause button fires toggle action.
