@@ -252,30 +252,22 @@ pub fn description(tree: *Tree, theme: *const Theme, bytes: []const u8, presence
     });
 }
 
-/// Starts the footer: buttons left to right, pushed to the right edge. By
-/// convention the action the dialog is about comes last. End it with
-/// `Tree.close`.
+/// Starts the footer: buttons left to right, pushed to the right edge,
+/// wrapping onto extra rows when narrow. By convention the action the dialog
+/// is about comes last. End it with `Tree.close`.
 pub fn footer(tree: *Tree) Tree.Error!Index {
     return footerPadded(tree, .zero);
 }
 
 /// Starts the footer with explicit inner padding inside a zero-padded card.
 pub fn footerPadded(tree: *Tree, card_padding: Tree.Edges) Tree.Error!Index {
-    return footerBox(tree, card_padding, .row);
-}
-
-/// Starts a vertically stacked footer with full-width button slots for narrow cards.
-pub fn footerColumn(tree: *Tree, card_padding: Tree.Edges) Tree.Error!Index {
-    return footerBox(tree, card_padding, .column);
-}
-
-fn footerBox(tree: *Tree, card_padding: Tree.Edges, axis: Tree.Axis) Tree.Error!Index {
     return tree.open(.{
-        .axis = axis,
+        .axis = .row,
         .width = .fill,
         .padding = card_padding,
-        .main = if (axis == .row) .end else .start,
+        .main = .end,
         .cross = .center,
         .gap = button.gap,
+        .wrap = true,
     });
 }

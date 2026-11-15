@@ -739,13 +739,12 @@ test "KitPainter: border_sweep draws clockwise rounded border progress" {
     var tree: Tree = .init(&nodes, &lines);
     const sweep_val: u16 = 16384; // ~25%: top-right quadrant from top-center to right-middle
     const border_color: Color = .{ .r = 60, .g = 140, .b = 250, .a = 255 };
-    _ = try tree.leaf(.{
+    _ = try tree.borderSweep(sweep_val, .{
         .width = .{ .fixed = 80 },
         .height = .{ .fixed = 80 },
         .radius = 12,
         .border_width = 4,
         .border = border_color,
-        .border_sweep = sweep_val,
     });
     try tree.layout(font.measurer(), 100, 100);
 

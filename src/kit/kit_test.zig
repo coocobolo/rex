@@ -673,3 +673,65 @@ test "layout: text wrap = .none and .ellipsis stay single-line in constrained bo
     const ell_line = tree.lines.slice(tree.nodes[t_ell].content.text.first_line, 1)[0];
     try testing.expect(ell_line.width <= 70);
 }
+
+test "layout: Box.wrap breaks row items across lines, sums line heights, and aligns per line" {
+    var fixture: Fixture = .{};
+    var tree = fixture.tree();
+
+    const row = try tree.open(.{
+        .axis = .row,
+        .wrap = true,
+        .width = .{ .fixed = 120 },
+        .padding = .all(10), // inner_w = 100
+        .gap = 8,
+        .main = .end,
+        .cross = .center,
+    });
+    const ov = try tree.leaf(.{ .overlay = true, .width = .{ .fixed = 10 }, .height = .{ .fixed = 10 } });
+    // Line 1: 40 + 8 + 50 = 98 <= 100 (line height 30; item a vertically centered -> y + 5).
+    const a = try tree.leaf(.{ .width = .{ .fixed = 40 }, .height = .{ .fixed = 20 } });
+    const b = try tree.leaf(.{ .width = .{ .fixed = 50 }, .height = .{ .fixed = 30 } });
+    // Line 2: 98 + 8 + 45 > 100 -> breaks; 45 + 8 + 30 = 83 <= 100 (line height 24).
+    const c = try tree.leaf(.{ .width = .{ .fixed = 45 }, .height = .{ .fixed = 24 } });
+    const d = try tree.leaf(.{ .width = .{ .fixed = 30 }, .height = .{ .fixed = 16 } });
+    tree.close(row);
+
+    try tree.layout(measurer, 400, 400);
+
+    // Height: 10 + 30 + 8 + 24 + 10 = 82.
+    try expectRect(&tree, row, 0, 0, 120, 82);
+    try expectRect(&tree, ov, 10, 10, 100, 62);
+    // Line 1 right-aligned within [10, 110]: free = 100 - 98 = 2 -> starts at 12.
+    try expectRect(&tree, a, 12, 15, 40, 20);
+    try expectRect(&tree, b, 60, 10, 50, 30);
+    // Line 2 starts at y = 10 + 30 + 8 = 48; right-aligned: free = 100 - 83 = 17 -> starts at 27.
+    try expectRect(&tree, c, 27, 48, 45, 24);
+    try expectRect(&tree, d, 80, 52, 30, 16);
+}
+
+test "layout: Box.wrap keeps fill children full-width and wraps shrinkable long text" {
+    var fixture: Fixture = .{};
+    var tree = fixture.tree();
+
+    const row = try tree.open(.{
+        .axis = .row,
+        .wrap = true,
+        .width = .{ .fixed = 100 },
+        .gap = 6,
+    });
+    const tag = try tree.open(.{ .padding = .symmetric(4, 2), .shrink = false });
+    _ = try tree.text("Tag", .{ .color = Theme.dark.foreground, .wrap = .none }); // 21 + 8 = 29, h = 24
+    tree.close(tag);
+    // 10 * 7 + 7 + 10 * 7 = 147 > 100 -> breaks to line 2, clamps to 100, and wraps to 2 lines (h = 40).
+    const note = try tree.text("a" ** 10 ++ " " ++ "b" ** 10, .{ .color = Theme.dark.foreground });
+    // .fill child receives full 100 width on its own line 3.
+    const rule = try tree.leaf(.{ .width = .fill, .height = .{ .fixed = 2 } });
+    tree.close(row);
+
+    try tree.layout(measurer, 400, 400);
+
+    try expectRect(&tree, row, 0, 0, 100, 24 + 6 + 40 + 6 + 2);
+    try expectRect(&tree, tag, 0, 0, 29, 24);
+    try expectRect(&tree, note, 0, 30, 100, 40);
+    try expectRect(&tree, rule, 0, 76, 100, 2);
+}

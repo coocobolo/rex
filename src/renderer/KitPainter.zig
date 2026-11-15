@@ -173,22 +173,8 @@ pub fn paint(self: *KitPainter, tree: *const Tree, font: *KitFont, atlas: *Atlas
             depth += 1;
         }
         switch (node.content) {
-            .box => {
-                const box = node.box;
-                const stroke = if (box.border.a == 0) 0 else layout.strokePixels(box.border_width, scale);
-                if (box.fill.a == 0 and stroke == 0) continue;
-                const rect = layout.snap(node.rect, scale);
-                const sweep: f32 = if (box.border_sweep == 0) 0.0 else @as(f32, @floatFromInt(box.border_sweep)) / 65535.0;
-                try self.push(.{
-                    .rect = pixels(rect),
-                    .fill = box.fill,
-                    .border = box.border,
-                    .params = .{ @as(f32, @floatFromInt(box.radius)) * scale, @floatFromInt(stroke) },
-                    .kind = .box,
-                    .clip = clip,
-                    .arc = .{ sweep, 0 },
-                });
-            },
+            .box => try self.paintBox(node.box, node.rect, 0, scale, clip),
+            .border_sweep => |sweep_val| try self.paintBox(node.box, node.rect, sweep_val, scale, clip),
             .dash => |d| {
                 if (d.color.a == 0) continue;
                 const rect = layout.snap(node.rect, scale);
@@ -275,6 +261,22 @@ fn clipOf(rect: layout.PixelRect) Clip {
 
 fn intersect(a: Clip, b: Clip) Clip {
     return .{ @max(a[0], b[0]), @max(a[1], b[1]), @min(a[2], b[2]), @min(a[3], b[3]) };
+}
+
+fn paintBox(self: *KitPainter, box: Tree.Box, box_rect: Tree.Rect, border_sweep: u16, scale: f32, clip: Clip) Error!void {
+    const stroke = if (box.border.a == 0) 0 else layout.strokePixels(box.border_width, scale);
+    if (box.fill.a == 0 and stroke == 0) return;
+    const rect = layout.snap(box_rect, scale);
+    const sweep: f32 = if (border_sweep == 0) 0.0 else @as(f32, @floatFromInt(border_sweep)) / 65535.0;
+    try self.push(.{
+        .rect = pixels(rect),
+        .fill = box.fill,
+        .border = box.border,
+        .params = .{ @as(f32, @floatFromInt(box.radius)) * scale, @floatFromInt(stroke) },
+        .kind = .box,
+        .clip = clip,
+        .arc = .{ sweep, 0 },
+    });
 }
 
 /// The instance for `arc`. The quad is the square around its centre, of

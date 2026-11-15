@@ -203,10 +203,10 @@ pub const Box = struct {
     /// Drawn over the parent's padding box, and not counted in the
     /// parent's size. Several share one square, as the slices of a donut do.
     overlay: bool = false,
-    /// Clockwise border sweep from top-center (`0` = full border, `1..65535` = `fraction * 65535`).
-    border_sweep: u16 = 0,
     /// Whether `.fit`/`.at_most`/`.fit_at_most`/`.at_least` children may shrink below intrinsic size on overflow.
     shrink: bool = true,
+    /// Wrap overflowing `.row` children onto extra lines using `gap` between lines (`axis == .row` only).
+    wrap: bool = false,
 };
 
 /// Internal payload for a text `Node` stored in `Node.Content.text`.
@@ -290,12 +290,13 @@ pub const Arc = struct {
 /// One flat entry in `Tree.nodes`: pairs input rules (`box`, `content`), computed `layout`
 /// geometry (`rect`), and array slice bounds (`parent`, `end`).
 pub const Node = struct {
-    /// Payload variant of a `Node` (`box` container/leaf vs `text`, `icon`, `dash`, or `arc` primitive).
+    /// Payload variant of a `Node` (`box` container/leaf vs `text`, `icon`, `dash`, `border_sweep`, or `arc` primitive).
     pub const Content = union(enum) {
         box,
         text: Text,
         icon: Icon,
         dash: Dash,
+        border_sweep: u16,
         arc: Arc,
     };
 
@@ -456,12 +457,18 @@ pub fn dash(self: *Tree, value: Dash, box: Box) Error!Index {
     return self.push(.{ .dash = value }, box);
 }
 
+/// A box whose border is stroked clockwise from top-center by `fraction` (`1..65535` mapped to `0..1`, `0` draws full border).
+pub fn borderSweep(self: *Tree, fraction: u16, box: Box) Error!Index {
+    return self.push(.{ .border_sweep = fraction }, box);
+}
+
 /// An arc. `box.overlay` lays it over its parent instead of in the flow.
 pub fn arc(self: *Tree, value: Arc, box: Box) Error!Index {
     return self.push(.{ .arc = value }, box);
 }
 
 fn push(self: *Tree, content: Node.Content, box: Box) Error!Index {
+    assert(!(box.wrap and box.axis == .column));
     if (self.len == self.nodes.len) return error.OutOfNodes;
     const index = self.len;
     self.nodes[index] = .{ .content = content, .box = box, .parent = self.current, .end = index + 1 };

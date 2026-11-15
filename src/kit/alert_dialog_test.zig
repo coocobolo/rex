@@ -457,7 +457,7 @@ test "dialog: option configures position, dimensions, and fallback scrim alpha" 
     }
 }
 
-test "dialog: narrow widths stack footer buttons instead of wrapping labels" {
+test "dialog: narrow widths wrap footer buttons without wrapping labels" {
     const actions = [_]alert_dialog.Action{
         .{ .label = "Cancel", .key_cap = "Esc", .role = .dismiss },
         .{ .label = "Close window", .variant = .destructive },
@@ -483,10 +483,12 @@ test "dialog: narrow widths stack footer buttons instead of wrapping labels" {
 
     const cancel_face = face(&tree, 0);
     const close_face = face(&tree, 1);
-    // Stacked vertically rather than squeezed onto one row.
-    try testing.expect(close_face.rect.y >= cancel_face.rect.y + cancel_face.rect.h);
-    try testing.expectEqual(cancel_face.rect.w, close_face.rect.w);
-    try testing.expectEqual(@as(f32, 240 - 2 * state.option.padding - 2 * Theme.ring_width), close_face.rect.w);
+    const right_edge = card.x + card.w - @as(f32, @floatFromInt(state.option.padding + Theme.ring_width));
+    // Wrapped onto separate rows at intrinsic button width, right-aligned.
+    try testing.expect(close_face.rect.y >= cancel_face.rect.y + cancel_face.rect.h + @as(f32, @floatFromInt(@import("button.zig").gap)));
+    try testing.expectEqual(right_edge, cancel_face.rect.x + cancel_face.rect.w);
+    try testing.expectEqual(right_edge, close_face.rect.x + close_face.rect.w);
+    try testing.expect(close_face.rect.w < 240 - 2 * @as(f32, @floatFromInt(state.option.padding)));
 
     const close_label = textByBytes(&tree, "Close window").?;
     try testing.expectEqual(@as(u16, 1), close_label.content.text.line_count);

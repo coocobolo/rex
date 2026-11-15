@@ -22,7 +22,7 @@ dialog. It has three parts.
   exhaustive switch. It returns whether anything on screen changed. A redraw
   happens only then, or while something is animating.
 - **`view(state, tree, theme)`**: writes the surface as a flat array of nodes
-  (boxes, texts, icons) into a `tree.Tree`. It is rebuilt from the state every
+  (boxes, texts, icons) into a `Tree`. It is rebuilt from the state every
   time; it never reads the previous view.
 
 A **component** is smaller than a surface and owns nothing. It is:

@@ -379,7 +379,9 @@ test "wellbeing_widget: mini uses full space for foreground time with phase-colo
                     if (node.box.id == widget.play_pause_id) {
                         try testing.expectEqual(Theme.Color.transparent, node.box.fill);
                     }
-                    if (node.box.border_sweep > 0 and
+                },
+                .border_sweep => |sweep| {
+                    if (sweep > 0 and
                         node.box.border_width >= 3 and
                         @abs(node.rect.h - play_rect.h) <= 1 and
                         @abs(node.rect.w - play_rect.w) <= 1)

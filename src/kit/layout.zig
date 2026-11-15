@@ -170,9 +170,74 @@ fn children(nodes: []Node, parent: usize) Children {
     return .{ .nodes = nodes, .next_index = @intCast(parent + 1), .end = nodes[parent].end };
 }
 
+const wrap_epsilon: f32 = 1e-3;
+
+const WrappedLines = struct {
+    nodes: []Node,
+    next_index: Index,
+    end: Index,
+    inner_w: f32,
+    gap: f32,
+
+    const Slice = struct {
+        start: Index,
+        end: Index,
+        width: f32,
+        height: f32,
+    };
+
+    fn next(self: *WrappedLines) ?Slice {
+        while (self.next_index < self.end and self.nodes[self.next_index].box.overlay) {
+            self.next_index = self.nodes[self.next_index].end;
+        }
+        if (self.next_index >= self.end) return null;
+
+        const line_start = self.next_index;
+        var line_w: f32 = 0;
+        var line_h: f32 = 0;
+        var count: u32 = 0;
+        while (self.next_index < self.end) {
+            const child = &self.nodes[self.next_index];
+            if (child.box.overlay) {
+                self.next_index = child.end;
+                continue;
+            }
+            const needed = child.rect.w + if (count > 0) self.gap else 0;
+            if (count > 0 and line_w + needed > self.inner_w + wrap_epsilon) break;
+            line_w += needed;
+            line_h = @max(line_h, child.rect.h);
+            count += 1;
+            self.next_index = child.end;
+        }
+        return .{ .start = line_start, .end = self.next_index, .width = line_w, .height = line_h };
+    }
+};
+
+fn wrappedLines(nodes: []Node, index: usize) WrappedLines {
+    const node = &nodes[index];
+    return .{
+        .nodes = nodes,
+        .next_index = @intCast(index + 1),
+        .end = node.end,
+        .inner_w = @max(0, node.rect.w - padding(node, .horizontal)),
+        .gap = @floatFromInt(node.box.gap),
+    };
+}
+
 /// What the children of a box need in `dimension`, padding included.
 fn contentExtent(nodes: []Node, index: usize, comptime dimension: Dimension) f32 {
     const node = &nodes[index];
+    if (dimension == .vertical and node.box.wrap) {
+        var total: f32 = 0;
+        var line_count: u32 = 0;
+        var lines = wrappedLines(nodes, index);
+        while (lines.next()) |line| {
+            total += line.height;
+            line_count += 1;
+        }
+        if (line_count > 1) total += @floatFromInt(@as(u32, node.box.gap) * (line_count - 1));
+        return total + padding(node, dimension);
+    }
     const along = isAlong(node, dimension);
     var total: f32 = 0;
     var count: u32 = 0;
@@ -209,7 +274,7 @@ fn fit(nodes: []Node, range: Range, comptime dimension: Dimension, measurer: tex
             },
             .icon => |icon| @floatFromInt(icon.size),
             .arc => |arc| arc.radius * 2,
-            .box, .dash => contentExtent(nodes, i, dimension),
+            .box, .dash, .border_sweep => contentExtent(nodes, i, dimension),
         };
         extent(node, dimension).* = switch (size(node, dimension)) {
             .fixed, .at_most => |value| value,
@@ -264,6 +329,10 @@ fn distribute(nodes: []Node, range: Range, comptime dimension: Dimension, viewpo
 /// In a scroll region a `fill` child takes at least what its content needs:
 /// content that does not fit scrolls rather than being squeezed.
 fn distributeAlong(nodes: []Node, index: usize, comptime dimension: Dimension, inner: f32, scrolls: bool) void {
+    if (nodes[index].box.wrap) {
+        distributeWrapped(nodes, index, dimension, inner, scrolls);
+        return;
+    }
     var used: f32 = 0;
     var count: u32 = 0;
     var fills: u32 = 0;
@@ -312,6 +381,23 @@ fn distributeAlong(nodes: []Node, index: usize, comptime dimension: Dimension, i
     }
 }
 
+fn distributeWrapped(nodes: []Node, index: usize, comptime dimension: Dimension, inner: f32, scrolls: bool) void {
+    var it = children(nodes, index);
+    while (it.next()) |child| {
+        const child_extent = extent(child, dimension);
+        if (child.box.overlay) {
+            child_extent.* = inner;
+            continue;
+        }
+        child_extent.* = switch (size(child, dimension)) {
+            .fixed => |value| value,
+            .fill => if (scrolls) @max(inner, child_extent.*) else inner,
+            .fraction => |value| inner * clamp01(value),
+            .fit, .at_most, .fit_at_most, .at_least => if (child.box.shrink) @min(child_extent.*, inner) else child_extent.*,
+        };
+    }
+}
+
 /// Moves the scroll region's content up by its offset, capped at what the
 /// content has beyond the region, and records that cap. The region clips,
 /// so the content kept its own height in `distribute`.
@@ -338,7 +424,7 @@ fn wrapTexts(tree: *Tree, range: Range, measurer: text.Measurer) Error!void {
                 };
                 node.rect.h = @floatFromInt(t.line_count * t.style.metrics().line_height);
             },
-            .box, .dash, .icon, .arc => {},
+            .box, .dash, .border_sweep, .icon, .arc => {},
         }
     }
 }
@@ -368,7 +454,14 @@ fn placeChildren(nodes: []Node, index: usize, comptime along: Dimension) void {
     const origin_y = node.rect.y + @as(f32, @floatFromInt(box.padding.top));
     const inner_along = @max(0, extent(node, along).* - padding(node, along));
     const inner_across = @max(0, extent(node, across).* - padding(node, across));
-    const free = @max(0, inner_along - (contentExtent(nodes, index, along) - padding(node, along)));
+    if (box.wrap) {
+        placeWrappedChildren(nodes, index, origin_x, origin_y, inner_along);
+        return;
+    }
+    const free = if (box.main == .start)
+        0
+    else
+        @max(0, inner_along - (contentExtent(nodes, index, along) - padding(node, along)));
 
     var cursor = offset(box.main, free);
     var it = children(nodes, index);
@@ -390,6 +483,46 @@ fn placeChildren(nodes: []Node, index: usize, comptime along: Dimension) void {
             },
         }
         cursor += extent(child, along).* + @as(f32, @floatFromInt(box.gap));
+    }
+}
+
+fn placeWrappedChildren(nodes: []Node, index: usize, origin_x: f32, origin_y: f32, inner_w: f32) void {
+    const box = nodes[index].box;
+    var line_y = origin_y;
+    var cursor_i: Index = @intCast(index + 1);
+    const end = nodes[index].end;
+    var lines = wrappedLines(nodes, index);
+    while (lines.next()) |line| {
+        while (cursor_i < line.start) {
+            const skipped = &nodes[cursor_i];
+            if (skipped.box.overlay) {
+                skipped.rect.x = origin_x;
+                skipped.rect.y = origin_y;
+            }
+            cursor_i = skipped.end;
+        }
+        var cursor_x = offset(box.main, @max(0, inner_w - line.width));
+        while (cursor_i < line.end) {
+            const child = &nodes[cursor_i];
+            cursor_i = child.end;
+            if (child.box.overlay) {
+                child.rect.x = origin_x;
+                child.rect.y = origin_y;
+                continue;
+            }
+            child.rect.x = origin_x + cursor_x;
+            child.rect.y = line_y + offset(box.cross, @max(0, line.height - child.rect.h));
+            cursor_x += child.rect.w + @as(f32, @floatFromInt(box.gap));
+        }
+        line_y += line.height + @as(f32, @floatFromInt(box.gap));
+    }
+    while (cursor_i < end) {
+        const child = &nodes[cursor_i];
+        if (child.box.overlay) {
+            child.rect.x = origin_x;
+            child.rect.y = origin_y;
+        }
+        cursor_i = child.end;
     }
 }
 

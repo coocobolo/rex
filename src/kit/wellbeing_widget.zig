@@ -604,13 +604,12 @@ fn viewProgressBorderOverlay(
 ) Tree.Error!void {
     if (state.fraction <= 0 or state.phase == .idle) return;
     const sweep_val: u16 = @max(1, @as(u16, @intFromFloat(@round(clamp01(state.fraction) * 65535.0))));
-    _ = try tree.leaf(.{
+    _ = try tree.borderSweep(sweep_val, .{
         .overlay = true,
         .width = .fill,
         .height = .fill,
         .border = progressBorderColor(theme, state.phase, state.run, box_state),
         .border_width = border_w,
-        .border_sweep = sweep_val,
         .radius = radius,
     });
 }
