@@ -493,9 +493,35 @@ test "dashboard: the gear opens the view choices, and a choice changes the chart
     _ = dashboard.update(&state, .{ .press = ring });
     try testing.expect(dashboard.update(&state, .release));
     try testing.expectEqual(.ring, state.charts.timer_chart);
-    // The menu stays open for the next choice; a press outside closes it.
+    // The menu stays open for the next choice.
     try testing.expectEqual(dashboard.Menu.view, state.menu);
-    try testing.expect(dashboard.update(&state, .{ .press = kit.Tree.Id.of("wellbeing.layer") }));
+
+    // Selecting Light in Color scheme updates currentTheme immediately.
+    try testing.expectEqual(&kit.Theme.dark, dashboard.currentTheme(&state));
+    const light = kit.Tree.Id.of("wellbeing.scheme").item(2);
+    _ = dashboard.update(&state, .{ .pointer = .{ .id = light } });
+    _ = dashboard.update(&state, .{ .press = light });
+    try testing.expect(dashboard.update(&state, .release));
+    try testing.expectEqual(.light, state.scheme);
+    try testing.expectEqual(&kit.Theme.light, dashboard.currentTheme(&state));
+    try testing.expectEqual(dashboard.Menu.view, state.menu);
+
+    // Clicking "Wellbeing settings…" launches the settings tool and closes the menu.
+    const Probe = struct {
+        opened: ?[]const u8 = null,
+        fn open(ctx: *anyopaque, subcommand: []const u8) void {
+            const self: *@This() = @ptrCast(@alignCast(ctx));
+            self.opened = subcommand;
+        }
+    };
+    var probe: Probe = .{};
+    state.tool_launcher = .{ .ctx = &probe, .openFn = Probe.open };
+    const settings_item = kit.Tree.Id.of("wellbeing.settings");
+    _ = dashboard.update(&state, .{ .pointer = .{ .id = settings_item } });
+    try buildView(&state);
+    _ = dashboard.update(&state, .{ .press = settings_item });
+    _ = dashboard.update(&state, .release);
+    try testing.expectEqualStrings("settings", probe.opened.?);
     try testing.expectEqual(dashboard.Menu.closed, state.menu);
 }
 
@@ -692,4 +718,57 @@ test "dashboard: lower row cards share the page width with a 16 px gap, and view
     try testing.expectApproxEqAbs(week_card.?.x + week_card.?.w + 16, prog_card.?.x, 1e-3);
     try testing.expectApproxEqAbs(@as(f32, 960 - 24), prog_card.?.x + prog_card.?.w, 1e-3);
     try testing.expectEqual(timer_label_x.?, settings_label_x.?);
+}
+
+test "dashboard: focus timer clock uses the same style in bar and ring, and 960 px history cards stack delta over note" {
+    var tmp: StateTmp = .init();
+    defer tmp.deinit();
+    const dir = try tmp.path();
+    const config = configWith(dir);
+    var state = try openDashboard(&config, dir);
+    defer dashboard.deinit(&state);
+    _ = dashboard.update(&state, .{ .size = .{ .width = 960, .height = 600 } });
+
+    state.page = .focus;
+    var styles: [2]kit.text.Style = undefined;
+    for ([_]WellbeingOption.TimerChart{ .bar, .ring }, 0..) |mark, idx| {
+        state.charts.timer_chart = mark;
+        var nodes: [dashboard.node_max]kit.Tree.Node = undefined;
+        var lines: [dashboard.line_max]kit.text.Line = undefined;
+        var tree = kit.Tree.init(&nodes, &lines);
+        try dashboard.view(&state, &tree, &kit.Theme.dark);
+        for (tree.items()) |node| {
+            if (node.content == .text and std.mem.eql(u8, node.content.text.bytes, state.clock())) {
+                styles[idx] = node.content.text.style;
+            }
+        }
+    }
+    try testing.expectEqual(kit.text.Style.xxl_semibold, styles[0]);
+    try testing.expectEqual(styles[0], styles[1]);
+
+    // On History at 960 px, delta and note stack cleanly and strip any leading middle dot.
+    state.wb.data.history[0] = .{ .day = 195, .active_screen_s = 3600, .focus_s = 600 };
+    state.wb.data.history_count = 1;
+    state.wb.data.today = .{ .day = 206, .active_screen_s = 2 * 3600, .focus_s = 1800 };
+    dashboard.refreshHistoryAt(&state, 206);
+    state.page = .history;
+
+    var nodes: [dashboard.node_max]kit.Tree.Node = undefined;
+    var lines: [dashboard.line_max]kit.text.Line = undefined;
+    var tree = kit.Tree.init(&nodes, &lines);
+    try dashboard.view(&state, &tree, &kit.Theme.dark);
+    var no_state: u8 = 0;
+    try tree.layout(.{ .context = &no_state, .widthFn = fixedWidth }, 960, 600);
+
+    var delta_rect: ?kit.Tree.Rect = null;
+    var note_rect: ?kit.Tree.Rect = null;
+    for (tree.items()) |node| {
+        if (node.content != .text) continue;
+        const bytes = node.content.text.bytes;
+        if (std.mem.eql(u8, bytes, "\u{2191} 20m")) delta_rect = node.rect;
+        if (std.mem.eql(u8, bytes, "25% of screen time")) note_rect = node.rect;
+    }
+    try testing.expect(note_rect != null);
+    try testing.expect(note_rect.?.y >= delta_rect.?.y + delta_rect.?.h);
+    try testing.expectEqual(delta_rect.?.x, note_rect.?.x);
 }

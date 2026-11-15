@@ -109,6 +109,8 @@ const Over = union(enum) {
     gear: void,
     timer_chart: TimerChart,
     program_chart: ProgramChart,
+    scheme: ColorScheme,
+    settings,
 };
 
 const TimerChart = @TypeOf(@as(DashboardOption, undefined).timer_chart);
@@ -128,6 +130,7 @@ const gear_id = Id.of("wellbeing.gear");
 const timer_chart_id = Id.of("wellbeing.timer_chart");
 const program_chart_id = Id.of("wellbeing.program_chart");
 const scheme_id = Id.of("wellbeing.scheme");
+const settings_id = Id.of("wellbeing.settings");
 pub const page_id = Id.of("wellbeing.page");
 
 fn over(id: Id) Over {
@@ -138,9 +141,13 @@ fn over(id: Id) Over {
     if (id == reset_id) return .reset;
     if (id == layer_id) return .outside;
     if (id == gear_id) return .gear;
+    if (id == settings_id) return .settings;
     inline for (0..2) |index| {
         if (id == timer_chart_id.item(index)) return .{ .timer_chart = @enumFromInt(index) };
         if (id == program_chart_id.item(index)) return .{ .program_chart = @enumFromInt(index) };
+    }
+    inline for (0..scheme_labels.len) |index| {
+        if (id == scheme_id.item(index)) return .{ .scheme = @enumFromInt(index) };
     }
     inline for (0..page_count) |index| {
         if (id == tab_id.item(index)) return .{ .tab = @enumFromInt(index) };
@@ -162,9 +169,9 @@ fn over(id: Id) Over {
 const frame_nodes = 2 + tabs.nodeMax(page_count) + 1 + @as(usize, @max(4, tabs.nodeMax(period_count))) + button.node_max;
 /// The card rows' outer column and up to two rows.
 const card_rows_nodes = 3;
-/// The gear's popup: layer and card, the column, three groups (box,
-/// label, tabs), the rule, the settings row (row, text, icon) and the note.
-const choices_nodes = popup.node_max + 1 + 2 * (2 + tabs.nodeMax(2)) + (2 + tabs.nodeMax(scheme_labels.len)) + separator.node_max + 3 + 1;
+/// The gear's popup: layer and card, the column and controls block, three
+/// groups (box, label, tabs), the rule, and the settings item.
+const choices_nodes = popup.node_max + 2 + 2 * (2 + tabs.nodeMax(2)) + (2 + tabs.nodeMax(scheme_labels.len)) + separator.node_max + popup.item_node_max;
 /// The Focus page: its scroll area, the timer block (badge, time, task line
 /// and the larger of the two marks: a bar, or a ring in its square under an
 /// overlaid column), the button row and three buttons, and the popup with
@@ -216,9 +223,13 @@ pub const State = struct {
     /// The open popup, if any: Focus's "more" menu, which holds Reset, or
     /// the gear's view choices.
     menu: Menu = .closed,
-    /// The config's `[ui] color_scheme`, shown in the view choices; the
-    /// host picks the theme from it at start.
+    /// Color scheme selected in the view choices, initialized from `[ui]
+    /// color_scheme`.
     scheme: ColorScheme,
+    /// Theme resolved from the terminal background when `scheme == .auto`.
+    auto_theme: *const Theme = &Theme.dark,
+    /// Spawns `rex settings` when "Wellbeing settings…" is clicked.
+    tool_launcher: host.ToolLauncher = .{},
     /// In logical pixels, from the last `size` event.
     width: f32 = 0,
     /// How far the page is scrolled, 0 to the last `max` the host sent; 0
@@ -399,8 +410,18 @@ pub const Program = struct {
 const card_titles = [Today.card_count][]const u8{ "Screen time", "Focus", "Breaks", "Streak" };
 const weekday_names = [7][]const u8{ "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" };
 
+/// Live UI kit theme for the dashboard window, tracking `State.scheme`.
+pub fn currentTheme(state: *const State) *const Theme {
+    return switch (state.scheme) {
+        .auto => state.auto_theme,
+        .dark => &Theme.dark,
+        .light => &Theme.light,
+    };
+}
+
 /// Joins the shared state and, on Linux, watches the state file.
 pub fn init(context: host.Context) !State {
+    const background = context.config.resolvedTheme().background;
     var state: State = .{
         .io = context.io,
         .gpa = context.gpa,
@@ -408,6 +429,8 @@ pub fn init(context: host.Context) !State {
         .wb = wellbeing.Wellbeing.init(context.config.wellbeing),
         .charts = context.config.wellbeing.dashboard,
         .scheme = context.config.ui.color_scheme,
+        .auto_theme = ColorScheme.auto.variant(.{ background.r, background.g, background.b }).theme(),
+        .tool_launcher = context.tool_launcher,
     };
     // Off, the window says so and leaves the state file alone.
     if (!state.wb.option.enabled) return state;
@@ -491,6 +514,7 @@ pub fn update(state: *State, event: host.Event) bool {
     const menu = state.menu;
     const period = state.period;
     const charts = state.charts;
+    const scheme = state.scheme;
     const width = state.width;
     const scrolled = state.scroll;
     const timer_changed = switch (event) {
@@ -533,7 +557,8 @@ pub fn update(state: *State, event: host.Event) bool {
         refreshTip(state);
     }
     return timer_changed or state.page != page or state.period != period or
-        !std.meta.eql(state.charts, charts) or state.width != width or state.scroll != scrolled or
+        !std.meta.eql(state.charts, charts) or state.scheme != scheme or
+        state.width != width or state.scroll != scrolled or
         !std.meta.eql(state.hover, hover) or !std.meta.eql(state.pressed, pressed) or state.menu != menu;
 }
 
@@ -587,6 +612,15 @@ fn act(state: *State, target: Over) bool {
         },
         .program_chart => |mark| {
             state.charts.program_chart = mark;
+            return false;
+        },
+        .scheme => |scheme| {
+            state.scheme = scheme;
+            return false;
+        },
+        .settings => {
+            state.menu = .closed;
+            state.tool_launcher.open("settings");
             return false;
         },
         .toggle, .skip, .reset => if (!state.wb.option.enabled) return false,
@@ -741,10 +775,13 @@ const stacked_chart_height = 280;
 const max_lower_height = 420;
 /// Below this window width a 4-across stat card is too narrow for delta
 /// and note on one line, so they stack.
-const note_stack_width = 940;
+const note_stack_width = 1080;
+const narrow_note_stack_width = 480;
 
 fn stackNote(width: f32) bool {
-    return width > 0 and width < note_stack_width;
+    if (width <= 0) return false;
+    if (width < compact_width) return width < narrow_note_stack_width;
+    return width < note_stack_width;
 }
 
 /// A page's column under the header, and the scroll region: content that
@@ -784,7 +821,8 @@ fn offPage(tree: *Tree, theme: *const Theme) kit.Tree.Error!void {
 /// settings window.
 fn viewChoices(state: *const State, tree: *Tree, theme: *const Theme) kit.Tree.Error!void {
     const menu = try popup.open(tree, theme, .{ .layer_id = layer_id, .anchor = gear_id });
-    const column = try tree.open(.{ .width = .{ .fixed = 252 }, .padding = .all(8), .gap = 12 });
+    const column = try tree.open(.{ .width = .{ .fixed = 252 }, .gap = 4 });
+    const controls = try tree.open(.{ .width = .fill, .padding = .all(8), .gap = 10 });
 
     const timer_tabs = [_]tabs.Tab{ .{ .id = timer_chart_id.item(0), .label = "Bar" }, .{ .id = timer_chart_id.item(1), .label = "Ring" } };
     try choiceGroup(tree, theme, "Timer", &timer_tabs, @intFromEnum(state.charts.timer_chart), switch (state.hover) {
@@ -798,17 +836,18 @@ fn viewChoices(state: *const State, tree: *Tree, theme: *const Theme) kit.Tree.E
     });
     var scheme_tabs: [scheme_labels.len]tabs.Tab = undefined;
     for (&scheme_tabs, scheme_labels, 0..) |*tab, label, index| tab.* = .{ .id = scheme_id.item(@intCast(index)), .label = label };
-    try choiceGroup(tree, theme, "Color scheme", &scheme_tabs, @intFromEnum(state.scheme), tabs.none);
+    try choiceGroup(tree, theme, "Color scheme", &scheme_tabs, @intFromEnum(state.scheme), switch (state.hover) {
+        .scheme => |scheme| @intFromEnum(scheme),
+        else => tabs.none,
+    });
+    tree.close(controls);
 
     try separator.horizontal(tree, theme);
-    const settings = try tree.open(.{ .axis = .row, .width = .fill, .height = .{ .fixed = Theme.control_sm }, .cross = .center });
-    _ = try tree.text("Wellbeing settings\u{2026}", .{ .color = theme.muted_foreground, .width = .fill });
-    _ = try tree.icon(.{ .codepoint = icons.external_link, .color = theme.muted_foreground, .size = button.icon_size });
-    tree.close(settings);
-    _ = try tree.text("Chart choices last until the window closes; the color scheme and saved choices come from the config file.", .{
-        .color = theme.muted_foreground,
-        .style = .xs,
-        .width = .fill,
+    try popup.item(tree, theme, .{
+        .id = settings_id,
+        .label = "Wellbeing settings\u{2026}",
+        .highlighted = std.meta.eql(state.hover, Over.settings),
+        .icon = icons.external_link,
     });
     tree.close(column);
     popup.close(tree, menu);
@@ -843,17 +882,23 @@ fn statCard(tree: *Tree, theme: *const Theme, card_title: []const u8, item: *con
         const line = try tree.open(if (stacked_note)
             .{ .width = .fill, .gap = 2 }
         else
-            .{ .axis = .row, .width = .fill, .gap = 4, .cross = .center });
+            .{ .axis = .row, .wrap = true, .width = .fill, .gap = 4, .cross = .center });
         _ = try tree.text(item.delta.slice(), .{
             .color = switch (item.trend) {
                 .better => theme.success,
                 .worse => theme.destructive,
                 .even => theme.muted_foreground,
             },
-            .style = .sm_medium,
+            .style = .xs,
             .figures = .tabular,
+            .wrap = .none,
         });
-        try card.description(tree, theme, item.note.slice(), .{});
+        const raw_note = item.note.slice();
+        const note_bytes = if (stacked_note and std.mem.startsWith(u8, raw_note, "\u{00b7} "))
+            raw_note["\u{00b7} ".len..]
+        else
+            raw_note;
+        try card.description(tree, theme, note_bytes, .{ .width = if (stacked_note) .fill else .fit });
         tree.close(line);
     }
     card.close(tree, box);
@@ -1153,7 +1198,7 @@ fn focusPage(state: *const State, tree: *Tree, theme: *const Theme) kit.Tree.Err
     switch (state.charts.timer_chart) {
         .bar => {
             const block = try tree.open(.{ .width = .{ .at_most = 400 }, .gap = 8, .cross = .center });
-            try timerText(state, tree, theme, .xxxl_semibold);
+            try timerText(state, tree, theme);
             try chart.progress(tree, theme, .bar, state.shown.fraction, color, 6);
             _ = try tree.text(state.taskLine(), .{ .color = theme.muted_foreground });
             tree.close(block);
@@ -1163,7 +1208,7 @@ fn focusPage(state: *const State, tree: *Tree, theme: *const Theme) kit.Tree.Err
             const square = try tree.open(.{ .width = .{ .fixed = side }, .height = .{ .fixed = side } });
             try chart.progress(tree, theme, .ring, state.shown.fraction, color, 6);
             const inside = try tree.open(.{ .overlay = true, .width = .fill, .height = .fill, .gap = 4, .main = .center, .cross = .center });
-            try timerText(state, tree, theme, .xxl_semibold);
+            try timerText(state, tree, theme);
             _ = try tree.text(state.taskLine(), .{ .color = theme.muted_foreground });
             tree.close(inside);
             tree.close(square);
@@ -1174,7 +1219,7 @@ fn focusPage(state: *const State, tree: *Tree, theme: *const Theme) kit.Tree.Err
 }
 
 /// The phase over the time.
-fn timerText(state: *const State, tree: *Tree, theme: *const Theme, style: kit.text.Style) kit.Tree.Error!void {
+fn timerText(state: *const State, tree: *Tree, theme: *const Theme) kit.Tree.Error!void {
     const phase = state.shown.phase;
     try badge.view(tree, theme, .{
         .label = phaseLabel(phase),
@@ -1183,7 +1228,7 @@ fn timerText(state: *const State, tree: *Tree, theme: *const Theme, style: kit.t
     });
     _ = try tree.text(state.clock(), .{
         .color = theme.foreground,
-        .style = style,
+        .style = .xxl_semibold,
         .figures = .tabular,
     });
 }

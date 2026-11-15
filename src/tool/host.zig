@@ -119,6 +119,17 @@ pub const NodeRect = struct {
     }
 };
 
+pub const ToolLauncher = struct {
+    ctx: ?*anyopaque = null,
+    openFn: ?*const fn (ctx: *anyopaque, subcommand: []const u8) void = null,
+
+    pub fn open(self: ToolLauncher, subcommand: []const u8) void {
+        const ctx = self.ctx orelse return;
+        const f = self.openFn orelse return;
+        f(ctx, subcommand);
+    }
+};
+
 pub const Context = struct {
     gpa: Allocator,
     io: std.Io,
@@ -136,6 +147,8 @@ pub const Context = struct {
     clipboard: Clipboard = .{},
     /// Laid-out rectangle lookup for the most recently rendered frame.
     node_rect: NodeRect = .{},
+    /// Spawns a detached sibling tool window (`rex <subcommand>`).
+    tool_launcher: ToolLauncher = .{},
 };
 
 pub const KeyPress = struct {
@@ -156,6 +169,7 @@ fn Host(comptime Tool: type) type {
         const Self = @This();
 
         io: std.Io,
+        argv0: []const u8,
         window: Window,
         font: KitFont,
         painter: KitPainter,
@@ -254,6 +268,7 @@ fn Host(comptime Tool: type) type {
             errdefer gpa.destroy(self);
             self.* = .{
                 .io = io,
+                .argv0 = argv0,
                 .window = window,
                 .font = font,
                 .painter = painter,
@@ -288,6 +303,10 @@ fn Host(comptime Tool: type) type {
                 .node_rect = .{
                     .ctx = self,
                     .getFn = nodeRect,
+                },
+                .tool_launcher = .{
+                    .ctx = self,
+                    .openFn = openTool,
                 },
             }) else .empty;
 
@@ -419,6 +438,33 @@ fn Host(comptime Tool: type) type {
             const self: *const Self = @ptrCast(@alignCast(ctx));
             const n = self.tree.find(id) orelse return null;
             return n.rect;
+        }
+
+        fn openTool(ctx: *anyopaque, subcommand: []const u8) void {
+            const self: *Self = @ptrCast(@alignCast(ctx));
+            var exe_buf: [std.fs.max_path_bytes]u8 = undefined;
+            const exe: []const u8 = if (std.process.executablePath(self.io, &exe_buf)) |len|
+                exe_buf[0..len]
+            else |_|
+                self.argv0;
+            const child = std.process.spawn(self.io, .{
+                .argv = &.{ exe, subcommand },
+                .cwd = .inherit,
+                .stdin = .ignore,
+                .stdout = .ignore,
+                .stderr = .ignore,
+                .pgid = 0,
+            }) catch |err| {
+                log.err("cannot start rex {s}: {t}", .{ subcommand, err });
+                return;
+            };
+            if (child.id) |pid| {
+                if (std.Thread.spawn(.{}, reapChild, .{pid})) |reaper| {
+                    reaper.detach();
+                } else |err| {
+                    log.warn("no reaper thread for rex {s} ({t}); pid {d} stays a zombie until exit", .{ subcommand, err, pid });
+                }
+            }
         }
 
         fn fromWindow(window: ?*c.GLFWwindow) *Self {
@@ -586,4 +632,12 @@ fn openFont(gpa: Allocator, io: std.Io, argv0: []const u8, scale: f32) !KitFont 
 /// Best effort: the process exits right after, with status 1 either way.
 fn writeStderr(msg: []const u8) void {
     _ = std.posix.system.write(std.posix.STDERR_FILENO, msg.ptr, msg.len);
+}
+
+fn reapChild(pid: std.posix.pid_t) void {
+    var status: c_int = undefined;
+    while (true) {
+        const rc = std.posix.system.waitpid(pid, &status, 0);
+        if (rc == pid or std.posix.errno(rc) != .INTR) return;
+    }
 }

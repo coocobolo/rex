@@ -93,10 +93,12 @@ pub const ItemOptions = struct {
     highlighted: bool = false,
     /// The value in use: drawn with a check mark.
     selected: bool = false,
+    /// Trailing icon drawn when `selected` is false (`icons.none` for none).
+    icon: u21 = icons.none,
 };
 
 /// Writes one item into the open card: a row the card's width, with the
-/// label on the left and a check mark on the right when selected.
+/// label on the left and a check mark (or `options.icon`) on the right.
 pub fn item(tree: *Tree, theme: *const Theme, options: ItemOptions) Tree.Error!void {
     const row = try tree.open(.{
         .id = options.id,
@@ -113,6 +115,12 @@ pub fn item(tree: *Tree, theme: *const Theme, options: ItemOptions) Tree.Error!v
     _ = try tree.text(options.label, .{ .color = theme.foreground, .width = .fill, .wrap = .ellipsis });
     if (options.selected) {
         _ = try tree.icon(.{ .codepoint = icons.check, .color = theme.foreground, .size = Theme.icon });
+    } else if (options.icon != icons.none) {
+        _ = try tree.icon(.{
+            .codepoint = options.icon,
+            .color = if (options.highlighted) theme.foreground else theme.muted_foreground,
+            .size = Theme.icon,
+        });
     }
     tree.close(row);
 }
