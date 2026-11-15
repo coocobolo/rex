@@ -129,16 +129,17 @@ test "wellbeing_widget: all responsive modes and tiny viewports lay out within b
         vh: f32,
         mode: widget.Mode,
     }{
-        .{ .w = 164, .h = 48, .vw = 800, .vh = 600, .mode = .mini },
+        .{ .w = 144, .h = 44, .vw = 800, .vh = 600, .mode = .mini },
         .{ .w = 210, .h = 110, .vw = 800, .vh = 600, .mode = .mini },
         .{ .w = 344, .h = 72, .vw = 800, .vh = 600, .mode = .bar },
-        .{ .w = 200, .h = 200, .vw = 800, .vh = 600, .mode = .portrait },
-        .{ .w = 312, .h = 152, .vw = 800, .vh = 600, .mode = .card },
+        .{ .w = 440, .h = 48, .vw = 800, .vh = 600, .mode = .bar },
+        .{ .w = 180, .h = 200, .vw = 800, .vh = 600, .mode = .portrait },
+        .{ .w = 308, .h = 148, .vw = 800, .vh = 600, .mode = .card },
         .{ .w = 420, .h = 220, .vw = 800, .vh = 600, .mode = .expanded },
         // Large card automatically folds down when the viewport shrinks.
         .{ .w = 420, .h = 220, .vw = 240, .vh = 110, .mode = .mini },
         .{ .w = 420, .h = 220, .vw = 320, .vh = 110, .mode = .bar },
-        .{ .w = 420, .h = 220, .vw = 220, .vh = 200, .mode = .portrait },
+        .{ .w = 420, .h = 220, .vw = 200, .vh = 200, .mode = .portrait },
     };
 
     for (sizes) |case| {
@@ -159,6 +160,7 @@ test "wellbeing_widget: all responsive modes and tiny viewports lay out within b
         try testing.expectEqual(case.mode, eff.mode);
 
         for ([_]*const Theme{ &Theme.dark, &Theme.light }) |theme| {
+            state.pointer_inside = false;
             var fixture: Fixture = .{};
             var tree = fixture.tree();
             const root = (try widget.view(&state, &tree, theme, case.vw, case.vh)).?;
@@ -168,15 +170,50 @@ test "wellbeing_widget: all responsive modes and tiny viewports lay out within b
             const card_rect = tree.nodes[root].rect;
             try testing.expect(card_rect.w <= case.vw);
             try testing.expect(card_rect.h <= case.vh);
+            try testing.expectEqual(@as(?tree_zig.Rect, null), findNode(&tree, widget.close_id));
 
-            // Corner resize handle is reachable at the outer bottom-right corner and distinct from card center.
+            // Corner resize handle is reachable at the outer bottom-right corner and distinct from close.
             const corner_hit = tree.hitTest(card_rect.x + card_rect.w - 4, card_rect.y + card_rect.h - 4);
             try testing.expectEqual(widget.resize_id, corner_hit);
-            const close_rect = findNode(&tree, widget.close_id).?;
-            const corner_rect = findNode(&tree, widget.resize_id).?;
+
+            // Hovering reveals the close pill without colliding with the corner resize grip.
+            state.pointer_inside = true;
+            var hover_fixture: Fixture = .{};
+            var hover_tree = hover_fixture.tree();
+            const hover_root = (try widget.view(&state, &hover_tree, theme, case.vw, case.vh)).?;
+            try layout(&hover_tree, measurer, case.vw, case.vh);
+            widget.place(&state, &hover_tree, hover_root, case.vw, case.vh);
+
+            const close_rect = findNode(&hover_tree, widget.close_id).?;
+            const corner_rect = findNode(&hover_tree, widget.resize_id).?;
             try testing.expect(close_rect.x + close_rect.w <= corner_rect.x or close_rect.y + close_rect.h <= corner_rect.y);
         }
     }
+}
+
+test "wellbeing_widget: auto-hiding close follows pointer presence" {
+    var state: widget.State = .empty;
+    _ = widget.update(&state, .toggle_visible);
+    try testing.expect(!state.showsClose());
+
+    try testing.expectEqual(widget.Outcome.redraw, widget.update(&state, .{ .pointer = .{ .over = .card, .x = 40, .y = 40 } }));
+    try testing.expect(state.showsClose());
+
+    // Moving within the same target stays quiet and preserves visibility.
+    try testing.expectEqual(widget.Outcome.quiet, widget.update(&state, .{ .pointer = .{ .over = .card, .x = 60, .y = 60 } }));
+    try testing.expect(state.showsClose());
+    // Moving onto a button redraws hover state while keeping close visible.
+    try testing.expectEqual(widget.Outcome.redraw, widget.update(&state, .{ .pointer = .{ .over = .play_pause, .x = 60, .y = 60 } }));
+    try testing.expect(state.showsClose());
+
+    // Moving outside or leaving hides the close pill.
+    try testing.expectEqual(widget.Outcome.redraw, widget.update(&state, .{ .pointer = .{ .over = .none, .x = 0, .y = 0 } }));
+    try testing.expect(!state.showsClose());
+
+    _ = widget.update(&state, .{ .pointer = .{ .over = .close, .x = 80, .y = 20 } });
+    try testing.expect(state.showsClose());
+    try testing.expectEqual(widget.Outcome.redraw, widget.update(&state, .leave));
+    try testing.expect(!state.showsClose());
 }
 
 test "wellbeing_widget: buttons act on release over target and idle disables reset and skip" {

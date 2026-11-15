@@ -449,6 +449,7 @@ test "KitOverlay: wellbeing widget toggles, drags, resizes and fires control act
     try testing.expect(fixture.frame());
 
     const card = centerOf(kit, wellbeing_widget.card_id).?;
+    try testing.expectEqual(@as(?[2]f32, null), centerOf(kit, wellbeing_widget.close_id));
     const orig_x = kit.wellbeing_widget.x;
     const orig_y = kit.wellbeing_widget.y;
 
@@ -478,6 +479,17 @@ test "KitOverlay: wellbeing widget toggles, drags, resizes and fires control act
     const play = centerOf(kit, wellbeing_widget.play_pause_id).?;
     try testing.expectEqual(KitOverlay.Press.changed, kit.press(play[0], play[1]));
     try testing.expectEqual(KitOverlay.Release{ .wellbeing_widget = .toggle }, kit.release(play[0], play[1]));
+
+    // Close button stays hidden when the pointer leaves the widget and appears on hover.
+    try testing.expect(kit.pointerMoved(10, 10));
+    try testing.expect(fixture.frame());
+    try testing.expectEqual(@as(?[2]f32, null), centerOf(kit, wellbeing_widget.close_id));
+    const current_card = centerOf(kit, wellbeing_widget.card_id).?;
+    try testing.expect(kit.pointerMoved(current_card[0], current_card[1]));
+    try testing.expect(fixture.frame());
+    const close = centerOf(kit, wellbeing_widget.close_id).?;
+    try testing.expectEqual(KitOverlay.Press.changed, kit.press(close[0], close[1]));
+    try testing.expectEqual(KitOverlay.Release{ .wellbeing_widget = .close }, kit.release(close[0], close[1]));
     try testing.expect(kit.hideWellbeingWidget());
     try testing.expect(fixture.frame());
     try testing.expect(!fixture.frame());
