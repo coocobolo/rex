@@ -231,7 +231,7 @@ pub fn wrapEllipsis(measurer: Measurer, bytes: []const u8, style: Style, figures
 
     const ellipsis_w = measurer.width(ellipsis_bytes, style, figures);
     const budget = max_width - ellipsis_w;
-    if (budget < 0 or (ellipsis_w == 0 and max_width <= 0)) {
+    if (!(budget >= 0) or (ellipsis_w == 0 and !(max_width > 0))) {
         try lines.append(.{ .start = 0, .end = 0, .width = 0 });
         return 1;
     }

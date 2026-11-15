@@ -92,22 +92,25 @@ one of:
 | `fill` | A share of what the parent has left |
 | `fixed` | This many pixels |
 | `at_most` | This many pixels, or less in a smaller parent |
+| `fit_at_most` | As large as the content, capped at this many pixels |
 | `at_least` | As large as the content, but not below this many pixels |
 | `fraction` | This fraction of the parent's inner size, from 0 to 1 |
 
-Text wraps to the width it ends up with. There is no scrolling and no
-wrapping of rows yet.
+Text wraps by words (`.word`), breaks only on line feeds (`.none`), or
+truncates a single line with `"…"` (`.ellipsis`). A row with `.wrap = true`
+breaks overflowing children onto additional lines.
 
-A box with `.overflow = .clip` cuts its descendants at its rectangle, for
-painting and for hit-testing, and keeps their sizes instead of shrinking the
-largest one to fit. The cut is square, also at rounded corners. Clipping
-boxes nest up to 8 deep.
+A box with `.overflow = .clip` cuts its descendants at its rectangle (and
+along its rounded corners when `radius > 0`), keeping their sizes instead of
+shrinking the largest one to fit. Clipping boxes nest up to 8 deep and up to
+`Tree.Scroll.max` regions can scroll on `x` and `y` via `Tree.scrollRegion`.
 
 Roots are laid out one after another in drawing order, each against the
 window. A root can instead be anchored to a node of an earlier root
-(`Tree.anchorTo`, at most `tree.anchor_max` per view): it goes below that
-node, or above it when there is more room there, stays 8 px inside the
-window and is at least as wide as the node.
+(`Tree.anchorTo` / `Tree.anchorToWith`, at most `Tree.anchor_max` per view):
+it is placed on the requested side (`.auto`, `.below`, `.above`, `.left`,
+`.right`), flips when clipped, stays inside the viewport margin, and matches
+the anchor's width when `match_anchor_width = true`.
 
 ## Components
 

@@ -318,9 +318,9 @@ fn wrappedLines(nodes: []Node, index: usize) WrappedLines {
 }
 
 /// What the children of a box need in `dimension`, padding included.
-fn contentExtent(nodes: []Node, index: usize, comptime dimension: Dimension) f32 {
+fn contentExtent(nodes: []Node, index: usize, comptime dimension: Dimension, comptime allow_wrap: bool) f32 {
     const node = &nodes[index];
-    if (node.box.wrap) {
+    if (allow_wrap and node.box.wrap) {
         var total: f32 = 0;
         var line_count: u32 = 0;
         var lines = wrappedLines(nodes, index);
@@ -365,14 +365,15 @@ fn fit(nodes: []Node, range: Range, comptime dimension: Dimension, measurer: tex
                     .none => text.maxLineWidth(measurer, t.bytes, t.style, t.figures),
                     .ellipsis => blk: {
                         const nl = std.mem.indexOfScalar(u8, t.bytes, '\n');
-                        break :blk measurer.width(t.bytes[0 .. nl orelse t.bytes.len], t.style, t.figures);
+                        const slice_w = measurer.width(t.bytes[0 .. nl orelse t.bytes.len], t.style, t.figures);
+                        break :blk if (nl != null) slice_w + measurer.width(text.ellipsis_bytes, t.style, t.figures) else slice_w;
                     },
                 },
                 .vertical => node.rect.h,
             },
             .icon => |icon| @floatFromInt(icon.size),
             .arc => |arc| arc.radius * 2,
-            .box, .dash, .border_sweep => contentExtent(nodes, i, dimension),
+            .box, .dash, .border_sweep => contentExtent(nodes, i, dimension, dimension == .vertical),
         };
         extent(node, dimension).* = switch (size(node, dimension)) {
             .fixed, .at_most => |value| value,
@@ -505,12 +506,11 @@ fn scrollRange(tree: *Tree, nodes: []Node, range: Range) void {
         const index = region.node;
         const box_node = &nodes[index];
         region.max = .{
-            .x = @max(0, contentExtent(nodes, index, .horizontal) - box_node.rect.w),
-            .y = @max(0, contentExtent(nodes, index, .vertical) - box_node.rect.h),
+            .x = @max(0, contentExtent(nodes, index, .horizontal, true) - box_node.rect.w),
+            .y = @max(0, contentExtent(nodes, index, .vertical, true) - box_node.rect.h),
         };
-        const moved_x = std.math.clamp(region.offset.x, 0, region.max.x);
-        const moved_y = std.math.clamp(region.offset.y, 0, region.max.y);
-        // Also false for NaN offsets.
+        const moved_x = if (std.math.isNan(region.offset.x)) 0 else std.math.clamp(region.offset.x, 0, region.max.x);
+        const moved_y = if (std.math.isNan(region.offset.y)) 0 else std.math.clamp(region.offset.y, 0, region.max.y);
         if (!(moved_x > 0) and !(moved_y > 0)) continue;
         for (nodes[index + 1 .. box_node.end]) |*child| {
             child.rect.x -= moved_x;
@@ -569,7 +569,7 @@ fn placeChildren(nodes: []Node, index: usize, comptime along: Dimension) void {
     const free = if (box.main == .start)
         0
     else
-        @max(0, inner_along - (contentExtent(nodes, index, along) - padding(node, along)));
+        @max(0, inner_along - (contentExtent(nodes, index, along, false) - padding(node, along)));
 
     var cursor = offset(box.main, free);
     var it = children(nodes, index);

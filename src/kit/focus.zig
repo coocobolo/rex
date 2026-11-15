@@ -1,6 +1,6 @@
-//! The order the keyboard focus moves in over a row or list of `count`
-//! items, numbered from 0. Any value from `count` up stands for "none has
-//! the focus".
+//! Focus-ring and control-border helpers (`ringColor`, `controlColors`,
+//! `openRing`), plus the order keyboard focus moves in over a row or list of
+//! `count` items (`move`), where values from `count` up mean "none has focus".
 
 const assert = @import("std").debug.assert;
 

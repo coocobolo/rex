@@ -1029,3 +1029,68 @@ test "layout: placeAxis room_before and placeAnchored 4-side alignment and overl
     try testing.expectEqual(@as(f32, 92), cramped.x);
     try testing.expectEqual(@as(f32, 40), cramped.y);
 }
+
+test "layout: wrapping row with .fit and .fit_at_most measures unwrapped width before wrapping" {
+    var fixture: Fixture = .{};
+    var tree = fixture.tree();
+    const root = try tree.open(.{ .width = .{ .fixed = 300 }, .height = .{ .fixed = 200 } });
+    // Unconstrained .fit wrapping row: 3 items of 60px + 2 * 8px gap = 196px on a single line.
+    const fit_row = try tree.open(.{ .axis = .row, .width = .fit, .gap = 8, .wrap = true });
+    for (0..3) |_| _ = try tree.leaf(.{ .width = .{ .fixed = 60 }, .height = .{ .fixed = 24 } });
+    tree.close(fit_row);
+    // Capped .fit_at_most = 140 wrapping row: 2 items (128px) on line 1, 1 item (60px) on line 2 -> height 24 + 8 + 24 = 56.
+    const capped_row = try tree.open(.{ .axis = .row, .width = .{ .fit_at_most = 140 }, .gap = 8, .wrap = true });
+    for (0..3) |_| _ = try tree.leaf(.{ .width = .{ .fixed = 60 }, .height = .{ .fixed = 24 } });
+    tree.close(capped_row);
+    tree.close(root);
+    try tree.layout(measurer, 300, 200);
+
+    try expectRect(&tree, fit_row, 0, 0, 196, 24);
+    try expectRect(&tree, capped_row, 0, 24, 140, 56);
+}
+
+test "layout: .ellipsis text with .fit width and newline keeps full first line plus ellipsis" {
+    var fixture: Fixture = .{};
+    var tree = fixture.tree();
+    const root = try tree.open(.{ .width = .{ .fixed = 400 }, .height = .{ .fixed = 100 } });
+    const t_idx = try tree.text("Hello\nWorld", .{
+        .color = Theme.dark.foreground,
+        .width = .fit,
+        .wrap = .ellipsis,
+    });
+    tree.close(root);
+    try tree.layout(measurer, 400, 100);
+
+    // "Hello" (5 B) + "…" (3 B) = 8 * byte_width (56); first line is kept intact ("Hello", end = 5).
+    try expectRect(&tree, t_idx, 0, 0, 8 * byte_width, 20);
+    const line = tree.lines.slice(tree.nodes[t_idx].content.text.first_line, 1)[0];
+    try testing.expectEqual(@as(u32, 0), line.start);
+    try testing.expectEqual(@as(u32, 5), line.end);
+    try testing.expectEqual(@as(f32, 8 * byte_width), line.width);
+}
+
+test "tree: find(.none) returns null and ensureVisible clamps out-of-range or NaN offsets" {
+    var fixture: Fixture = .{};
+    var tree = fixture.tree();
+    const reg_id = Id.of("clamp.region");
+    const first_id = Id.of("clamp.first");
+    const region = try tree.open(.{ .id = reg_id, .width = .{ .fixed = 50 }, .height = .{ .fixed = 100 }, .overflow = .clip });
+    // Pass an out-of-range offset (500 when max.y will be 80); layout clamps children to offset 80.
+    try tree.scrollRegion(region, .{ .y = 500 });
+    _ = try tree.leaf(.{ .id = first_id, .width = .fill, .height = .{ .fixed = 60 } });
+    _ = try tree.leaf(.{ .width = .fill, .height = .{ .fixed = 60 } });
+    _ = try tree.leaf(.{ .width = .fill, .height = .{ .fixed = 60 } });
+    tree.close(region);
+    try tree.layout(measurer, 200, 200);
+
+    try testing.expectEqual(@as(?*const Node, null), tree.find(.none));
+    try testing.expectEqual(@as(?Tree.Scroll.Offset, null), tree.ensureVisible(reg_id, .none, 0));
+    // First item is at y = -80.. -20; bringing it into [0..100] must scroll back to 0 (not 500 - 80 = 420 -> 80).
+    const next = tree.ensureVisible(reg_id, first_id, 0).?;
+    try testing.expectEqual(@as(f32, 0), next.y);
+
+    // NaN offsets and wheel deltas are ignored safely.
+    const nan = std.math.nan(f32);
+    try testing.expectEqual(@as(f32, 0), Tree.Scroll.ensureVisibleAxis(nan, 100, 0, 100, 10, 20, 0));
+    try testing.expectEqual(@as(?Tree.Scroll.Region, null), tree.scrollTargetAt(10, 10, nan, nan));
+}

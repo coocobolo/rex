@@ -411,14 +411,21 @@ pub const Scroll = struct {
         item_size: f32,
         margin: f32,
     ) f32 {
+        const current = if (std.math.isNan(offset))
+            0
+        else if (limit) |m|
+            std.math.clamp(offset, 0, @max(0, m))
+        else
+            @max(0, offset);
         const pad = @max(0, @min(margin, @max(0, (view_size - item_size) / 2)));
-        var next = offset;
+        var next = current;
         if (item_pos < view_pos + pad) {
-            next = @max(0, offset - (view_pos + pad - item_pos));
+            next = @max(0, current - (view_pos + pad - item_pos));
         } else if (item_pos + item_size > view_pos + view_size - pad) {
             const delta = @min(item_pos + item_size - (view_pos + view_size - pad), @max(0, item_pos - view_pos));
-            next = offset + delta;
+            next = current + delta;
         }
+        if (std.math.isNan(next)) return 0;
         return if (limit) |m| std.math.clamp(next, 0, @max(0, m)) else @max(0, next);
     }
 
@@ -468,6 +475,7 @@ pub fn reset(self: *Tree) void {
 /// intrinsic extent along open overflow and shifts by `offset` logical pixels,
 /// clamped by `layout` to `[0, Region.max]`.
 pub fn scrollRegion(self: *Tree, index: Index, offset: Scroll.Offset) Error!void {
+    assert(index < self.len);
     assert(self.nodes[index].content == .box and self.nodes[index].box.overflow == .clip);
     assert(!self.hasScrollRegion(index));
     if (self.scroll_len == Scroll.max) return error.OutOfScrollRegions;
@@ -507,7 +515,9 @@ pub fn hasScrollRegion(self: *const Tree, index: Index) bool {
 /// Topmost unoccluded scroll region containing `(x, y)` that can scroll along
 /// the nonzero component(s) of `(dx, dy)`.
 pub fn scrollTargetAt(self: *const Tree, x: f32, y: f32, dx: f32, dy: f32) ?Scroll.Region {
-    if (dx == 0 and dy == 0) return null;
+    const has_x = !std.math.isNan(dx) and dx != 0;
+    const has_y = !std.math.isNan(dy) and dy != 0;
+    if (!has_x and !has_y) return null;
     const top_hit = self.hitIndex(x, y, 0);
     var i: usize = self.scroll_len;
     while (i > 0) {
@@ -519,7 +529,7 @@ pub fn scrollTargetAt(self: *const Tree, x: f32, y: f32, dx: f32, dy: f32) ?Scro
         if (top_hit) |hit_index| {
             if (hit_index >= region_node.end) continue;
         }
-        if ((dx != 0 and region.max.x > 0) or (dy != 0 and region.max.y > 0)) {
+        if ((has_x and region.max.x > 0) or (has_y and region.max.y > 0)) {
             return region;
         }
     }
@@ -538,15 +548,17 @@ pub fn ensureVisible(self: *const Tree, region_id: Id, target_id: Id, margin: f3
 }
 
 /// Places the root `index` against the node with id `target_id` using
-/// default dropdown options (see `Anchor`). Call it right after opening the root.
+/// default dropdown options (see `Anchor`).
 pub fn anchorTo(self: *Tree, index: Index, target_id: Id) Error!void {
     return self.anchorToWith(index, target_id, .{});
 }
 
 /// Places the root `index` against the node with id `target_id` and custom
-/// `options` (see `Anchor`). Call it right after opening the root.
+/// `options` (see `Anchor`).
 pub fn anchorToWith(self: *Tree, index: Index, target_id: Id, options: Anchor.Options) Error!void {
+    assert(index < self.len);
     assert(self.nodes[index].parent == none);
+    assert(self.anchorOf(index) == null);
     if (self.anchor_len == anchor_max) return error.OutOfAnchors;
     self.anchors[self.anchor_len] = .{
         .payload = .{ .node = target_id },
@@ -561,10 +573,11 @@ pub fn anchorToWith(self: *Tree, index: Index, target_id: Id, options: Anchor.Op
     self.anchor_len += 1;
 }
 
-/// Places the root `index` near `(x, y)` in logical pixels. Call it
-/// right after opening the root.
+/// Places the root `index` near `(x, y)` in logical pixels.
 pub fn anchorAt(self: *Tree, index: Index, x: f32, y: f32) Error!void {
+    assert(index < self.len);
     assert(self.nodes[index].parent == none);
+    assert(self.anchorOf(index) == null);
     if (self.anchor_len == anchor_max) return error.OutOfAnchors;
     self.anchors[self.anchor_len] = .{
         .payload = .{ .point = .{ .x = x, .y = y } },
@@ -582,8 +595,9 @@ pub fn anchorOf(self: *const Tree, index: Index) ?Anchor {
     return null;
 }
 
-/// The first node with id `id`, or null.
+/// The first node with id `id`, or null (`Id.none` never matches).
 pub fn find(self: *const Tree, id: Id) ?*const Node {
+    if (id == .none) return null;
     for (self.items()) |*node| {
         if (node.box.id == id) return node;
     }
