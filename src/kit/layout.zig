@@ -42,14 +42,14 @@ pub fn run(tree: *Tree, measurer: text.Measurer, viewport_width: f32, viewport_h
     while (root < nodes.len) {
         const range: Range = .{ .start = root, .end = nodes[root].end };
         const anchor = tree.anchorOf(root);
-        const target: ?Rect = if (anchor) |a| switch (a.target) {
+        const target: ?Rect = if (anchor) |a| switch (a.target()) {
             .node => |id| if (findBefore(nodes, root, id)) |node| node.rect else null,
             .point => null,
         } else null;
 
         fit(nodes, range, .horizontal, measurer);
-        // At least as wide as its anchor, as a dropdown list is.
-        if (target) |rect| switch (nodes[root].box.width) {
+        // Optionally match or exceed its anchor's width (e.g. dropdown menus).
+        if (target) |rect| if (anchor.?.match_anchor_width) switch (nodes[root].box.width) {
             .fit, .at_least => nodes[root].rect.w = @max(nodes[root].rect.w, rect.w),
             .fit_at_most => |value| nodes[root].rect.w = @min(@max(nodes[root].rect.w, rect.w), @max(0, value)),
             .fill, .fixed, .at_most, .fraction => {},
@@ -61,9 +61,9 @@ pub fn run(tree: *Tree, measurer: text.Measurer, viewport_width: f32, viewport_h
         place(nodes, range);
         // Before later roots anchor to nodes inside any scrolling region.
         scrollRange(tree, nodes, range);
-        if (anchor) |a| switch (a.target) {
+        if (anchor) |a| switch (a.target()) {
             .node => if (target) |rect| {
-                const at = anchorPosition(nodes[root].rect, rect, viewport_width, viewport_height);
+                const at = placeAnchored(nodes[root].rect, rect, viewport_width, viewport_height, a.options());
                 tree.translate(root, at.x, at.y);
             },
             .point => |pt| {
@@ -80,30 +80,123 @@ pub const anchor_gap = 4;
 /// The least room an anchored root keeps from the window's edges.
 pub const anchor_margin = 8;
 
-/// Where an anchored root of size `own` goes against `target`: below it,
-/// left edges aligned; above it when it does not fit below and there is
-/// more room above; then moved inside the window's margin.
 const point_gap: f32 = 12;
 
-fn anchorPosition(own: Rect, target: Rect, viewport_width: f32, viewport_height: f32) struct { x: f32, y: f32 } {
-    return .{
-        .x = clamp(target.x, anchor_margin, viewport_width - anchor_margin - own.w),
-        .y = placeAxis(target.y + target.h + anchor_gap, target.y - anchor_gap - own.h, own.h, viewport_height),
+/// Computes top-left viewport coordinates for a rectangle of size `own` placed
+/// against `target` according to `options` (`side`, `alignment`, `gap`, `margin`).
+pub fn placeAnchored(
+    own: Rect,
+    target: Rect,
+    viewport_width: f32,
+    viewport_height: f32,
+    options: Tree.Anchor.Options,
+) Tree.Anchor.Point {
+    const gap: f32 = @floatFromInt(options.gap);
+    const margin: f32 = @floatFromInt(options.margin);
+    return switch (options.side) {
+        .auto => placeAuto(own, target, viewport_width, viewport_height, options.alignment, gap, margin),
+        .below, .above => .{
+            .x = alignCross(target.x, target.w, own.w, margin, viewport_width, options.alignment),
+            .y = placeAxis(target.y - gap, target.y + target.h + gap, own.h, margin, viewport_height, options.side == .above),
+        },
+        .left, .right => .{
+            .x = placeAxis(target.x - gap, target.x + target.w + gap, own.w, margin, viewport_width, options.side == .left),
+            .y = alignCross(target.y, target.h, own.h, margin, viewport_height, options.alignment),
+        },
     };
 }
 
-fn anchorPointPosition(own: Rect, px: f32, py: f32, viewport_width: f32, viewport_height: f32) struct { x: f32, y: f32 } {
+fn placeAuto(
+    own: Rect,
+    target: Rect,
+    viewport_width: f32,
+    viewport_height: f32,
+    alignment: Tree.Anchor.Alignment,
+    gap: f32,
+    margin: f32,
+) Tree.Anchor.Point {
+    const Candidate = enum { below, above, left, right };
+    const room_left = target.x - gap - margin;
+    const room_right = viewport_width - margin - (target.x + target.w + gap);
+    const order: [4]Candidate = if (room_right >= room_left)
+        .{ .below, .above, .right, .left }
+    else
+        .{ .below, .above, .left, .right };
+
+    const max_x = @max(margin, viewport_width - margin - own.w);
+    const max_y = @max(margin, viewport_height - margin - own.h);
+    var best_x: f32 = margin;
+    var best_y: f32 = margin;
+    var best_overlap: f32 = std.math.inf(f32);
+
+    for (order) |side| {
+        const raw_x = switch (side) {
+            .below, .above => alignCross(target.x, target.w, own.w, margin, viewport_width, alignment),
+            .left => target.x - gap - own.w,
+            .right => target.x + target.w + gap,
+        };
+        const raw_y = switch (side) {
+            .below => target.y + target.h + gap,
+            .above => target.y - gap - own.h,
+            .left, .right => alignCross(target.y, target.h, own.h, margin, viewport_height, alignment),
+        };
+        const x = clamp(raw_x, margin, max_x);
+        const y = clamp(raw_y, margin, max_y);
+        const fits = switch (side) {
+            .below => y >= target.y + target.h + gap and y + own.h <= viewport_height - margin,
+            .above => y + own.h <= target.y - gap and y >= margin,
+            .left => x + own.w <= target.x - gap and x >= margin,
+            .right => x >= target.x + target.w + gap and x + own.w <= viewport_width - margin,
+        };
+        if (fits) return .{ .x = x, .y = y };
+        const overlap = rectOverlapArea(x, y, own.w, own.h, target);
+        if (overlap < best_overlap) {
+            best_overlap = overlap;
+            best_x = x;
+            best_y = y;
+        }
+    }
+    return .{ .x = best_x, .y = best_y };
+}
+
+fn alignCross(anchor_pos: f32, anchor_span: f32, own_span: f32, margin: f32, viewport: f32, alignment: Tree.Anchor.Alignment) f32 {
+    const max_pos = @max(margin, viewport - margin - own_span);
+    const pos = switch (alignment) {
+        .start => anchor_pos,
+        .center => anchor_pos + (anchor_span - own_span) * 0.5,
+        .end => anchor_pos + anchor_span - own_span,
+        .flush => blk: {
+            const centered = anchor_pos + (anchor_span - own_span) * 0.5;
+            if (centered < margin) break :blk anchor_pos;
+            if (centered + own_span > viewport - margin) break :blk anchor_pos + anchor_span - own_span;
+            break :blk centered;
+        },
+    };
+    return clamp(pos, margin, max_pos);
+}
+
+fn rectOverlapArea(ax: f32, ay: f32, aw: f32, ah: f32, b: Rect) f32 {
+    const ox = @max(0, @min(ax + aw, b.x + b.w) - @max(ax, b.x));
+    const oy = @max(0, @min(ay + ah, b.y + b.h) - @max(ay, b.y));
+    return ox * oy;
+}
+
+fn anchorPointPosition(own: Rect, px: f32, py: f32, viewport_width: f32, viewport_height: f32) Tree.Anchor.Point {
     return .{
-        .x = placeAxis(px + point_gap, px - point_gap - own.w, own.w, viewport_width),
-        .y = placeAxis(py + point_gap, py - point_gap - own.h, own.h, viewport_height),
+        .x = placeAxis(px - point_gap, px + point_gap, own.w, anchor_margin, viewport_width, false),
+        .y = placeAxis(py - point_gap, py + point_gap, own.h, anchor_margin, viewport_height, false),
     };
 }
 
-fn placeAxis(after: f32, before: f32, span: f32, viewport: f32) f32 {
-    const room_after = viewport - anchor_margin - after;
-    const room_before = before - anchor_margin;
-    const pos = if (span <= room_after or room_after >= room_before) after else before;
-    return clamp(pos, anchor_margin, viewport - anchor_margin - span);
+fn placeAxis(before_edge: f32, after_edge: f32, span: f32, margin: f32, viewport: f32, prefer_before: bool) f32 {
+    const room_before = before_edge - margin;
+    const room_after = viewport - margin - after_edge;
+    const use_before = if (prefer_before)
+        span <= room_before or room_before >= room_after
+    else
+        !(span <= room_after or room_after >= room_before);
+    const pos = if (use_before) before_edge - span else after_edge;
+    return clamp(pos, margin, viewport - margin - span);
 }
 
 /// `value` within `low` and `high`; `low` wins when they cross, so a root

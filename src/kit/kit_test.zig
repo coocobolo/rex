@@ -421,6 +421,7 @@ test "sizes of the kit's types" {
     try testing.expectEqual(16, @sizeOf(Tree.Rect));
     try testing.expectEqual(8, @sizeOf(Tree.Size));
     try testing.expectEqual(24, @sizeOf(Tree.Scroll.Region));
+    try testing.expectEqual(16, @sizeOf(Tree.Anchor));
     try testing.expectEqual(304, @sizeOf(Tree));
 }
 
@@ -968,4 +969,43 @@ test "focus: ringColor, controlColors, and openRing handle focus, disabled, inva
     try testing.expectEqual(Id.none, tree.nodes[b].box.id);
     try testing.expectEqual(@as(u8, 255), tree.nodes[b].box.radius);
     try testing.expectEqual(true, tree.nodes[b].box.shrink);
+}
+
+test "layout: placeAxis room_before and placeAnchored 4-side alignment and overlap fallback" {
+    // Reproduces the prior room_before sign bug: target at y=[160..196] in 270px viewport,
+    // own.h = 110. Room below is 62px; room above is 148px (fits completely).
+    var fixture: Fixture = .{};
+    var tree = fixture.tree();
+    const tgt_id = Id.of("anchor.tgt");
+    const page = try tree.open(.{ .width = .fill, .height = .fill, .padding = .{ .left = 40, .top = 160 } });
+    _ = try tree.leaf(.{ .id = tgt_id, .width = .{ .fixed = 200 }, .height = .{ .fixed = 36 } });
+    tree.close(page);
+    const pop = try tree.open(.{ .width = .{ .fixed = 80 }, .height = .{ .fixed = 110 } });
+    try tree.anchorToWith(pop, tgt_id, .{ .side = .below, .match_anchor_width = false });
+    tree.close(pop);
+    try tree.layout(measurer, 400, 270);
+    // Must flip above to [46..156], not clamp on top of the trigger below.
+    try testing.expectEqual(Tree.Rect{ .x = 40, .y = 46, .w = 80, .h = 110 }, tree.nodes[pop].rect);
+
+    // Cross-axis alignments along .below and .left.
+    const tgt: Tree.Rect = .{ .x = 100, .y = 100, .w = 80, .h = 40 };
+    const own: Tree.Rect = .{ .x = 0, .y = 0, .w = 40, .h = 20 };
+    try testing.expectEqual(
+        @as(f32, 120),
+        layout.placeAnchored(own, tgt, 400, 400, .{ .side = .below, .alignment = .center }).x,
+    );
+    try testing.expectEqual(
+        @as(f32, 140),
+        layout.placeAnchored(own, tgt, 400, 400, .{ .side = .below, .alignment = .end }).x,
+    );
+    const on_left = layout.placeAnchored(own, tgt, 400, 400, .{ .side = .left, .alignment = .center });
+    try testing.expectEqual(@as(f32, 56), on_left.x);
+    try testing.expectEqual(@as(f32, 110), on_left.y);
+
+    // Cramped viewport where all 4 sides overlap picks the minimum-overlap side (.right: 28x80 < 48x80/80x68).
+    const cramped_tgt: Tree.Rect = .{ .x = 40, .y = 40, .w = 80, .h = 80 };
+    const cramped_own: Tree.Rect = .{ .x = 0, .y = 0, .w = 80, .h = 80 };
+    const cramped = layout.placeAnchored(cramped_own, cramped_tgt, 180, 140, .{ .side = .auto, .gap = 6, .margin = 8 });
+    try testing.expectEqual(@as(f32, 92), cramped.x);
+    try testing.expectEqual(@as(f32, 40), cramped.y);
 }

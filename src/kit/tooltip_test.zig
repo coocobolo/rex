@@ -28,12 +28,16 @@ const Fixture = struct {
     card: Tree.Index = 0,
 
     fn build(self: *Fixture, x: u8, y: u8, width: f32, height: f32) !void {
+        try self.buildWith(x, y, 40, 36, width, height, .{ .anchor = bar_id });
+    }
+
+    fn buildWith(self: *Fixture, x: u8, y: u8, anchor_w: f32, anchor_h: f32, width: f32, height: f32, options: tooltip.Options) !void {
         const theme = &Theme.dark;
         self.tree = .init(&self.nodes, &self.lines);
         const page = try self.tree.open(.{ .id = page_id, .width = .fill, .height = .fill, .padding = .{ .left = x, .top = y } });
-        _ = try self.tree.leaf(.{ .id = bar_id, .width = .{ .fixed = 40 }, .height = .{ .fixed = 36 } });
+        _ = try self.tree.leaf(.{ .id = bar_id, .width = .{ .fixed = anchor_w }, .height = .{ .fixed = anchor_h } });
         self.tree.close(page);
-        self.card = try tooltip.open(&self.tree, theme, bar_id);
+        self.card = try tooltip.open(&self.tree, theme, options);
         try tooltip.line(&self.tree, theme, .{ .name = "Focus", .value = "2h", .swatch = theme.primary });
         tooltip.close(&self.tree, self.card);
         try self.tree.layout(measurer(), width, height);
@@ -73,7 +77,28 @@ test "tooltip: a view holds anchor_max tooltips" {
     var lines: [1]text.Line = undefined;
     var tree = Tree.init(&nodes, &lines);
     for (0..Tree.anchor_max) |_| {
-        tooltip.close(&tree, try tooltip.open(&tree, &Theme.dark, bar_id));
+        tooltip.close(&tree, try tooltip.open(&tree, &Theme.dark, .{ .anchor = bar_id }));
     }
-    try testing.expectError(error.OutOfAnchors, tooltip.open(&tree, &Theme.dark, bar_id));
+    try testing.expectError(error.OutOfAnchors, tooltip.open(&tree, &Theme.dark, .{ .anchor = bar_id }));
+}
+
+test "tooltip: hugs its content below a wide anchor and supports four-side placement" {
+    var fixture: Fixture = .{};
+    // Trigger is 240 wide, tooltip is 97 wide: must keep 97 instead of stretching to 240.
+    try fixture.buildWith(40, 100, 240, 36, 800, 600, .{ .anchor = bar_id });
+    try testing.expectEqual(Rect{ .x = 40, .y = 140, .w = 97, .h = 32 }, fixture.tree.nodes[fixture.card].rect);
+
+    // Explicit side = .right / .above / .left, plus .auto falling back to .right in a short viewport.
+    try fixture.buildWith(40, 100, 40, 36, 800, 600, .{ .anchor = bar_id, .side = .right, .alignment = .center });
+    try testing.expectEqual(Rect{ .x = 84, .y = 102, .w = 97, .h = 32 }, fixture.tree.nodes[fixture.card].rect);
+
+    try fixture.buildWith(40, 100, 40, 36, 800, 600, .{ .anchor = bar_id, .side = .above });
+    try testing.expectEqual(Rect{ .x = 40, .y = 64, .w = 97, .h = 32 }, fixture.tree.nodes[fixture.card].rect);
+
+    try fixture.buildWith(150, 100, 40, 36, 800, 600, .{ .anchor = bar_id, .side = .left });
+    try testing.expectEqual(Rect{ .x = 49, .y = 100, .w = 97, .h = 32 }, fixture.tree.nodes[fixture.card].rect);
+
+    // Short 80px viewport leaves neither above nor below open for a 40px-tall anchor -> auto picks right.
+    try fixture.buildWith(20, 20, 40, 40, 800, 80, .{ .anchor = bar_id, .side = .auto });
+    try testing.expect(fixture.tree.nodes[fixture.card].rect.x >= 20 + 40 + layout.anchor_gap);
 }

@@ -143,8 +143,8 @@ pub const ScreenAnchor = enum(u8) {
 pub const Overflow = enum(u1) {
     /// Draws them and lets them be hit anywhere.
     visible,
-    /// Cuts them at its rectangle, for painting and for hit-testing. The
-    /// cut is square: rounded corners do not round it.
+    /// Cuts them at its rectangle (following `Box.radius` when positive),
+    /// for painting and rectangular hit-testing.
     clip,
 };
 
@@ -316,15 +316,60 @@ pub const Error = error{ OutOfNodes, OutOfAnchors, OutOfScrollRegions };
 ///
 /// Use for popups/tooltips positioned against a trigger or cursor; use `ScreenAnchor` for screen corners.
 pub const Anchor = struct {
+    /// Preferred placement side relative to the target rectangle; `.auto` tries all four sides.
+    pub const Side = enum(u8) { auto, below, above, left, right };
+
+    /// Cross-axis alignment along the anchored edge; `.flush` centers and snaps inside viewport margins.
+    pub const Alignment = enum(u8) { start, center, end, flush };
+
+    /// Placement rules stored inline on an `Anchor`.
+    pub const Options = struct {
+        side: Side = .below,
+        alignment: Alignment = .start,
+        match_anchor_width: bool = true,
+        gap: u8 = 4,
+        margin: u8 = 8,
+    };
+
+    pub const Point = extern struct { x: f32, y: f32 };
+
     /// What a floating root anchors against: an earlier node's `Id` (`anchorTo`) or screen point (`anchorAt`).
     pub const Target = union(enum) {
         node: Id,
-        point: struct { x: f32, y: f32 },
+        point: Point,
     };
 
+    const Payload = extern union {
+        node: Id,
+        point: Point,
+    };
+
+    payload: Payload,
     /// Root node index being positioned.
     node: Index,
-    target: Target,
+    kind: enum(u8) { node, point },
+    side: Side = .below,
+    alignment: Alignment = .start,
+    match_anchor_width: bool = true,
+    gap: u8 = 4,
+    margin: u8 = 8,
+
+    pub fn target(self: Anchor) Target {
+        return switch (self.kind) {
+            .node => .{ .node = self.payload.node },
+            .point => .{ .point = self.payload.point },
+        };
+    }
+
+    pub fn options(self: Anchor) Options {
+        return .{
+            .side = self.side,
+            .alignment = self.alignment,
+            .match_anchor_width = self.match_anchor_width,
+            .gap = self.gap,
+            .margin = self.margin,
+        };
+    }
 };
 
 /// Maximum anchored roots (popups/tooltips) per frame.
@@ -492,12 +537,27 @@ pub fn ensureVisible(self: *const Tree, region_id: Id, target_id: Id, margin: f3
     return null;
 }
 
-/// Places the root `index` against the node with id `target` (see
-/// `Anchor`). Call it right after opening the root.
-pub fn anchorTo(self: *Tree, index: Index, target: Id) Error!void {
+/// Places the root `index` against the node with id `target_id` using
+/// default dropdown options (see `Anchor`). Call it right after opening the root.
+pub fn anchorTo(self: *Tree, index: Index, target_id: Id) Error!void {
+    return self.anchorToWith(index, target_id, .{});
+}
+
+/// Places the root `index` against the node with id `target_id` and custom
+/// `options` (see `Anchor`). Call it right after opening the root.
+pub fn anchorToWith(self: *Tree, index: Index, target_id: Id, options: Anchor.Options) Error!void {
     assert(self.nodes[index].parent == none);
     if (self.anchor_len == anchor_max) return error.OutOfAnchors;
-    self.anchors[self.anchor_len] = .{ .node = index, .target = .{ .node = target } };
+    self.anchors[self.anchor_len] = .{
+        .payload = .{ .node = target_id },
+        .node = index,
+        .kind = .node,
+        .side = options.side,
+        .alignment = options.alignment,
+        .match_anchor_width = options.match_anchor_width,
+        .gap = options.gap,
+        .margin = options.margin,
+    };
     self.anchor_len += 1;
 }
 
@@ -506,7 +566,11 @@ pub fn anchorTo(self: *Tree, index: Index, target: Id) Error!void {
 pub fn anchorAt(self: *Tree, index: Index, x: f32, y: f32) Error!void {
     assert(self.nodes[index].parent == none);
     if (self.anchor_len == anchor_max) return error.OutOfAnchors;
-    self.anchors[self.anchor_len] = .{ .node = index, .target = .{ .point = .{ .x = x, .y = y } } };
+    self.anchors[self.anchor_len] = .{
+        .payload = .{ .point = .{ .x = x, .y = y } },
+        .node = index,
+        .kind = .point,
+    };
     self.anchor_len += 1;
 }
 

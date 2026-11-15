@@ -2706,7 +2706,7 @@ pub fn view(state: *const State, tree: *Tree, theme: *const Theme) kit.Tree.Erro
         const seg = state.hover.key_segment;
         const info = row_infos[seg.key];
         if (seg.idx < info.display_labels.len) {
-            const card = try tooltip.open(tree, theme, segmentId(seg.key, seg.idx));
+            const card = try tooltip.open(tree, theme, .{ .anchor = segmentId(seg.key, seg.idx) });
             _ = try tree.text(info.display_labels[seg.idx], .{
                 .color = theme.foreground,
                 .style = .xs,

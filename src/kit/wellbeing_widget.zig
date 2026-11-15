@@ -13,6 +13,7 @@ const Color = Theme.Color;
 const badge = @import("badge.zig");
 const button = @import("button.zig");
 const icons = @import("icons.zig");
+const layout = @import("layout.zig");
 const text = @import("text.zig");
 const tooltip = @import("tooltip.zig");
 const Tree = @import("Tree.zig");
@@ -163,8 +164,8 @@ pub const State = struct {
         const clamped_h = std.math.clamp(self.height, min_height, max_height);
         const w = @max(@min(min_width, fit_w), @min(clamped_w, fit_w));
         const h = @max(@min(min_height, fit_h), @min(clamped_h, fit_h));
-        const layout = classify(w, h);
-        return .{ .w = w, .h = h, .grid = layout.grid, .mode = layout.mode };
+        const classified = classify(w, h);
+        return .{ .w = w, .h = h, .grid = classified.grid, .mode = classified.mode };
     }
 };
 
@@ -778,15 +779,6 @@ pub fn viewTooltip(
     return card;
 }
 
-const TooltipSide = enum { below, above, left, right };
-
-const TooltipPlacement = struct {
-    x: f32,
-    y: f32,
-    fits: bool,
-    overlap: f32,
-};
-
 /// Positions `tip_root` cleanly on the best non-overlapping side of `widget_root`
 /// (`below`, `above`, `left`, or `right`), aligned against the card and viewport
 /// margins, falling back to minimum card overlap in cramped viewports.
@@ -795,84 +787,14 @@ pub fn placeTooltip(tree: *Tree, widget_root: ?Index, tip_root: ?Index, viewport
     const t_idx = tip_root orelse return;
     const card = tree.nodes[w_idx].rect;
     const tip = tree.nodes[t_idx].rect;
-    const gap: f32 = 6;
-    const margin: f32 = 8;
-
-    const room_left = card.x - gap - margin;
-    const room_right = viewport_w - margin - (card.x + card.w + gap);
-    const order = if (room_right >= room_left)
-        [4]TooltipSide{ .below, .above, .right, .left }
-    else
-        [4]TooltipSide{ .below, .above, .left, .right };
-
-    var best: ?TooltipPlacement = null;
-    for (order) |side| {
-        const cand = tooltipCandidate(side, card, tip, gap, margin, viewport_w, viewport_h);
-        if (cand.fits) {
-            best = cand;
-            break;
-        }
-        if (best == null or cand.overlap < best.?.overlap) {
-            best = cand;
-        }
-    }
-    const chosen = best.?;
-    tree.translate(t_idx, chosen.x - tip.x, chosen.y - tip.y);
-}
-
-fn tooltipCandidate(
-    side: TooltipSide,
-    card: Tree.Rect,
-    tip: Tree.Rect,
-    gap: f32,
-    margin: f32,
-    viewport_w: f32,
-    viewport_h: f32,
-) TooltipPlacement {
-    const max_x = @max(margin, viewport_w - margin - tip.w);
-    const max_y = @max(margin, viewport_h - margin - tip.h);
-    const raw_x = switch (side) {
-        .below, .above => alignTooltipCross(card.x, card.w, tip.w, margin, viewport_w),
-        .left => card.x - gap - tip.w,
-        .right => card.x + card.w + gap,
-    };
-    const raw_y = switch (side) {
-        .below => card.y + card.h + gap,
-        .above => card.y - gap - tip.h,
-        .left, .right => alignTooltipCross(card.y, card.h, tip.h, margin, viewport_h),
-    };
-    const x = std.math.clamp(raw_x, margin, max_x);
-    const y = std.math.clamp(raw_y, margin, max_y);
-    const fits = switch (side) {
-        .below => y >= card.y + card.h + gap,
-        .above => y + tip.h <= card.y - gap,
-        .left => x + tip.w <= card.x - gap,
-        .right => x >= card.x + card.w + gap,
-    };
-    return .{
-        .x = x,
-        .y = y,
-        .fits = fits,
-        .overlap = rectOverlapArea(x, y, tip.w, tip.h, card),
-    };
-}
-
-fn alignTooltipCross(card_pos: f32, card_span: f32, tip_span: f32, margin: f32, viewport: f32) f32 {
-    const max_pos = @max(margin, viewport - margin - tip_span);
-    const centered = card_pos + (card_span - tip_span) * 0.5;
-    const pos = if (centered < margin)
-        card_pos
-    else if (centered + tip_span > viewport - margin)
-        card_pos + card_span - tip_span
-    else
-        centered;
-    return std.math.clamp(pos, margin, max_pos);
-}
-
-fn rectOverlapArea(ax: f32, ay: f32, aw: f32, ah: f32, b: Tree.Rect) f32 {
-    const ox = @max(0, @min(ax + aw, b.x + b.w) - @max(ax, b.x));
-    const oy = @max(0, @min(ay + ah, b.y + b.h) - @max(ay, b.y));
-    return ox * oy;
+    const at = layout.placeAnchored(tip, card, viewport_w, viewport_h, .{
+        .side = .auto,
+        .alignment = .flush,
+        .match_anchor_width = false,
+        .gap = 6,
+        .margin = 8,
+    });
+    tree.translate(t_idx, at.x - tip.x, at.y - tip.y);
 }
 
 /// Translates the widget to its clamped `(x, y)` viewport coordinates after layout.

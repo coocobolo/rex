@@ -12,9 +12,18 @@ const assert = std.debug.assert;
 
 const Theme = @import("Theme.zig");
 const Color = Theme.Color;
+const layout = @import("layout.zig");
 const Tree = @import("Tree.zig");
 const Id = Tree.Id;
 const Index = Tree.Index;
+
+pub const Options = struct {
+    anchor: Id,
+    side: Tree.Anchor.Side = .auto,
+    alignment: Tree.Anchor.Alignment = .start,
+    gap: u8 = layout.anchor_gap,
+    margin: u8 = layout.anchor_margin,
+};
 
 /// Horizontal padding inside the card.
 pub const pad_x = 12;
@@ -37,11 +46,17 @@ pub fn nodes(count: usize) usize {
     return 1 + count * 4;
 }
 
-/// Opens the card as a root, anchored to `anchor`. Write the lines, then
-/// `close`.
-pub fn open(tree: *Tree, theme: *const Theme, anchor: Id) Tree.Error!Index {
+/// Opens the card as a root, anchored to `options.anchor` without stretching to
+/// its width. Write the lines, then `close`.
+pub fn open(tree: *Tree, theme: *const Theme, options: Options) Tree.Error!Index {
     const card = try openCard(tree, theme);
-    try tree.anchorTo(card, anchor);
+    try tree.anchorToWith(card, options.anchor, .{
+        .side = options.side,
+        .alignment = options.alignment,
+        .match_anchor_width = false,
+        .gap = options.gap,
+        .margin = options.margin,
+    });
     return card;
 }
 
