@@ -38,6 +38,7 @@ pub fn view(tree: *Tree, theme: *const Theme, options: Options) Tree.Error!void 
         .border = ring_color,
         .border_width = Theme.ring_width,
         .radius = 255,
+        .shrink = false,
     });
 
     const track_fill = (if (options.checked) theme.primary else theme.input).fade(presence);

@@ -34,6 +34,7 @@ pub fn view(tree: *Tree, theme: *const Theme, options: Options) Tree.Error!void 
         .border = ring_color,
         .border_width = Theme.ring_width,
         .radius = Theme.radius_md + Theme.ring_width,
+        .shrink = false,
     });
 
     const fill = if (options.pressed)
@@ -58,6 +59,7 @@ pub fn view(tree: *Tree, theme: *const Theme, options: Options) Tree.Error!void 
         .border = border,
         .border_width = Theme.border_width,
         .radius = Theme.radius_md,
+        .shrink = false,
     });
 
     if (options.pressed) {

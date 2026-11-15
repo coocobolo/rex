@@ -351,6 +351,47 @@ test "layout: an at-most child in a row gives way like a fit child" {
     try expectRect(&tree, field, 110, 0, 190, 20);
 }
 
+test "layout: shrink = false keeps a box at its intrinsic size on overflow" {
+    var fixture: Fixture = .{};
+    var tree = fixture.tree();
+
+    // Badge-sized non-shrinking pill is wider (80) than the sibling text (49),
+    // yet overflow (129 + 8 - 100 = 37) must come from the shrinkable text.
+    const row = try tree.open(.{ .axis = .row, .width = .{ .fixed = 100 }, .gap = 8 });
+    const pill = try tree.open(.{ .axis = .row, .padding = .symmetric(8, 2), .shrink = false });
+    const pill_text = try tree.text("FocusOk", .{ .color = Theme.dark.foreground }); // 49 + 16 = 65
+    tree.close(pill);
+    const label = try tree.text("Status", .{ .color = Theme.dark.foreground }); // 42
+    tree.close(row);
+
+    try tree.layout(measurer, 400, 400);
+
+    try expectRect(&tree, pill, 0, 0, 65, 24);
+    try expectRect(&tree, pill_text, 8, 2, 49, 20);
+    // 100 - 65 - 8 = 27 left for "Status" (42 -> 27).
+    try expectRect(&tree, label, 73, 0, 27, 20);
+}
+
+test "layout: when all overflowing children have shrink = false none compress" {
+    var fixture: Fixture = .{};
+    var tree = fixture.tree();
+
+    const row = try tree.open(.{ .axis = .row, .width = .{ .fixed = 80 }, .height = .{ .fixed = 16 }, .gap = 8 });
+    const a = try tree.open(.{ .padding = .symmetric(6, 2), .shrink = false });
+    _ = try tree.text("First", .{ .color = Theme.dark.foreground }); // 35 + 12 = 47, h = 24
+    tree.close(a);
+    const b = try tree.open(.{ .padding = .symmetric(6, 2), .shrink = false });
+    _ = try tree.text("Second", .{ .color = Theme.dark.foreground }); // 42 + 12 = 54, h = 24
+    tree.close(b);
+    tree.close(row);
+
+    try tree.layout(measurer, 400, 400);
+
+    // Neither main-axis (47 + 8 + 54 > 80) nor cross-axis (24 > 16) compresses.
+    try expectRect(&tree, a, 0, 0, 47, 24);
+    try expectRect(&tree, b, 55, 0, 54, 24);
+}
+
 test "snap: shared edges stay shared and hairlines stay visible at fractional scales" {
     const left: Tree.Rect = .{ .x = 0, .y = 0, .w = 10.5, .h = 13 };
     const right: Tree.Rect = .{ .x = 10.5, .y = 0, .w = 10.5, .h = 13 };
@@ -506,4 +547,129 @@ test "motion: progress eases out for full motion and snaps for none" {
     try testing.expectEqual(1, motion.progress(.full, 60_000));
     try testing.expectEqual(1, motion.progress(.none, 0));
     try testing.expectEqual(0, motion.duration(.none));
+}
+
+test "layout: fit_at_most hugs smaller content, caps at max, and gives way to a tighter parent" {
+    var fixture: Fixture = .{};
+    var tree = fixture.tree();
+
+    // Small content (40x24 + padding 16 = 56x40) hugs below the 200x120 cap.
+    const small = try tree.open(.{ .width = .{ .fit_at_most = 200 }, .height = .{ .fit_at_most = 120 }, .padding = .all(8) });
+    _ = try tree.leaf(.{ .width = .{ .fixed = 40 }, .height = .{ .fixed = 24 } });
+    tree.close(small);
+    try tree.layout(measurer, 800, 600);
+    try expectRect(&tree, small, 0, 0, 56, 40);
+
+    // Tall/wide scroll content (300x300) caps at 200x120 and reports scroll_max = 180.
+    tree = fixture.tree();
+    const scroll_box = try tree.open(.{
+        .width = .{ .fit_at_most = 200 },
+        .height = .{ .fit_at_most = 120 },
+        .overflow = .clip,
+    });
+    _ = try tree.leaf(.{ .width = .{ .fixed = 300 }, .height = .{ .fixed = 300 } });
+    tree.close(scroll_box);
+    tree.scrollRegion(scroll_box, 30);
+    try tree.layout(measurer, 800, 600);
+    try expectRect(&tree, scroll_box, 0, 0, 200, 120);
+    try testing.expectEqual(@as(f32, 180), tree.scroll_max);
+
+    // Parent narrower than the hugged/capped size shrinks it unless shrink = false.
+    tree = fixture.tree();
+    const row = try tree.open(.{ .axis = .row, .width = .{ .fixed = 100 }, .gap = 10 });
+    const left = try tree.leaf(.{ .width = .{ .fixed = 60 }, .height = .{ .fixed = 20 } });
+    const right = try tree.open(.{ .width = .{ .fit_at_most = 200 }, .height = .{ .fixed = 20 } });
+    _ = try tree.leaf(.{ .width = .{ .fixed = 80 }, .height = .{ .fixed = 20 } });
+    tree.close(right);
+    tree.close(row);
+    try tree.layout(measurer, 800, 600);
+    try expectRect(&tree, left, 0, 0, 60, 20);
+    try expectRect(&tree, right, 70, 0, 30, 20);
+}
+
+test "layout: fit_at_most text hugs short strings and wraps once past max" {
+    var fixture: Fixture = .{};
+    var tree = fixture.tree();
+    const col = try tree.open(.{});
+    // 4 bytes * 7 = 28 px < 100 cap -> single line of width 28.
+    const short = try tree.text("okay", .{ .color = Theme.dark.foreground, .width = .{ .fit_at_most = 100 } });
+    // Two 10-byte words = 147 px > 100 cap -> capped at 100 and wrapped to 2 lines (40 px high).
+    const long = try tree.text("a" ** 10 ++ " " ++ "b" ** 10, .{ .color = Theme.dark.foreground, .width = .{ .fit_at_most = 100 } });
+    tree.close(col);
+    try tree.layout(measurer, 800, 600);
+    try expectRect(&tree, short, 0, 0, 28, 20);
+    try expectRect(&tree, long, 0, 20, 100, 40);
+}
+
+test "text: wrapNone keeps spaces on one line and splits only on newlines" {
+    var buffer: [8]text.Line = undefined;
+    var lines = text.Lines.init(&buffer);
+    try testing.expectEqual(2, try text.wrapNone(measurer, "one two three\nfour five", .sm, .proportional, &lines));
+    const got = lines.slice(0, 2);
+    try testing.expectEqualStrings("one two three", "one two three\nfour five"[got[0].start..got[0].end]);
+    try testing.expectEqual(@as(f32, 13 * 7), got[0].width);
+    try testing.expectEqualStrings("four five", "one two three\nfour five"[got[1].start..got[1].end]);
+    try testing.expectEqual(@as(f32, 9 * 7), got[1].width);
+}
+
+test "text: wrapEllipsis truncates at UTF-8 codepoint boundaries and avoids overdraw when narrower than ellipsis" {
+    // Fake measurer counting 10 px per decoded UTF-8 codepoint.
+    const CodepointMeasurer = struct {
+        var unused: u8 = 0;
+        fn width(_: *anyopaque, bytes: []const u8, _: text.Style, _: text.Figures) f32 {
+            var iter = text.Codepoints.init(bytes);
+            var count: usize = 0;
+            while (iter.next()) |_| count += 1;
+            return @floatFromInt(count * 10);
+        }
+    };
+    const cp_measurer: text.Measurer = .{ .context = &CodepointMeasurer.unused, .widthFn = CodepointMeasurer.width };
+
+    var buffer: [8]text.Line = undefined;
+    var lines = text.Lines.init(&buffer);
+
+    // Fits without truncation -> end == len.
+    try testing.expectEqual(1, try text.wrapEllipsis(cp_measurer, "abc", .sm, .proportional, 30, &lines));
+    try testing.expectEqual(@as(u32, 3), lines.slice(0, 1)[0].end);
+
+    // Multi-byte UTF-8: "a\u{1F600}bc" is 4 glyphs (40 px). At max_width = 30,
+    // budget after "…" (10 px) is 20 px -> keeps "a\u{1F600}" (5 bytes) without splitting U+1F600.
+    lines.len = 0;
+    const utf8_sample = "a\u{1F600}bc";
+    try testing.expectEqual(1, try text.wrapEllipsis(cp_measurer, utf8_sample, .sm, .proportional, 30, &lines));
+    const trunc = lines.slice(0, 1)[0];
+    try testing.expectEqualStrings("a\u{1F600}", utf8_sample[trunc.start..trunc.end]);
+    try testing.expectEqual(@as(f32, 30), trunc.width);
+
+    // Explicit newline forces truncation even when first line fits easily.
+    lines.len = 0;
+    try testing.expectEqual(1, try text.wrapEllipsis(cp_measurer, "ok\nnext", .sm, .proportional, 100, &lines));
+    const nl_trunc = lines.slice(0, 1)[0];
+    try testing.expectEqualStrings("ok", "ok\nnext"[nl_trunc.start..nl_trunc.end]);
+    try testing.expectEqual(@as(f32, 30), nl_trunc.width);
+
+    // Narrower than "…" (10 px): emits empty 0-width line so no overdraw occurs.
+    lines.len = 0;
+    try testing.expectEqual(1, try text.wrapEllipsis(cp_measurer, "hello", .sm, .proportional, 5, &lines));
+    const tiny = lines.slice(0, 1)[0];
+    try testing.expectEqual(@as(u32, 0), tiny.end);
+    try testing.expectEqual(@as(f32, 0), tiny.width);
+}
+
+test "layout: text wrap = .none and .ellipsis stay single-line in constrained boxes" {
+    var fixture: Fixture = .{};
+    var tree = fixture.tree();
+
+    const col = try tree.open(.{ .width = .{ .fixed = 70 } });
+    const t_none = try tree.text("alpha beta gamma", .{ .color = Theme.dark.foreground, .wrap = .none, .width = .fill });
+    const t_ell = try tree.text("alpha beta gamma", .{ .color = Theme.dark.foreground, .wrap = .ellipsis, .width = .fill });
+    tree.close(col);
+
+    try tree.layout(measurer, 400, 200);
+    try expectRect(&tree, t_none, 0, 0, 70, 20);
+    try expectRect(&tree, t_ell, 0, 20, 70, 20);
+    try testing.expectEqual(@as(u32, 1), tree.nodes[t_none].content.text.line_count);
+    try testing.expectEqual(@as(u32, 1), tree.nodes[t_ell].content.text.line_count);
+    const ell_line = tree.lines.slice(tree.nodes[t_ell].content.text.first_line, 1)[0];
+    try testing.expect(ell_line.width <= 70);
 }

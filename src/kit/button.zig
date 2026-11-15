@@ -179,6 +179,7 @@ pub fn view(tree: *Tree, theme: *const Theme, options: Options) Tree.Error!void 
         .border = ringBorder(theme, options).fade(presence),
         .border_width = Theme.ring_width,
         .radius = Theme.radius_md + Theme.ring_width,
+        .shrink = false,
     });
     const face = try tree.open(.{
         .axis = .row,
@@ -192,6 +193,7 @@ pub fn view(tree: *Tree, theme: *const Theme, options: Options) Tree.Error!void 
         .border = colors.border.fade(presence),
         .border_width = Theme.border_width,
         .radius = Theme.radius_md,
+        .shrink = false,
     });
     if (options.icon != icons.none) _ = try tree.icon(.{
         .codepoint = options.icon,
@@ -201,6 +203,7 @@ pub fn view(tree: *Tree, theme: *const Theme, options: Options) Tree.Error!void 
     if (!square) _ = try tree.text(options.label, .{
         .color = colors.label.fade(presence),
         .style = .sm_medium,
+        .wrap = if (options.fill_width) .word else .none,
     });
     if (options.key_cap.len > 0) try kbd.view(tree, theme, options.key_cap, presence);
     tree.close(face);

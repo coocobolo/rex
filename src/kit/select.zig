@@ -63,6 +63,7 @@ pub fn trigger(tree: *Tree, theme: *const Theme, options: TriggerOptions) Tree.E
     _ = try tree.text(options.value, .{
         .color = theme.foreground.fade(presence),
         .width = .fill,
+        .wrap = .ellipsis,
     });
     _ = try tree.icon(.{
         .codepoint = icons.chevron_down,

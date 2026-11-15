@@ -46,6 +46,7 @@ pub fn view(tree: *Tree, theme: *const Theme, options: Options) Tree.Error!void 
         .border = ring_color,
         .border_width = Theme.ring_width,
         .radius = Theme.radius_sm + Theme.ring_width,
+        .shrink = false,
     });
 
     const box = try tree.open(.{

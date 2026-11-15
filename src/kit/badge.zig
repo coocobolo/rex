@@ -146,6 +146,7 @@ pub fn view(tree: *Tree, theme: *const Theme, options: Options) Tree.Error!void 
         .border = colors.border.fade(options.presence),
         .border_width = Theme.border_width,
         .radius = Theme.radius_sm,
+        .shrink = false,
     });
     if (options.icon != icons.none) {
         _ = try tree.icon(.{
@@ -157,6 +158,7 @@ pub fn view(tree: *Tree, theme: *const Theme, options: Options) Tree.Error!void 
     _ = try tree.text(options.label, .{
         .color = colors.foreground.fade(options.presence),
         .style = options.size.textStyle(),
+        .wrap = .none,
     });
     tree.close(pill);
 }

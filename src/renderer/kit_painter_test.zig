@@ -793,3 +793,53 @@ test "KitPainter: border_sweep draws clockwise rounded border progress" {
     try testing.expect(top_right_pixels > 40);
     try testing.expectEqual(@as(usize, 0), bottom_left_pixels);
 }
+
+test "KitPainter: text alignment shifts lines and wrap = .none / .ellipsis clip without overdraw" {
+    try testGlContext();
+    var atlas = try Atlas.init(testing.allocator, .{ .width = 512, .height = 512 });
+    defer atlas.deinit();
+    var font = try KitFont.init(inter, .{});
+    defer font.deinit();
+    var painter = try KitPainter.init();
+    defer painter.deinit();
+
+    var nodes: [8]Tree.Node = undefined;
+    var lines: [8]text.Line = undefined;
+    var tree: Tree = .init(&nodes, &lines);
+    const col = try tree.open(.{ .width = .{ .fixed = 120 }, .gap = 4 });
+    _ = try tree.text("Hi", .{ .color = Theme.dark.foreground, .width = .fill, .alignment = .center });
+    _ = try tree.text("Hi", .{ .color = Theme.dark.foreground, .width = .fill, .alignment = .end });
+    _ = try tree.text("This long label needs ellipsis truncation", .{ .color = Theme.dark.foreground, .width = .fill, .wrap = .ellipsis });
+    _ = try tree.text("This long label is nowrap clipped", .{ .color = Theme.dark.foreground, .width = .fill, .wrap = .none });
+    tree.close(col);
+    try tree.layout(font.measurer(), 200, 200);
+
+    painter.begin();
+    try painter.paint(&tree, &font, &atlas);
+
+    // Inspect the glyphs emitted for each of the four text nodes:
+    // center "Hi" sits in the middle of [0, 120]; end "Hi" sits at the right edge;
+    // ellipsis line ends before x = 120; nowrap line carries a [0, 0, 120, ...] clip rect.
+    const centered_line = tree.lines.slice(tree.nodes[1].content.text.first_line, 1)[0];
+    const center_x_min = (120 - centered_line.width) / 2 - 2;
+    const end_x_min = (120 - centered_line.width) - 2;
+
+    try testing.expect(painter.len > 6);
+    // First two glyphs belong to centered "Hi".
+    try testing.expect(painter.instances[0].rect[0] >= center_x_min);
+    // Next two glyphs belong to right-aligned "Hi".
+    try testing.expect(painter.instances[2].rect[0] >= end_x_min);
+    // Notice the ellipsis line was truncated (< bytes.len) and all of its glyphs fit inside 120 px.
+    const ell_t = tree.nodes[3].content.text;
+    const ell_line = tree.lines.slice(ell_t.first_line, 1)[0];
+    try testing.expect(ell_line.end < ell_t.bytes.len);
+    for (painter.instances[0..painter.len]) |inst| {
+        if (inst.rect[1] >= 44 and inst.rect[1] < 64) {
+            try testing.expect(inst.rect[0] + inst.rect[2] <= 121);
+        }
+        // Row 4 (.wrap = .none at y = 72) is clipped cleanly at node right edge 120.
+        if (inst.rect[1] >= 68) {
+            try testing.expectEqual(@as(i16, 120), inst.clip[2]);
+        }
+    }
+}

@@ -246,7 +246,18 @@ pub fn paint(self: *KitPainter, tree: *const Tree, font: *KitFont, atlas: *Atlas
                 const line_height: f32 = @floatFromInt(t.style.metrics().line_height);
                 for (tree.lines.slice(t.first_line, t.line_count), 0..) |line, index| {
                     const top = (node.rect.y + line_height * @as(f32, @floatFromInt(index))) * scale;
-                    try self.paintLine(t.bytes[line.start..line.end], t.style, t.figures, t.color, node.rect.x * scale, @round(top + font.baseline(t.style)), clip, font, atlas);
+                    const slack = @max(0, node.rect.w - line.width);
+                    const offset_x = switch (t.alignment) {
+                        .start => 0,
+                        .center => slack / 2,
+                        .end => slack,
+                    };
+                    const line_clip = if (t.wrap != .word and line.width > node.rect.w)
+                        intersect(clip, clipOf(layout.snap(node.rect, scale)))
+                    else
+                        clip;
+                    const append_ellipsis = t.wrap == .ellipsis and line.end < t.bytes.len and line.width > 0;
+                    try self.paintLine(t.bytes[line.start..line.end], append_ellipsis, t.style, t.figures, t.color, (node.rect.x + offset_x) * scale, @round(top + font.baseline(t.style)), line_clip, font, atlas);
                 }
             },
         }
@@ -289,30 +300,32 @@ fn pixels(rect: layout.PixelRect) [4]f32 {
     return .{ @floatFromInt(rect.x), @floatFromInt(rect.y), @floatFromInt(rect.w), @floatFromInt(rect.h) };
 }
 
-fn paintLine(self: *KitPainter, bytes: []const u8, style: text.Style, figures: text.Figures, color: Color, left: f32, baseline: f32, clip: Clip, font: *KitFont, atlas: *Atlas) Error!void {
-    // Same split as `KitFont.width`: proportional text with no tracking
-    // never enters the digit-cell path.
-    if (figures == .proportional and style.metrics().tracking == 0) {
-        var pen = left;
-        var previous: ?u21 = null;
-        var codepoints: text.Codepoints = .init(bytes);
-        while (codepoints.next()) |codepoint| {
-            if (previous) |before| pen += font.kern(style, before, codepoint);
-            previous = codepoint;
-            defer pen += font.advance(style, codepoint);
-            try self.paintGlyph(style, codepoint, color, pen, baseline, clip, font, atlas);
-        }
-        return;
-    }
+fn paintLine(self: *KitPainter, bytes: []const u8, append_ellipsis: bool, style: text.Style, figures: text.Figures, color: Color, left: f32, baseline: f32, clip: Clip, font: *KitFont, atlas: *Atlas) Error!void {
+    const simple = figures == .proportional and style.metrics().tracking == 0;
     var pen = left;
     var previous: ?u21 = null;
     var codepoints: text.Codepoints = .init(bytes);
     while (codepoints.next()) |codepoint| {
-        const moved = font.step(style, figures, previous, codepoint);
-        previous = codepoint;
-        pen += moved.before;
-        defer pen += moved.after;
-        try self.paintGlyph(style, codepoint, color, pen, baseline, clip, font, atlas);
+        if (simple) {
+            if (previous) |before| pen += font.kern(style, before, codepoint);
+            previous = codepoint;
+            defer pen += font.advance(style, codepoint);
+            try self.paintGlyph(style, codepoint, color, pen, baseline, clip, font, atlas);
+        } else {
+            const moved = font.step(style, figures, previous, codepoint);
+            previous = codepoint;
+            pen += moved.before;
+            defer pen += moved.after;
+            try self.paintGlyph(style, codepoint, color, pen, baseline, clip, font, atlas);
+        }
+    }
+    if (append_ellipsis) {
+        if (simple) {
+            if (previous) |before| pen += font.kern(style, before, text.ellipsis_codepoint);
+        } else {
+            pen += font.step(style, figures, previous, text.ellipsis_codepoint).before;
+        }
+        try self.paintGlyph(style, text.ellipsis_codepoint, color, pen, baseline, clip, font, atlas);
     }
 }
 

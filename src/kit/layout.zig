@@ -4,7 +4,8 @@
 //! The rules are few. A box places its children in a row or a column with
 //! padding around them and a gap between them. A size is `fixed`, `fit`
 //! (as large as the content), `fill` (a share of what the parent has
-//! left), `at_most` (fixed, but giving way to a smaller parent), `at_least`
+//! left), `at_most` (fixed, but giving way to a smaller parent),
+//! `fit_at_most` (as large as the content, with a maximum), `at_least`
 //! (as large as the content, with a minimum) or `fraction` (that much of
 //! the parent's inner size). Text wraps to the width it ends up with. Roots are laid out
 //! against the viewport, from its top left, and stack in drawing order.
@@ -50,6 +51,7 @@ pub fn run(tree: *Tree, measurer: text.Measurer, viewport_width: f32, viewport_h
         // At least as wide as its anchor, as a dropdown list is.
         if (target) |rect| switch (nodes[root].box.width) {
             .fit, .at_least => nodes[root].rect.w = @max(nodes[root].rect.w, rect.w),
+            .fit_at_most => |value| nodes[root].rect.w = @min(@max(nodes[root].rect.w, rect.w), @max(0, value)),
             .fill, .fixed, .at_most, .fraction => {},
         };
         distribute(nodes, range, .horizontal, viewport_width, tree.scroll_index);
@@ -195,7 +197,14 @@ fn fit(nodes: []Node, range: Range, comptime dimension: Dimension, measurer: tex
         const node = &nodes[i];
         const content: f32 = switch (node.content) {
             .text => |t| switch (dimension) {
-                .horizontal => measurer.width(t.bytes, t.style, t.figures),
+                .horizontal => switch (t.wrap) {
+                    .word => measurer.width(t.bytes, t.style, t.figures),
+                    .none => text.maxLineWidth(measurer, t.bytes, t.style, t.figures),
+                    .ellipsis => blk: {
+                        const nl = std.mem.indexOfScalar(u8, t.bytes, '\n');
+                        break :blk measurer.width(t.bytes[0 .. nl orelse t.bytes.len], t.style, t.figures);
+                    },
+                },
                 .vertical => node.rect.h,
             },
             .icon => |icon| @floatFromInt(icon.size),
@@ -204,6 +213,7 @@ fn fit(nodes: []Node, range: Range, comptime dimension: Dimension, measurer: tex
         };
         extent(node, dimension).* = switch (size(node, dimension)) {
             .fixed, .at_most => |value| value,
+            .fit_at_most => |value| @min(content, @max(0, value)),
             .at_least => |value| @max(content, value),
             .fraction => 0,
             .fit, .fill => content,
@@ -220,7 +230,7 @@ fn distribute(nodes: []Node, range: Range, comptime dimension: Dimension, viewpo
         .fixed => |value| value,
         .fill => viewport,
         .fraction => |value| viewport * clamp01(value),
-        .fit, .at_most, .at_least => @min(own.*, viewport),
+        .fit, .at_most, .fit_at_most, .at_least => @min(own.*, viewport),
     };
     for (nodes[range.start..range.end], range.start..) |*node, i| {
         if (node.content != .box) continue;
@@ -239,7 +249,7 @@ fn distribute(nodes: []Node, range: Range, comptime dimension: Dimension, viewpo
                     .fixed => |value| value,
                     .fill => inner,
                     .fraction => |value| inner * clamp01(value),
-                    .fit, .at_most, .at_least => @min(child_extent.*, inner),
+                    .fit, .at_most, .fit_at_most, .at_least => if (child.box.shrink) @min(child_extent.*, inner) else child_extent.*,
                 };
             }
         }
@@ -273,9 +283,9 @@ fn distributeAlong(nodes: []Node, index: usize, comptime dimension: Dimension, i
                 extent(child, dimension).* = taken;
                 used += taken;
             },
-            .fit, .at_most, .at_least => {
+            .fit, .at_most, .fit_at_most, .at_least => {
                 used += extent(child, dimension).*;
-                if (largest_fit == null or extent(child, dimension).* > extent(largest_fit.?, dimension).*) {
+                if (child.box.shrink and (largest_fit == null or extent(child, dimension).* > extent(largest_fit.?, dimension).*)) {
                     largest_fit = child;
                 }
             },
@@ -315,13 +325,17 @@ fn scroll(tree: *Tree, nodes: []Node) void {
     for (nodes[index + 1 .. region.end]) |*node| node.rect.y -= moved;
 }
 
-/// Wraps every text to the width it was given and sets its height.
+/// Fits or wraps every text node's lines to the width it was given and sets its height.
 fn wrapTexts(tree: *Tree, range: Range, measurer: text.Measurer) Error!void {
     for (tree.nodes[range.start..range.end]) |*node| {
         switch (node.content) {
             .text => |*t| {
                 t.first_line = tree.lines.len;
-                t.line_count = try text.wrap(measurer, t.bytes, t.style, t.figures, node.rect.w, &tree.lines);
+                t.line_count = switch (t.wrap) {
+                    .word => try text.wrap(measurer, t.bytes, t.style, t.figures, node.rect.w, &tree.lines),
+                    .none => try text.wrapNone(measurer, t.bytes, t.style, t.figures, &tree.lines),
+                    .ellipsis => try text.wrapEllipsis(measurer, t.bytes, t.style, t.figures, node.rect.w, &tree.lines),
+                };
                 node.rect.h = @floatFromInt(t.line_count * t.style.metrics().line_height);
             },
             .box, .dash, .icon, .arc => {},

@@ -80,7 +80,7 @@ pub fn item(tree: *Tree, theme: *const Theme, options: ItemOptions) Tree.Error!v
         .fill = if (options.highlighted) theme.accent else .transparent,
         .radius = Theme.radius_sm,
     });
-    _ = try tree.text(options.label, .{ .color = theme.foreground, .width = .fill });
+    _ = try tree.text(options.label, .{ .color = theme.foreground, .width = .fill, .wrap = .ellipsis });
     if (options.selected) {
         _ = try tree.icon(.{ .codepoint = icons.check, .color = theme.foreground, .size = Theme.icon });
     }

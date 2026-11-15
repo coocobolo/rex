@@ -90,3 +90,20 @@ test "badge: sizes step padding and typography" {
     try testing.expectEqual(@as(u8, 8), tree.nodes[2].box.padding.left);
     try testing.expectEqual(@as(u8, 10), tree.nodes[4].box.padding.left);
 }
+
+test "badge: keeps intrinsic single-line width in a tight row" {
+    var nodes: [badge.node_max + 4]Tree.Node = undefined;
+    var lines: [4]text.Line = undefined;
+    var tree = Tree.init(&nodes, &lines);
+
+    const row = try tree.open(.{ .axis = .row, .width = .{ .fixed = 95 }, .gap = 6 });
+    try badge.view(&tree, &Theme.dark, .{ .label = "Focus ready", .size = .sm }); // 11 * 7 + 12 = 89
+    _ = try tree.text("2/4", .{ .color = Theme.dark.muted_foreground, .style = .xs }); // 21
+    tree.close(row);
+
+    try tree.layout(measurer(), 200, 100);
+
+    try testing.expectEqual(false, tree.nodes[1].box.shrink);
+    try testing.expectEqual(@as(u32, 1), tree.nodes[2].content.text.line_count);
+    try testing.expectEqual(@as(f32, 89), tree.nodes[1].rect.w);
+}

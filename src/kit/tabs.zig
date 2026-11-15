@@ -59,6 +59,7 @@ pub fn view(tree: *Tree, theme: *const Theme, options: Options) Tree.Error!void 
         .cross = .center,
         .fill = theme.muted,
         .radius = Theme.radius,
+        .shrink = false,
     });
     for (options.tabs, 0..) |tab, index| {
         const i: u8 = @intCast(index);
@@ -75,6 +76,7 @@ pub fn view(tree: *Tree, theme: *const Theme, options: Options) Tree.Error!void 
             .border = border(theme, current, i == options.focused),
             .border_width = Theme.border_width,
             .radius = Theme.radius_md,
+            .shrink = false,
         });
         _ = try tree.text(tab.label, .{
             .color = if (current or i == options.hovered) theme.foreground else theme.muted_foreground,

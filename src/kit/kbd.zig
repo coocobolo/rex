@@ -30,6 +30,7 @@ pub fn view(tree: *Tree, theme: *const Theme, key: []const u8, presence: f32) Tr
         .radius = Theme.radius_sm,
         .main = .center,
         .cross = .center,
+        .shrink = false,
     });
     _ = try tree.text(key, .{
         .color = theme.muted_foreground.fade(presence),
@@ -40,7 +41,7 @@ pub fn view(tree: *Tree, theme: *const Theme, key: []const u8, presence: f32) Tr
 
 /// Writes the caps of a chord, in order, as one row.
 pub fn group(tree: *Tree, theme: *const Theme, keys: []const []const u8, presence: f32) Tree.Error!void {
-    const row = try tree.open(.{ .axis = .row, .gap = gap, .cross = .center });
+    const row = try tree.open(.{ .axis = .row, .gap = gap, .cross = .center, .shrink = false });
     for (keys) |key| try view(tree, theme, key, presence);
     tree.close(row);
 }

@@ -101,23 +101,21 @@ pub const Codepoints = struct {
 
     pub fn next(self: *Codepoints) ?u21 {
         if (self.index >= self.bytes.len) return null;
-        const rest = self.bytes[self.index..];
-        const len = std.unicode.utf8ByteSequenceLength(rest[0]) catch {
-            self.index += 1;
-            return replacement;
-        };
-        if (len > rest.len) {
-            self.index += 1;
-            return replacement;
-        }
-        const codepoint = std.unicode.utf8Decode(rest[0..len]) catch {
-            self.index += 1;
-            return replacement;
-        };
-        self.index += len;
-        return codepoint;
+        const decoded = decodeCodepoint(self.bytes[self.index..]);
+        self.index += decoded.len;
+        return decoded.codepoint;
     }
 };
+
+fn decodeCodepoint(rest: []const u8) struct { codepoint: u21, len: usize } {
+    const len = std.unicode.utf8ByteSequenceLength(rest[0]) catch return .{ .codepoint = Codepoints.replacement, .len = 1 };
+    if (len > rest.len) return .{ .codepoint = Codepoints.replacement, .len = 1 };
+    const codepoint = std.unicode.utf8Decode(rest[0..len]) catch return .{ .codepoint = Codepoints.replacement, .len = 1 };
+    return .{ .codepoint = codepoint, .len = len };
+}
+
+pub const ellipsis_codepoint: u21 = 0x2026;
+pub const ellipsis_bytes = "\u{2026}";
 
 /// How many of the first `max` bytes of `bytes` to keep so that no UTF-8
 /// sequence is cut in two, for copying text into a fixed buffer.
@@ -192,4 +190,83 @@ pub fn wrap(measurer: Measurer, bytes: []const u8, style: Style, figures: Figure
         i = word_end + 1;
     }
     return lines.len - first;
+}
+
+/// Width of the widest explicit line (split only on `\n`).
+pub fn maxLineWidth(measurer: Measurer, bytes: []const u8, style: Style, figures: Figures) f32 {
+    var widest: f32 = 0;
+    var it = std.mem.splitScalar(u8, bytes, '\n');
+    while (it.next()) |line| widest = @max(widest, measurer.width(line, style, figures));
+    return widest;
+}
+
+/// Splits `bytes` only at `\n` without wrapping at spaces or `max_width`.
+pub fn wrapNone(measurer: Measurer, bytes: []const u8, style: Style, figures: Figures, lines: *Lines) error{OutOfLines}!u32 {
+    const first = lines.len;
+    var start: usize = 0;
+    var it = std.mem.splitScalar(u8, bytes, '\n');
+    while (it.next()) |segment| {
+        const end = start + segment.len;
+        try lines.append(.{
+            .start = @intCast(start),
+            .end = @intCast(end),
+            .width = measurer.width(segment, style, figures),
+        });
+        start = end + 1;
+    }
+    return lines.len - first;
+}
+
+/// Fits a single line within `max_width`, truncating at a UTF-8 codepoint boundary
+/// with `"…"` if `bytes` exceeds `max_width` or contains `\n`. Emits an empty line
+/// when not even `"…"` fits inside `max_width`.
+pub fn wrapEllipsis(measurer: Measurer, bytes: []const u8, style: Style, figures: Figures, max_width: f32, lines: *Lines) error{OutOfLines}!u32 {
+    const nl = std.mem.indexOfScalar(u8, bytes, '\n');
+    const slice = bytes[0 .. nl orelse bytes.len];
+    const full_w = measurer.width(slice, style, figures);
+    if (nl == null and full_w <= max_width) {
+        try lines.append(.{ .start = 0, .end = @intCast(slice.len), .width = full_w });
+        return 1;
+    }
+
+    const ellipsis_w = measurer.width(ellipsis_bytes, style, figures);
+    const budget = max_width - ellipsis_w;
+    if (budget < 0 or (ellipsis_w == 0 and max_width <= 0)) {
+        try lines.append(.{ .start = 0, .end = 0, .width = 0 });
+        return 1;
+    }
+
+    const prefix_end = fitPrefix(measurer, slice, style, figures, budget);
+    const prefix_w = if (prefix_end == 0) 0 else measurer.width(slice[0..prefix_end], style, figures);
+    try lines.append(.{
+        .start = 0,
+        .end = @intCast(prefix_end),
+        .width = prefix_w + ellipsis_w,
+    });
+    return 1;
+}
+
+fn fitPrefix(measurer: Measurer, slice: []const u8, style: Style, figures: Figures, budget: f32) usize {
+    if (slice.len == 0 or budget <= 0) return 0;
+    if (measurer.width(slice, style, figures) <= budget) return slice.len;
+    var lo: usize = 0;
+    var hi: usize = slice.len - 1;
+    while (lo < hi) {
+        const mid = lo + (hi - lo + 1) / 2;
+        const bound = cut(slice, mid);
+        if (bound <= lo) {
+            const next = lo + decodeCodepoint(slice[lo..]).len;
+            if (next > hi) break;
+            if (measurer.width(slice[0..next], style, figures) <= budget) {
+                lo = next;
+            } else {
+                break;
+            }
+        } else if (measurer.width(slice[0..bound], style, figures) <= budget) {
+            lo = bound;
+        } else {
+            hi = bound - 1;
+        }
+    }
+    return lo;
 }

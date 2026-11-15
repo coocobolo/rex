@@ -67,10 +67,11 @@ pub const Id = enum(u32) {
 
 /// Sizing constraint along one axis, set on `Box.width` and `Box.height`.
 ///
-///   `.fit`: shrink-wraps content; may shrink on overflow.
+///   `.fit`: shrink-wraps content; may shrink on overflow unless `Box.shrink == false`.
 ///   `.fill`: divides remaining parent space equally among `.fill` siblings.
 ///   `.fixed`: exact logical pixel size; never shrinks or grows.
 ///   `.at_most`: prefers this size, shrinking only if the parent has less room (`min(n, parent)`).
+///   `.fit_at_most`: shrink-wraps content, capped at this many logical pixels (`min(content, n)`), and shrinks further if the parent has less room.
 ///   `.at_least`: shrink-wraps content, clamped up to at least this many logical pixels.
 ///   `.fraction`: fraction (`0..1`) of the parent's inner extent; ignored when computing a `.fit` parent's size.
 pub const Size = union(enum) {
@@ -83,6 +84,9 @@ pub const Size = union(enum) {
     /// This many logical pixels, or what the parent has room for when that
     /// is less.
     at_most: f32,
+    /// As large as its content, up to this many logical pixels (and less
+    /// when the parent is smaller).
+    fit_at_most: f32,
     /// As large as its content, but not smaller than this many logical
     /// pixels.
     at_least: f32,
@@ -201,6 +205,8 @@ pub const Box = struct {
     overlay: bool = false,
     /// Clockwise border sweep from top-center (`0` = full border, `1..65535` = `fraction * 65535`).
     border_sweep: u16 = 0,
+    /// Whether `.fit`/`.at_most`/`.fit_at_most`/`.at_least` children may shrink below intrinsic size on overflow.
+    shrink: bool = true,
 };
 
 /// Internal payload for a text `Node` stored in `Node.Content.text`.
@@ -208,11 +214,23 @@ pub const Box = struct {
 /// Views construct text nodes via `Tree.text(bytes, Text.Options)` rather than filling `Text`
 /// directly; `first_line` and `line_count` are populated by `layout`.
 pub const Text = struct {
+    /// How lines fit within the laid-out text node width.
+    pub const Wrap = enum(u8) {
+        /// Wraps at spaces and `\n` to fit the width.
+        word,
+        /// Never wraps at spaces; breaks only at explicit `\n`.
+        none,
+        /// Single line, truncated at UTF-8 codepoint boundaries with `"…"` if wider than the box.
+        ellipsis,
+    };
+
     /// Text presentation and flow options passed to `Tree.text`.
     pub const Options = struct {
         color: Color,
         style: Style = .sm,
         figures: Figures = .proportional,
+        wrap: Wrap = .word,
+        alignment: Align = .start,
         /// `fit` keeps the text on one line where there is room; `fill`
         /// takes the width the parent has left and wraps to it.
         width: Size = .fit,
@@ -225,6 +243,8 @@ pub const Text = struct {
     style: Style = .sm,
     /// Digit spacing. Proportional leaves the font's advances alone.
     figures: Figures = .proportional,
+    wrap: Wrap = .word,
+    alignment: Align = .start,
     /// Its lines in the tree's `Lines`, set by layout.
     first_line: u32 = 0,
     line_count: u32 = 0,
@@ -420,13 +440,15 @@ pub fn text(self: *Tree, bytes: []const u8, options: Text.Options) Error!Index {
             .color = options.color,
             .style = options.style,
             .figures = options.figures,
+            .wrap = options.wrap,
+            .alignment = options.alignment,
         } },
         .{ .width = options.width, .id = options.id },
     );
 }
 
 pub fn icon(self: *Tree, value: Icon) Error!Index {
-    return self.push(.{ .icon = value }, .{});
+    return self.push(.{ .icon = value }, .{ .shrink = false });
 }
 
 /// A horizontal dashed rule. `box` sets its extent and placement (typically `.width = .fill, .height = .{ .fixed = 1 }`).
