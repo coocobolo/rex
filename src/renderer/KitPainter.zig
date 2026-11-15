@@ -247,7 +247,7 @@ pub fn paint(self: *KitPainter, tree: *const Tree, font: *KitFont, atlas: *Atlas
             .arc => |arc| {
                 if (!(arc.radius > 0 and arc.thickness > 0 and arc.sweep > 0)) continue;
                 if (!std.math.isFinite(arc.radius) or !std.math.isFinite(arc.sweep)) continue;
-                var instance = arcInstance(arc, node.rect.x, node.rect.y, node.rect.w, scale, clip.rect);
+                var instance = arcInstance(arc, node.rect, scale, clip.rect);
                 instance.clip_round = clip.round;
                 instance.clip_radius = clip.radius;
                 try self.push(instance);
@@ -321,13 +321,13 @@ fn paintBox(self: *KitPainter, box: Tree.Box, box_rect: Tree.Rect, border_sweep:
     });
 }
 
-/// The instance for `arc`. The quad is the square around its centre, of
-/// side `2 * radius` in physical pixels. `origin_x`, `origin_y` and `side`
-/// are the node's rectangle in logical pixels.
+/// The instance for `arc`. The quad is the square around the centre of
+/// `rect` (the node's rectangle in logical pixels), of side `2 * radius`
+/// in physical pixels, matching where `Tree.hitTest` finds the arc.
 /// `clip` is the clipping boxes' cut, as for every other instance.
-pub fn arcInstance(arc: Tree.Arc, origin_x: f32, origin_y: f32, side: f32, scale: f32, clip: Clip) Instance {
-    const center_x = (origin_x + side / 2) * scale;
-    const center_y = (origin_y + side / 2) * scale;
+pub fn arcInstance(arc: Tree.Arc, rect: Tree.Rect, scale: f32, clip: Clip) Instance {
+    const center_x = (rect.x + rect.w / 2) * scale;
+    const center_y = (rect.y + rect.h / 2) * scale;
     const outer = arc.radius * scale;
     const thick = @min(arc.radius, @max(0, arc.thickness)) * scale;
     return .{

@@ -456,7 +456,7 @@ test "KitPainter: an arc instance is the square around its centre" {
         .caps = .round,
     };
     const clip: KitPainter.Clip = .{ 0, 110, 400, 400 };
-    const got = KitPainter.arcInstance(arc, 100, 50, 20, 2, clip);
+    const got = KitPainter.arcInstance(arc, .{ .x = 100, .y = 50, .w = 20, .h = 20 }, 2, clip);
     try testing.expectEqual([4]f32{ 200, 100, 40, 40 }, got.rect);
     try testing.expectEqual([2]f32{ 20, -8 }, got.params);
     try testing.expectEqual([2]f32{ 1, 2 }, got.arc);
@@ -464,6 +464,11 @@ test "KitPainter: an arc instance is the square around its centre" {
     // A scrolled donut is cut where its region ends, as boxes and glyphs
     // are.
     try testing.expectEqual(clip, got.clip);
+
+    // A non-square rectangle (an overlay arc filling a tall parent) centres
+    // vertically on its height, where hit-testing finds it.
+    const tall = KitPainter.arcInstance(arc, .{ .x = 0, .y = 0, .w = 20, .h = 60 }, 1, clip);
+    try testing.expectEqual([4]f32{ 0, 20, 20, 20 }, tall.rect);
 }
 
 test "KitPainter: a toast is a filled, bordered box with text, over an untouched background" {
