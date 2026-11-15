@@ -14,9 +14,11 @@ const wellbeing = @import("../builtin/wellbeing/root.zig");
 const DashboardOption = @FieldType(@import("../config/wellbeing.zig").Wellbeing, "dashboard");
 
 const button = kit.button;
+const card_kit = kit.card;
 const chart = kit.chart;
 const icons = kit.icons;
 const popup = kit.popup;
+const separator = kit.separator;
 const tabs = kit.tabs;
 const tooltip = kit.tooltip;
 const Theme = kit.Theme;
@@ -641,19 +643,6 @@ const card_gap = 16;
 /// keeps in its place.
 const card_bar = 4;
 
-fn cardBox(theme: *const Theme, height: kit.Tree.Size, gap: u8) kit.Tree.Box {
-    return .{
-        .width = .fill,
-        .height = height,
-        .padding = .all(16),
-        .gap = gap,
-        .fill = theme.card,
-        .border = theme.border,
-        .border_width = Theme.border_width,
-        .radius = Theme.radius,
-    };
-}
-
 fn todayPage(state: *const State, tree: *Tree, theme: *const Theme) kit.Tree.Error!void {
     const page = try pageBox(state, tree);
     var rows = try CardRows.begin(tree, state.width);
@@ -821,7 +810,7 @@ fn viewChoices(state: *const State, tree: *Tree, theme: *const Theme) kit.Tree.E
     for (&scheme_tabs, scheme_labels, 0..) |*tab, label, index| tab.* = .{ .id = scheme_id.item(@intCast(index)), .label = label };
     try choiceGroup(tree, theme, "Color scheme", &scheme_tabs, @intFromEnum(state.scheme), tabs.none);
 
-    _ = try tree.leaf(.{ .width = .fill, .height = .{ .fixed = 1 }, .fill = theme.border });
+    try separator.horizontal(tree, theme);
     const settings = try tree.open(.{ .axis = .row, .width = .fill, .height = .{ .fixed = Theme.control_sm }, .padding = .symmetric(8, 0), .cross = .center });
     _ = try tree.text("Wellbeing settings\u{2026}", .{ .color = theme.muted_foreground, .width = .fill });
     _ = try tree.icon(.{ .codepoint = icons.external_link, .color = theme.muted_foreground, .size = button.icon_size });
@@ -844,7 +833,7 @@ fn choiceGroup(tree: *Tree, theme: *const Theme, label: []const u8, list: []cons
 
 fn statCard(tree: *Tree, theme: *const Theme, card_title: []const u8, card: *const Card, fill: Theme.Color, with_bar: bool, stacked_note: bool) kit.Tree.Error!void {
     // `fill` across the row: every card in a row is as tall as the tallest.
-    const box = try tree.open(cardBox(theme, .fill, if (with_bar) 6 else 4));
+    const box = try card_kit.open(tree, theme, .{ .height = .fill, .gap = if (with_bar) 6 else 4 });
     _ = try tree.text(card_title, .{ .color = theme.muted_foreground, .style = .xs });
     _ = try tree.text(card.value.slice(), .{
         .color = if (card.over) theme.destructive else theme.foreground,
@@ -877,7 +866,7 @@ fn statCard(tree: *Tree, theme: *const Theme, card_title: []const u8, card: *con
         _ = try tree.text(card.note.slice(), .{ .color = theme.muted_foreground, .style = .xs });
         tree.close(line);
     }
-    tree.close(box);
+    card_kit.close(tree, box);
 }
 
 /// A swatch and its name.
@@ -916,7 +905,7 @@ fn isHovered(hovered: ?u8, index: usize) bool {
 }
 
 fn daysCard(tree: *Tree, theme: *const Theme, options: DayChart) kit.Tree.Error!void {
-    const box = try tree.open(cardBox(theme, options.height, 12));
+    const box = try card_kit.open(tree, theme, .{ .height = options.height, .gap = 12 });
     const head = try tree.open(.{ .axis = .row, .width = .fill, .gap = 12, .cross = .center });
     _ = try tree.text(options.card_title, .{ .color = theme.foreground, .style = .sm_medium });
     _ = try tree.leaf(.{ .width = .fill });
@@ -958,16 +947,16 @@ fn daysCard(tree: *Tree, theme: *const Theme, options: DayChart) kit.Tree.Error!
         tree.close(cell);
     }
     tree.close(labels);
-    tree.close(box);
+    card_kit.close(tree, box);
 }
 
 fn programsCard(state: *const State, tree: *Tree, theme: *const Theme, card_title: []const u8, rows: []const Program, height: kit.Tree.Size) kit.Tree.Error!void {
-    const box = try tree.open(cardBox(theme, height, 12));
+    const box = try card_kit.open(tree, theme, .{ .height = height, .gap = 12 });
     _ = try tree.text(card_title, .{ .color = theme.foreground, .style = .sm_medium });
     if (rows.len == 0) {
         const empty = if (state.wb.option.screen_time.track_foreground_apps) "No programs recorded yet" else "Program tracking is off";
         _ = try tree.text(empty, .{ .color = theme.muted_foreground });
-        tree.close(box);
+        card_kit.close(tree, box);
         return;
     }
     var parts: [program_rows]chart.Part = undefined;
@@ -1005,7 +994,7 @@ fn programsCard(state: *const State, tree: *Tree, theme: *const Theme, card_titl
         tree.close(line);
     }
     tree.close(list);
-    tree.close(box);
+    card_kit.close(tree, box);
 }
 
 fn historyPage(state: *const State, tree: *Tree, theme: *const Theme) kit.Tree.Error!void {

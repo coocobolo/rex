@@ -19,9 +19,15 @@ const Rgb = @import("../color/Rgb.zig");
 const ThemePreset = @import("../color/Theme.zig");
 const theme_presets = @import("../color/presets.zig");
 
-const badge = kit.badge;
 const button = kit.button;
+const button_group = kit.button_group;
+const card_kit = kit.card;
+const collapsible = kit.collapsible;
+const field = kit.field;
 const focus = kit.focus;
+const input_group = kit.input_group;
+const scroll_area = kit.scroll_area;
+const separator = kit.separator;
 const sidebar = kit.sidebar;
 const popup = kit.popup;
 const switch_control = kit.switch_control;
@@ -40,7 +46,6 @@ pub const title = "Rex Settings";
 
 pub const node_max = 1600;
 pub const line_max = 1024;
-const popup_max_items: usize = 10;
 
 pub const Page = enum(u8) {
     appearance,
@@ -800,6 +805,7 @@ pub const Target = union(enum) {
 };
 
 const layer_id = Id.of("settings.layer");
+const popup_card_id = Id.of("settings.popup_card");
 const scroll_area_id = Id.of("settings.scroll_area");
 const ansi_toggle_id = Id.of("settings.ansi_toggle");
 const preview_toast_id = Id.of("settings.preview_toast");
@@ -906,7 +912,6 @@ pub const State = struct {
     loaded: ?Loaded = null,
     frame: sidebar.State = .{},
     scroll: f32 = 0,
-    scroll_max: f32 = 0,
     viewport_width: f32 = 960,
     viewport_height: f32 = 600,
     pointer_x: f32 = 0,
@@ -915,7 +920,7 @@ pub const State = struct {
     pressed: Target = .none,
     focused: Target = .none,
     dragging_slider: ?u16 = null,
-    open_select: ?struct { key: u16, highlight: usize, top: usize = 0 } = null,
+    open_select: ?struct { key: u16, highlight: usize, scroll_y: f32 = 0 } = null,
     inputs: [keys.table.len]input.State = [_]input.State{.{}} ** keys.table.len,
     color_placeholders: [color_slot_count][7]u8 = [_][7]u8{.{ '#', '0', '0', '0', '0', '0', '0' }} ** color_slot_count,
     list_items: [keys.table.len]std.ArrayListUnmanaged([]u8) = [_]std.ArrayListUnmanaged([]u8){.empty} ** keys.table.len,
@@ -1548,7 +1553,6 @@ pub fn update(state: *State, event: host.Event) bool {
             if (state.frame.current != prev_page) {
                 blurFocused(state);
                 state.scroll = 0;
-                state.scroll_max = 0;
             } else if (state.focused != .none) {
                 blurFocused(state);
                 return true;
@@ -1585,24 +1589,13 @@ pub fn update(state: *State, event: host.Event) bool {
         },
         .scroll => |wheel| {
             if (state.open_select) |*sel| {
-                const count = selectChoiceCount(sel.key);
-                if (count > popup_max_items) {
-                    const max_top = count - popup_max_items;
-                    const step: usize = @max(1, @as(usize, @intFromFloat(@abs(wheel.dy) / popup.item_height)));
-                    const next_top = if (wheel.dy > 0)
-                        @min(sel.top + step, max_top)
-                    else if (wheel.dy < 0)
-                        sel.top -| step
-                    else
-                        sel.top;
-                    if (next_top == sel.top) return false;
-                    sel.top = next_top;
-                    return true;
-                }
-                return false;
+                const max_y = if (wheel.id == popup_card_id) wheel.max_y else popupScrollMax(selectChoiceCount(sel.key));
+                const next = std.math.clamp(sel.scroll_y + wheel.dy, 0, max_y);
+                if (next == sel.scroll_y) return false;
+                sel.scroll_y = next;
+                return true;
             }
             if (wheel.id != scroll_area_id) return false;
-            state.scroll_max = wheel.max_y;
             const next = std.math.clamp(state.scroll + wheel.dy, 0, wheel.max_y);
             if (next == state.scroll) return false;
             state.scroll = next;
@@ -1620,13 +1613,18 @@ pub fn update(state: *State, event: host.Event) bool {
     }
 }
 
-fn fitPopupTop(highlight: usize, count: usize, prev_top: usize) usize {
-    if (count <= popup_max_items) return 0;
-    const max_top = count - popup_max_items;
-    var top = @min(prev_top, max_top);
-    if (highlight < top) top = highlight;
-    if (highlight >= top + popup_max_items) top = highlight - popup_max_items + 1;
-    return @min(top, max_top);
+fn popupScrollMax(count: usize) f32 {
+    const content_h = @as(f32, @floatFromInt(count)) * popup.item_height + 2 * popup.padding;
+    return @max(0, content_h - popup.default_max_height);
+}
+
+fn fitPopupScroll(highlight: usize, count: usize, prev_scroll: f32) f32 {
+    const max_y = popupScrollMax(count);
+    if (max_y <= 0) return 0;
+    const view_h: f32 = popup.default_max_height - 2 * popup.padding;
+    const current = std.math.clamp(prev_scroll, 0, max_y);
+    const item_y = @as(f32, @floatFromInt(highlight)) * popup.item_height - current;
+    return Tree.Scroll.ensureVisibleAxis(current, max_y, 0, view_h, item_y, popup.item_height, 0);
 }
 
 fn handleKey(state: *State, press: host.KeyPress) bool {
@@ -1647,13 +1645,13 @@ fn handleKey(state: *State, press: host.KeyPress) bool {
         switch (press.key) {
             .up => {
                 sel.highlight -|= 1;
-                sel.top = fitPopupTop(sel.highlight, count, sel.top);
+                sel.scroll_y = fitPopupScroll(sel.highlight, count, sel.scroll_y);
                 return true;
             },
             .down => {
                 if (count > 0) {
                     sel.highlight = @min(sel.highlight + 1, count - 1);
-                    sel.top = fitPopupTop(sel.highlight, count, sel.top);
+                    sel.scroll_y = fitPopupScroll(sel.highlight, count, sel.scroll_y);
                 }
                 return true;
             },
@@ -1847,7 +1845,6 @@ fn handleKey(state: *State, press: host.KeyPress) bool {
     };
     if (state.frame.current != prev_page) {
         state.scroll = 0;
-        state.scroll_max = 0;
         if (state.focused != .sidebar) state.focused = .none;
     }
     if (!state.frame.shown() and state.focused == .sidebar) {
@@ -2026,8 +2023,7 @@ fn ensureFocusedVisible(state: *State) void {
     const id = targetId(state.focused) orelse return;
     const area = state.node_rect.get(scroll_area_id) orelse return;
     const rect = state.node_rect.get(id) orelse return;
-    const limit: ?f32 = if (state.scroll_max > 0) state.scroll_max else null;
-    state.scroll = Tree.Scroll.ensureVisibleAxis(state.scroll, limit, area.y, area.h, rect.y, rect.h, 24);
+    state.scroll = Tree.Scroll.ensureVisibleAxis(state.scroll, null, area.y, area.h, rect.y, rect.h, 24);
 }
 
 fn copySelection(state: *State, inp: *const input.State) void {
@@ -2081,10 +2077,12 @@ fn activate(state: *State, target: Target) bool {
             else
                 currentSelectIndex(idx, state.activeConfig()) orelse 0;
             const count = selectChoiceCount(idx);
+            const center_offset = @as(f32, @floatFromInt(highlight)) * popup.item_height -
+                (popup.default_max_height - 2 * popup.padding - popup.item_height) * 0.5;
             state.open_select = .{
                 .key = idx,
                 .highlight = highlight,
-                .top = fitPopupTop(highlight, count, highlight -| (popup_max_items / 2)),
+                .scroll_y = fitPopupScroll(highlight, count, @max(0, center_offset)),
             };
             return true;
         },
@@ -2651,21 +2649,12 @@ fn setError(state: *State, idx: u16, msg: []const u8) void {
 pub fn view(state: *const State, tree: *Tree, theme: *const Theme) kit.Tree.Error!void {
     const frame = try sidebar.begin(tree, theme, &groups, &state.frame, .{});
 
-    const content_row = try tree.open(.{
-        .axis = .row,
-        .width = .fill,
-        .height = .fill,
-    });
-
-    const scroll_area = try tree.open(.{
+    const scroll_box = try scroll_area.open(tree, .{
         .id = scroll_area_id,
-        .width = .fill,
-        .height = .fill,
+        .offset = .{ .y = state.scroll },
         .cross = .center,
         .padding = .symmetric(24, 16),
-        .overflow = .clip,
     });
-    try tree.scrollRegion(scroll_area, .{ .y = state.scroll });
 
     const content = try tree.open(.{
         .width = .{ .at_most = 800 },
@@ -2682,22 +2671,12 @@ pub fn view(state: *const State, tree: *Tree, theme: *const Theme) kit.Tree.Erro
         .style = .sm,
         .width = .fill,
     });
-    _ = try tree.leaf(.{
-        .width = .fill,
-        .height = .{ .fixed = 1 },
-        .fill = theme.border,
-    });
+    try separator.horizontal(tree, theme);
 
     try viewPage(state, tree, theme, page);
 
     tree.close(content);
-    tree.close(scroll_area);
-
-    if (state.scroll_max > 0) {
-        try viewScrollbar(state, tree, theme);
-    }
-
-    tree.close(content_row);
+    try scroll_area.close(tree, theme, scroll_box);
     try sidebar.end(tree, theme, &groups, &state.frame, frame);
 
     if (state.open_select) |sel| {
@@ -2721,31 +2700,6 @@ pub fn view(state: *const State, tree: *Tree, theme: *const Theme) kit.Tree.Erro
         _ = try kit.alert.view(&state.preview_banner, tree, theme);
         _ = try kit.toast.view(&state.preview_toast, tree, theme);
     }
-}
-
-fn viewScrollbar(state: *const State, tree: *Tree, theme: *const Theme) kit.Tree.Error!void {
-    const rail = try tree.open(.{
-        .width = .{ .fixed = 8 },
-        .height = .fill,
-        .padding = .symmetric(2, 8),
-    });
-    const track_h = @max(40.0, state.viewport_height - 80.0);
-    const total_h = track_h + state.scroll_max;
-    const thumb_h = @max(24.0, track_h * (track_h / total_h));
-    const travel = @max(0.0, track_h - thumb_h);
-    const ratio = if (state.scroll_max > 0) state.scroll / state.scroll_max else 0;
-    const top_pad: f32 = travel * std.math.clamp(ratio, 0, 1);
-
-    if (top_pad > 0) {
-        _ = try tree.leaf(.{ .height = .{ .fixed = top_pad } });
-    }
-    _ = try tree.leaf(.{
-        .width = .{ .fixed = 4 },
-        .height = .{ .fixed = thumb_h },
-        .fill = theme.muted_foreground.fade(0.35),
-        .radius = 2,
-    });
-    tree.close(rail);
 }
 
 const RowInfo = struct {
@@ -2899,59 +2853,16 @@ fn viewAnsiCollapsible(
         }
     }
 
-    const card = try tree.open(.{
-        .width = .fill,
-        .fill = theme.card,
-        .border = theme.border,
-        .border_width = Theme.border_width,
-        .radius = Theme.radius_md,
-    });
-
-    const ring_slot = try tree.open(.{
+    const card = try collapsible.open(tree, theme, .{});
+    const trigger = try collapsible.openTrigger(tree, theme, .{
         .id = ansi_toggle_id,
-        .pointer = .hand,
-        .width = .fill,
-        .padding = .all(Theme.ring_width),
-        .border = focus.ringColor(theme, .{ .focused = focused }),
-        .border_width = Theme.ring_width,
-        .radius = Theme.radius_md - Theme.border_width,
+        .title = "ANSI Palette",
+        .description = "Terminal palette colors 0–15",
+        .badge = if (overridden_count > 0) ansi_overridden_labels[@min(overridden_count, 16)] else "",
+        .open = state.ansi_colors_open,
+        .hovered = hovered,
+        .focused = focused,
     });
-
-    const header = try tree.open(.{
-        .axis = .row,
-        .width = .fill,
-        .padding = .symmetric(14 - Theme.ring_width, 10 - Theme.ring_width),
-        .gap = 12,
-        .cross = .center,
-        .fill = if (hovered) theme.accent else .transparent,
-        .border = if (focused) theme.ring else .transparent,
-        .border_width = Theme.border_width,
-        .radius = Theme.radius_sm,
-    });
-
-    const label_box = try tree.open(.{ .width = .fill, .gap = 2 });
-    const title_row = try tree.open(.{
-        .axis = .row,
-        .gap = 8,
-        .cross = .center,
-    });
-    _ = try tree.text("ANSI Palette", .{
-        .color = theme.foreground,
-        .style = .sm_medium,
-    });
-    if (overridden_count > 0) {
-        try badge.view(tree, theme, .{
-            .label = ansi_overridden_labels[@min(overridden_count, 16)],
-            .variant = .muted,
-            .size = .sm,
-        });
-    }
-    tree.close(title_row);
-    _ = try tree.text("Terminal palette colors 0–15", .{
-        .color = theme.muted_foreground,
-        .style = .xs,
-    });
-    tree.close(label_box);
 
     if (paneWidth(state) >= 520) {
         const strip = try tree.open(.{
@@ -2975,45 +2886,25 @@ fn viewAnsiCollapsible(
         tree.close(strip);
     }
 
-    _ = try tree.icon(.{
-        .codepoint = if (state.ansi_colors_open) kit.icons.chevron_down else kit.icons.chevron_right,
-        .color = theme.muted_foreground,
-        .size = Theme.icon,
-    });
-
-    tree.close(header);
-    tree.close(ring_slot);
+    try collapsible.closeTrigger(tree, theme, trigger);
 
     if (state.ansi_colors_open) {
-        _ = try tree.leaf(.{
-            .width = .fill,
-            .height = .{ .fixed = 1 },
-            .fill = theme.border,
-        });
-        const body = try tree.open(.{
-            .width = .fill,
-            .padding = .all(14),
-            .gap = 12,
-        });
+        const body = try collapsible.openContent(tree, theme, .{});
         var first = true;
         for (row_infos, 0..) |info, i| {
             const idx: u16 = @intCast(i);
             if (keys.availableHere(idx) and info.is_ansi_color) {
                 if (!first) {
-                    _ = try tree.leaf(.{
-                        .width = .fill,
-                        .height = .{ .fixed = 1 },
-                        .fill = theme.border,
-                    });
+                    try separator.horizontal(tree, theme);
                 }
                 first = false;
                 try viewKeyRow(state, tree, theme, info, idx, cfg);
             }
         }
-        tree.close(body);
+        collapsible.closeContent(tree, body);
     }
 
-    tree.close(card);
+    collapsible.close(tree, card);
 }
 
 fn viewPage(state: *const State, tree: *Tree, theme: *const Theme, page: Page) kit.Tree.Error!void {
@@ -3030,7 +2921,7 @@ fn viewPage(state: *const State, tree: *Tree, theme: *const Theme, page: Page) k
             if (info.is_ansi_color) {
                 if (!ansi_drawn) {
                     if (section_open) |open_box| {
-                        tree.close(open_box);
+                        card_kit.close(tree, open_box);
                         section_open = null;
                     }
                     try viewAnsiCollapsible(state, tree, theme, cfg);
@@ -3039,39 +2930,24 @@ fn viewPage(state: *const State, tree: *Tree, theme: *const Theme, page: Page) k
                 continue;
             }
             if (section_open == null) {
-                _ = try tree.text(section_titles.get(sec), .{
-                    .color = theme.foreground,
-                    .style = .sm_medium,
-                });
-                section_open = try tree.open(.{
-                    .width = .fill,
+                try field.legend(tree, theme, section_titles.get(sec));
+                section_open = try card_kit.open(tree, theme, .{
                     .padding = .all(14),
                     .gap = 12,
-                    .fill = theme.card,
-                    .border = theme.border,
-                    .border_width = Theme.border_width,
                     .radius = Theme.radius_md,
                 });
             } else if (!first_in_section) {
-                _ = try tree.leaf(.{
-                    .width = .fill,
-                    .height = .{ .fixed = 1 },
-                    .fill = theme.border,
-                });
+                try separator.horizontal(tree, theme);
             }
             first_in_section = false;
             try viewKeyRow(state, tree, theme, info, idx, cfg);
         }
         if (section_open) |open_box| {
             if (page == .overlays and (sec == .toast or sec == .banner or sec == .alert_dialog)) {
-                _ = try tree.leaf(.{
-                    .width = .fill,
-                    .height = .{ .fixed = 1 },
-                    .fill = theme.border,
-                });
+                try separator.horizontal(tree, theme);
                 try viewPreviewRow(state, tree, theme, sec);
             }
-            tree.close(open_box);
+            card_kit.close(tree, open_box);
         }
     }
 }
@@ -3104,7 +2980,6 @@ fn viewPreviewRow(
         else => unreachable,
     };
 
-    const compact = paneWidth(state) < 540;
     const hovered = std.meta.eql(state.hover, tgt);
     const pressed = std.meta.eql(state.pressed, tgt);
     const focused = std.meta.eql(state.focused, tgt);
@@ -3115,23 +2990,12 @@ fn viewPreviewRow(
     else
         .normal;
 
-    const row = try tree.open(.{
-        .axis = if (compact) .column else .row,
-        .width = .fill,
-        .cross = if (compact) .start else .center,
-        .gap = if (compact) 10 else 16,
+    const row = try field.open(tree, theme, .{
+        .label = "Preview",
+        .description = desc,
+        .orientation = .responsive,
+        .compact = paneWidth(state) < 540,
     });
-    const label_box = try tree.open(.{ .width = .fill, .gap = 3 });
-    _ = try tree.text("Preview", .{
-        .color = theme.foreground,
-        .style = .sm_medium,
-    });
-    _ = try tree.text(desc, .{
-        .color = theme.muted_foreground,
-        .style = .xs,
-        .width = .fill,
-    });
-    tree.close(label_box);
 
     try button.view(tree, theme, .{
         .id = id,
@@ -3141,7 +3005,7 @@ fn viewPreviewRow(
         .state = btn_state,
         .focused = focused,
     });
-    tree.close(row);
+    try field.close(tree, theme, row);
 }
 
 const pct_labels: [101][]const u8 = blk: {
@@ -3158,62 +3022,11 @@ fn pctLabel(ratio: f32) []const u8 {
     return pct_labels[@min(pct, 100)];
 }
 
-fn openGroupSegment(tree: *Tree, theme: *const Theme, options: struct {
-    id: Id,
-    fill: ?Theme.Color = null,
-    hovered: bool = false,
-    disabled: bool = false,
-    width: kit.Tree.Size = .fit,
-}) kit.Tree.Error!kit.Tree.Index {
-    const seg = try tree.open(.{
-        .id = options.id,
-        .axis = .row,
-        .width = options.width,
-        .height = .fill,
-        .main = .center,
-        .cross = .center,
-        .pointer = if (options.disabled) .arrow else .hand,
-    });
-    const bg: ?Theme.Color = if (options.disabled)
-        null
-    else
-        options.fill orelse if (options.hovered) theme.accent else null;
-    if (bg) |fill_color| {
-        _ = try tree.leaf(.{
-            .overlay = true,
-            .width = .fill,
-            .height = .fill,
-            .fill = fill_color,
-        });
-    }
-    return seg;
-}
-
 fn segmentIcon(token: []const u8) u21 {
     if (std.mem.eql(u8, token, "auto")) return kit.icons.monitor;
     if (std.mem.eql(u8, token, "dark")) return kit.icons.moon;
     if (std.mem.eql(u8, token, "light")) return kit.icons.sun;
     return kit.icons.none;
-}
-
-fn stepperSegment(tree: *Tree, theme: *const Theme, options: struct {
-    id: Id,
-    label: []const u8,
-    hovered: bool = false,
-    disabled: bool = false,
-}) kit.Tree.Error!void {
-    const presence: f32 = if (options.disabled) 0.4 else 1.0;
-    const cell = try openGroupSegment(tree, theme, .{
-        .id = options.id,
-        .hovered = options.hovered,
-        .disabled = options.disabled,
-        .width = .{ .fixed = Theme.control_sm },
-    });
-    _ = try tree.text(options.label, .{
-        .color = theme.foreground.fade(presence),
-        .style = .sm_medium,
-    });
-    tree.close(cell);
 }
 
 fn toggleValue(idx: u16, cfg: *const Config) bool {
@@ -3293,39 +3106,15 @@ fn viewKeyRow(
     else
         .{ .fixed = 240 };
 
-    const col = try tree.open(.{ .width = .fill, .gap = 4 });
-    const row = try tree.open(.{
-        .axis = if (compact) .column else .row,
-        .width = .fill,
-        .cross = if (compact or info.kind == .list) .start else .center,
-        .gap = if (compact) 10 else 16,
+    const row = try field.open(tree, theme, .{
+        .label = meta.label,
+        .description = meta.description,
+        .badge = if (info.restart_required) "Restart required" else "",
+        .err = if (state.error_key == idx) state.error_msg.items else "",
+        .orientation = .responsive,
+        .compact = compact,
+        .align_top = info.kind == .list,
     });
-
-    const label_box = try tree.open(.{ .width = .fill, .gap = 3 });
-    const title_row = try tree.open(.{
-        .axis = .row,
-        .gap = 8,
-        .cross = .center,
-    });
-    _ = try tree.text(meta.label, .{
-        .color = theme.foreground,
-        .style = .sm_medium,
-    });
-    if (info.restart_required) {
-        try badge.view(tree, theme, .{
-            .label = "Restart required",
-            .variant = .muted,
-            .size = .sm,
-        });
-    }
-    tree.close(title_row);
-
-    _ = try tree.text(meta.description, .{
-        .color = theme.muted_foreground,
-        .style = .xs,
-        .width = .fill,
-    });
-    tree.close(label_box);
 
     switch (info.kind) {
         .toggle => {
@@ -3366,41 +3155,21 @@ fn viewKeyRow(
             const any_focused = input_focused or
                 std.meta.eql(state.focused, Target{ .stepper_dec = idx }) or
                 std.meta.eql(state.focused, Target{ .stepper_inc = idx });
-            const colors = focus.controlColors(theme, .{
+
+            const group = try input_group.open(tree, theme, .{
+                .width = control_width,
                 .focused = any_focused,
                 .hovered = input_hovered or dec_hovered or inc_hovered,
                 .invalid = is_err,
-                .show_invalid_ring = true,
             });
-
-            const ring = try focus.openRing(tree, .{
-                .width = control_width,
-                .border = colors.ring,
-            });
-            const compound = try tree.open(.{
-                .axis = .row,
-                .width = .fill,
-                .height = .{ .fixed = Theme.control_sm },
-                .padding = .all(Theme.border_width),
-                .cross = .center,
-                .overflow = .clip,
-                .fill = theme.background,
-                .border = colors.border,
-                .border_width = Theme.border_width,
-                .radius = Theme.radius_md,
-            });
-            try stepperSegment(tree, theme, .{
+            try input_group.addonButton(tree, theme, .{
                 .id = decId(idx),
                 .label = "−",
                 .hovered = dec_hovered,
                 .disabled = at_min,
             });
-            _ = try tree.leaf(.{
-                .width = .{ .fixed = 1 },
-                .height = .fill,
-                .fill = theme.border,
-            });
-            try input.view(tree, theme, .{
+            try input_group.separator(tree, theme);
+            try input_group.textInput(tree, theme, .{
                 .id = inputId(idx),
                 .value = inp.text(),
                 .placeholder = info.placeholder,
@@ -3411,21 +3180,15 @@ fn viewKeyRow(
                 .focused = input_focused,
                 .invalid = is_err,
                 .center = true,
-                .borderless = true,
             });
-            _ = try tree.leaf(.{
-                .width = .{ .fixed = 1 },
-                .height = .fill,
-                .fill = theme.border,
-            });
-            try stepperSegment(tree, theme, .{
+            try input_group.separator(tree, theme);
+            try input_group.addonButton(tree, theme, .{
                 .id = incId(idx),
                 .label = "+",
                 .hovered = inc_hovered,
                 .disabled = at_max,
             });
-            tree.close(compound);
-            tree.close(ring);
+            input_group.close(tree, group);
         },
         .duration => {
             const inp = &state.inputs[idx];
@@ -3435,30 +3198,14 @@ fn viewKeyRow(
             const input_hovered = std.meta.eql(state.hover, Target{ .key_input = idx });
             const select_hovered = std.meta.eql(state.hover, Target{ .key_select = idx });
             const is_open = if (state.open_select) |sel| sel.key == idx else false;
-            const colors = focus.controlColors(theme, .{
+
+            const group = try input_group.open(tree, theme, .{
+                .width = control_width,
                 .focused = input_focused,
                 .hovered = input_hovered or select_hovered or is_open,
                 .invalid = is_err,
-                .show_invalid_ring = true,
             });
-
-            const ring = try focus.openRing(tree, .{
-                .width = control_width,
-                .border = colors.ring,
-            });
-            const compound = try tree.open(.{
-                .axis = .row,
-                .width = .fill,
-                .height = .{ .fixed = Theme.control_sm },
-                .padding = .all(Theme.border_width),
-                .cross = .center,
-                .overflow = .clip,
-                .fill = theme.background,
-                .border = colors.border,
-                .border_width = Theme.border_width,
-                .radius = Theme.radius_md,
-            });
-            try input.view(tree, theme, .{
+            try input_group.textInput(tree, theme, .{
                 .id = inputId(idx),
                 .value = inp.text(),
                 .placeholder = if (unit == .none) "—" else "0",
@@ -3469,23 +3216,11 @@ fn viewKeyRow(
                 .focused = input_focused,
                 .invalid = is_err,
                 .disabled = unit == .none,
-                .borderless = true,
             });
-            _ = try tree.leaf(.{
-                .width = .{ .fixed = 1 },
-                .height = .fill,
-                .fill = theme.border,
-            });
-            const unit_btn = try openGroupSegment(tree, theme, .{
+            try input_group.separator(tree, theme);
+            const unit_btn = try input_group.openAddon(tree, theme, .{
                 .id = selectId(idx),
                 .hovered = select_hovered or is_open,
-            });
-            const unit_pad = try tree.open(.{
-                .axis = .row,
-                .height = .fill,
-                .padding = .symmetric(10, 0),
-                .gap = 6,
-                .cross = .center,
             });
             _ = try tree.text(unit.shortLabel(), .{
                 .color = if (unit == .none) theme.muted_foreground else theme.foreground,
@@ -3496,10 +3231,8 @@ fn viewKeyRow(
                 .color = theme.muted_foreground,
                 .size = Theme.icon,
             });
-            tree.close(unit_pad);
-            tree.close(unit_btn);
-            tree.close(compound);
-            tree.close(ring);
+            input_group.closeAddon(tree, unit_btn);
+            input_group.close(tree, group);
         },
         .select => {
             const current_label = selectDisplayValue(idx, cfg);
@@ -3523,56 +3256,24 @@ fn viewKeyRow(
                 if (std.meta.eql(state.hover, seg_target)) hovered_any = true;
                 if (std.meta.eql(state.focused, seg_target)) focused_any = true;
             }
-            const colors = focus.controlColors(theme, .{
+
+            const group = try button_group.open(tree, theme, .{
                 .focused = focused_any,
                 .hovered = hovered_any,
             });
-
-            const ring = try focus.openRing(tree, .{ .border = colors.ring });
-            const compound = try tree.open(.{
-                .axis = .row,
-                .height = .{ .fixed = Theme.control_sm },
-                .padding = .all(Theme.border_width),
-                .cross = .center,
-                .overflow = .clip,
-                .fill = theme.background,
-                .border = colors.border,
-                .border_width = Theme.border_width,
-                .radius = Theme.radius_md,
-            });
             for (0..count) |seg_i| {
                 if (seg_i > 0) {
-                    _ = try tree.leaf(.{
-                        .width = .{ .fixed = 1 },
-                        .height = .fill,
-                        .fill = theme.border,
-                    });
+                    try button_group.separator(tree, theme);
                 }
                 const seg_target: Target = .{ .key_segment = .{ .key = idx, .idx = @intCast(seg_i) } };
-                const is_selected = if (current_idx) |cur| cur == seg_i else false;
-                const is_hovered = std.meta.eql(state.hover, seg_target);
-                const is_focused = std.meta.eql(state.focused, seg_target);
-                const seg_fill: ?Theme.Color = if (is_selected)
-                    theme.accent
-                else if (is_hovered or is_focused)
-                    theme.muted
-                else
-                    null;
-
-                const cell = try openGroupSegment(tree, theme, .{
+                try button_group.iconSegment(tree, theme, segmentIcon(info.labels[seg_i]), .{
                     .id = segmentId(idx, seg_i),
-                    .fill = seg_fill,
-                    .width = .{ .fixed = Theme.control_sm },
+                    .selected = if (current_idx) |cur| cur == seg_i else false,
+                    .hovered = std.meta.eql(state.hover, seg_target),
+                    .focused = std.meta.eql(state.focused, seg_target),
                 });
-                _ = try tree.icon(.{
-                    .codepoint = segmentIcon(info.labels[seg_i]),
-                    .color = if (is_selected or is_hovered or is_focused) theme.foreground else theme.muted_foreground,
-                    .size = Theme.icon,
-                });
-                tree.close(cell);
             }
-            tree.close(compound);
-            tree.close(ring);
+            button_group.close(tree, group);
         },
         .enum_set => {
             const is_open = if (state.open_select) |sel| sel.key == idx else false;
@@ -3610,17 +3311,12 @@ fn viewKeyRow(
                     .border_width = Theme.border_width,
                     .radius = Theme.radius_md,
                 });
-                const text_clip = try tree.open(.{
-                    .axis = .row,
-                    .width = .fill,
-                    .cross = .center,
-                    .overflow = .clip,
-                });
                 _ = try tree.text(item, .{
                     .color = theme.foreground,
                     .style = .sm,
+                    .width = .fill,
+                    .wrap = .ellipsis,
                 });
-                tree.close(text_clip);
 
                 const up_disabled = item_i == 0;
                 const up_hovered = std.meta.eql(state.hover, Target{ .list_up = .{ .key = idx, .item = item_u16 } });
@@ -3672,9 +3368,10 @@ fn viewKeyRow(
                     .fill = if (rm_hovered) theme.accent else .transparent,
                     .radius = Theme.radius_md - 4,
                 });
-                _ = try tree.text("×", .{
+                _ = try tree.icon(.{
+                    .codepoint = kit.icons.x,
                     .color = if (rm_hovered) theme.destructive else theme.muted_foreground,
-                    .style = .sm,
+                    .size = 14,
                 });
                 tree.close(rm_btn);
 
@@ -3687,30 +3384,14 @@ fn viewKeyRow(
             const input_focused = std.meta.eql(state.focused, Target{ .key_input = idx });
             const input_hovered = std.meta.eql(state.hover, Target{ .key_input = idx });
             const add_hovered = std.meta.eql(state.hover, Target{ .list_add = idx });
-            const colors = focus.controlColors(theme, .{
+
+            const group = try input_group.open(tree, theme, .{
+                .width = .fill,
                 .focused = input_focused,
                 .hovered = input_hovered or add_hovered,
                 .invalid = is_err,
-                .show_invalid_ring = true,
             });
-
-            const ring = try focus.openRing(tree, .{
-                .width = .fill,
-                .border = colors.ring,
-            });
-            const compound = try tree.open(.{
-                .axis = .row,
-                .width = .fill,
-                .height = .{ .fixed = Theme.control_sm },
-                .padding = .all(Theme.border_width),
-                .cross = .center,
-                .overflow = .clip,
-                .fill = theme.background,
-                .border = colors.border,
-                .border_width = Theme.border_width,
-                .radius = Theme.radius_md,
-            });
-            try input.view(tree, theme, .{
+            try input_group.textInput(tree, theme, .{
                 .id = inputId(idx),
                 .value = inp.text(),
                 .placeholder = info.placeholder,
@@ -3720,22 +3401,16 @@ fn viewKeyRow(
                 .hovered = input_hovered,
                 .focused = input_focused,
                 .invalid = is_err,
-                .borderless = true,
             });
-            _ = try tree.leaf(.{
-                .width = .{ .fixed = 1 },
-                .height = .fill,
-                .fill = theme.border,
-            });
+            try input_group.separator(tree, theme);
             const add_disabled = std.mem.trim(u8, inp.text(), " \t").len == 0;
-            try stepperSegment(tree, theme, .{
+            try input_group.addonButton(tree, theme, .{
                 .id = listAddId(idx),
                 .label = "+",
                 .hovered = add_hovered,
                 .disabled = add_disabled,
             });
-            tree.close(compound);
-            tree.close(ring);
+            input_group.close(tree, group);
             tree.close(list_col);
         },
         .color => {
@@ -3809,16 +3484,7 @@ fn viewKeyRow(
         },
     }
 
-    tree.close(row);
-
-    if (state.error_key == idx and state.error_msg.items.len > 0) {
-        _ = try tree.text(state.error_msg.items, .{
-            .color = theme.destructive,
-            .style = .xs,
-            .width = .fill,
-        });
-    }
-    tree.close(col);
+    try field.close(tree, theme, row);
 }
 
 fn viewSelectPopup(
@@ -3830,14 +3496,20 @@ fn viewSelectPopup(
 ) kit.Tree.Error!void {
     const cfg = state.activeConfig();
     const info = row_infos[key_idx];
-    const card = try popup.open(tree, theme, .{ .layer_id = layer_id, .anchor = selectId(key_idx) });
+    const card = try select.openList(tree, theme, .{
+        .layer_id = layer_id,
+        .anchor = selectId(key_idx),
+        .id = popup_card_id,
+        .max_height = popup.default_max_height,
+        .scroll_y = state.open_select.?.scroll_y,
+    });
     switch (info.kind) {
         .duration => {
             const selected_idx: usize = @intFromEnum(state.duration_units[key_idx]);
             const count: usize = if (info.null_keyword != null) 5 else 4;
             for (0..count) |c_idx| {
                 const unit: DurationUnit = @enumFromInt(@as(u8, @intCast(c_idx)));
-                try popup.item(tree, theme, .{
+                try select.item(tree, theme, .{
                     .id = choiceId(c_idx),
                     .label = unit.label(),
                     .highlighted = c_idx == highlight,
@@ -3848,7 +3520,7 @@ fn viewSelectPopup(
         .enum_set => {
             const mask = enumSetMask(key_idx, cfg);
             for (info.display_labels, 0..) |label, c_idx| {
-                try popup.item(tree, theme, .{
+                try select.item(tree, theme, .{
                     .id = choiceId(c_idx),
                     .label = label,
                     .highlighted = c_idx == highlight,
@@ -3858,13 +3530,10 @@ fn viewSelectPopup(
         },
         .select => {
             const selected_idx = currentSelectIndex(key_idx, cfg);
-            const count = info.display_labels.len;
-            const start = if (count > popup_max_items) @min(state.open_select.?.top, count - popup_max_items) else 0;
-            const end = @min(count, start + popup_max_items);
-            for (start..end) |c_idx| {
-                try popup.item(tree, theme, .{
+            for (info.display_labels, 0..) |label, c_idx| {
+                try select.item(tree, theme, .{
                     .id = choiceId(c_idx),
-                    .label = info.display_labels[c_idx],
+                    .label = label,
                     .highlighted = c_idx == highlight,
                     .selected = if (selected_idx) |s| c_idx == s else false,
                 });
@@ -3872,7 +3541,7 @@ fn viewSelectPopup(
         },
         else => {},
     }
-    popup.close(tree, card);
+    try select.closeScrollableList(tree, theme, card);
 }
 
 fn selectChoiceCount(key_idx: u16) usize {

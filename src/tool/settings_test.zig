@@ -353,14 +353,14 @@ test "settings: theme select popup windows long list and saves selection" {
     _ = settings.update(&state, .{ .press = theme_id });
     try testing.expect(settings.update(&state, .release));
     try testing.expect(state.open_select != null);
-    try testing.expectEqual(@as(usize, 0), state.open_select.?.top);
+    try testing.expectEqual(@as(f32, 0), state.open_select.?.scroll_y);
 
-    // Move down past the 10-row visible window so `top` advances and the
+    // Move down past the 10-row visible window so `scroll_y` advances and the
     // laid-out popup stays comfortably inside the 600px window height.
     for (0..12) |_| {
         try testing.expect(settings.update(&state, .{ .key = .{ .key = .down } }));
     }
-    try testing.expect(state.open_select.?.top > 0);
+    try testing.expect(state.open_select.?.scroll_y > 0);
 
     var nodes: [settings.node_max]kit.Tree.Node = undefined;
     var lines: [settings.line_max]kit.text.Line = undefined;
