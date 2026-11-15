@@ -13,11 +13,13 @@ const kit = @import("../kit/root.zig");
 const wellbeing = @import("../builtin/wellbeing/root.zig");
 const DashboardOption = @FieldType(@import("../config/wellbeing.zig").Wellbeing, "dashboard");
 
+const badge = kit.badge;
 const button = kit.button;
-const card_kit = kit.card;
+const card = kit.card;
 const chart = kit.chart;
 const icons = kit.icons;
 const popup = kit.popup;
+const scroll_area = kit.scroll_area;
 const separator = kit.separator;
 const tabs = kit.tabs;
 const tooltip = kit.tooltip;
@@ -155,42 +157,39 @@ fn over(id: Id) Over {
     return .none;
 }
 
-/// The frame: the root, the header, the tab list, the spacer, and the
-/// right group (Today's chip or History's switch, and the gear button).
-const frame_nodes = 3 + tabs.nodeMax(page_count) + 1 + 1 + @as(usize, @max(4, tabs.nodeMax(period_count))) + button.node_max;
+/// The frame: the root, the header, the tab list, and the right group
+/// (Today's chip or History's switch, and the gear button).
+const frame_nodes = 2 + tabs.nodeMax(page_count) + 1 + @as(usize, @max(4, tabs.nodeMax(period_count))) + button.node_max;
 /// The card rows' outer column and up to two rows.
 const card_rows_nodes = 3;
 /// The gear's popup: layer and card, the column, three groups (box,
 /// label, tabs), the rule, the settings row (row, text, icon) and the note.
-const choices_nodes = popup.node_max + 1 + 2 * (2 + tabs.nodeMax(2)) + (2 + tabs.nodeMax(scheme_labels.len)) + 1 + 3 + 1;
-/// The Focus page: its column, the timer block (badge, label, time, task line and
-/// the larger of the two marks: a bar, or a ring in its square under an
+const choices_nodes = popup.node_max + 1 + 2 * (2 + tabs.nodeMax(2)) + (2 + tabs.nodeMax(scheme_labels.len)) + separator.node_max + 3 + 1;
+/// The Focus page: its scroll area, the timer block (badge, time, task line
+/// and the larger of the two marks: a bar, or a ring in its square under an
 /// overlaid column), the button row and three buttons, and the popup with
 /// its one item.
-const focus_nodes = 1 + 1 + 4 + 6 + 1 + 3 * button.node_max + popup.node_max + popup.item_node_max;
+const focus_nodes = scroll_area.node_max + 7 + badge.node_max + 1 + 3 * button.node_max + popup.node_max + popup.item_node_max;
 
-/// The Today page: its column, the card row and four stat cards (box,
-/// title, value, bar or spacer, note), the lower row and its two slots,
-/// the week card and the programs card.
+/// The Today page: its scroll area, the card row and four stat cards (box,
+/// title, value, bar or spacer, note), the lower row, the week card and the
+/// programs card.
 /// A stat card: box, title, value, bar or spacer, and the note, or the
 /// note's row with the delta and the note.
 /// A day or program tooltip: card, date, footer, and two `tooltip.line` rows.
 const tooltip_nodes = 2 + tooltip.nodes(2);
 const stat_card_nodes = 4 + chart.progress_nodes + 2;
-const today_nodes = 1 + card_rows_nodes + 4 * stat_card_nodes + 1 + 2 + week_nodes + programs_nodes + tooltip_nodes;
-/// Card, header row, title, spacer, two legend items (row, swatch, text),
+const today_nodes = scroll_area.node_max + card_rows_nodes + 4 * stat_card_nodes + 1 + week_nodes + programs_nodes + tooltip_nodes;
+/// Card, header row, title, action slot, two legend items (row, swatch, text),
 /// the chart's column, the bars, and the label row with a box and text
 /// per day.
 const week_nodes = daysNodes(week_days);
-/// Card, header row, title, spacer, three legend items (row, swatch,
-/// text), the chart's column, the bars, and the label row with a box and
-/// text per day.
 fn daysNodes(comptime count: usize) usize {
     return 4 + 2 * 3 + 1 + chart.dayNodes(count) + 1 + count * 2;
 }
 /// The History page: like Today with cards of three nodes and no bar, two
 /// weeks of days, and the tooltip.
-const history_nodes = 1 + card_rows_nodes + 4 * stat_card_nodes + 1 + 2 + daysNodes(history_days) + programs_nodes + tooltip_nodes;
+const history_nodes = scroll_area.node_max + card_rows_nodes + 4 * stat_card_nodes + 1 + daysNodes(history_days) + programs_nodes + tooltip_nodes;
 /// Card, title, the chart's box and the larger mark, the list and a row
 /// per program (row, swatch, name, time, share box and share); or one
 /// line when there are none.
@@ -627,13 +626,13 @@ pub fn view(state: *const State, tree: *Tree, theme: *const Theme) kit.Tree.Erro
 
     if (state.menu == .view) try viewChoices(state, tree, theme);
     if (state.page == .focus and state.menu == .more) {
-        const card = try popup.open(tree, theme, .{ .layer_id = layer_id, .anchor = more_id });
+        const menu = try popup.open(tree, theme, .{ .layer_id = layer_id, .anchor = more_id });
         try popup.item(tree, theme, .{
             .id = reset_id,
             .label = "Reset cycle",
             .highlighted = std.meta.eql(state.hover, Over.reset),
         });
-        popup.close(tree, card);
+        popup.close(tree, menu);
     }
 }
 
@@ -646,18 +645,19 @@ const card_bar = 4;
 fn todayPage(state: *const State, tree: *Tree, theme: *const Theme) kit.Tree.Error!void {
     const page = try pageBox(state, tree);
     var rows = try CardRows.begin(tree, state.width);
-    for (&state.today.cards, card_titles, 0..) |*card, card_title, index| {
+    for (&state.today.cards, card_titles, 0..) |*item, card_title, index| {
         const fill = switch (index) {
-            0 => if (card.over) theme.destructive else theme.primary,
+            0 => if (item.over) theme.destructive else theme.primary,
             else => theme.info,
         };
         try rows.next(tree, index);
-        try statCard(tree, theme, card_title, card, fill, true, stackNote(state.width));
+        try statCard(tree, theme, card_title, item, fill, true, stackNote(state.width));
     }
     rows.end(tree);
-    var lower = try LowerRow.begin(tree, isNarrow(state.width));
+    const lower = try LowerRow.begin(tree, isNarrow(state.width));
     try daysCard(tree, theme, .{
         .card_title = "This week",
+        .width = lower.chartWidth(),
         .height = lower.chartHeight(),
         .days = &state.today.week,
         .weekday = state.today.weekday,
@@ -669,26 +669,29 @@ fn todayPage(state: *const State, tree: *Tree, theme: *const Theme) kit.Tree.Err
             else => null,
         },
     });
-    try lower.middle(tree);
     try programsCard(state, tree, theme, "Programs today", state.today.programs[0..state.today.program_count], lower.programsHeight());
     lower.end(tree);
-    tree.close(page);
+    try scroll_area.close(tree, theme, page);
 }
 
 /// The four stat cards: one row, or two rows of two below `compact_width`.
 const CardRows = struct {
     outer: kit.Tree.Index,
-    row: kit.Tree.Index,
+    row: kit.Tree.Index = kit.Tree.none,
     per_row: u8,
 
     fn begin(tree: *Tree, width: f32) kit.Tree.Error!CardRows {
         const per_row: u8 = if (width > 0 and width < compact_width) 2 else Today.card_count;
-        const outer = try tree.open(.{ .width = .fill, .gap = card_gap });
-        return .{ .outer = outer, .row = kit.Tree.none, .per_row = per_row };
+        const outer = try tree.open(.{
+            .axis = if (per_row == Today.card_count) .row else .column,
+            .width = .fill,
+            .gap = card_gap,
+        });
+        return .{ .outer = outer, .per_row = per_row };
     }
 
     fn next(self: *CardRows, tree: *Tree, index: usize) kit.Tree.Error!void {
-        if (index % self.per_row != 0) return;
+        if (self.per_row == Today.card_count or index % self.per_row != 0) return;
         if (self.row != kit.Tree.none) tree.close(self.row);
         self.row = try tree.open(.{ .axis = .row, .width = .fill, .gap = card_gap });
     }
@@ -701,40 +704,28 @@ const CardRows = struct {
 
 /// The chart card and the programs card: three fifths and two fifths side
 /// by side, or, on a narrow page that scrolls, one over the other at their
-/// own heights. Side by side, the gap is padding inside the first slot, so
-/// the fractions add up.
+/// own heights.
 const LowerRow = struct {
     outer: kit.Tree.Index,
-    first: kit.Tree.Index,
-    second: kit.Tree.Index = kit.Tree.none,
     stacked: bool,
 
     fn begin(tree: *Tree, stacked: bool) kit.Tree.Error!LowerRow {
         const outer = try tree.open(if (stacked)
             .{ .width = .fill, .gap = card_gap }
         else
-            .{ .axis = .row, .width = .fill, .height = .{ .at_most = max_lower_height } });
-        const first = try tree.open(if (stacked)
-            .{ .width = .fill }
-        else
-            .{ .width = .{ .fraction = 0.6 }, .height = .fill, .padding = .{ .right = card_gap } });
-        return .{ .outer = outer, .first = first, .stacked = stacked };
-    }
-
-    fn middle(self: *LowerRow, tree: *Tree) kit.Tree.Error!void {
-        tree.close(self.first);
-        self.second = try tree.open(if (self.stacked)
-            .{ .width = .fill }
-        else
-            .{ .width = .{ .fraction = 0.4 }, .height = .fill });
+            .{ .axis = .row, .width = .fill, .height = .{ .at_most = max_lower_height }, .gap = card_gap });
+        return .{ .outer = outer, .stacked = stacked };
     }
 
     fn end(self: *const LowerRow, tree: *Tree) void {
-        tree.close(self.second);
         tree.close(self.outer);
     }
 
-    /// The chart card's height: the slot's, or its own when stacked.
+    fn chartWidth(self: *const LowerRow) kit.Tree.Size {
+        return if (self.stacked) .fill else .{ .fraction = 0.58 };
+    }
+
+    /// The chart card's height: the row's, or its own when stacked.
     fn chartHeight(self: *const LowerRow) kit.Tree.Size {
         return if (self.stacked) .{ .fixed = stacked_chart_height } else .fill;
     }
@@ -759,16 +750,15 @@ fn stackNote(width: f32) bool {
 /// A page's column under the header, and the scroll region: content that
 /// does not fit the window, wide or narrow, scrolls instead of squeezing.
 fn pageBox(state: *const State, tree: *Tree) kit.Tree.Error!kit.Tree.Index {
-    const page = try tree.open(.{
+    const margin = sideMargin(state.width);
+    return scroll_area.open(tree, .{
         .id = page_id,
+        .offset = .{ .y = state.scroll },
         .width = .fill,
         .height = .fill,
-        .padding = .{ .left = sideMargin(state.width), .right = sideMargin(state.width), .top = 4, .bottom = 24 },
+        .padding = .{ .left = margin, .right = margin, .top = 8, .bottom = 24 },
         .gap = card_gap,
-        .overflow = .clip,
     });
-    try tree.scrollRegion(page, .{ .y = state.scroll });
-    return page;
 }
 
 /// Left and right of the header and the page: less when narrow, so the
@@ -793,7 +783,7 @@ fn offPage(tree: *Tree, theme: *const Theme) kit.Tree.Error!void {
 /// The gear's popup: the chart looks, the color scheme, and the way to the
 /// settings window.
 fn viewChoices(state: *const State, tree: *Tree, theme: *const Theme) kit.Tree.Error!void {
-    const card = try popup.open(tree, theme, .{ .layer_id = layer_id, .anchor = gear_id });
+    const menu = try popup.open(tree, theme, .{ .layer_id = layer_id, .anchor = gear_id });
     const column = try tree.open(.{ .width = .{ .fixed = 252 }, .padding = .all(8), .gap = 12 });
 
     const timer_tabs = [_]tabs.Tab{ .{ .id = timer_chart_id.item(0), .label = "Bar" }, .{ .id = timer_chart_id.item(1), .label = "Ring" } };
@@ -811,7 +801,7 @@ fn viewChoices(state: *const State, tree: *Tree, theme: *const Theme) kit.Tree.E
     try choiceGroup(tree, theme, "Color scheme", &scheme_tabs, @intFromEnum(state.scheme), tabs.none);
 
     try separator.horizontal(tree, theme);
-    const settings = try tree.open(.{ .axis = .row, .width = .fill, .height = .{ .fixed = Theme.control_sm }, .padding = .symmetric(8, 0), .cross = .center });
+    const settings = try tree.open(.{ .axis = .row, .width = .fill, .height = .{ .fixed = Theme.control_sm }, .cross = .center });
     _ = try tree.text("Wellbeing settings\u{2026}", .{ .color = theme.muted_foreground, .width = .fill });
     _ = try tree.icon(.{ .codepoint = icons.external_link, .color = theme.muted_foreground, .size = button.icon_size });
     tree.close(settings);
@@ -821,7 +811,7 @@ fn viewChoices(state: *const State, tree: *Tree, theme: *const Theme) kit.Tree.E
         .width = .fill,
     });
     tree.close(column);
-    popup.close(tree, card);
+    popup.close(tree, menu);
 }
 
 fn choiceGroup(tree: *Tree, theme: *const Theme, label: []const u8, list: []const tabs.Tab, current: u8, hovered: u8) kit.Tree.Error!void {
@@ -831,31 +821,31 @@ fn choiceGroup(tree: *Tree, theme: *const Theme, label: []const u8, list: []cons
     tree.close(group);
 }
 
-fn statCard(tree: *Tree, theme: *const Theme, card_title: []const u8, card: *const Card, fill: Theme.Color, with_bar: bool, stacked_note: bool) kit.Tree.Error!void {
+fn statCard(tree: *Tree, theme: *const Theme, card_title: []const u8, item: *const Card, fill: Theme.Color, with_bar: bool, stacked_note: bool) kit.Tree.Error!void {
     // `fill` across the row: every card in a row is as tall as the tallest.
-    const box = try card_kit.open(tree, theme, .{ .height = .fill, .gap = if (with_bar) 6 else 4 });
-    _ = try tree.text(card_title, .{ .color = theme.muted_foreground, .style = .xs });
-    _ = try tree.text(card.value.slice(), .{
-        .color = if (card.over) theme.destructive else theme.foreground,
+    const box = try card.open(tree, theme, .{ .height = .fill, .gap = if (with_bar) 6 else 4 });
+    try card.title(tree, theme, card_title, .{ .style = .xs, .color = theme.muted_foreground, .width = .fill });
+    _ = try tree.text(item.value.slice(), .{
+        .color = if (item.over) theme.destructive else theme.foreground,
         .style = .xl_semibold,
         .figures = .tabular,
     });
     if (with_bar) {
-        if (card.fraction < 0) {
+        if (item.fraction < 0) {
             _ = try tree.leaf(.{ .height = .{ .fixed = card_bar } });
         } else {
-            try chart.progress(tree, theme, .bar, card.fraction, fill, card_bar);
+            try chart.progress(tree, theme, .bar, item.fraction, fill, card_bar);
         }
     }
-    if (card.delta.len == 0) {
-        _ = try tree.text(card.note.slice(), .{ .color = theme.muted_foreground, .style = .xs });
+    if (item.delta.len == 0) {
+        try card.description(tree, theme, item.note.slice(), .{});
     } else {
         const line = try tree.open(if (stacked_note)
-            .{ .gap = 2 }
+            .{ .width = .fill, .gap = 2 }
         else
-            .{ .axis = .row, .gap = 4, .cross = .center });
-        _ = try tree.text(card.delta.slice(), .{
-            .color = switch (card.trend) {
+            .{ .axis = .row, .width = .fill, .gap = 4, .cross = .center });
+        _ = try tree.text(item.delta.slice(), .{
+            .color = switch (item.trend) {
                 .better => theme.success,
                 .worse => theme.destructive,
                 .even => theme.muted_foreground,
@@ -863,16 +853,21 @@ fn statCard(tree: *Tree, theme: *const Theme, card_title: []const u8, card: *con
             .style = .sm_medium,
             .figures = .tabular,
         });
-        _ = try tree.text(card.note.slice(), .{ .color = theme.muted_foreground, .style = .xs });
+        try card.description(tree, theme, item.note.slice(), .{});
         tree.close(line);
     }
-    card_kit.close(tree, box);
+    card.close(tree, box);
+}
+
+/// An 8×8 rounded color swatch.
+fn swatch(tree: *Tree, color: Theme.Color) kit.Tree.Error!void {
+    _ = try tree.leaf(.{ .width = .{ .fixed = 8 }, .height = .{ .fixed = 8 }, .fill = color, .radius = 2 });
 }
 
 /// A swatch and its name.
 fn legend(tree: *Tree, theme: *const Theme, label: []const u8, color: Theme.Color) kit.Tree.Error!void {
     const item = try tree.open(.{ .axis = .row, .gap = 6, .cross = .center });
-    _ = try tree.leaf(.{ .width = .{ .fixed = 8 }, .height = .{ .fixed = 8 }, .fill = color, .radius = 2 });
+    try swatch(tree, color);
     _ = try tree.text(label, .{ .color = theme.muted_foreground, .style = .xs });
     tree.close(item);
 }
@@ -889,6 +884,7 @@ fn focusFill(theme: *const Theme) Theme.Color {
 /// with the limit and, on History, the day under the pointer.
 const DayChart = struct {
     card_title: []const u8,
+    width: kit.Tree.Size = .fill,
     height: kit.Tree.Size,
     days: []const DaySummary,
     /// Today's day of the week, 0 for Sunday.
@@ -905,13 +901,14 @@ fn isHovered(hovered: ?u8, index: usize) bool {
 }
 
 fn daysCard(tree: *Tree, theme: *const Theme, options: DayChart) kit.Tree.Error!void {
-    const box = try card_kit.open(tree, theme, .{ .height = options.height, .gap = 12 });
-    const head = try tree.open(.{ .axis = .row, .width = .fill, .gap = 12, .cross = .center });
-    _ = try tree.text(options.card_title, .{ .color = theme.foreground, .style = .sm_medium });
-    _ = try tree.leaf(.{ .width = .fill });
+    const box = try card.open(tree, theme, .{ .width = options.width, .height = options.height, .gap = 12 });
+    const head = try card.openHeader(tree, .{ .axis = .row, .gap = 12, .cross = .center });
+    try card.title(tree, theme, options.card_title, .{ .width = .fill });
+    const actions = try card.openAction(tree);
     try legend(tree, theme, "Screen", screenFill(theme));
     try legend(tree, theme, "Focus", focusFill(theme));
-    tree.close(head);
+    card.close(tree, actions);
+    card.close(tree, head);
 
     var items: [history_days]chart.Day = undefined;
     const shown = items[0..options.days.len];
@@ -947,16 +944,16 @@ fn daysCard(tree: *Tree, theme: *const Theme, options: DayChart) kit.Tree.Error!
         tree.close(cell);
     }
     tree.close(labels);
-    card_kit.close(tree, box);
+    card.close(tree, box);
 }
 
 fn programsCard(state: *const State, tree: *Tree, theme: *const Theme, card_title: []const u8, rows: []const Program, height: kit.Tree.Size) kit.Tree.Error!void {
-    const box = try card_kit.open(tree, theme, .{ .height = height, .gap = 12 });
-    _ = try tree.text(card_title, .{ .color = theme.foreground, .style = .sm_medium });
+    const box = try card.open(tree, theme, .{ .height = height, .gap = 12 });
+    try card.title(tree, theme, card_title, .{ .width = .fill });
     if (rows.len == 0) {
         const empty = if (state.wb.option.screen_time.track_foreground_apps) "No programs recorded yet" else "Program tracking is off";
-        _ = try tree.text(empty, .{ .color = theme.muted_foreground });
-        card_kit.close(tree, box);
+        try card.description(tree, theme, empty, .{ .style = .sm });
+        card.close(tree, box);
         return;
     }
     var parts: [program_rows]chart.Part = undefined;
@@ -985,8 +982,8 @@ fn programsCard(state: *const State, tree: *Tree, theme: *const Theme, card_titl
             .gap = 8,
             .cross = .center,
         });
-        _ = try tree.leaf(.{ .width = .{ .fixed = 8 }, .height = .{ .fixed = 8 }, .fill = theme.chart[index], .radius = 2 });
-        _ = try tree.text(row.name.slice(), .{ .color = theme.foreground, .width = .fill });
+        try swatch(tree, theme.chart[index]);
+        _ = try tree.text(row.name.slice(), .{ .color = theme.foreground, .width = .fill, .wrap = .ellipsis });
         _ = try tree.text(row.time.slice(), .{ .color = theme.muted_foreground, .figures = .tabular });
         const share_box = try tree.open(.{ .width = .{ .fixed = 36 }, .cross = .end });
         _ = try tree.text(row.share.slice(), .{ .color = theme.muted_foreground, .figures = .tabular });
@@ -994,22 +991,23 @@ fn programsCard(state: *const State, tree: *Tree, theme: *const Theme, card_titl
         tree.close(line);
     }
     tree.close(list);
-    card_kit.close(tree, box);
+    card.close(tree, box);
 }
 
 fn historyPage(state: *const State, tree: *Tree, theme: *const Theme) kit.Tree.Error!void {
     const history = &state.history;
     const page = try pageBox(state, tree);
     var rows = try CardRows.begin(tree, state.width);
-    for (&history.cards, history_card_titles, 0..) |*card, card_title, index| {
+    for (&history.cards, history_card_titles, 0..) |*item, card_title, index| {
         try rows.next(tree, index);
-        try statCard(tree, theme, card_title, card, theme.info, false, stackNote(state.width));
+        try statCard(tree, theme, card_title, item, theme.info, false, stackNote(state.width));
     }
     rows.end(tree);
-    var lower = try LowerRow.begin(tree, isNarrow(state.width));
+    const lower = try LowerRow.begin(tree, isNarrow(state.width));
     const count = state.period.days();
     try daysCard(tree, theme, .{
         .card_title = "Each day",
+        .width = lower.chartWidth(),
         .height = lower.chartHeight(),
         .days = history.days[history_days - count ..],
         .weekday = history.weekday,
@@ -1021,33 +1019,32 @@ fn historyPage(state: *const State, tree: *Tree, theme: *const Theme) kit.Tree.E
             else => null,
         },
     });
-    try lower.middle(tree);
     try programsCard(state, tree, theme, "Where the time went", history.programs[0..history.program_count], lower.programsHeight());
     lower.end(tree);
-    tree.close(page);
+    try scroll_area.close(tree, theme, page);
 }
 
 /// The hovered day's date and numbers, placed near the pointer.
 fn dayTooltip(state: *const State, tree: *Tree, theme: *const Theme) kit.Tree.Error!void {
-    const card = try tooltip.openAt(tree, theme, state.pointer_x, state.pointer_y);
+    const tip = try tooltip.openAt(tree, theme, state.pointer_x, state.pointer_y);
     _ = try tree.text(state.tip.title.slice(), .{ .color = theme.foreground, .style = .xs });
     try tooltip.line(tree, theme, .{ .name = "Screen", .value = state.tip.screen.slice(), .swatch = screenFill(theme) });
     try tooltip.line(tree, theme, .{ .name = "Focus", .value = state.tip.focus.slice(), .swatch = focusFill(theme) });
     _ = try tree.text(state.tip.counts.slice(), .{ .color = theme.muted_foreground, .style = .xs });
-    tooltip.close(tree, card);
+    tooltip.close(tree, tip);
 }
 
 /// The hovered program's name, duration and share, placed near the pointer.
 fn programTooltip(state: *const State, tree: *Tree, theme: *const Theme, index: u8) kit.Tree.Error!void {
     const rows = programRows(state);
     if (index >= rows.len) return;
-    const card = try tooltip.openAt(tree, theme, state.pointer_x, state.pointer_y);
+    const tip = try tooltip.openAt(tree, theme, state.pointer_x, state.pointer_y);
     try tooltip.line(tree, theme, .{
         .name = rows[index].name.slice(),
         .value = state.tip.program_value.slice(),
         .swatch = theme.chart[index],
     });
-    tooltip.close(tree, card);
+    tooltip.close(tree, tip);
 }
 
 fn programRows(state: *const State) []const Program {
@@ -1064,6 +1061,7 @@ fn header(state: *const State, tree: *Tree, theme: *const Theme) kit.Tree.Error!
         .width = .fill,
         .height = .{ .fixed = 56 },
         .padding = .symmetric(sideMargin(state.width), 0),
+        .gap = 12,
         .cross = .center,
     });
     var list: [page_count]tabs.Tab = undefined;
@@ -1078,8 +1076,7 @@ fn header(state: *const State, tree: *Tree, theme: *const Theme) kit.Tree.Error!
             else => tabs.none,
         },
     });
-    _ = try tree.leaf(.{ .width = .fill });
-    const row_inner = try tree.open(.{ .axis = .row, .gap = 8, .cross = .center });
+    const row_inner = try tree.open(.{ .axis = .row, .width = .fill, .gap = 8, .main = .end, .cross = .center });
     switch (state.page) {
         .today => {
             if (state.shown.phase != .idle and state.width >= narrow_width) try timerChip(state, tree, theme);
@@ -1141,10 +1138,13 @@ fn timerChip(state: *const State, tree: *Tree, theme: *const Theme) kit.Tree.Err
 }
 
 fn focusPage(state: *const State, tree: *Tree, theme: *const Theme) kit.Tree.Error!void {
-    const page = try tree.open(.{
+    const margin = sideMargin(state.width);
+    const page = try scroll_area.open(tree, .{
+        .id = page_id,
+        .offset = .{ .y = state.scroll },
         .width = .fill,
         .height = .fill,
-        .padding = .{ .left = 24, .right = 24, .top = 0, .bottom = 40 },
+        .padding = .{ .left = margin, .right = margin, .top = 8, .bottom = 40 },
         .gap = 28,
         .main = .center,
         .cross = .center,
@@ -1170,28 +1170,17 @@ fn focusPage(state: *const State, tree: *Tree, theme: *const Theme) kit.Tree.Err
         },
     }
     try timerButtons(state, tree, theme);
-    tree.close(page);
+    try scroll_area.close(tree, theme, page);
 }
 
 /// The phase over the time.
 fn timerText(state: *const State, tree: *Tree, theme: *const Theme, style: kit.text.Style) kit.Tree.Error!void {
     const phase = state.shown.phase;
-
-    const badge = try tree.open(.{
-        .height = .{ .fixed = 24 },
-        .padding = .symmetric(12, 0),
-        .cross = .center,
-        .main = .center,
-        .width = .fit,
-        .fill = phaseColor(theme, phase).alpha(15),
-        .radius = Theme.radius_md,
+    try badge.view(tree, theme, .{
+        .label = phaseLabel(phase),
+        .variant = phaseBadgeVariant(phase),
+        .size = .lg,
     });
-
-    _ = try tree.text(phaseLabel(phase), .{
-        .color = phaseTextColor(theme, phase),
-        .style = .sm_medium,
-    });
-    tree.close(badge);
     _ = try tree.text(state.clock(), .{
         .color = theme.foreground,
         .style = style,
@@ -1255,11 +1244,11 @@ fn phaseLabel(phase: focus.Phase) []const u8 {
     };
 }
 
-/// The phase's name over the time: lighter than its dot and bar.
-fn phaseTextColor(theme: *const Theme, phase: focus.Phase) Theme.Color {
+fn phaseBadgeVariant(phase: focus.Phase) badge.Variant {
     return switch (phase) {
-        .task => theme.info_text,
-        .idle, .short_break, .long_break => phaseColor(theme, phase),
+        .idle => .muted,
+        .task => .info,
+        .short_break, .long_break => .success,
     };
 }
 
@@ -1485,17 +1474,17 @@ fn average(days: []const DaySummary) Average {
 /// "↓ 34m from the week before", or "↑ 12m · 34% of screen time".
 /// The card's delta ("↑ 12m") and whether it is good news, then `tail`
 /// as its note. `more_is_better` is true for focus, false for screen time.
-fn change(card: *Card, now: u32, earlier: u32, more_is_better: bool, tail: []const u8) void {
+fn change(item: *Card, now: u32, earlier: u32, more_is_better: bool, tail: []const u8) void {
     var amount: Label(12) = .{};
     amount.duration(if (now > earlier) now - earlier else earlier - now);
     if (amount.len == 0 or std.mem.eql(u8, amount.slice(), "0m")) {
-        card.delta.set("=", .{});
-        card.trend = .even;
+        item.delta.set("=", .{});
+        item.trend = .even;
     } else {
-        card.delta.set("{s} {s}", .{ if (now > earlier) "\u{2191}" else "\u{2193}", amount.slice() });
-        card.trend = if ((now > earlier) == more_is_better) .better else .worse;
+        item.delta.set("{s} {s}", .{ if (now > earlier) "\u{2191}" else "\u{2193}", amount.slice() });
+        item.trend = if ((now > earlier) == more_is_better) .better else .worse;
     }
-    card.note.set("{s}", .{tail});
+    item.note.set("{s}", .{tail});
 }
 
 /// A day's record from the file, or an empty one when none was kept.

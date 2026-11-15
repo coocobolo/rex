@@ -579,6 +579,9 @@ test "dashboard: a narrow page scrolls within what the host reports, and a new p
     try tree.layout(.{ .context = &no_state, .widthFn = fixedWidth }, 400, 300);
     try testing.expectEqual(@as(u8, 1), tree.scroll_len);
     try testing.expect(tree.scrollMax(dashboard.page_id).y > 0);
+    const thumb = tree.scrolls[0].thumb;
+    try testing.expect(thumb != kit.Tree.none);
+    try testing.expect(tree.nodes[thumb].rect.h > 0);
 
     _ = dashboard.update(&state, .{ .key = .{ .key = .tab, .mods = .{ .ctrl = true } } });
     try testing.expectEqual(0, state.scroll);
@@ -648,4 +651,45 @@ test "dashboard: program tooltip works on Today and History and stays near the p
         try buildView(&state);
         try testing.expect(dashboard.update(&state, .{ .pointer = .{ .id = .none } }));
     }
+}
+
+test "dashboard: lower row cards share the page width with a 16 px gap, and view choices align" {
+    var tmp: StateTmp = .init();
+    defer tmp.deinit();
+    const dir = try tmp.path();
+    const config = configWith(dir);
+    var state = try openDashboard(&config, dir);
+    defer dashboard.deinit(&state);
+    _ = dashboard.update(&state, .{ .size = .{ .width = 960, .height = 600 } });
+    state.menu = .view;
+
+    var nodes: [dashboard.node_max]kit.Tree.Node = undefined;
+    var lines: [dashboard.line_max]kit.text.Line = undefined;
+    var tree = kit.Tree.init(&nodes, &lines);
+    try dashboard.view(&state, &tree, &kit.Theme.dark);
+    var no_state: u8 = 0;
+    try tree.layout(.{ .context = &no_state, .widthFn = fixedWidth }, 960, 600);
+
+    var week_card: ?kit.Tree.Rect = null;
+    var prog_card: ?kit.Tree.Rect = null;
+    var timer_label_x: ?f32 = null;
+    var settings_label_x: ?f32 = null;
+    for (tree.items()) |node| {
+        if (node.content != .text) continue;
+        const bytes = node.content.text.bytes;
+        if (std.mem.eql(u8, bytes, "This week")) {
+            const head = tree.nodes[node.parent];
+            week_card = tree.nodes[head.parent].rect;
+        } else if (std.mem.eql(u8, bytes, "Programs today")) {
+            prog_card = tree.nodes[node.parent].rect;
+        } else if (std.mem.eql(u8, bytes, "Timer")) {
+            timer_label_x = node.rect.x;
+        } else if (std.mem.eql(u8, bytes, "Wellbeing settings\u{2026}")) {
+            settings_label_x = node.rect.x;
+        }
+    }
+    try testing.expectApproxEqAbs(@as(f32, 24), week_card.?.x, 1e-3);
+    try testing.expectApproxEqAbs(week_card.?.x + week_card.?.w + 16, prog_card.?.x, 1e-3);
+    try testing.expectApproxEqAbs(@as(f32, 960 - 24), prog_card.?.x + prog_card.?.w, 1e-3);
+    try testing.expectEqual(timer_label_x.?, settings_label_x.?);
 }
