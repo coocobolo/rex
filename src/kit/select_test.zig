@@ -41,3 +41,34 @@ test "select: trigger writes value and chevron; list opens anchored popup" {
     select.closeList(&tree, card);
     try testing.expect(tree.len <= nodes.len);
 }
+
+test "select: scrollable list caps height and registers scroll region" {
+    const choices = [_][]const u8{ "One", "Two", "Three", "Four", "Five" };
+    var nodes: [select.trigger_node_max + select.scrollable_list_node_max + choices.len * select.item_node_max]Tree.Node = undefined;
+    var lines: [16]text.Line = undefined;
+    var tree = Tree.init(&nodes, &lines);
+
+    const trigger_id = Id.of("sel.scroll.trigger");
+    const list_id = Id.of("sel.scroll.list");
+    try select.trigger(&tree, &Theme.dark, .{
+        .id = trigger_id,
+        .value = choices[0],
+        .open = true,
+    });
+    const card = try select.openList(&tree, &Theme.dark, .{
+        .layer_id = Id.of("sel.scroll.layer"),
+        .anchor = trigger_id,
+        .id = list_id,
+        .max_height = 104,
+        .scroll_y = 16,
+    });
+    for (choices, 0..) |label, i| {
+        try select.item(&tree, &Theme.dark, .{
+            .id = Id.of("sel.scroll.item").item(@intCast(i)),
+            .label = label,
+            .selected = i == 0,
+        });
+    }
+    try select.closeScrollableList(&tree, &Theme.dark, card);
+    try testing.expectEqual(nodes.len - 4, tree.len);
+}

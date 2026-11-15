@@ -498,8 +498,14 @@ fn distributeWrapped(nodes: []Node, index: usize, comptime dimension: Dimension,
     }
 }
 
-/// Shifts each scroll region's descendants left/up by its clamped offset and
-/// records the region's `max.{x,y}` extent beyond its box.
+const thumb_thickness: f32 = 4;
+const thumb_inset: f32 = 2;
+const thumb_track_pad: f32 = 4;
+const thumb_min_len: f32 = 24;
+
+/// Shifts each scroll region's descendants left/up by its clamped offset,
+/// records the region's `max.{x,y}` extent beyond its box, and places its
+/// optional scrollbar thumb inside its viewport.
 fn scrollRange(tree: *Tree, nodes: []Node, range: Range) void {
     for (tree.scrolls[0..tree.scroll_len]) |*region| {
         if (region.node < range.start or region.node >= range.end) continue;
@@ -511,12 +517,50 @@ fn scrollRange(tree: *Tree, nodes: []Node, range: Range) void {
         };
         const moved_x = if (std.math.isNan(region.offset.x)) 0 else std.math.clamp(region.offset.x, 0, region.max.x);
         const moved_y = if (std.math.isNan(region.offset.y)) 0 else std.math.clamp(region.offset.y, 0, region.max.y);
-        if (!(moved_x > 0) and !(moved_y > 0)) continue;
-        for (nodes[index + 1 .. box_node.end]) |*child| {
-            child.rect.x -= moved_x;
-            child.rect.y -= moved_y;
+        if (moved_x > 0 or moved_y > 0) {
+            for (nodes[index + 1 .. box_node.end]) |*child| {
+                child.rect.x -= moved_x;
+                child.rect.y -= moved_y;
+            }
+        }
+        if (region.thumb != Tree.none) {
+            placeScrollThumb(&nodes[region.thumb], box_node.rect, moved_x, moved_y, region.max);
         }
     }
+}
+
+fn placeScrollThumb(thumb: *Node, viewport: Rect, moved_x: f32, moved_y: f32, max: Tree.Scroll.Max) void {
+    if (max.y > 0 and viewport.w > thumb_thickness + thumb_inset * 2 and viewport.h > thumb_track_pad * 2) {
+        const track_h = viewport.h - thumb_track_pad * 2;
+        const total_h = viewport.h + max.y;
+        const min_h = @min(thumb_min_len, track_h);
+        const thumb_h = @max(min_h, track_h * (viewport.h / total_h));
+        const travel = @max(0, track_h - thumb_h);
+        const ratio = std.math.clamp(moved_y / max.y, 0, 1);
+        thumb.rect = .{
+            .x = viewport.x + viewport.w - thumb_thickness - thumb_inset,
+            .y = viewport.y + thumb_track_pad + travel * ratio,
+            .w = thumb_thickness,
+            .h = thumb_h,
+        };
+        return;
+    }
+    if (max.x > 0 and viewport.h > thumb_thickness + thumb_inset * 2 and viewport.w > thumb_track_pad * 2) {
+        const track_w = viewport.w - thumb_track_pad * 2;
+        const total_w = viewport.w + max.x;
+        const min_w = @min(thumb_min_len, track_w);
+        const thumb_w = @max(min_w, track_w * (viewport.w / total_w));
+        const travel = @max(0, track_w - thumb_w);
+        const ratio = std.math.clamp(moved_x / max.x, 0, 1);
+        thumb.rect = .{
+            .x = viewport.x + thumb_track_pad + travel * ratio,
+            .y = viewport.y + viewport.h - thumb_thickness - thumb_inset,
+            .w = thumb_w,
+            .h = thumb_thickness,
+        };
+        return;
+    }
+    thumb.rect = .{ .x = viewport.x, .y = viewport.y, .w = 0, .h = 0 };
 }
 
 /// Fits or wraps every text node's lines to the width it was given and sets its height.

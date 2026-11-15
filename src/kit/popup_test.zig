@@ -135,3 +135,41 @@ test "popup: a view holds anchor_max popups" {
     }
     try testing.expectError(error.OutOfAnchors, popup.open(&tree, &Theme.dark, .{ .layer_id = layer_id, .anchor = trigger_id }));
 }
+
+test "popup: max_height caps card height, scrolls items, and places thumb" {
+    var nodes: [32]Tree.Node = undefined;
+    var lines: [16]text.Line = undefined;
+    var tree = Tree.init(&nodes, &lines);
+    const card_id = Id.of("test.popup.scroll");
+
+    const page = try tree.open(.{ .id = page_id, .width = .fill, .height = .fill, .padding = .{ .left = 40, .top = 20 } });
+    _ = try tree.leaf(.{ .id = trigger_id, .width = .{ .fixed = 120 }, .height = .{ .fixed = 36 } });
+    tree.close(page);
+
+    const card = try popup.open(&tree, &Theme.dark, .{
+        .layer_id = layer_id,
+        .anchor = trigger_id,
+        .id = card_id,
+        .max_height = 72,
+        .scroll_y = 32,
+    });
+    for (0..4) |i| {
+        try popup.item(&tree, &Theme.dark, .{
+            .id = itemId(@intCast(i)),
+            .label = "Item",
+            .selected = i == 0,
+        });
+    }
+    try popup.closeScrollable(&tree, &Theme.dark, card);
+    try tree.layout(measurer(), 800, 600);
+
+    // 4 items * 32 + 8 padding = 136 total height, capped to 72 -> scrollMax.y = 64.
+    try testing.expectEqual(Rect{ .x = 40, .y = 60, .w = 120, .h = 72 }, tree.nodes[card].rect);
+    try testing.expectEqual(@as(f32, 64), tree.scrollMax(card_id).y);
+    // Item 1 (originally at y = 60 + 4 + 32 = 96) is shifted up by 32 to y = 64.
+    try testing.expectEqual(@as(f32, 64), tree.find(itemId(1)).?.rect.y);
+    // Scrollbar thumb is translated along with the anchored card.
+    const thumb = tree.nodes[tree.len - 1];
+    try testing.expectEqual(@as(f32, 40 + 120 - 6), thumb.rect.x);
+    try testing.expect(thumb.rect.h > 0);
+}

@@ -396,6 +396,7 @@ pub const Scroll = struct {
     pub const Region = struct {
         id: Id = .none,
         node: Index = none,
+        thumb: Index = none,
         offset: Offset = .{},
         max: Max = .{},
     };
@@ -489,6 +490,20 @@ pub fn scrollRegion(self: *Tree, index: Index, offset: Scroll.Offset) Error!void
         .offset = offset,
     };
     self.scroll_len += 1;
+}
+
+/// Attaches overlay node `thumb` as the scrollbar thumb for registered scroll region `index`.
+pub fn scrollThumb(self: *Tree, index: Index, thumb: Index) void {
+    assert(thumb < self.len);
+    assert(self.nodes[thumb].parent == index);
+    assert(self.nodes[thumb].box.overlay);
+    for (self.scrolls[0..self.scroll_len]) |*region| {
+        if (region.node == index) {
+            region.thumb = thumb;
+            return;
+        }
+    }
+    unreachable;
 }
 
 /// Laid-out scroll bounds for the region with `id`, or zeros if not registered.

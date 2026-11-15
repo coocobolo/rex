@@ -14,6 +14,7 @@ const assert = std.debug.assert;
 
 const Theme = @import("Theme.zig");
 const icons = @import("icons.zig");
+const scroll_area = @import("scroll_area.zig");
 const Tree = @import("Tree.zig");
 const Id = Tree.Id;
 const Index = Tree.Index;
@@ -22,9 +23,13 @@ const Index = Tree.Index;
 pub const padding = 4;
 /// The height of an item.
 pub const item_height = 32;
+/// Default maximum height for a scrollable dropdown list (10 items plus padding).
+pub const default_max_height: f32 = 10 * item_height + 2 * padding;
 
 /// The layer and the card.
 pub const node_max = 2;
+/// The layer, the scrollable card, and its scrollbar thumb.
+pub const scrollable_node_max = 1 + scroll_area.node_max;
 /// An item's row, label and mark.
 pub const item_node_max = 3;
 
@@ -33,27 +38,51 @@ pub const Options = struct {
     layer_id: Id,
     /// The control the card is placed against.
     anchor: Id,
+    /// Optional ID on the card (used for scroll queries when `max_height` is set).
+    id: Id = .none,
+    /// Caps the card's height and registers it as a vertical `scroll_area`.
+    max_height: ?f32 = null,
+    /// Vertical scroll offset in logical pixels when `max_height` is set.
+    scroll_y: f32 = 0,
 };
 
 /// Writes the layer and opens the card, which must be a root: call it
-/// after the page is closed. Write the items, then `close` the card.
+/// after the page is closed. Write the items, then `close` (or `closeScrollable`) the card.
 pub fn open(tree: *Tree, theme: *const Theme, options: Options) Tree.Error!Index {
     assert(tree.current == Tree.none);
     _ = try tree.leaf(.{ .id = options.layer_id, .width = .fill, .height = .fill });
-    const card = try tree.open(.{
-        .padding = .all(padding),
-        .overflow = .clip,
-        .fill = theme.popover,
-        .border = theme.border,
-        .border_width = Theme.border_width,
-        .radius = Theme.radius_md,
-    });
+    const card = if (options.max_height) |max_h|
+        try scroll_area.open(tree, .{
+            .id = options.id,
+            .offset = .{ .y = options.scroll_y },
+            .width = .fit,
+            .height = .{ .fit_at_most = max_h },
+            .padding = .all(padding),
+            .fill = theme.popover,
+            .border = theme.border,
+            .border_width = Theme.border_width,
+            .radius = Theme.radius_md,
+        })
+    else
+        try tree.open(.{
+            .id = options.id,
+            .padding = .all(padding),
+            .overflow = .clip,
+            .fill = theme.popover,
+            .border = theme.border,
+            .border_width = Theme.border_width,
+            .radius = Theme.radius_md,
+        });
     try tree.anchorTo(card, options.anchor);
     return card;
 }
 
 pub fn close(tree: *Tree, card: Index) void {
     tree.close(card);
+}
+
+pub fn closeScrollable(tree: *Tree, theme: *const Theme, card: Index) Tree.Error!void {
+    try scroll_area.close(tree, theme, card);
 }
 
 pub const ItemOptions = struct {

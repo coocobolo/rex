@@ -16,6 +16,7 @@ pub const min_width: f32 = 160;
 /// Focus ring wrapper, trigger face, value text, and chevron icon.
 pub const trigger_node_max = 4;
 pub const list_node_max = popup.node_max;
+pub const scrollable_list_node_max = popup.scrollable_node_max;
 pub const item_node_max = popup.item_node_max;
 
 pub const TriggerOptions = struct {
@@ -82,4 +83,8 @@ pub fn item(tree: *Tree, theme: *const Theme, options: popup.ItemOptions) Tree.E
 
 pub fn closeList(tree: *Tree, card: Index) void {
     popup.close(tree, card);
+}
+
+pub fn closeScrollableList(tree: *Tree, theme: *const Theme, card: Index) Tree.Error!void {
+    try popup.closeScrollable(tree, theme, card);
 }
