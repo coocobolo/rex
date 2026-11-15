@@ -979,3 +979,61 @@ test "KitPainter: inner square clip and nowrap text keep outer rounded clip" {
         try testing.expectEqual([4]i16{ 20, 20, 140, 140 }, inst.clip_round);
     }
 }
+
+test "KitPainter: nested rounded clip and thin-border rounded clip preserve outer corners and border inset" {
+    try testGlContext();
+    const theme = &Theme.dark;
+    var atlas = try Atlas.init(testing.allocator, .{ .width = 512, .height = 512 });
+    defer atlas.deinit();
+    var font = try KitFont.init(inter, .{});
+    defer font.deinit();
+    var painter = try KitPainter.init();
+    defer painter.deinit();
+
+    var nodes: [16]Tree.Node = undefined;
+    var lines: [8]text.Line = undefined;
+    var tree: Tree = .init(&nodes, &lines);
+    const root = try tree.open(.{ .width = .fill, .height = .fill, .padding = .all(20), .gap = 20 });
+    // Case 1: Outer rounded clip (radius 16) containing a flush inner rounded clip (radius 4).
+    const outer = try tree.open(.{
+        .width = .{ .fixed = 100 },
+        .height = .{ .fixed = 60 },
+        .overflow = .clip,
+        .radius = 16,
+    });
+    const inner = try tree.open(.{
+        .width = .fill,
+        .height = .fill,
+        .overflow = .clip,
+        .radius = 4,
+    });
+    _ = try tree.leaf(.{ .overlay = true, .width = .fill, .height = .fill, .fill = theme.destructive });
+    tree.close(inner);
+    tree.close(outer);
+
+    // Case 2: Rounded clip where radius (2) <= border_width (4) -> inner clip_radius == 0,
+    // yet children must still be inset by the 4px border so the border is not painted over.
+    const bordered = try tree.open(.{
+        .width = .{ .fixed = 100 },
+        .height = .{ .fixed = 60 },
+        .overflow = .clip,
+        .radius = 2,
+        .border = theme.primary,
+        .border_width = 4,
+    });
+    _ = try tree.leaf(.{ .overlay = true, .width = .fill, .height = .fill, .fill = theme.destructive });
+    tree.close(bordered);
+    tree.close(root);
+    try tree.layout(font.measurer(), 200, 200);
+
+    var frame = try drawToFrame(&painter, &font, &atlas, &tree, 200, 200, 1, terminal_dark);
+    defer frame.deinit();
+
+    // Case 1: (22, 22) is outside the 16px outer corner arc -> remains background, not destructive.
+    try testing.expectEqual(rgb(terminal_dark), frame.at(22, 22));
+    try testing.expectEqual(rgb(theme.destructive), frame.at(50, 50));
+
+    // Case 2: bordered box sits at y = [100..160]. Top border at (50, 101) stays primary, interior at (50, 110) is destructive.
+    try testing.expectEqual(rgb(theme.primary), frame.at(50, 101));
+    try testing.expectEqual(rgb(theme.destructive), frame.at(50, 110));
+}

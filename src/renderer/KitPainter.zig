@@ -263,7 +263,7 @@ pub fn paint(self: *KitPainter, tree: *const Tree, font: *KitFont, atlas: *Atlas
                         .end => slack,
                     };
                     var line_clip = clip;
-                    if (t.wrap != .word and line.width > node.rect.w) {
+                    if (t.wrap != .word and (line.width > node.rect.w or (t.wrap == .ellipsis and line.end < t.bytes.len))) {
                         line_clip.rect = intersect(clip.rect, clipOf(layout.snap(node.rect, scale)));
                     }
                     const append_ellipsis = t.wrap == .ellipsis and line.end < t.bytes.len and line.width > 0;
@@ -280,13 +280,28 @@ fn narrowClip(mask: ClipMask, node: *const Tree.Node, scale: f32) ClipMask {
     if (node.box.radius == 0) {
         return .{ .end = node.end, .rect = rect, .round = mask.round, .radius = mask.radius };
     }
-    const stroke = if (node.box.border.a == 0) 0 else layout.strokePixels(node.box.border_width, scale);
+    const stroke: i32 = @intCast(if (node.box.border.a == 0) 0 else layout.strokePixels(node.box.border_width, scale));
     const s = @min(stroke, @divFloor(@max(0, @min(outer.w, outer.h)), 2));
+    const inner_clip = clipOf(.{ .x = outer.x + s, .y = outer.y + s, .w = outer.w - 2 * s, .h = outer.h - 2 * s });
+    const inner_rect = intersect(rect, inner_clip);
+    const round = intersect(mask.round, inner_clip);
+    const inner_radius = @max(0, @as(f32, @floatFromInt(node.box.radius)) * scale - @as(f32, @floatFromInt(s)));
+    const outer_radius: f32 = if (mask.radius > 0) blk: {
+        const dx_l: i32 = @max(0, @as(i32, round[0]) - @as(i32, mask.round[0]));
+        const dx_r: i32 = @max(0, @as(i32, mask.round[2]) - @as(i32, round[2]));
+        const dy_t: i32 = @max(0, @as(i32, round[1]) - @as(i32, mask.round[1]));
+        const dy_b: i32 = @max(0, @as(i32, mask.round[3]) - @as(i32, round[3]));
+        const corner_inset = @min(
+            @min(@max(dx_l, dy_t), @max(dx_r, dy_t)),
+            @min(@max(dx_l, dy_b), @max(dx_r, dy_b)),
+        );
+        break :blk @max(0, mask.radius - @as(f32, @floatFromInt(corner_inset)));
+    } else 0;
     return .{
         .end = node.end,
-        .rect = rect,
-        .round = clipOf(.{ .x = outer.x + s, .y = outer.y + s, .w = outer.w - 2 * s, .h = outer.h - 2 * s }),
-        .radius = @max(0, @as(f32, @floatFromInt(node.box.radius)) * scale - @as(f32, @floatFromInt(stroke))),
+        .rect = inner_rect,
+        .round = round,
+        .radius = @max(inner_radius, outer_radius),
     };
 }
 
