@@ -19,6 +19,7 @@ const Rgb = @import("../color/Rgb.zig");
 const ThemePreset = @import("../color/Theme.zig");
 const theme_presets = @import("../color/presets.zig");
 
+const badge = kit.badge;
 const button = kit.button;
 const sidebar = kit.sidebar;
 const popup = kit.popup;
@@ -2942,16 +2943,11 @@ fn viewAnsiCollapsible(
         .style = .sm_medium,
     });
     if (overridden_count > 0) {
-        const badge = try tree.open(.{
-            .padding = .symmetric(6, 1),
-            .fill = theme.muted,
-            .radius = Theme.radius_sm,
+        try badge.view(tree, theme, .{
+            .label = ansi_overridden_labels[@min(overridden_count, 16)],
+            .variant = .muted,
+            .size = .sm,
         });
-        _ = try tree.text(ansi_overridden_labels[@min(overridden_count, 16)], .{
-            .color = theme.muted_foreground,
-            .style = .xs,
-        });
-        tree.close(badge);
     }
     tree.close(title_row);
     _ = try tree.text("Terminal palette colors 0–15", .{
@@ -3372,16 +3368,11 @@ fn viewKeyRow(
         .style = .sm_medium,
     });
     if (info.restart_required) {
-        const badge = try tree.open(.{
-            .padding = .symmetric(6, 1),
-            .fill = theme.muted,
-            .radius = Theme.radius_sm,
+        try badge.view(tree, theme, .{
+            .label = "Restart required",
+            .variant = .muted,
+            .size = .sm,
         });
-        _ = try tree.text("Restart required", .{
-            .color = theme.muted_foreground,
-            .style = .xs,
-        });
-        tree.close(badge);
     }
     tree.close(title_row);
 

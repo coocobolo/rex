@@ -60,7 +60,7 @@ Rules that hold everywhere:
 | `memory.zig` | Per-id memory that outlives a rebuild of the view |
 | `motion.zig` | The one duration and curve every surface uses |
 | `focus.zig` | Keyboard focus order over a row or list |
-| `button.zig`, `kbd.zig`, `dialog.zig`, `sidebar.zig`, `popup.zig`, `tabs.zig`, `chart.zig`, `tooltip.zig` | Components |
+| `button.zig`, `badge.zig`, `kbd.zig`, `dialog.zig`, `sidebar.zig`, `popup.zig`, `tabs.zig`, `chart.zig`, `tooltip.zig` | Components |
 | `toast.zig`, `alert_dialog.zig` | Surfaces |
 
 ## Text
@@ -129,6 +129,13 @@ at half opacity and gets neither hover nor focus from its surface.
 `kbd.view` draws one key cap; `kbd.group` draws several in a row. A key cap
 is at least as wide as it is tall. It only displays a key; the caller binds
 it.
+
+### Badge (`badge.zig`)
+
+Read-only status or metadata pill (`default`, `secondary`, `muted`, `outline`,
+`destructive`, `info`, `success`, `warning`) in `sm`, `default`, or `lg` size,
+with an optional leading icon. Maps cleanly to `Theme` tokens with no caller
+color state.
 
 ### Dialog (`dialog.zig`)
 

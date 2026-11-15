@@ -11,6 +11,7 @@ pub const layout = @import("layout.zig");
 pub const memory = @import("memory.zig");
 pub const motion = @import("motion.zig");
 pub const kbd = @import("kbd.zig");
+pub const badge = @import("badge.zig");
 pub const button = @import("button.zig");
 pub const focus = @import("focus.zig");
 pub const dialog = @import("dialog.zig");
@@ -39,6 +40,7 @@ test {
     _ = @import("alert_dialog_test.zig");
     _ = @import("lock_screen_test.zig");
     _ = @import("wellbeing_widget_test.zig");
+    _ = @import("badge_test.zig");
     _ = @import("button_test.zig");
     _ = @import("sidebar_test.zig");
     _ = @import("popup_test.zig");

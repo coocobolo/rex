@@ -2932,7 +2932,6 @@ const mouseButtonCb: c.GLFWmousebuttonfun = struct {
                                         app.ringBell();
                                     },
                                     .reset => app.wellbeing_state.resetFocus(app.wallMs()),
-                                    .close => _ = kit.hideWellbeingWidget(),
                                 }
                                 app.needs_redraw = true;
                                 app.syncWellbeingKit(false);

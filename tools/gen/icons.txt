@@ -20,3 +20,4 @@ external-link
 monitor
 moon
 sun
+handle-bottom-right

@@ -23,6 +23,10 @@ pub const Style = enum(u8) {
     lg_semibold,
     /// 24 / 32, semibold: card values.
     xl_semibold,
+    /// 36 / 42, semibold, tracking −1: compact display values.
+    display_sm,
+    /// 44 / 52, semibold, tracking −1: medium display values.
+    display_md,
     /// 56 / 64, semibold, tracking −1: the compact timer.
     xxl_semibold,
     /// 80 / 88, semibold, tracking −2: the timer.
@@ -49,6 +53,8 @@ pub const Style = enum(u8) {
             .base => .{ .size = 16, .line_height = 24, .weight = 400 },
             .lg_semibold => .{ .size = 18, .line_height = 28, .weight = 600 },
             .xl_semibold => .{ .size = 24, .line_height = 32, .weight = 600 },
+            .display_sm => .{ .size = 36, .line_height = 42, .weight = 600, .tracking = -1 },
+            .display_md => .{ .size = 44, .line_height = 52, .weight = 600, .tracking = -1 },
             .xxl_semibold => .{ .size = 56, .line_height = 64, .weight = 600, .tracking = -1 },
             .xxxl_semibold => .{ .size = 80, .line_height = 88, .weight = 600, .tracking = -2 },
         };

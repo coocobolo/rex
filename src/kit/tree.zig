@@ -176,6 +176,8 @@ pub const Box = struct {
     overlay: bool = false,
     /// Dash and gap length in logical pixels for a horizontal rule; 0 is solid.
     dash: u8 = 0,
+    /// Clockwise border sweep from top-center (`0` = full border, `1..65535` = `fraction * 65535`).
+    border_sweep: u16 = 0,
 };
 
 pub const Text = struct {

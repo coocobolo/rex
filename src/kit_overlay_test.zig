@@ -17,6 +17,7 @@ const wellbeing_widget = @import("kit/wellbeing_widget.zig");
 const Theme = @import("kit/Theme.zig");
 const motion = @import("kit/motion.zig");
 const Id = @import("kit/tree.zig").Id;
+const Rect = @import("kit/tree.zig").Rect;
 
 const inter: @import("freetype/KitFont.zig").Files = .{
     .regular = "assets/fonts/Inter-Regular.ttf",
@@ -399,10 +400,10 @@ test "KitOverlay: its size" {
     // Reported in the ticket. Nearly all of it is two tables: the font's
     // kerning pairs, and the painter's 2048 instances of 52 bytes with its
     // glyph position cache.
-    try testing.expectEqual(311408, @sizeOf(KitOverlay));
-    try testing.expectEqual(131864, @sizeOf(@FieldType(KitOverlay, "painter")));
-    try testing.expectEqual(152496, @sizeOf(@FieldType(KitOverlay, "font")));
-    try testing.expectEqual(9568, @sizeOf(@FieldType(KitOverlay, "nodes")));
+    try testing.expectEqual(353424, @sizeOf(KitOverlay));
+    try testing.expectEqual(136472, @sizeOf(@FieldType(KitOverlay, "painter")));
+    try testing.expectEqual(190424, @sizeOf(@FieldType(KitOverlay, "font")));
+    try testing.expectEqual(9048, @sizeOf(@FieldType(KitOverlay, "nodes")));
 }
 
 test "KitOverlay: configure applies surface options and resets toast glide table on position change" {
@@ -449,7 +450,6 @@ test "KitOverlay: wellbeing widget toggles, drags, resizes and fires control act
     try testing.expect(fixture.frame());
 
     const card = centerOf(kit, wellbeing_widget.card_id).?;
-    try testing.expectEqual(@as(?[2]f32, null), centerOf(kit, wellbeing_widget.close_id));
     const orig_x = kit.wellbeing_widget.x;
     const orig_y = kit.wellbeing_widget.y;
 
@@ -463,34 +463,126 @@ test "KitOverlay: wellbeing widget toggles, drags, resizes and fires control act
     try testing.expectEqual(orig_y + 50, kit.wellbeing_widget.y);
     try testing.expect(fixture.frame());
 
-    // Drag the bottom-right corner grip inward to resize into mini/compact range.
+    // Drag the bottom-right corner grip inward to resize into mini horizontal grid.
     const grip = centerOf(kit, wellbeing_widget.resize_id).?;
-    const start_w = kit.wellbeing_widget.width;
-    const start_h = kit.wellbeing_widget.height;
     try testing.expectEqual(KitOverlay.Press.changed, kit.press(grip[0], grip[1]));
     try testing.expect(kit.holdsPress());
     try testing.expect(kit.pointerMoved(grip[0] - 110, grip[1] - 60));
     try testing.expectEqual(KitOverlay.Release.redraw, kit.release(grip[0] - 110, grip[1] - 60));
-    try testing.expectEqual(start_w - 110, kit.wellbeing_widget.width);
-    try testing.expectEqual(start_h - 60, kit.wellbeing_widget.height);
+    try testing.expectEqual(@as(f32, 152), kit.wellbeing_widget.width);
+    try testing.expectEqual(@as(f32, 76), kit.wellbeing_widget.height);
     try testing.expect(fixture.frame());
 
-    // Clicking the play/pause button fires toggle action.
+    // Leaving the widget clears hover; hovering back over play/pause shows tooltip and click toggles.
     const play = centerOf(kit, wellbeing_widget.play_pause_id).?;
+    try testing.expect(kit.pointerMoved(10, 10));
+    try testing.expect(fixture.frame());
+    try testing.expect(kit.pointerMoved(play[0], play[1]));
+    try testing.expect(fixture.frame());
+    var saw_tooltip_label = false;
+    for (kit.tree.nodes[0..kit.tree.len]) |node| {
+        switch (node.content) {
+            .text => |t| if (std.mem.eql(u8, t.bytes, "Focus")) {
+                saw_tooltip_label = true;
+            },
+            else => {},
+        }
+    }
+    try testing.expect(saw_tooltip_label);
     try testing.expectEqual(KitOverlay.Press.changed, kit.press(play[0], play[1]));
     try testing.expectEqual(KitOverlay.Release{ .wellbeing_widget = .toggle }, kit.release(play[0], play[1]));
 
-    // Close button stays hidden when the pointer leaves the widget and appears on hover.
-    try testing.expect(kit.pointerMoved(10, 10));
-    try testing.expect(fixture.frame());
-    try testing.expectEqual(@as(?[2]f32, null), centerOf(kit, wellbeing_widget.close_id));
-    const current_card = centerOf(kit, wellbeing_widget.card_id).?;
-    try testing.expect(kit.pointerMoved(current_card[0], current_card[1]));
-    try testing.expect(fixture.frame());
-    const close = centerOf(kit, wellbeing_widget.close_id).?;
-    try testing.expectEqual(KitOverlay.Press.changed, kit.press(close[0], close[1]));
-    try testing.expectEqual(KitOverlay.Release{ .wellbeing_widget = .close }, kit.release(close[0], close[1]));
     try testing.expect(kit.hideWellbeingWidget());
     try testing.expect(fixture.frame());
     try testing.expect(!fixture.frame());
+}
+
+test "KitOverlay: mini timer digits stay inside progress border across sizes" {
+    var fixture: Fixture = try .init(1);
+    defer fixture.deinit();
+    const kit = fixture.kit;
+
+    try testing.expect(kit.toggleWellbeingWidget());
+    // 5338s -> "88:58", exercising tabular digit cell width across every mini breakpoint.
+    try testing.expect(kit.syncWellbeingWidget(.{ .phase = .task, .run = .running, .fraction = 0.5, .seconds = 5338 }));
+
+    const sizes = [_][2]f32{
+        .{ 96, 96 },
+        .{ 112, 112 },
+        .{ 132, 132 },
+        .{ 152, 152 },
+        .{ 144, 72 },
+        .{ 164, 82 },
+        .{ 180, 90 },
+        .{ 212, 106 },
+        .{ 236, 118 },
+    };
+    for (sizes) |sz| {
+        kit.wellbeing_widget.width = sz[0];
+        kit.wellbeing_widget.height = sz[1];
+        try testing.expect(fixture.frame());
+
+        var tile_rect: ?Rect = null;
+        var bw: f32 = 0;
+        for (kit.tree.nodes[0..kit.tree.len]) |node| {
+            if (node.box.id == wellbeing_widget.play_pause_id) {
+                tile_rect = node.rect;
+                bw = @floatFromInt(node.box.border_width);
+                break;
+            }
+        }
+        const tile = tile_rect.?;
+        var saw_text = false;
+        for (kit.tree.nodes[0..kit.tree.len]) |node| {
+            switch (node.content) {
+                .text => {
+                    saw_text = true;
+                    try testing.expect(node.rect.x >= tile.x + bw);
+                    try testing.expect(node.rect.x + node.rect.w <= tile.x + tile.w - bw);
+                    try testing.expect(node.rect.y >= tile.y + bw);
+                    try testing.expect(node.rect.y + node.rect.h <= tile.y + tile.h - bw);
+                },
+                else => {},
+            }
+        }
+        try testing.expect(saw_text);
+    }
+}
+
+test "KitOverlay: normal widget badge stays single-line across every size and phase" {
+    var fixture: Fixture = try .init(1);
+    defer fixture.deinit();
+    const kit = fixture.kit;
+
+    try testing.expect(kit.toggleWellbeingWidget());
+
+    const sizes = [_][2]f32{
+        .{ 240, 120 },
+        .{ 264, 132 },
+        .{ 288, 144 },
+        .{ 290, 144 },
+        .{ 320, 160 },
+    };
+    const states = [_]wellbeing_widget.Snapshot{
+        .{ .phase = .idle, .run = .paused, .seconds = 0 },
+        .{ .phase = .task, .run = .waiting, .fraction = 0, .seconds = 1500, .tasks_in_cycle = 2, .tasks_before_long_break = 4 },
+        .{ .phase = .task, .run = .running, .fraction = 0.5, .seconds = 1200, .tasks_in_cycle = 2, .tasks_before_long_break = 4 },
+        .{ .phase = .short_break, .run = .paused, .fraction = 0.25, .seconds = 180, .tasks_in_cycle = 3, .tasks_before_long_break = 4 },
+        .{ .phase = .long_break, .run = .running, .fraction = 0.75, .seconds = 600, .tasks_in_cycle = 4, .tasks_before_long_break = 4 },
+    };
+
+    for (sizes) |sz| {
+        kit.wellbeing_widget.width = sz[0];
+        kit.wellbeing_widget.height = sz[1];
+        for (states) |snap| {
+            _ = kit.syncWellbeingWidget(snap);
+            try testing.expect(fixture.frame());
+            for (kit.tree.nodes[0..kit.tree.len]) |node| {
+                switch (node.content) {
+                    .text => |t| try testing.expectEqual(@as(u32, 1), t.line_count),
+                    else => {},
+                }
+            }
+        }
+    }
 }

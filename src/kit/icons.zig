@@ -24,3 +24,4 @@ pub const external_link = 0xE0B9;
 pub const monitor = 0xE11D;
 pub const moon = 0xE11E;
 pub const sun = 0xE178;
+pub const handle_bottom_right = 0xE79D;

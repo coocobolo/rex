@@ -86,7 +86,42 @@ void main() {
   // The border is the band of v_params.y pixels inside the edge, drawn
   // over the fill (it may be translucent, such as white at 10%).
   float inside_border = v_params.y > 0.0 ? clamp(0.5 - (distance + v_params.y), 0.0, 1.0) : 1.0;
-  float border = (1.0 - inside_border) * v_border.a;
+  float border_seg = 1.0;
+  if (v_arc.x > 0.0 && v_arc.x < 0.9999 && v_params.y > 0.0 && inside_border < 1.0) {
+    float sx = max(v_half.x - radius, 0.0);
+    float sy = max(v_half.y - radius, 0.0);
+    float r_mid = max(radius - v_params.y * 0.5, 0.5);
+    float q_arc = 1.57079632679 * r_mid;
+    float perim = 4.0 * sx + 4.0 * sy + 4.0 * q_arc;
+    if (perim > 0.0) {
+      vec2 p = v_local;
+      float s = 0.0;
+      if (p.x >= 0.0 && p.x <= sx && p.y <= 0.0) {
+        s = p.x;
+      } else if (p.x > sx && p.y < -sy) {
+        s = sx + r_mid * atan(p.x - sx, max(-sy - p.y, 1e-4));
+      } else if (p.x >= 0.0 && p.y >= -sy && p.y <= sy) {
+        s = sx + q_arc + (p.y + sy);
+      } else if (p.x > sx && p.y > sy) {
+        s = sx + q_arc + 2.0 * sy + r_mid * atan(p.y - sy, max(p.x - sx, 1e-4));
+      } else if (p.y > 0.0 && p.x >= -sx && p.x <= sx) {
+        s = sx + 2.0 * q_arc + 2.0 * sy + (sx - p.x);
+      } else if (p.x < -sx && p.y > sy) {
+        s = 3.0 * sx + 2.0 * q_arc + 2.0 * sy + r_mid * atan(-sx - p.x, max(p.y - sy, 1e-4));
+      } else if (p.x < 0.0 && p.y >= -sy && p.y <= sy) {
+        s = 3.0 * sx + 3.0 * q_arc + 2.0 * sy + (sy - p.y);
+      } else if (p.x < -sx && p.y < -sy) {
+        s = 3.0 * sx + 3.0 * q_arc + 4.0 * sy + r_mid * atan(-sy - p.y, max(-sx - p.x, 1e-4));
+      } else {
+        s = 3.0 * sx + 4.0 * q_arc + 4.0 * sy + (sx + p.x);
+      }
+      float target = clamp(v_arc.x, 0.0, 1.0) * perim;
+      float ccw = perim - s;
+      float along = s <= target ? -min(s, target - s) : min(s - target, ccw);
+      border_seg = clamp(0.5 - along, 0.0, 1.0);
+    }
+  }
+  float border = (1.0 - inside_border) * v_border.a * border_seg;
   float alpha = border + v_fill.a * (1.0 - border);
   if (alpha * shape < 0.004) discard;
   vec3 color = (v_border.rgb * border + v_fill.rgb * v_fill.a * (1.0 - border)) / alpha;

@@ -18,6 +18,7 @@ const tree_zig = @import("../kit/tree.zig");
 const Tree = tree_zig.Tree;
 const layout = @import("../kit/layout.zig");
 const memory = @import("../kit/memory.zig");
+const badge = @import("../kit/badge.zig");
 const button = @import("../kit/button.zig");
 const kbd = @import("../kit/kbd.zig");
 const alert = @import("../kit/alert.zig");
@@ -212,6 +213,17 @@ fn specimen(tree: *Tree, theme: *const Theme, marks: *Marks) !void {
     try kbd.group(tree, theme, &.{ "Ctrl", "Shift", "P" }, 1);
     try button.view(tree, theme, .{ .id = tree_zig.Id.of("specimen.cap"), .label = "Cancel", .key_cap = "Esc" });
     tree.close(caps);
+    const badges = try tree.open(.{ .axis = .row, .gap = 8, .cross = .center });
+    _ = try tree.text("Badge", .{ .color = theme.muted_foreground, .style = .xs, .width = .{ .fixed = name_width } });
+    try badge.view(tree, theme, .{ .label = "Default", .variant = .default });
+    try badge.view(tree, theme, .{ .label = "Secondary", .variant = .secondary });
+    try badge.view(tree, theme, .{ .label = "Muted", .variant = .muted });
+    try badge.view(tree, theme, .{ .label = "Outline", .variant = .outline });
+    try badge.view(tree, theme, .{ .label = "Destructive", .variant = .destructive });
+    try badge.view(tree, theme, .{ .label = "Focus", .variant = .info });
+    try badge.view(tree, theme, .{ .label = "Break", .variant = .success });
+    try badge.view(tree, theme, .{ .label = "Warn", .variant = .warning });
+    tree.close(badges);
     tree.close(sheet);
 }
 
@@ -712,4 +724,73 @@ test "KitPainter: lock screen renders dimmed scrim, progress bar and unlock butt
         const unlock = rendered.rect(rendered.marks.lock_unlock);
         try testing.expect(frame.countNot(unlock, rgb(theme.popover)) > 100);
     }
+}
+
+test "KitPainter: border_sweep draws clockwise rounded border progress" {
+    try testGlContext();
+    var atlas = try Atlas.init(testing.allocator, .{ .width = 512, .height = 512 });
+    defer atlas.deinit();
+    var font = try KitFont.init(inter, .{});
+    defer font.deinit();
+    var painter = try KitPainter.init();
+    defer painter.deinit();
+
+    var nodes: [4]tree_zig.Node = undefined;
+    var lines: [4]text.Line = undefined;
+    var tree: Tree = .init(&nodes, &lines);
+    const sweep_val: u16 = 16384; // ~25%: top-right quadrant from top-center to right-middle
+    const border_color: Color = .{ .r = 60, .g = 140, .b = 250, .a = 255 };
+    _ = try tree.leaf(.{
+        .width = .{ .fixed = 80 },
+        .height = .{ .fixed = 80 },
+        .radius = 12,
+        .border_width = 4,
+        .border = border_color,
+        .border_sweep = sweep_val,
+    });
+    try layout.layout(&tree, font.measurer(), 100, 100);
+
+    var target: gl.GLuint = 0;
+    gl.genTextures(1, &target);
+    defer gl.deleteTextures(1, &target);
+    gl.bindTexture(gl.TEXTURE_2D, target);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, 100, 100, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    gl.bindTexture(gl.TEXTURE_2D, 0);
+    var fbo: gl.GLuint = 0;
+    gl.genFramebuffers(1, &fbo);
+    defer gl.deleteFramebuffers(1, &fbo);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+    defer gl.bindFramebuffer(gl.FRAMEBUFFER, 0);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, target, 0);
+    try testing.expectEqual(@as(gl.GLenum, gl.FRAMEBUFFER_COMPLETE), gl.checkFramebufferStatus(gl.FRAMEBUFFER));
+
+    gl.viewport(0, 0, 100, 100);
+    gl.clearColor(0, 0, 0, 1);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+
+    painter.begin();
+    try painter.paint(&tree, &font, &atlas);
+    try testing.expectEqual(@as(u32, 1), painter.len);
+    try testing.expectApproxEqAbs(@as(f32, 0.25), painter.instances[0].arc[0], 0.001);
+    painter.draw(&atlas, 100, 100);
+
+    var raw: [100 * 100 * 4]u8 = undefined;
+    gl.pixelStorei(gl.PACK_ALIGNMENT, 1);
+    gl.readPixels(0, 0, 100, 100, gl.RGBA, gl.UNSIGNED_BYTE, &raw);
+    gl.pixelStorei(gl.PACK_ALIGNMENT, 4);
+    // GL rows run bottom-up: top-down row `y` lives at GL row `99 - y`.
+    var top_right_pixels: usize = 0;
+    var bottom_left_pixels: usize = 0;
+    for (0..80) |y| {
+        const gl_row = 99 - y;
+        for (0..80) |x| {
+            const offset = (gl_row * 100 + x) * 4;
+            if (raw[offset + 2] > 180) {
+                if (x > 42 and y < 40) top_right_pixels += 1;
+                if (x < 38 and y > 42) bottom_left_pixels += 1;
+            }
+        }
+    }
+    try testing.expect(top_right_pixels > 40);
+    try testing.expectEqual(@as(usize, 0), bottom_left_pixels);
 }

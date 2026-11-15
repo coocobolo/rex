@@ -469,8 +469,10 @@ fn build(self: *KitOverlay, atlas: *Atlas, width: f32, height: f32, theme: *cons
     const widget_root = try widget_mod.view(&self.wellbeing_widget, &self.tree, theme, width, height);
     const banner = try alert_mod.view(&self.alert, &self.tree, theme);
     const stack = try toast.view(&self.toasts, &self.tree, theme);
+    const widget_tip = try widget_mod.viewTooltip(&self.wellbeing_widget, &self.tree, theme, width, height);
     try layout.layout(&self.tree, self.font.measurer(), width, height);
     widget_mod.place(&self.wellbeing_widget, &self.tree, widget_root, width, height);
+    widget_mod.placeTooltip(&self.tree, widget_root, widget_tip, width, height);
     alert_mod.place(&self.alert, &self.tree, banner);
     self.motion = try toast.place(&self.toasts, &self.tree, stack, &self.table, dt_ms);
     try self.painter.paint(&self.tree, &self.font, atlas);

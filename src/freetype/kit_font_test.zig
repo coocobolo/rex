@@ -155,6 +155,12 @@ test "KitFont: the large semibold styles" {
     try testing.expectEqual(24, text.Style.xl_semibold.metrics().size);
     try testing.expectEqual(32, text.Style.xl_semibold.metrics().line_height);
     try testing.expectEqual(0, text.Style.xl_semibold.metrics().tracking);
+    try testing.expectEqual(36, text.Style.display_sm.metrics().size);
+    try testing.expectEqual(42, text.Style.display_sm.metrics().line_height);
+    try testing.expectEqual(-1, text.Style.display_sm.metrics().tracking);
+    try testing.expectEqual(44, text.Style.display_md.metrics().size);
+    try testing.expectEqual(52, text.Style.display_md.metrics().line_height);
+    try testing.expectEqual(-1, text.Style.display_md.metrics().tracking);
     try testing.expectEqual(56, text.Style.xxl_semibold.metrics().size);
     try testing.expectEqual(64, text.Style.xxl_semibold.metrics().line_height);
     try testing.expectEqual(-1, text.Style.xxl_semibold.metrics().tracking);
@@ -165,14 +171,21 @@ test "KitFont: the large semibold styles" {
     var font = try KitFont.init(inter, .{});
     defer font.deinit();
     try testing.expect(font.width("18:42", .xxxl_semibold, .proportional) > font.width("18:42", .xxl_semibold, .proportional));
-    try testing.expect(font.width("18:42", .xxl_semibold, .proportional) > font.width("18:42", .xl_semibold, .proportional));
+    try testing.expect(font.width("18:42", .xxl_semibold, .proportional) > font.width("18:42", .display_md, .proportional));
+    try testing.expect(font.width("18:42", .display_md, .proportional) > font.width("18:42", .display_sm, .proportional));
+    try testing.expect(font.width("18:42", .display_sm, .proportional) > font.width("18:42", .xl_semibold, .proportional));
     try testing.expect(font.width("18:42", .xl_semibold, .proportional) > font.width("18:42", .lg_semibold, .proportional));
+    try testing.expect(font.width("88:88", .display_sm, .tabular) <= 106);
+    try testing.expect(font.width("88:88", .display_md, .tabular) <= 132);
+    try testing.expect(font.width("88:88", .xxl_semibold, .tabular) <= 168);
 }
 
 test "KitFont: timer digits sit inside the line box" {
     var font = try KitFont.init(inter, .{});
     defer font.deinit();
     const samples = [_]struct { text.Style, u8 }{
+        .{ .display_sm, 42 },
+        .{ .display_md, 52 },
         .{ .xxl_semibold, 64 },
         .{ .xxxl_semibold, 88 },
     };
@@ -187,9 +200,9 @@ test "KitFont: timer digits sit inside the line box" {
 }
 
 test "KitFont: its size" {
-    // Nearly all of it is the kerning table: eight styles of 95 by 95
+    // Nearly all of it is the kerning table: ten styles of 95 by 95
     // pairs, two bytes each.
-    try testing.expectEqual(152496, @sizeOf(KitFont));
+    try testing.expectEqual(190424, @sizeOf(KitFont));
 }
 
 test "KitFont: is the kit's measurer" {

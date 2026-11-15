@@ -10,46 +10,46 @@ const std = @import("std");
 
 const Theme = @import("Theme.zig");
 const Color = Theme.Color;
+const badge = @import("badge.zig");
 const button = @import("button.zig");
 const icons = @import("icons.zig");
 const text = @import("text.zig");
+const tooltip = @import("tooltip.zig");
 const tree_zig = @import("tree.zig");
 const Tree = tree_zig.Tree;
 const Id = tree_zig.Id;
 const Index = tree_zig.Index;
 
-pub const min_width: f32 = 144;
-pub const max_width: f32 = 440;
-pub const min_height: f32 = 44;
-pub const max_height: f32 = 240;
-pub const default_width: f32 = 308;
-pub const default_height: f32 = 148;
+pub const min_width: f32 = 96;
+pub const max_width: f32 = 320;
+pub const min_height: f32 = 72;
+pub const max_height: f32 = 160;
+pub const default_width: f32 = 264;
+pub const default_height: f32 = 132;
 
-const bar_min_width: f32 = 248;
-const card_min_height: f32 = 124;
-const portrait_min_height: f32 = 140;
-const expanded_min_width: f32 = 340;
-const expanded_min_height: f32 = 160;
+const min_square: f32 = 96;
+const max_square: f32 = 160;
+
+const min_horizontal_h: f32 = 72;
+const normal_horizontal_min_h: f32 = 120;
+const max_horizontal_h: f32 = 160;
+const horizontal_aspect_threshold: f32 = 1.45;
 
 const edge_margin: f32 = 16;
 const min_clamp_margin: f32 = 4;
-const resize_corner_size: f32 = 16;
-const resize_edge_band: f32 = 7;
-const close_btn_side: f32 = 24;
+const resize_corner_size: f32 = 18;
 const turn = std.math.tau;
 
 pub const card_id = Id.of("wellbeing_widget.card");
 pub const play_pause_id = Id.of("wellbeing_widget.play_pause");
 pub const skip_id = Id.of("wellbeing_widget.skip");
 pub const reset_id = Id.of("wellbeing_widget.reset");
-pub const close_id = Id.of("wellbeing_widget.close");
 pub const resize_id = Id.of("wellbeing_widget.resize");
-pub const resize_w_id = Id.of("wellbeing_widget.resize_w");
-pub const resize_h_id = Id.of("wellbeing_widget.resize_h");
 
 pub const Phase = enum(u8) { idle, task, short_break, long_break };
 pub const Run = enum(u8) { paused, running, waiting };
-pub const Mode = enum(u8) { mini, bar, portrait, card, expanded };
+pub const Grid = enum(u8) { square, horizontal };
+pub const Mode = enum(u8) { mini, normal };
 
 pub const Hit = enum(u8) {
     none,
@@ -57,13 +57,10 @@ pub const Hit = enum(u8) {
     play_pause,
     skip,
     reset,
-    close,
     resize,
-    resize_w,
-    resize_h,
 };
 
-pub const Action = enum(u8) { toggle, skip, reset, close };
+pub const Action = enum(u8) { toggle, skip, reset };
 
 pub const DragOrigin = struct {
     pointer_x: f32,
@@ -78,8 +75,7 @@ pub const Capture = union(enum) {
     none,
     move: DragOrigin,
     resize: DragOrigin,
-    resize_w: DragOrigin,
-    resize_h: DragOrigin,
+    play_pause: DragOrigin,
     button: Hit,
 };
 
@@ -150,46 +146,37 @@ pub const State = struct {
         return self.phase != .idle;
     }
 
-    pub fn showsClose(self: *const State) bool {
-        if (!self.visible) return false;
-        if (self.pointer_inside or self.hovered == .close) return true;
-        return switch (self.capture) {
-            .button => |b| b == .close,
-            else => false,
-        };
-    }
-
     pub fn hit(self: *const State, id: Id) Hit {
         if (!self.visible or id == .none) return .none;
         if (id == play_pause_id) return .play_pause;
         if (id == skip_id) return .skip;
         if (id == reset_id) return .reset;
-        if (id == close_id) return .close;
         if (id == resize_id) return .resize;
-        if (id == resize_w_id) return .resize_w;
-        if (id == resize_h_id) return .resize_h;
         if (id == card_id) return .card;
         return .none;
     }
 
-    /// Resolves the active responsive layout mode for `(viewport_w, viewport_h)`.
-    pub fn effectiveSize(self: *const State, viewport_w: f32, viewport_h: f32) struct { w: f32, h: f32, mode: Mode } {
+    /// Resolves the active grid shape and density mode for `(viewport_w, viewport_h)`.
+    pub fn effectiveSize(self: *const State, viewport_w: f32, viewport_h: f32) struct { w: f32, h: f32, grid: Grid, mode: Mode } {
         const fit_w = @max(1, viewport_w - min_clamp_margin * 2);
         const fit_h = @max(1, viewport_h - min_clamp_margin * 2);
         const clamped_w = std.math.clamp(self.width, min_width, max_width);
         const clamped_h = std.math.clamp(self.height, min_height, max_height);
         const w = @max(@min(min_width, fit_w), @min(clamped_w, fit_w));
         const h = @max(@min(min_height, fit_h), @min(clamped_h, fit_h));
-        return .{ .w = w, .h = h, .mode = classify(w, h) };
+        const layout = classify(w, h);
+        return .{ .w = w, .h = h, .grid = layout.grid, .mode = layout.mode };
     }
 };
 
-/// Chooses the layout breakpoint from effective `(w, h)` bounds.
-pub fn classify(w: f32, h: f32) Mode {
-    if (h < card_min_height) return if (w >= bar_min_width) .bar else .mini;
-    if (w < bar_min_width) return if (h >= portrait_min_height) .portrait else .mini;
-    if (w >= expanded_min_width and h >= expanded_min_height) return .expanded;
-    return .card;
+/// Chooses the grid shape (`square` 1:1 or `horizontal` 2:1) and density (`mini` or `normal`).
+pub fn classify(w: f32, h: f32) struct { grid: Grid, mode: Mode } {
+    const grid: Grid = if (w >= h * horizontal_aspect_threshold) .horizontal else .square;
+    const mode: Mode = switch (grid) {
+        .square => .mini,
+        .horizontal => if (w >= normal_horizontal_min_h * 2 and h >= normal_horizontal_min_h) .normal else .mini,
+    };
+    return .{ .grid = grid, .mode = mode };
 }
 
 /// Applies `event` and returns whether anything changed or an action fired.
@@ -259,9 +246,19 @@ fn hoverTarget(state: *const State, over: Hit) Hit {
     return switch (over) {
         .reset => if (state.canReset()) .reset else .none,
         .skip => if (state.canSkip()) .skip else .none,
-        .play_pause, .close, .resize, .resize_w, .resize_h => over,
+        .play_pause, .resize => over,
         .card, .none => .none,
     };
+}
+
+fn resizeBounds(raw_w: f32, raw_h: f32) struct { w: f32, h: f32 } {
+    if (raw_w >= raw_h * horizontal_aspect_threshold) {
+        // Project onto the 2:1 horizontal grid line between mini and normal bounds.
+        const h = std.math.clamp(@round((raw_w * 2.0 + raw_h) / 5.0), min_horizontal_h, max_horizontal_h);
+        return .{ .w = h * 2.0, .h = h };
+    }
+    const side = std.math.clamp(@round((raw_w + raw_h) * 0.5), min_square, max_square);
+    return .{ .w = side, .h = side };
 }
 
 fn handlePointer(state: *State, over: Hit, x: f32, y: f32) Outcome {
@@ -280,25 +277,24 @@ fn handlePointer(state: *State, over: Hit, x: f32, y: f32) Outcome {
         },
         .resize => |orig| {
             state.pointer_inside = inside;
-            const next_w = std.math.clamp(orig.w + (x - orig.pointer_x), min_width, max_width);
-            const next_h = std.math.clamp(orig.h + (y - orig.pointer_y), min_height, max_height);
-            if (state.width == next_w and state.height == next_h) return .quiet;
-            state.width = next_w;
-            state.height = next_h;
+            const raw_w = @max(1, orig.w + (x - orig.pointer_x));
+            const raw_h = @max(1, orig.h + (y - orig.pointer_y));
+            const next = resizeBounds(raw_w, raw_h);
+            if (state.width == next.w and state.height == next.h) return .quiet;
+            state.width = next.w;
+            state.height = next.h;
             return .redraw;
         },
-        .resize_w => |orig| {
+        .play_pause => |orig| {
+            const dx = x - orig.pointer_x;
+            const dy = y - orig.pointer_y;
+            if (dx * dx + dy * dy <= 36) return .quiet;
+            state.hovered = .none;
             state.pointer_inside = inside;
-            const next_w = std.math.clamp(orig.w + (x - orig.pointer_x), min_width, max_width);
-            if (state.width == next_w) return .quiet;
-            state.width = next_w;
-            return .redraw;
-        },
-        .resize_h => |orig| {
-            state.pointer_inside = inside;
-            const next_h = std.math.clamp(orig.h + (y - orig.pointer_y), min_height, max_height);
-            if (state.height == next_h) return .quiet;
-            state.height = next_h;
+            state.capture = .{ .move = orig };
+            state.x = orig.x + dx;
+            state.y = orig.y + dy;
+            state.positioned = true;
             return .redraw;
         },
         .button => return .quiet,
@@ -325,48 +321,29 @@ fn handlePress(state: *State, target: Hit, x: f32, y: f32) Outcome {
     switch (target) {
         .card => {
             state.capture = .{ .move = orig };
-            state.pointer_inside = true;
             return .quiet;
         },
         .resize => {
             state.positioned = true;
-            state.pointer_inside = true;
             state.capture = .{ .resize = orig };
             state.hovered = .resize;
             return .redraw;
         },
-        .resize_w => {
-            state.positioned = true;
-            state.pointer_inside = true;
-            state.capture = .{ .resize_w = orig };
-            state.hovered = .resize_w;
-            return .redraw;
-        },
-        .resize_h => {
-            state.positioned = true;
-            state.pointer_inside = true;
-            state.capture = .{ .resize_h = orig };
-            state.hovered = .resize_h;
-            return .redraw;
-        },
         .reset => {
             if (!state.canReset()) return .quiet;
-            state.pointer_inside = true;
             state.capture = .{ .button = .reset };
             state.hovered = .reset;
             return .redraw;
         },
         .skip => {
             if (!state.canSkip()) return .quiet;
-            state.pointer_inside = true;
             state.capture = .{ .button = .skip };
             state.hovered = .skip;
             return .redraw;
         },
-        .play_pause, .close => {
-            state.pointer_inside = true;
-            state.capture = .{ .button = target };
-            state.hovered = target;
+        .play_pause => {
+            state.capture = .{ .play_pause = orig };
+            state.hovered = .play_pause;
             return .redraw;
         },
         .none => return .quiet,
@@ -376,31 +353,32 @@ fn handlePress(state: *State, target: Hit, x: f32, y: f32) Outcome {
 fn handleRelease(state: *State, over: Hit) Outcome {
     const cap = state.capture;
     state.capture = .none;
-    state.pointer_inside = over != .none;
     switch (cap) {
         .none => return .quiet,
-        .move, .resize, .resize_w, .resize_h => {
+        .move, .resize => {
             state.hovered = hoverTarget(state, over);
             return .redraw;
+        },
+        .play_pause => {
+            state.hovered = if (over == .play_pause) .play_pause else .none;
+            if (over != .play_pause) return .redraw;
+            return .{ .action = .toggle };
         },
         .button => |target| {
             state.hovered = if (over == target) hoverTarget(state, target) else .none;
             if (over != target) return .redraw;
             return switch (target) {
-                .play_pause => .{ .action = .toggle },
                 .skip => .{ .action = .skip },
                 .reset => .{ .action = .reset },
-                .close => .{ .action = .close },
                 else => .redraw,
             };
         },
     }
 }
 
-/// Worst-case nodes written by one `view` call: card + padded surface +
-/// card/portrait content + 2 action buttons + floating close overlay +
-/// 3 resize overlay zones.
-pub const node_max: usize = 36 + 3 * button.node_max;
+/// Worst-case nodes written by one `view` + `viewTooltip` call: card + padded
+/// surface + normal grid content + 2 action buttons + corner resize handle + tooltip.
+pub const node_max: usize = 32 + 2 * button.node_max + tooltip.nodes(1);
 pub const line_max: usize = 6;
 
 /// Writes the floating widget into `tree` adapted to `(viewport_w, viewport_h)`,
@@ -415,11 +393,13 @@ pub fn view(
     if (!state.visible) return null;
 
     const eff = state.effectiveSize(viewport_w, viewport_h);
-    const resizing = switch (state.capture) {
-        .resize, .resize_w, .resize_h => true,
-        else => false,
-    };
-    const radius: u8 = if (eff.mode == .mini and eff.h <= 56) 14 else Theme.radius + 4;
+    const focused = state.pointer_inside or state.hovered != .none or state.capture != .none;
+    const outer_border = if (!focused)
+        Color.transparent
+    else if (state.capture == .resize)
+        theme.ring.alpha(70)
+    else
+        theme.border;
 
     const card = try tree.open(.{
         .id = card_id,
@@ -428,319 +408,121 @@ pub fn view(
         .height = .{ .fixed = eff.h },
         .overflow = .clip,
         .fill = theme.popover,
-        .border = if (resizing) theme.info.alpha(65) else theme.border,
+        .border = outer_border,
         .border_width = Theme.border_width,
-        .radius = radius,
+        .radius = Theme.radius + 4,
     });
 
-    switch (eff.mode) {
-        .mini => try viewMini(state, tree, theme, eff.w, eff.h),
-        .bar => try viewBar(state, tree, theme, eff.w, eff.h),
-        .portrait => try viewPortrait(state, tree, theme, eff.w, eff.h),
-        .card => try viewCard(state, tree, theme, eff.w, eff.h, false),
-        .expanded => try viewCard(state, tree, theme, eff.w, eff.h, true),
+    switch (eff.grid) {
+        .square => try viewMini(state, tree, theme, .square, eff.w, eff.h),
+        .horizontal => switch (eff.mode) {
+            .mini => try viewMini(state, tree, theme, .horizontal, eff.w, eff.h),
+            .normal => try viewHorizontalNormal(state, tree, theme, eff.w, eff.h),
+        },
     }
 
-    if (state.showsClose() and eff.mode != .bar) {
-        try viewCloseOverlay(state, tree, theme, eff.mode == .mini and eff.h < 60);
-    }
-
-    try viewResizeHandles(state, tree, theme, eff.h);
+    try viewResizeHandle(state, tree, theme);
     tree.close(card);
     return card;
 }
 
-fn viewMini(state: *const State, tree: *Tree, theme: *const Theme, w: f32, h: f32) tree_zig.Error!void {
-    const with_actions = h >= 92 and w >= 184;
-    const vpad: u8 = if (h >= 72) 10 else 5;
-    const hpad: u8 = if (w >= 180) 12 else 9;
-    if (with_actions) {
-        const surface = try tree.open(.{
-            .axis = .column,
-            .width = .fill,
-            .height = .fill,
-            .padding = .{ .left = hpad, .right = hpad, .top = vpad, .bottom = vpad },
-            .gap = 6,
-            .cross = .start,
-        });
-
-        const top = try tree.open(.{
-            .axis = .row,
-            .width = .fill,
-            .gap = 10,
-            .cross = .center,
-        });
-        const ring_side = std.math.clamp(h - 62, 42, 60);
-        try viewRingButton(state, tree, theme, ring_side, 4.5);
-
-        const col = try tree.open(.{ .width = .fill, .gap = 1, .cross = .start });
-        _ = try tree.text(state.timeText(), .{
-            .color = theme.foreground,
-            .style = .xl_semibold,
-            .figures = .tabular,
-        });
-        const meta = try tree.open(.{ .axis = .row, .cross = .center, .gap = 5 });
-        _ = try tree.text(phaseShortLabel(state.phase, state.run), .{
-            .color = phaseSubtextColor(theme, state.phase, state.run),
-            .style = .xs,
-        });
-        if (state.phase != .idle and state.cycle_len > 0 and w >= 196) {
-            _ = try tree.text(state.cycleText(), .{
-                .color = theme.muted_foreground,
-                .style = .xs,
-                .figures = .tabular,
-            });
-        }
-        tree.close(meta);
-        tree.close(col);
-        tree.close(top);
-
-        _ = try tree.leaf(.{ .width = .{ .fixed = 1 }, .height = .fill });
-
-        const controls = try tree.open(.{ .axis = .row, .cross = .center, .gap = 6 });
-        try button.view(tree, theme, .{
-            .id = reset_id,
-            .label = "",
-            .icon = icons.rotate_ccw,
-            .variant = .outline,
-            .size = .sm,
-            .state = if (state.canReset()) buttonState(state, .reset) else .disabled,
-        });
-        try button.view(tree, theme, .{
-            .id = skip_id,
-            .label = "",
-            .icon = icons.skip_forward,
-            .variant = .outline,
-            .size = .sm,
-            .state = if (state.canSkip()) buttonState(state, .skip) else .disabled,
-        });
-        tree.close(controls);
-        tree.close(surface);
-        return;
-    }
-
-    const surface = try tree.open(.{
-        .axis = .row,
-        .width = .fill,
-        .height = .fill,
-        .padding = .{ .left = hpad, .right = hpad, .top = vpad, .bottom = vpad },
-        .gap = if (w >= 180) 10 else 8,
-        .cross = .center,
-    });
-
-    const ring_side = std.math.clamp(h - @as(f32, @floatFromInt(vpad * 2)), 30, 68);
-    const thick: f32 = if (ring_side <= 38) 3.5 else 4.5;
-    try viewRingButton(state, tree, theme, ring_side, thick);
-
-    const col = try tree.open(.{ .width = .fill, .gap = 1, .cross = .start });
-    const time_style: text.Style = if (h >= 78 and w >= 176)
-        .xl_semibold
-    else if (w >= 158)
-        .lg_semibold
-    else
-        .sm_medium;
-    _ = try tree.text(state.timeText(), .{
-        .color = theme.foreground,
-        .style = time_style,
-        .figures = .tabular,
-    });
-    if (h >= 62 and w >= 166) {
-        const meta = try tree.open(.{ .axis = .row, .cross = .center, .gap = 5 });
-        _ = try tree.text(phaseShortLabel(state.phase, state.run), .{
-            .color = phaseSubtextColor(theme, state.phase, state.run),
-            .style = .xs,
-        });
-        if (state.phase != .idle and state.cycle_len > 0 and w >= 196) {
-            _ = try tree.text(state.cycleText(), .{
-                .color = theme.muted_foreground,
-                .style = .xs,
-                .figures = .tabular,
-            });
-        }
-        tree.close(meta);
-    }
-    tree.close(col);
-
-    tree.close(surface);
-}
-
-fn viewBar(state: *const State, tree: *Tree, theme: *const Theme, w: f32, h: f32) tree_zig.Error!void {
-    const inline_meta = h < 68;
-    const vpad: u8 = if (h >= 78) 10 else 6;
-    const hpad: u8 = if (inline_meta and w >= 400) 10 else 12;
-    const surface = try tree.open(.{
-        .axis = .row,
-        .width = .fill,
-        .height = .fill,
-        .padding = .{ .left = hpad, .right = 16, .top = vpad, .bottom = vpad },
-        .gap = if (w >= 320 and !(inline_meta and w >= 400)) 12 else 8,
-        .cross = .center,
-    });
-
-    const ring_side = std.math.clamp(h - @as(f32, @floatFromInt(vpad * 2)), 32, 84);
-    const thick: f32 = if (ring_side >= 56) 5.5 else 4;
-    try viewRingButton(state, tree, theme, ring_side, thick);
-
-    const info = try tree.open(.{
-        .axis = if (inline_meta) .row else .column,
-        .width = .fill,
-        .gap = if (inline_meta) 8 else 3,
-        .cross = if (inline_meta) .center else .start,
-    });
-    const time_style: text.Style = if (h >= 100 and w >= 340 and state.timeText().len <= 5)
-        .xxl_semibold
-    else if (h >= 76)
-        .xl_semibold
-    else
-        .lg_semibold;
-    _ = try tree.text(state.timeText(), .{
-        .color = theme.foreground,
-        .style = time_style,
-        .figures = .tabular,
-    });
-    const wide_labels = if (inline_meta)
-        w >= 432 and state.timeText().len <= 5
-    else
-        w >= 400;
-    const show_close = state.showsClose();
-    if (h >= 68 or (inline_meta and w >= 292)) {
-        const meta = try tree.open(.{ .axis = .row, .cross = .center, .gap = 6 });
-        try viewPhaseBadge(state, tree, theme, false);
-        const show_cycle = if (inline_meta) !wide_labels and w >= 340 else w >= 290;
-        if (state.phase != .idle and state.cycle_len > 0 and show_cycle) {
-            _ = try tree.text(state.cycleText(), .{
-                .color = theme.muted_foreground,
-                .style = .xs,
-                .figures = .tabular,
-            });
-        }
-        tree.close(meta);
-    }
-    tree.close(info);
-
-    const actions = try tree.open(.{ .axis = .row, .cross = .center, .gap = 6 });
-    if (w >= 306) {
-        try button.view(tree, theme, .{
-            .id = reset_id,
-            .label = if (wide_labels) "Stop" else "",
-            .icon = icons.rotate_ccw,
-            .variant = .outline,
-            .size = .sm,
-            .state = if (state.canReset()) buttonState(state, .reset) else .disabled,
-        });
-    }
-    if (w >= 260) {
-        try button.view(tree, theme, .{
-            .id = skip_id,
-            .label = if (wide_labels) "Skip" else "",
-            .icon = icons.skip_forward,
-            .variant = .outline,
-            .size = .sm,
-            .state = if (state.canSkip()) buttonState(state, .skip) else .disabled,
-        });
-    }
-    if (show_close) {
-        try viewClosePill(state, tree, theme, false);
-    }
-    tree.close(actions);
-
-    tree.close(surface);
-}
-
-fn viewPortrait(state: *const State, tree: *Tree, theme: *const Theme, w: f32, h: f32) tree_zig.Error!void {
+fn viewMini(state: *const State, tree: *Tree, theme: *const Theme, grid: Grid, w: f32, h: f32) tree_zig.Error!void {
+    const pad: u8 = if (w < 108 or h < 96) 3 else if (grid == .horizontal and h >= 96) 6 else 4;
     const surface = try tree.open(.{
         .axis = .column,
         .width = .fill,
         .height = .fill,
-        .padding = .{ .left = 12, .right = 12, .top = 12, .bottom = 12 },
-        .gap = 8,
-        .cross = .center,
+        .padding = .all(pad),
     });
 
-    const header = try tree.open(.{
-        .axis = .row,
+    const box_state = buttonState(state, .play_pause);
+    const radius: u8 = if (h < 96) Theme.radius else Theme.radius + 2;
+    const border_w: u8 = if (grid == .square) (if (h >= 108) 4 else 3) else (if (h >= 96) 4 else 3);
+
+    const tile = try tree.open(.{
+        .id = play_pause_id,
+        .axis = .column,
         .width = .fill,
-        .main = .center,
-        .cross = .center,
-        .gap = 6,
+        .height = .fill,
+        .fill = progressBoxFill(theme, box_state),
+        .border = progressTrackBorder(theme, box_state),
+        .border_width = border_w,
+        .radius = radius,
+        .pointer = .hand,
     });
-    try viewPhaseBadge(state, tree, theme, false);
-    if (state.phase != .idle and state.cycle_len > 0) {
-        _ = try tree.text(state.cycleText(), .{
-            .color = theme.muted_foreground,
-            .style = .xs,
-            .figures = .tabular,
-        });
-    }
-    tree.close(header);
 
-    const show_controls = h >= 178;
-    const dial_max_h = h - @as(f32, if (show_controls) 130 else 88);
-    const tile_side = std.math.clamp(@min(w - 28, dial_max_h), 58, 120);
-    const ring_side = tile_side - 16;
+    try viewProgressBorderOverlay(state, tree, theme, box_state, border_w, radius);
 
-    const tile_wrap = try tree.open(.{
+    // Borders paint inside the tile bounds, so content padding includes `border_w` plus breathing room.
+    const inner_pad_x: u8 = border_w + if (grid == .square) @as(u8, 6) else (if (h >= 96) @as(u8, 10) else @as(u8, 8));
+    const inner_pad_y: u8 = border_w + if (grid == .square) (if (h >= 108) @as(u8, 4) else @as(u8, 6)) else (if (h >= 96) @as(u8, 6) else @as(u8, 4));
+    const inner_w = @max(1, w - @as(f32, @floatFromInt(pad * 2 + inner_pad_x * 2)));
+    const inner_h = @max(1, h - @as(f32, @floatFromInt(pad * 2 + inner_pad_y * 2)));
+    const time_color = progressTimeColor(theme, state.phase, state.run, box_state);
+    const full_time = state.timeText();
+    const stacked_style: ?text.Style = if (grid == .square and full_time.len == 5 and full_time[2] == ':') blk: {
+        if (inner_h >= 128 and inner_w >= 80) break :blk .xxl_semibold;
+        if (inner_h >= 104 and inner_w >= 64) break :blk .display_md;
+        if (inner_h >= 84 and inner_w >= 48) break :blk .display_sm;
+        if (inner_h >= 66 and inner_w >= 44) break :blk .xl_semibold;
+        break :blk null;
+    } else null;
+
+    const content = try tree.open(.{
+        .axis = .column,
         .width = .fill,
         .height = .fill,
         .main = .center,
         .cross = .center,
-    });
-    const tile = try tree.open(.{
-        .width = .{ .fixed = tile_side },
-        .height = .{ .fixed = tile_side },
-        .main = .center,
-        .cross = .center,
-        .fill = dialTileFill(theme, state.phase, state.run),
-        .radius = Theme.radius + 2,
-    });
-    try viewRingButton(state, tree, theme, ring_side, if (ring_side >= 76) 5.5 else 4.5);
-    tree.close(tile);
-    tree.close(tile_wrap);
-
-    _ = try tree.text(state.timeText(), .{
-        .color = theme.foreground,
-        .style = if (w >= 196) .xl_semibold else .lg_semibold,
-        .figures = .tabular,
+        .padding = .symmetric(inner_pad_x, inner_pad_y),
+        .gap = 0,
     });
 
-    if (show_controls) {
-        const controls = try tree.open(.{ .axis = .row, .gap = 6, .cross = .center });
-        try button.view(tree, theme, .{
-            .id = reset_id,
-            .label = if (w >= 204) "Stop" else "",
-            .icon = if (w >= 204) icons.none else icons.rotate_ccw,
-            .variant = .outline,
-            .size = .sm,
-            .state = if (state.canReset()) buttonState(state, .reset) else .disabled,
+    if (stacked_style) |style| {
+        _ = try tree.text(full_time[0..2], .{
+            .color = time_color,
+            .style = style,
+            .figures = .tabular,
         });
-        try button.view(tree, theme, .{
-            .id = skip_id,
-            .label = "",
-            .icon = icons.skip_forward,
-            .variant = .outline,
-            .size = .sm,
-            .state = if (state.canSkip()) buttonState(state, .skip) else .disabled,
+        _ = try tree.text(full_time[3..5], .{
+            .color = time_color,
+            .style = style,
+            .figures = .tabular,
         });
-        tree.close(controls);
+    } else {
+        _ = try tree.text(full_time, .{
+            .color = time_color,
+            .style = fitTimerStyle(inner_w, inner_h, full_time.len, grid == .horizontal or inner_w >= 170),
+            .figures = .tabular,
+        });
     }
 
+    tree.close(content);
+    tree.close(tile);
     tree.close(surface);
 }
 
-fn viewCard(state: *const State, tree: *Tree, theme: *const Theme, w: f32, h: f32, expanded: bool) tree_zig.Error!void {
-    const hpad: u8 = if (expanded) 16 else 14;
-    const vpad: u8 = if (expanded) 14 else 12;
-    const gap: u8 = if (expanded) 16 else 12;
+fn viewHorizontalNormal(state: *const State, tree: *Tree, theme: *const Theme, w: f32, h: f32) tree_zig.Error!void {
+    const roomy = w >= 290 and h >= 144;
+    const hpad: u8 = if (roomy) 14 else 12;
+    const vpad: u8 = if (roomy) 12 else 10;
+    const gap: u8 = if (roomy) 12 else 10;
+    const right_pad: u8 = hpad + 2;
+    const bottom_pad: u8 = vpad + 2;
+    const chrome_x: f32 = @floatFromInt(hpad + right_pad + gap);
+    const chrome_y: f32 = @floatFromInt(vpad + bottom_pad);
     const surface = try tree.open(.{
         .axis = .row,
         .width = .fill,
         .height = .fill,
-        .padding = .{ .left = hpad, .right = hpad, .top = vpad, .bottom = vpad },
+        .padding = .{ .left = hpad, .right = right_pad, .top = vpad, .bottom = bottom_pad },
         .gap = gap,
         .cross = .center,
     });
 
-    const tile_side = std.math.clamp(@min(h - @as(f32, @floatFromInt(vpad * 2)), w * 0.44), 68, 176);
+    // Reserve `min_left_w` so the phase badge and cycle tally never wrap at any `normal` size.
+    const min_left_w: f32 = if (roomy) 146 else 124;
+    const tile_side = std.math.clamp(@min(h - chrome_y, w - chrome_x - min_left_w), 76, 134);
 
     const left = try tree.open(.{
         .width = .fill,
@@ -753,13 +535,17 @@ fn viewCard(state: *const State, tree: *Tree, theme: *const Theme, w: f32, h: f3
         .axis = .row,
         .width = .fill,
         .cross = .center,
-        .gap = 8,
+        .gap = 6,
     });
-    try viewPhaseBadge(state, tree, theme, expanded);
+    try badge.view(tree, theme, .{
+        .label = phaseShortLabel(state.phase, state.run),
+        .variant = phaseBadgeVariant(state.phase, state.run),
+        .size = if (roomy) .lg else .sm,
+    });
     if (state.phase != .idle and state.cycle_len > 0) {
         _ = try tree.text(state.cycleText(), .{
             .color = theme.muted_foreground,
-            .style = if (expanded) .sm else .xs,
+            .style = if (roomy) .sm else .xs,
             .figures = .tabular,
         });
     }
@@ -767,17 +553,11 @@ fn viewCard(state: *const State, tree: *Tree, theme: *const Theme, w: f32, h: f3
 
     _ = try tree.leaf(.{ .width = .{ .fixed = 1 }, .height = .fill });
 
-    const left_w = w - @as(f32, @floatFromInt(hpad * 2 + gap)) - tile_side;
-    const can_xxl = h >= 158 and (state.timeText().len <= 5 or left_w >= 190);
-    const time_style: text.Style = if (can_xxl)
-        .xxl_semibold
-    else if (h >= 132)
-        .xl_semibold
-    else
-        .lg_semibold;
+    const left_w = @max(1, w - chrome_x - tile_side);
+    const avail_h = @max(1, h - chrome_y - 58);
     _ = try tree.text(state.timeText(), .{
         .color = theme.foreground,
-        .style = time_style,
+        .style = fitTimerStyle(left_w, avail_h, state.timeText().len, roomy),
         .figures = .tabular,
     });
 
@@ -785,22 +565,20 @@ fn viewCard(state: *const State, tree: *Tree, theme: *const Theme, w: f32, h: f3
 
     const controls = try tree.open(.{
         .axis = .row,
-        .gap = if (expanded) 8 else 6,
+        .gap = if (roomy) 8 else 6,
         .cross = .center,
     });
-    const show_stop_icon = left_w >= 170;
-    const show_skip_label = left_w >= 160;
     try button.view(tree, theme, .{
         .id = reset_id,
-        .label = "Stop",
-        .icon = if (show_stop_icon) icons.rotate_ccw else icons.none,
+        .label = "",
+        .icon = icons.rotate_ccw,
         .variant = .outline,
         .size = .sm,
         .state = if (state.canReset()) buttonState(state, .reset) else .disabled,
     });
     try button.view(tree, theme, .{
         .id = skip_id,
-        .label = if (show_skip_label) "Skip" else "",
+        .label = "",
         .icon = icons.skip_forward,
         .variant = .outline,
         .size = .sm,
@@ -809,85 +587,68 @@ fn viewCard(state: *const State, tree: *Tree, theme: *const Theme, w: f32, h: f3
     tree.close(controls);
     tree.close(left);
 
-    const tile = try tree.open(.{
-        .width = .{ .fixed = tile_side },
-        .height = .{ .fixed = tile_side },
-        .main = .center,
-        .cross = .center,
-        .fill = dialTileFill(theme, state.phase, state.run),
-        .radius = Theme.radius + 4,
-    });
-    const ring_pad: f32 = if (tile_side >= 132) 24 else 18;
+    const ring_pad: f32 = if (tile_side >= 116) 20 else 16;
     const ring_side = tile_side - ring_pad;
-    const thick: f32 = if (tile_side >= 132) 7 else if (tile_side >= 96) 6 else 5;
-    try viewRingButton(state, tree, theme, ring_side, thick);
-    tree.close(tile);
+    const thick: f32 = if (tile_side >= 116) 6 else 5;
+    try viewDialTile(state, tree, theme, tile_side, ring_side, thick, Theme.radius + 2);
 
     tree.close(surface);
 }
 
-fn viewCloseOverlay(state: *const State, tree: *Tree, theme: *const Theme, compact: bool) tree_zig.Error!void {
-    const pad: u8 = if (compact) 4 else 6;
-    const wrap = try tree.open(.{
+fn viewProgressBorderOverlay(
+    state: *const State,
+    tree: *Tree,
+    theme: *const Theme,
+    box_state: button.State,
+    border_w: u8,
+    radius: u8,
+) tree_zig.Error!void {
+    if (state.fraction <= 0 or state.phase == .idle) return;
+    const sweep_val: u16 = @max(1, @as(u16, @intFromFloat(@round(clamp01(state.fraction) * 65535.0))));
+    _ = try tree.leaf(.{
         .overlay = true,
-        .axis = .row,
         .width = .fill,
         .height = .fill,
-        .main = .end,
-        .cross = .start,
-        .padding = .{ .top = pad, .right = pad },
+        .border = progressBorderColor(theme, state.phase, state.run, box_state),
+        .border_width = border_w,
+        .border_sweep = sweep_val,
+        .radius = radius,
     });
-    try viewClosePill(state, tree, theme, true);
-    tree.close(wrap);
 }
 
-fn viewClosePill(state: *const State, tree: *Tree, theme: *const Theme, floating: bool) tree_zig.Error!void {
-    const btn_state = buttonState(state, .close);
-    const fill: Color = switch (btn_state) {
-        .pressed => theme.secondary,
-        .hovered => theme.accent,
-        else => if (floating) theme.popover.alpha(92) else .transparent,
-    };
-    const border: Color = if (floating or btn_state != .normal) theme.border else .transparent;
-    const icon_color: Color = if (btn_state == .normal) theme.ghost_foreground else theme.foreground;
-    const box = try tree.open(.{
-        .id = close_id,
-        .width = .{ .fixed = close_btn_side },
-        .height = .{ .fixed = close_btn_side },
+fn viewDialTile(
+    state: *const State,
+    tree: *Tree,
+    theme: *const Theme,
+    tile_side: f32,
+    ring_side: f32,
+    thickness: f32,
+    radius: u8,
+) tree_zig.Error!void {
+    const box_state = buttonState(state, .play_pause);
+    const tile = try tree.open(.{
+        .id = play_pause_id,
+        .width = .{ .fixed = tile_side },
+        .height = .{ .fixed = tile_side },
         .main = .center,
         .cross = .center,
-        .fill = fill,
-        .border = border,
+        .fill = tileFill(theme, box_state),
+        .border = tileBorder(theme, box_state),
         .border_width = Theme.border_width,
-        .radius = 12,
+        .radius = radius,
         .pointer = .hand,
     });
-    _ = try tree.icon(.{
-        .codepoint = icons.x,
-        .color = icon_color,
-        .size = 13,
-    });
-    tree.close(box);
+    try viewDialGraphic(state, tree, theme, ring_side, thickness);
+    tree.close(tile);
 }
 
-fn viewPhaseBadge(state: *const State, tree: *Tree, theme: *const Theme, large: bool) tree_zig.Error!void {
-    const pad: tree_zig.Edges = if (large) .symmetric(10, 3) else .symmetric(8, 2);
-    const pill = try tree.open(.{
-        .width = .fit,
-        .padding = pad,
-        .cross = .center,
-        .main = .center,
-        .fill = phaseBadgeFill(theme, state.phase, state.run),
-        .radius = Theme.radius_sm,
-    });
-    _ = try tree.text(phaseShortLabel(state.phase, state.run), .{
-        .color = phaseSubtextColor(theme, state.phase, state.run),
-        .style = if (large) .sm_medium else .xs,
-    });
-    tree.close(pill);
-}
-
-fn viewRingButton(state: *const State, tree: *Tree, theme: *const Theme, side: f32, thickness: f32) tree_zig.Error!void {
+fn viewDialGraphic(
+    state: *const State,
+    tree: *Tree,
+    theme: *const Theme,
+    side: f32,
+    thickness: f32,
+) tree_zig.Error!void {
     const radius = side / 2;
     const dial = try tree.open(.{
         .width = .{ .fixed = side },
@@ -915,100 +676,48 @@ fn viewRingButton(state: *const State, tree: *Tree, theme: *const Theme, side: f
         .main = .center,
         .cross = .center,
     });
-    const btn_side = @max(22, side - thickness * 2 - 4);
-    const btn_state = buttonState(state, .play_pause);
-    const center_fill: Color = switch (btn_state) {
-        .pressed => theme.secondary,
-        .hovered => theme.accent,
-        else => theme.background,
-    };
-    const icon_size: u8 = if (btn_side < 30) 12 else if (btn_side >= 100) 24 else if (btn_side >= 58) 20 else Theme.icon;
-    const play_box = try tree.open(.{
-        .id = play_pause_id,
-        .width = .{ .fixed = btn_side },
-        .height = .{ .fixed = btn_side },
+    const inner_side = @max(18, side - thickness * 2 - 4);
+    const icon_size: u8 = if (inner_side < 26)
+        11
+    else if (inner_side >= 100)
+        24
+    else if (inner_side >= 58)
+        20
+    else if (inner_side >= 34)
+        Theme.icon
+    else
+        14;
+    const disc = try tree.open(.{
+        .width = .{ .fixed = inner_side },
+        .height = .{ .fixed = inner_side },
         .main = .center,
         .cross = .center,
-        .fill = center_fill,
-        .border = theme.border,
-        .border_width = Theme.border_width,
-        .radius = @intFromFloat(@ceil(btn_side / 2)),
-        .pointer = .hand,
+        .fill = theme.background.alpha(85),
+        .radius = @intFromFloat(@ceil(inner_side / 2)),
     });
     _ = try tree.icon(.{
         .codepoint = if (state.run == .running) icons.pause else icons.play,
         .color = theme.foreground,
         .size = icon_size,
     });
-    tree.close(play_box);
+    tree.close(disc);
     tree.close(center);
     tree.close(dial);
 }
 
-fn viewResizeHandles(state: *const State, tree: *Tree, theme: *const Theme, card_h: f32) tree_zig.Error!void {
-    const right_active = state.hovered == .resize_w or switch (state.capture) {
-        .resize_w => true,
-        else => false,
-    };
-    const right_wrap = try tree.open(.{
-        .overlay = true,
-        .axis = .row,
-        .width = .fill,
-        .height = .fill,
-        .main = .end,
-        .cross = .center,
-    });
-    const right_hit = try tree.open(.{
-        .id = resize_w_id,
-        .width = .{ .fixed = resize_edge_band },
-        .height = .fill,
-        .main = .center,
-        .cross = .center,
-        .pointer = .hand,
-    });
-    _ = try tree.leaf(.{
-        .width = .{ .fixed = 2 },
-        .height = .{ .fixed = 22 },
-        .fill = if (right_active) theme.info else Color.transparent,
-        .radius = 1,
-    });
-    tree.close(right_hit);
-    tree.close(right_wrap);
+fn fitTimerStyle(avail_w: f32, avail_h: f32, len: usize, allow_hero: bool) text.Style {
+    const chars: f32 = @floatFromInt(@max(1, len));
+    if (allow_hero and avail_h >= 64 and avail_w >= chars * 34.0) return .xxl_semibold;
+    if (allow_hero and avail_h >= 52 and avail_w >= chars * 26.5) return .display_md;
+    if (allow_hero and avail_h >= 42 and avail_w >= chars * 21.5) return .display_sm;
+    if (avail_h >= 32 and avail_w >= chars * 16.0) return .xl_semibold;
+    if (avail_h >= 24 and avail_w >= chars * 12.0) return .lg_semibold;
+    return .sm_medium;
+}
 
-    const bottom_active = state.hovered == .resize_h or switch (state.capture) {
-        .resize_h => true,
-        else => false,
-    };
-    const bottom_wrap = try tree.open(.{
-        .overlay = true,
-        .axis = .column,
-        .width = .fill,
-        .height = .fill,
-        .main = .end,
-        .cross = .center,
-    });
-    const bottom_hit = try tree.open(.{
-        .id = resize_h_id,
-        .width = .fill,
-        .height = .{ .fixed = resize_edge_band },
-        .main = .center,
-        .cross = .center,
-        .pointer = .hand,
-    });
-    _ = try tree.leaf(.{
-        .width = .{ .fixed = 22 },
-        .height = .{ .fixed = 2 },
-        .fill = if (bottom_active) theme.info else Color.transparent,
-        .radius = 1,
-    });
-    tree.close(bottom_hit);
-    tree.close(bottom_wrap);
-
-    const corner_active = state.hovered == .resize or switch (state.capture) {
-        .resize => true,
-        else => false,
-    };
-    const grip_color = if (corner_active) theme.info else theme.muted_foreground.alpha(55);
+fn viewResizeHandle(state: *const State, tree: *Tree, theme: *const Theme) tree_zig.Error!void {
+    const corner_active = state.hovered == .resize or state.capture == .resize;
+    const grip_color = if (corner_active) theme.foreground else theme.muted_foreground.alpha(65);
     const corner = try tree.open(.{
         .overlay = true,
         .width = .fill,
@@ -1016,37 +725,156 @@ fn viewResizeHandles(state: *const State, tree: *Tree, theme: *const Theme, card
         .main = .end,
         .cross = .end,
     });
-    const corner_side: f32 = if (card_h < 80) 14 else resize_corner_size;
-    const grip_pad: u8 = if (card_h < 80) 6 else 7;
     const grip = try tree.open(.{
         .id = resize_id,
-        .width = .{ .fixed = corner_side },
-        .height = .{ .fixed = corner_side },
+        .width = .{ .fixed = resize_corner_size },
+        .height = .{ .fixed = resize_corner_size },
         .main = .end,
         .cross = .end,
-        .padding = .{ .right = grip_pad, .bottom = grip_pad },
+        .padding = .{ .right = 3, .bottom = 3 },
         .pointer = .hand,
     });
-    const corner_mark = try tree.open(.{
-        .axis = .row,
-        .cross = .end,
-        .gap = 0,
+    _ = try tree.icon(.{
+        .codepoint = icons.handle_bottom_right,
+        .color = grip_color,
+        .size = 10,
     });
-    _ = try tree.leaf(.{
-        .width = .{ .fixed = 5 },
-        .height = .{ .fixed = 2 },
-        .fill = grip_color,
-        .radius = 1,
-    });
-    _ = try tree.leaf(.{
-        .width = .{ .fixed = 2 },
-        .height = .{ .fixed = 7 },
-        .fill = grip_color,
-        .radius = 1,
-    });
-    tree.close(corner_mark);
     tree.close(grip);
     tree.close(corner);
+}
+
+/// Builds the hover tooltip for `mini` mode (colored phase badge and cycle tally),
+/// returning null when unfocused, dragging/resizing, hidden, or in `normal` mode.
+pub fn viewTooltip(
+    state: *const State,
+    tree: *Tree,
+    theme: *const Theme,
+    viewport_w: f32,
+    viewport_h: f32,
+) tree_zig.Error!?Index {
+    if (!state.visible) return null;
+    if (!state.pointer_inside and state.hovered == .none) return null;
+    if (state.capture == .move or state.capture == .resize) return null;
+    const eff = state.effectiveSize(viewport_w, viewport_h);
+    if (eff.mode != .mini) return null;
+
+    const card = try tooltip.openAt(tree, theme, 0, 0);
+    const row = try tree.open(.{
+        .axis = .row,
+        .gap = 6,
+        .cross = .center,
+    });
+    try badge.view(tree, theme, .{
+        .label = phaseShortLabel(state.phase, state.run),
+        .variant = phaseBadgeVariant(state.phase, state.run),
+    });
+    if (state.phase != .idle and state.cycle_len > 0) {
+        _ = try tree.text(state.cycleText(), .{
+            .color = theme.muted_foreground,
+            .style = .xs,
+            .figures = .tabular,
+        });
+    }
+    tree.close(row);
+    tooltip.close(tree, card);
+    return card;
+}
+
+const TooltipSide = enum { below, above, left, right };
+
+const TooltipPlacement = struct {
+    x: f32,
+    y: f32,
+    fits: bool,
+    overlap: f32,
+};
+
+/// Positions `tip_root` cleanly on the best non-overlapping side of `widget_root`
+/// (`below`, `above`, `left`, or `right`), aligned against the card and viewport
+/// margins, falling back to minimum card overlap in cramped viewports.
+pub fn placeTooltip(tree: *Tree, widget_root: ?Index, tip_root: ?Index, viewport_w: f32, viewport_h: f32) void {
+    const w_idx = widget_root orelse return;
+    const t_idx = tip_root orelse return;
+    const card = tree.nodes[w_idx].rect;
+    const tip = tree.nodes[t_idx].rect;
+    const gap: f32 = 6;
+    const margin: f32 = 8;
+
+    const room_left = card.x - gap - margin;
+    const room_right = viewport_w - margin - (card.x + card.w + gap);
+    const order = if (room_right >= room_left)
+        [4]TooltipSide{ .below, .above, .right, .left }
+    else
+        [4]TooltipSide{ .below, .above, .left, .right };
+
+    var best: ?TooltipPlacement = null;
+    for (order) |side| {
+        const cand = tooltipCandidate(side, card, tip, gap, margin, viewport_w, viewport_h);
+        if (cand.fits) {
+            best = cand;
+            break;
+        }
+        if (best == null or cand.overlap < best.?.overlap) {
+            best = cand;
+        }
+    }
+    const chosen = best.?;
+    tree.translate(t_idx, chosen.x - tip.x, chosen.y - tip.y);
+}
+
+fn tooltipCandidate(
+    side: TooltipSide,
+    card: tree_zig.Rect,
+    tip: tree_zig.Rect,
+    gap: f32,
+    margin: f32,
+    viewport_w: f32,
+    viewport_h: f32,
+) TooltipPlacement {
+    const max_x = @max(margin, viewport_w - margin - tip.w);
+    const max_y = @max(margin, viewport_h - margin - tip.h);
+    const raw_x = switch (side) {
+        .below, .above => alignTooltipCross(card.x, card.w, tip.w, margin, viewport_w),
+        .left => card.x - gap - tip.w,
+        .right => card.x + card.w + gap,
+    };
+    const raw_y = switch (side) {
+        .below => card.y + card.h + gap,
+        .above => card.y - gap - tip.h,
+        .left, .right => alignTooltipCross(card.y, card.h, tip.h, margin, viewport_h),
+    };
+    const x = std.math.clamp(raw_x, margin, max_x);
+    const y = std.math.clamp(raw_y, margin, max_y);
+    const fits = switch (side) {
+        .below => y >= card.y + card.h + gap,
+        .above => y + tip.h <= card.y - gap,
+        .left => x + tip.w <= card.x - gap,
+        .right => x >= card.x + card.w + gap,
+    };
+    return .{
+        .x = x,
+        .y = y,
+        .fits = fits,
+        .overlap = rectOverlapArea(x, y, tip.w, tip.h, card),
+    };
+}
+
+fn alignTooltipCross(card_pos: f32, card_span: f32, tip_span: f32, margin: f32, viewport: f32) f32 {
+    const max_pos = @max(margin, viewport - margin - tip_span);
+    const centered = card_pos + (card_span - tip_span) * 0.5;
+    const pos = if (centered < margin)
+        card_pos
+    else if (centered + tip_span > viewport - margin)
+        card_pos + card_span - tip_span
+    else
+        centered;
+    return std.math.clamp(pos, margin, max_pos);
+}
+
+fn rectOverlapArea(ax: f32, ay: f32, aw: f32, ah: f32, b: tree_zig.Rect) f32 {
+    const ox = @max(0, @min(ax + aw, b.x + b.w) - @max(ax, b.x));
+    const oy = @max(0, @min(ay + ah, b.y + b.h) - @max(ay, b.y));
+    return ox * oy;
 }
 
 /// Translates the widget to its clamped `(x, y)` viewport coordinates after layout.
@@ -1067,6 +895,7 @@ pub fn place(state: *State, tree: *Tree, root: ?Index, viewport_w: f32, viewport
 
 fn buttonState(state: *const State, target: Hit) button.State {
     switch (state.capture) {
+        .play_pause => if (target == .play_pause) return .pressed,
         .button => |b| if (b == target) return .pressed,
         else => {},
     }
@@ -1102,32 +931,61 @@ fn progressColor(theme: *const Theme, phase: Phase, run: Run) Color {
     };
 }
 
-fn phaseBadgeFill(theme: *const Theme, phase: Phase, run: Run) Color {
-    if (phase == .idle or run != .running) return theme.muted;
+fn phaseBadgeVariant(phase: Phase, run: Run) badge.Variant {
+    if (phase == .idle or run != .running) return .muted;
     return switch (phase) {
-        .task => theme.info.alpha(16),
-        .short_break, .long_break => theme.success.alpha(16),
-        .idle => theme.muted,
+        .task => .info,
+        .short_break, .long_break => .success,
+        .idle => .muted,
     };
 }
 
-fn phaseSubtextColor(theme: *const Theme, phase: Phase, run: Run) Color {
-    if (phase == .idle) return theme.muted_foreground;
-    if (run != .running) return theme.muted_foreground;
-    return switch (phase) {
-        .task => theme.info_text,
+fn tileFill(theme: *const Theme, btn_state: button.State) Color {
+    return switch (btn_state) {
+        .pressed => theme.secondary,
+        .hovered => theme.accent,
+        else => theme.muted.alpha(50),
+    };
+}
+
+fn progressBoxFill(theme: *const Theme, btn_state: button.State) Color {
+    return switch (btn_state) {
+        .pressed => theme.secondary.alpha(75),
+        .hovered => theme.accent.alpha(45),
+        else => .transparent,
+    };
+}
+
+fn progressTrackBorder(theme: *const Theme, btn_state: button.State) Color {
+    if (btn_state == .hovered or btn_state == .pressed) {
+        return theme.ring.alpha(55);
+    }
+    return theme.foreground.alpha(12);
+}
+
+fn progressBorderColor(theme: *const Theme, phase: Phase, run: Run, btn_state: button.State) Color {
+    const hovered = btn_state == .hovered or btn_state == .pressed;
+    if (phase == .idle or run != .running) {
+        return theme.muted_foreground.alpha(if (hovered) 80 else 55);
+    }
+    const base = switch (phase) {
+        .task => theme.info,
         .short_break, .long_break => theme.success,
         .idle => theme.muted_foreground,
     };
+    return if (hovered) base else base.alpha(92);
 }
 
-fn dialTileFill(theme: *const Theme, phase: Phase, run: Run) Color {
-    if (phase == .idle or run != .running) return theme.muted.alpha(50);
-    return switch (phase) {
-        .task => theme.info.alpha(14),
-        .short_break, .long_break => theme.success.alpha(14),
-        .idle => theme.muted.alpha(50),
-    };
+fn progressTimeColor(theme: *const Theme, phase: Phase, run: Run, box_state: button.State) Color {
+    if (phase != .idle and run != .running) return progressBorderColor(theme, phase, run, box_state);
+    return theme.foreground;
+}
+
+fn tileBorder(theme: *const Theme, btn_state: button.State) Color {
+    if (btn_state == .hovered or btn_state == .pressed) {
+        return theme.ring.alpha(70);
+    }
+    return theme.border;
 }
 
 fn trackColor(theme: *const Theme, phase: Phase, run: Run) Color {

@@ -192,6 +192,7 @@ pub fn paint(self: *KitPainter, tree: *const Tree, font: *KitFont, atlas: *Atlas
                 const stroke = if (box.border.a == 0) 0 else layout.strokePixels(box.border_width, scale);
                 if (box.fill.a == 0 and stroke == 0) continue;
                 const rect = layout.snap(node.rect, scale);
+                const sweep: f32 = if (box.border_sweep == 0) 0.0 else @as(f32, @floatFromInt(box.border_sweep)) / 65535.0;
                 try self.push(.{
                     .rect = pixels(rect),
                     .fill = box.fill,
@@ -199,6 +200,7 @@ pub fn paint(self: *KitPainter, tree: *const Tree, font: *KitFont, atlas: *Atlas
                     .params = .{ @as(f32, @floatFromInt(box.radius)) * scale, @floatFromInt(stroke) },
                     .kind = .box,
                     .clip = clip,
+                    .arc = .{ sweep, 0 },
                 });
             },
             .icon => |icon| {
