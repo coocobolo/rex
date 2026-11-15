@@ -347,6 +347,26 @@ pub fn build(b: *std.Build) !void {
         step.dependOn(benchRun(b, bench, name));
     }
 
+    const layout_module = b.createModule(.{
+        .root_source_file = b.path("tools/layout/inspect.zig"),
+        .imports = &.{
+            .{ .name = "rex", .module = mod },
+        },
+        .target = target,
+        .strip = strip,
+        .optimize = optimize,
+    });
+    const layout_exe = b.addExecutable(.{
+        .name = "inspect-layout",
+        .root_module = layout_module,
+    });
+    const layout_run = b.addRunArtifact(layout_exe);
+    layout_run.stdio = .inherit;
+    layout_run.has_side_effects = true;
+    if (b.args) |args| layout_run.addArgs(args);
+    const layout_step = b.step("layout", "Inspect struct and union memory layouts across rex modules (flags after --)");
+    layout_step.dependOn(&layout_run.step);
+
     const run_step = b.step("run", "Run the app");
     run_step.dependOn(&run_cmd.step);
 
@@ -482,6 +502,7 @@ pub fn build(b: *std.Build) !void {
     test_step.dependOn(tests.run(tests.add("test-import-check", import_check_module, test_filters)));
     test_step.dependOn(theme_check_step);
     test_step.dependOn(tests.run(tests.add("test-theme-check", check_theme_module, test_filters)));
+    test_step.dependOn(tests.run(tests.add("test-layout", layout_module, test_filters)));
 
     // Fuzzing (see CONTRIBUTING.md, "Fuzzing"):
     //   - One target per file in src/fuzz/, each built on
