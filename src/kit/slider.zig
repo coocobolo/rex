@@ -8,6 +8,7 @@
 const std = @import("std");
 
 const Theme = @import("Theme.zig");
+const focus = @import("focus.zig");
 const Tree = @import("Tree.zig");
 const Id = Tree.Id;
 const Rect = Tree.Rect;
@@ -36,10 +37,10 @@ pub const Options = struct {
 pub fn view(tree: *Tree, theme: *const Theme, options: Options) Tree.Error!void {
     const clamped = std.math.clamp(options.value, 0.0, 1.0);
     const presence: f32 = if (options.disabled) 0.5 else 1.0;
-    const ring_color = if (options.focused and !options.disabled)
-        theme.ring.alpha(Theme.ring_opacity)
-    else
-        Theme.Color.transparent;
+    const ring_color = focus.ringColor(theme, .{
+        .focused = options.focused,
+        .disabled = options.disabled,
+    });
 
     const row = try tree.open(.{
         .axis = .row,
@@ -74,15 +75,13 @@ pub fn view(tree: *Tree, theme: *const Theme, options: Options) Tree.Error!void 
     else
         theme.primary.fade(presence);
 
-    const thumb_ring = try tree.open(.{
+    const thumb_ring = try focus.openRing(tree, .{
         .width = .{ .fixed = thumb_size + Theme.ring_width * 2 },
         .height = .{ .fixed = thumb_size + Theme.ring_width * 2 },
-        .padding = .all(Theme.ring_width),
         .main = .center,
         .cross = .center,
         .border = ring_color,
-        .border_width = Theme.ring_width,
-        .radius = 255,
+        .inner_radius = 255,
     });
     _ = try tree.leaf(.{
         .width = .{ .fixed = thumb_size },

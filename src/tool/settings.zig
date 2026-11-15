@@ -21,6 +21,7 @@ const theme_presets = @import("../color/presets.zig");
 
 const badge = kit.badge;
 const button = kit.button;
+const focus = kit.focus;
 const sidebar = kit.sidebar;
 const popup = kit.popup;
 const switch_control = kit.switch_control;
@@ -2911,7 +2912,7 @@ fn viewAnsiCollapsible(
         .pointer = .hand,
         .width = .fill,
         .padding = .all(Theme.ring_width),
-        .border = if (focused) theme.ring.alpha(Theme.ring_opacity) else .transparent,
+        .border = focus.ringColor(theme, .{ .focused = focused }),
         .border_width = Theme.ring_width,
         .radius = Theme.radius_md - Theme.border_width,
     });
@@ -3215,28 +3216,6 @@ fn stepperSegment(tree: *Tree, theme: *const Theme, options: struct {
     tree.close(cell);
 }
 
-fn groupColors(theme: *const Theme, is_err: bool, focused: bool, hovered: bool) struct {
-    ring: Theme.Color,
-    border: Theme.Color,
-} {
-    return .{
-        .ring = if (is_err)
-            theme.destructive.alpha(Theme.ring_opacity)
-        else if (focused)
-            theme.ring.alpha(Theme.ring_opacity)
-        else
-            Theme.Color.transparent,
-        .border = if (is_err)
-            theme.destructive
-        else if (focused)
-            theme.ring
-        else if (hovered)
-            theme.foreground.fade(0.35)
-        else
-            theme.input,
-    };
-}
-
 fn toggleValue(idx: u16, cfg: *const Config) bool {
     @setEvalBranchQuota(keys.eval_branch_quota);
     inline for (keys.table, 0..) |key, i| {
@@ -3387,14 +3366,16 @@ fn viewKeyRow(
             const any_focused = input_focused or
                 std.meta.eql(state.focused, Target{ .stepper_dec = idx }) or
                 std.meta.eql(state.focused, Target{ .stepper_inc = idx });
-            const colors = groupColors(theme, is_err, any_focused, input_hovered or dec_hovered or inc_hovered);
+            const colors = focus.controlColors(theme, .{
+                .focused = any_focused,
+                .hovered = input_hovered or dec_hovered or inc_hovered,
+                .invalid = is_err,
+                .show_invalid_ring = true,
+            });
 
-            const ring = try tree.open(.{
+            const ring = try focus.openRing(tree, .{
                 .width = control_width,
-                .padding = .all(Theme.ring_width),
                 .border = colors.ring,
-                .border_width = Theme.ring_width,
-                .radius = Theme.radius_md + Theme.ring_width,
             });
             const compound = try tree.open(.{
                 .axis = .row,
@@ -3454,14 +3435,16 @@ fn viewKeyRow(
             const input_hovered = std.meta.eql(state.hover, Target{ .key_input = idx });
             const select_hovered = std.meta.eql(state.hover, Target{ .key_select = idx });
             const is_open = if (state.open_select) |sel| sel.key == idx else false;
-            const colors = groupColors(theme, is_err, input_focused, input_hovered or select_hovered or is_open);
+            const colors = focus.controlColors(theme, .{
+                .focused = input_focused,
+                .hovered = input_hovered or select_hovered or is_open,
+                .invalid = is_err,
+                .show_invalid_ring = true,
+            });
 
-            const ring = try tree.open(.{
+            const ring = try focus.openRing(tree, .{
                 .width = control_width,
-                .padding = .all(Theme.ring_width),
                 .border = colors.ring,
-                .border_width = Theme.ring_width,
-                .radius = Theme.radius_md + Theme.ring_width,
             });
             const compound = try tree.open(.{
                 .axis = .row,
@@ -3540,14 +3523,12 @@ fn viewKeyRow(
                 if (std.meta.eql(state.hover, seg_target)) hovered_any = true;
                 if (std.meta.eql(state.focused, seg_target)) focused_any = true;
             }
-            const colors = groupColors(theme, false, focused_any, hovered_any);
-
-            const ring = try tree.open(.{
-                .padding = .all(Theme.ring_width),
-                .border = colors.ring,
-                .border_width = Theme.ring_width,
-                .radius = Theme.radius_md + Theme.ring_width,
+            const colors = focus.controlColors(theme, .{
+                .focused = focused_any,
+                .hovered = hovered_any,
             });
+
+            const ring = try focus.openRing(tree, .{ .border = colors.ring });
             const compound = try tree.open(.{
                 .axis = .row,
                 .height = .{ .fixed = Theme.control_sm },
@@ -3706,14 +3687,16 @@ fn viewKeyRow(
             const input_focused = std.meta.eql(state.focused, Target{ .key_input = idx });
             const input_hovered = std.meta.eql(state.hover, Target{ .key_input = idx });
             const add_hovered = std.meta.eql(state.hover, Target{ .list_add = idx });
-            const colors = groupColors(theme, is_err, input_focused, input_hovered or add_hovered);
+            const colors = focus.controlColors(theme, .{
+                .focused = input_focused,
+                .hovered = input_hovered or add_hovered,
+                .invalid = is_err,
+                .show_invalid_ring = true,
+            });
 
-            const ring = try tree.open(.{
+            const ring = try focus.openRing(tree, .{
                 .width = .fill,
-                .padding = .all(Theme.ring_width),
                 .border = colors.ring,
-                .border_width = Theme.ring_width,
-                .radius = Theme.radius_md + Theme.ring_width,
             });
             const compound = try tree.open(.{
                 .axis = .row,

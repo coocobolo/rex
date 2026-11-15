@@ -5,6 +5,7 @@
 //! `disabled` and handles clicks by `id`.
 
 const Theme = @import("Theme.zig");
+const focus = @import("focus.zig");
 const Tree = @import("Tree.zig");
 const Id = Tree.Id;
 
@@ -26,18 +27,14 @@ pub const Options = struct {
 
 pub fn view(tree: *Tree, theme: *const Theme, options: Options) Tree.Error!void {
     const presence: f32 = if (options.disabled) 0.5 else 1.0;
-    const ring_color = if (options.focused and !options.disabled)
-        theme.ring.alpha(Theme.ring_opacity)
-    else
-        Theme.Color.transparent;
-
-    const ring = try tree.open(.{
+    const ring = try focus.openRing(tree, .{
         .id = options.id,
         .pointer = if (options.disabled) .arrow else .hand,
-        .padding = .all(Theme.ring_width),
-        .border = ring_color,
-        .border_width = Theme.ring_width,
-        .radius = 255,
+        .border = focus.ringColor(theme, .{
+            .focused = options.focused,
+            .disabled = options.disabled,
+        }),
+        .inner_radius = 255,
         .shrink = false,
     });
 

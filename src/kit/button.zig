@@ -10,6 +10,7 @@ const assert = std.debug.assert;
 
 const Theme = @import("Theme.zig");
 const Color = Theme.Color;
+const focus = @import("focus.zig");
 const icons = @import("icons.zig");
 const kbd = @import("kbd.zig");
 const Tree = @import("Tree.zig");
@@ -145,14 +146,6 @@ fn look(theme: *const Theme, options: Options) Look {
     return result;
 }
 
-fn ringBorder(theme: *const Theme, options: Options) Color {
-    if (!options.focused) return .transparent;
-    if (options.variant == .destructive) {
-        return theme.destructive.alpha(if (theme.isDark()) 40 else 20);
-    }
-    return theme.ring.alpha(Theme.ring_opacity);
-}
-
 /// How much of its surface's opacity a disabled button keeps.
 const disabled_opacity = 0.5;
 
@@ -167,18 +160,23 @@ pub fn view(tree: *Tree, theme: *const Theme, options: Options) Tree.Error!void 
         .normal, .hovered, .pressed => options.presence,
         .disabled => options.presence * disabled_opacity,
     };
+    const ring_color = if (options.focused and options.variant == .destructive)
+        theme.destructive.alpha(if (theme.isDark()) 40 else 20).fade(presence)
+    else
+        focus.ringColor(theme, .{
+            .focused = options.focused,
+            .disabled = options.state == .disabled,
+            .presence = presence,
+        });
     // The face sits in a slot with room for the ring, so a row does not
     // shift when the focus moves. The ring is the slot's border, not its
     // fill, which would show through an outline button. The id is on the
     // slot: a click on the ring is a click on the button.
-    const slot = try tree.open(.{
+    const slot = try focus.openRing(tree, .{
         .id = options.id,
         .width = if (options.fill_width and !square) .fill else .fit,
         .pointer = if (options.state == .disabled) .arrow else .hand,
-        .padding = .all(Theme.ring_width),
-        .border = ringBorder(theme, options).fade(presence),
-        .border_width = Theme.ring_width,
-        .radius = Theme.radius_md + Theme.ring_width,
+        .border = ring_color,
         .shrink = false,
     });
     const face = try tree.open(.{

@@ -5,6 +5,7 @@
 //! list is open, and which item is highlighted.
 
 const Theme = @import("Theme.zig");
+const focus = @import("focus.zig");
 const icons = @import("icons.zig");
 const popup = @import("popup.zig");
 const Tree = @import("Tree.zig");
@@ -32,20 +33,17 @@ pub const TriggerOptions = struct {
 
 pub fn trigger(tree: *Tree, theme: *const Theme, options: TriggerOptions) Tree.Error!void {
     const presence: f32 = if (options.disabled) 0.5 else 1.0;
-    const ring_color = if (options.focused and !options.disabled)
-        theme.ring.alpha(Theme.ring_opacity)
-    else
-        Theme.Color.transparent;
+    const ring_color = focus.ringColor(theme, .{
+        .focused = options.focused,
+        .disabled = options.disabled,
+    });
     const touched = !options.disabled and (options.hovered or options.open);
 
-    const ring = try tree.open(.{
+    const ring = try focus.openRing(tree, .{
         .id = options.id,
         .width = if (options.width == .fill) .fill else .fit,
         .pointer = if (options.disabled) .arrow else .hand,
-        .padding = .all(Theme.ring_width),
         .border = ring_color,
-        .border_width = Theme.ring_width,
-        .radius = Theme.radius_md + Theme.ring_width,
     });
 
     const face = try tree.open(.{

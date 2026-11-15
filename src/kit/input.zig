@@ -10,6 +10,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 
 const Theme = @import("Theme.zig");
+const focus = @import("focus.zig");
 const Tree = @import("Tree.zig");
 const Id = Tree.Id;
 
@@ -262,30 +263,22 @@ pub const Options = struct {
 pub fn view(tree: *Tree, theme: *const Theme, options: Options) Tree.Error!void {
     const presence: f32 = if (options.disabled) 0.5 else 1.0;
     const active = options.focused and !options.disabled;
-    const ring_color = if (!active)
-        Theme.Color.transparent
-    else if (options.invalid)
-        theme.destructive.alpha(Theme.ring_opacity)
-    else
-        theme.ring.alpha(Theme.ring_opacity);
+    const colors = focus.controlColors(theme, .{
+        .focused = options.focused,
+        .hovered = options.hovered,
+        .invalid = options.invalid,
+        .disabled = options.disabled,
+    });
 
-    const border_color = if (options.invalid)
-        theme.destructive.fade(presence)
-    else if (active)
-        theme.ring.fade(presence)
-    else if (options.hovered and !options.disabled)
-        theme.foreground.fade(0.35)
-    else
-        theme.input.fade(presence);
-
-    const ring = try tree.open(.{
+    const ring = if (options.borderless) try tree.open(.{
         .id = options.id,
         .width = if (options.width == .fill) .fill else .fit,
         .pointer = if (options.disabled) .arrow else .text,
-        .padding = if (options.borderless) .all(0) else .all(Theme.ring_width),
-        .border = if (options.borderless) Theme.Color.transparent else ring_color,
-        .border_width = if (options.borderless) 0 else Theme.ring_width,
-        .radius = if (options.borderless) 0 else Theme.radius_md + Theme.ring_width,
+    }) else try focus.openRing(tree, .{
+        .id = options.id,
+        .width = if (options.width == .fill) .fill else .fit,
+        .pointer = if (options.disabled) .arrow else .text,
+        .border = colors.ring,
     });
 
     const face = try tree.open(.{
@@ -295,7 +288,7 @@ pub fn view(tree: *Tree, theme: *const Theme, options: Options) Tree.Error!void 
         .padding = .symmetric(12, 0),
         .cross = .center,
         .fill = if (options.borderless) .transparent else theme.background.fade(presence),
-        .border = if (options.borderless) Theme.Color.transparent else border_color,
+        .border = if (options.borderless) Theme.Color.transparent else colors.border,
         .border_width = if (options.borderless) 0 else Theme.border_width,
         .radius = if (options.borderless) 0 else Theme.radius_md,
     });

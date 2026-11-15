@@ -903,3 +903,69 @@ test "tree: ensureVisible brings targets into padded bounds and handles narrow o
     try tree.layout(measurer, 400, 400);
     try testing.expectEqual(@as(f32, 60), tree.scrollMax(wrap_id).x);
 }
+
+test "focus: ringColor, controlColors, and openRing handle focus, disabled, invalid, and radius clamping" {
+    const t = &Theme.dark;
+
+    // ringColor: focused / disabled / invalid / show_invalid_ring / presence.
+    try testing.expectEqual(Theme.Color.transparent, focus.ringColor(t, .{}));
+    try testing.expectEqual(t.ring.alpha(Theme.ring_opacity), focus.ringColor(t, .{ .focused = true }));
+    try testing.expectEqual(Theme.Color.transparent, focus.ringColor(t, .{ .focused = true, .disabled = true }));
+    try testing.expectEqual(Theme.Color.transparent, focus.ringColor(t, .{ .invalid = true }));
+    try testing.expectEqual(t.destructive.alpha(Theme.ring_opacity), focus.ringColor(t, .{ .invalid = true, .show_invalid_ring = true }));
+    try testing.expectEqual(t.destructive.alpha(Theme.ring_opacity), focus.ringColor(t, .{ .focused = true, .invalid = true }));
+    try testing.expectEqual(t.ring.alpha(Theme.ring_opacity).fade(0.5), focus.ringColor(t, .{ .focused = true, .presence = 0.5 }));
+
+    // controlColors: invalid > focused > hovered > input, with disabled suppression & 0.5 border fade.
+    const rest = focus.controlColors(t, .{});
+    try testing.expectEqual(Theme.Color.transparent, rest.ring);
+    try testing.expectEqual(t.input, rest.border);
+
+    const hovered = focus.controlColors(t, .{ .hovered = true });
+    try testing.expectEqual(Theme.Color.transparent, hovered.ring);
+    try testing.expectEqual(t.foreground.fade(0.35), hovered.border);
+
+    const focused = focus.controlColors(t, .{ .focused = true });
+    try testing.expectEqual(t.ring.alpha(Theme.ring_opacity), focused.ring);
+    try testing.expectEqual(t.ring, focused.border);
+
+    const disabled = focus.controlColors(t, .{ .focused = true, .hovered = true, .disabled = true });
+    try testing.expectEqual(Theme.Color.transparent, disabled.ring);
+    try testing.expectEqual(t.input.fade(0.5), disabled.border);
+
+    const invalid_unfocused = focus.controlColors(t, .{ .invalid = true });
+    try testing.expectEqual(Theme.Color.transparent, invalid_unfocused.ring);
+    try testing.expectEqual(t.destructive, invalid_unfocused.border);
+
+    const invalid_group = focus.controlColors(t, .{ .invalid = true, .show_invalid_ring = true });
+    try testing.expectEqual(t.destructive.alpha(Theme.ring_opacity), invalid_group.ring);
+    try testing.expectEqual(t.destructive, invalid_group.border);
+
+    // openRing: padding, border_width, radius clamping (radius_md + 3 and 255 -> 255), id/shrink forwarding.
+    var fixture: Fixture = .{};
+    var tree = fixture.tree();
+    const id_a = Id.of("focus.ring.a");
+    const a = try focus.openRing(&tree, .{
+        .id = id_a,
+        .pointer = .hand,
+        .border = focused.ring,
+        .shrink = false,
+    });
+    tree.close(a);
+    const b = try focus.openRing(&tree, .{
+        .border = focused.ring,
+        .inner_radius = 255,
+    });
+    tree.close(b);
+
+    try testing.expectEqual(id_a, tree.nodes[a].box.id);
+    try testing.expectEqual(Tree.PointerShape.hand, tree.nodes[a].box.pointer);
+    try testing.expectEqual(Theme.ring_width, tree.nodes[a].box.border_width);
+    try testing.expectEqual(Tree.Edges.all(Theme.ring_width), tree.nodes[a].box.padding);
+    try testing.expectEqual(@as(u8, Theme.radius_md + Theme.ring_width), tree.nodes[a].box.radius);
+    try testing.expectEqual(false, tree.nodes[a].box.shrink);
+
+    try testing.expectEqual(Id.none, tree.nodes[b].box.id);
+    try testing.expectEqual(@as(u8, 255), tree.nodes[b].box.radius);
+    try testing.expectEqual(true, tree.nodes[b].box.shrink);
+}
