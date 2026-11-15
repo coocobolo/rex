@@ -3157,11 +3157,8 @@ fn pctLabel(ratio: f32) []const u8 {
     return pct_labels[@min(pct, 100)];
 }
 
-const GroupEdge = enum { left, middle, right };
-
 fn openGroupSegment(tree: *Tree, theme: *const Theme, options: struct {
     id: Id,
-    edge: GroupEdge,
     fill: ?Theme.Color = null,
     hovered: bool = false,
     disabled: bool = false,
@@ -3181,38 +3178,12 @@ fn openGroupSegment(tree: *Tree, theme: *const Theme, options: struct {
     else
         options.fill orelse if (options.hovered) theme.accent else null;
     if (bg) |fill_color| {
-        if (options.edge == .middle) {
-            _ = try tree.leaf(.{
-                .overlay = true,
-                .width = .fill,
-                .height = .fill,
-                .fill = fill_color,
-            });
-        } else {
-            // Round all corners concentrically with the outer border, then square
-            // off the half adjacent to the group's inner divider.
-            _ = try tree.leaf(.{
-                .overlay = true,
-                .width = .fill,
-                .height = .fill,
-                .fill = fill_color,
-                .radius = Theme.radius_md - Theme.border_width,
-            });
-            const mask = try tree.open(.{
-                .overlay = true,
-                .axis = .row,
-                .width = .fill,
-                .height = .fill,
-            });
-            if (options.edge == .left) {
-                _ = try tree.leaf(.{ .width = .fill, .height = .fill });
-                _ = try tree.leaf(.{ .width = .fill, .height = .fill, .fill = fill_color });
-            } else {
-                _ = try tree.leaf(.{ .width = .fill, .height = .fill, .fill = fill_color });
-                _ = try tree.leaf(.{ .width = .fill, .height = .fill });
-            }
-            tree.close(mask);
-        }
+        _ = try tree.leaf(.{
+            .overlay = true,
+            .width = .fill,
+            .height = .fill,
+            .fill = fill_color,
+        });
     }
     return seg;
 }
@@ -3226,7 +3197,6 @@ fn segmentIcon(token: []const u8) u21 {
 
 fn stepperSegment(tree: *Tree, theme: *const Theme, options: struct {
     id: Id,
-    edge: GroupEdge,
     label: []const u8,
     hovered: bool = false,
     disabled: bool = false,
@@ -3234,7 +3204,6 @@ fn stepperSegment(tree: *Tree, theme: *const Theme, options: struct {
     const presence: f32 = if (options.disabled) 0.4 else 1.0;
     const cell = try openGroupSegment(tree, theme, .{
         .id = options.id,
-        .edge = options.edge,
         .hovered = options.hovered,
         .disabled = options.disabled,
         .width = .{ .fixed = Theme.control_sm },
@@ -3433,6 +3402,7 @@ fn viewKeyRow(
                 .height = .{ .fixed = Theme.control_sm },
                 .padding = .all(Theme.border_width),
                 .cross = .center,
+                .overflow = .clip,
                 .fill = theme.background,
                 .border = colors.border,
                 .border_width = Theme.border_width,
@@ -3440,7 +3410,6 @@ fn viewKeyRow(
             });
             try stepperSegment(tree, theme, .{
                 .id = decId(idx),
-                .edge = .left,
                 .label = "−",
                 .hovered = dec_hovered,
                 .disabled = at_min,
@@ -3470,7 +3439,6 @@ fn viewKeyRow(
             });
             try stepperSegment(tree, theme, .{
                 .id = incId(idx),
-                .edge = .right,
                 .label = "+",
                 .hovered = inc_hovered,
                 .disabled = at_max,
@@ -3501,6 +3469,7 @@ fn viewKeyRow(
                 .height = .{ .fixed = Theme.control_sm },
                 .padding = .all(Theme.border_width),
                 .cross = .center,
+                .overflow = .clip,
                 .fill = theme.background,
                 .border = colors.border,
                 .border_width = Theme.border_width,
@@ -3526,7 +3495,6 @@ fn viewKeyRow(
             });
             const unit_btn = try openGroupSegment(tree, theme, .{
                 .id = selectId(idx),
-                .edge = .right,
                 .hovered = select_hovered or is_open,
             });
             const unit_pad = try tree.open(.{
@@ -3585,6 +3553,7 @@ fn viewKeyRow(
                 .height = .{ .fixed = Theme.control_sm },
                 .padding = .all(Theme.border_width),
                 .cross = .center,
+                .overflow = .clip,
                 .fill = theme.background,
                 .border = colors.border,
                 .border_width = Theme.border_width,
@@ -3602,12 +3571,6 @@ fn viewKeyRow(
                 const is_selected = if (current_idx) |cur| cur == seg_i else false;
                 const is_hovered = std.meta.eql(state.hover, seg_target);
                 const is_focused = std.meta.eql(state.focused, seg_target);
-                const edge: GroupEdge = if (seg_i == 0)
-                    .left
-                else if (seg_i + 1 == count)
-                    .right
-                else
-                    .middle;
                 const seg_fill: ?Theme.Color = if (is_selected)
                     theme.accent
                 else if (is_hovered or is_focused)
@@ -3617,7 +3580,6 @@ fn viewKeyRow(
 
                 const cell = try openGroupSegment(tree, theme, .{
                     .id = segmentId(idx, seg_i),
-                    .edge = edge,
                     .fill = seg_fill,
                     .width = .{ .fixed = Theme.control_sm },
                 });
@@ -3759,6 +3721,7 @@ fn viewKeyRow(
                 .height = .{ .fixed = Theme.control_sm },
                 .padding = .all(Theme.border_width),
                 .cross = .center,
+                .overflow = .clip,
                 .fill = theme.background,
                 .border = colors.border,
                 .border_width = Theme.border_width,
@@ -3784,7 +3747,6 @@ fn viewKeyRow(
             const add_disabled = std.mem.trim(u8, inp.text(), " \t").len == 0;
             try stepperSegment(tree, theme, .{
                 .id = listAddId(idx),
-                .edge = .right,
                 .label = "+",
                 .hovered = add_hovered,
                 .disabled = add_disabled,

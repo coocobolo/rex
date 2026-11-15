@@ -4,6 +4,8 @@ in vec2 v_local;
 in vec2 v_uv;
 in vec2 v_pixel;
 flat in vec4 v_clip;
+flat in vec4 v_clip_round;
+flat in float v_clip_radius;
 flat in vec2 v_half;
 flat in vec4 v_fill;
 flat in vec4 v_border;
@@ -21,15 +23,11 @@ float roundedBox(vec2 p, vec2 b, float r) {
   return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r;
 }
 
-void main() {
-  // Outside the clipping box this instance sits in.
-  if (v_pixel.x < v_clip.x || v_pixel.y < v_clip.y || v_pixel.x >= v_clip.z || v_pixel.y >= v_clip.w) discard;
-
+vec4 sampleShape() {
   if (v_kind == 1u) {
     float coverage = texture(u_atlas_gray, v_uv).a;
-    if (coverage < 0.004) discard;
-    frag_color = vec4(v_fill.rgb, v_fill.a * coverage);
-    return;
+    if (coverage < 0.004) return vec4(0.0);
+    return vec4(v_fill.rgb, v_fill.a * coverage);
   }
 
   // A ring segment. 0 is the top and the sweep runs clockwise, which is
@@ -43,7 +41,7 @@ void main() {
     float ring = max(inner - d, d - outer);
     // Coverage is zero past half a pixel, and a round cap stays inside
     // the outer radius, so this pixel cannot be ink.
-    if (ring > 0.5) discard;
+    if (ring > 0.5) return vec4(0.0);
 
     float ang = mod(atan(v_local.y, v_local.x) + 1.57079632679, TAU);
     float start = mod(v_arc.x, TAU);
@@ -64,19 +62,17 @@ void main() {
     }
 
     float shape = clamp(0.5 - dist, 0.0, 1.0);
-    if (v_fill.a * shape < 0.004) discard;
-    frag_color = vec4(v_fill.rgb, v_fill.a * shape);
-    return;
+    if (v_fill.a * shape < 0.004) return vec4(0.0);
+    return vec4(v_fill.rgb, v_fill.a * shape);
   }
 
   if (v_kind == 3u) {
-    if (abs(v_local.x) >= v_half.x || abs(v_local.y) >= v_half.y) discard;
+    if (abs(v_local.x) >= v_half.x || abs(v_local.y) >= v_half.y) return vec4(0.0);
     float x = v_local.x + v_half.x;
     float period = v_params.x + v_params.y;
-    if (period > 0.0 && mod(x, period) >= v_params.x) discard;
-    if (v_fill.a < 0.004) discard;
-    frag_color = v_fill;
-    return;
+    if (period > 0.0 && mod(x, period) >= v_params.x) return vec4(0.0);
+    if (v_fill.a < 0.004) return vec4(0.0);
+    return v_fill;
   }
 
   float radius = min(v_params.x, min(v_half.x, v_half.y));
@@ -123,7 +119,27 @@ void main() {
   }
   float border = (1.0 - inside_border) * v_border.a * border_seg;
   float alpha = border + v_fill.a * (1.0 - border);
-  if (alpha * shape < 0.004) discard;
+  if (alpha * shape < 0.004) return vec4(0.0);
   vec3 color = (v_border.rgb * border + v_fill.rgb * v_fill.a * (1.0 - border)) / alpha;
-  frag_color = vec4(color, alpha * shape);
+  return vec4(color, alpha * shape);
+}
+
+void main() {
+  // Outside the clipping box this instance sits in.
+  if (v_pixel.x < v_clip.x || v_pixel.y < v_clip.y || v_pixel.x >= v_clip.z || v_pixel.y >= v_clip.w) discard;
+
+  float clip_alpha = 1.0;
+  if (v_clip_radius > 0.0) {
+    vec2 half_clip = max((v_clip_round.zw - v_clip_round.xy) * 0.5, 0.0);
+    if (half_clip.x == 0.0 || half_clip.y == 0.0) discard;
+    vec2 center_clip = (v_clip_round.xy + v_clip_round.zw) * 0.5;
+    float r_clip = min(v_clip_radius, min(half_clip.x, half_clip.y));
+    clip_alpha = clamp(0.5 - roundedBox(v_pixel - center_clip, half_clip, r_clip), 0.0, 1.0);
+    if (clip_alpha < 0.004) discard;
+  }
+
+  vec4 sampled = sampleShape();
+  float final_alpha = sampled.a * clip_alpha;
+  if (final_alpha < 0.004) discard;
+  frag_color = vec4(sampled.rgb, final_alpha);
 }

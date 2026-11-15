@@ -42,6 +42,7 @@ pub fn open(tree: *Tree, theme: *const Theme, options: Options) Tree.Error!Index
     _ = try tree.leaf(.{ .id = options.layer_id, .width = .fill, .height = .fill });
     const card = try tree.open(.{
         .padding = .all(padding),
+        .overflow = .clip,
         .fill = theme.popover,
         .border = theme.border,
         .border_width = Theme.border_width,

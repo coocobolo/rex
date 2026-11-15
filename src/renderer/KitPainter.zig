@@ -48,10 +48,21 @@ pub const Instance = extern struct {
     clip: Clip = no_clip,
     /// Arc: start angle and clockwise sweep, in radians. Zero otherwise.
     arc: [2]f32 = .{ 0, 0 },
+    /// Rounded-corner clipping box in physical pixels (`no_clip` when none)
+    /// and its corner radius in physical pixels (`0` when rectangular only).
+    clip_round: Clip = no_clip,
+    clip_radius: f32 = 0,
 };
 
 pub const Clip = [4]i16;
 pub const no_clip: Clip = .{ std.math.minInt(i16), std.math.minInt(i16), std.math.maxInt(i16), std.math.maxInt(i16) };
+
+const ClipMask = struct {
+    end: Tree.Index,
+    rect: Clip,
+    round: Clip,
+    radius: f32,
+};
 
 /// Clipping boxes nested inside each other that one tree can hold.
 pub const clip_depth_max = 8;
@@ -123,7 +134,11 @@ pub fn init() Shader.Error!KitPainter {
     gl.vertexAttribIPointer(5, 4, gl.SHORT, stride, offsetPointer("clip"));
     gl.enableVertexAttribArray(6);
     gl.vertexAttribPointer(6, 2, gl.FLOAT, gl.FALSE, stride, offsetPointer("arc"));
-    inline for (0..7) |location| gl.vertexAttribDivisor(location, 1);
+    gl.enableVertexAttribArray(7);
+    gl.vertexAttribIPointer(7, 4, gl.SHORT, stride, offsetPointer("clip_round"));
+    gl.enableVertexAttribArray(8);
+    gl.vertexAttribPointer(8, 1, gl.FLOAT, gl.FALSE, stride, offsetPointer("clip_radius"));
+    inline for (0..9) |location| gl.vertexAttribDivisor(location, 1);
 
     gl.bindVertexArray(0);
     gl.bindBuffer(gl.ARRAY_BUFFER, 0);
@@ -162,14 +177,14 @@ pub fn paint(self: *KitPainter, tree: *const Tree, font: *KitFont, atlas: *Atlas
     const scale = font.scale;
     // The clipping boxes around the current node: where each one's
     // descendants end, and its cut intersected with those outside it.
-    var clips: [clip_depth_max]struct { end: Tree.Index, clip: Clip } = undefined;
+    var clips: [clip_depth_max]ClipMask = undefined;
     var depth: usize = 0;
     for (tree.items(), 0..) |*node, node_index| {
         while (depth > 0 and node_index >= clips[depth - 1].end) depth -= 1;
-        const clip = if (depth > 0) clips[depth - 1].clip else no_clip;
+        const clip: ClipMask = if (depth > 0) clips[depth - 1] else .{ .end = 0, .rect = no_clip, .round = no_clip, .radius = 0 };
         if (node.box.overflow == .clip) {
             if (depth == clip_depth_max) return error.ClipTooDeep;
-            clips[depth] = .{ .end = node.end, .clip = intersect(clip, clipOf(layout.snap(node.rect, scale))) };
+            clips[depth] = narrowClip(clip, node, scale);
             depth += 1;
         }
         switch (node.content) {
@@ -184,7 +199,9 @@ pub fn paint(self: *KitPainter, tree: *const Tree, font: *KitFont, atlas: *Atlas
                         .fill = d.color,
                         .params = .{ 0, 0 },
                         .kind = .box,
-                        .clip = clip,
+                        .clip = clip.rect,
+                        .clip_round = clip.round,
+                        .clip_radius = clip.radius,
                     });
                     continue;
                 }
@@ -194,7 +211,9 @@ pub fn paint(self: *KitPainter, tree: *const Tree, font: *KitFont, atlas: *Atlas
                     .fill = d.color,
                     .params = .{ dash_px, dash_px },
                     .kind = .dash,
-                    .clip = clip,
+                    .clip = clip.rect,
+                    .clip_round = clip.round,
+                    .clip_radius = clip.radius,
                 });
             },
             .icon => |icon| {
@@ -220,13 +239,18 @@ pub fn paint(self: *KitPainter, tree: *const Tree, font: *KitFont, atlas: *Atlas
                     .fill = icon.color,
                     .params = .{ @floatFromInt(metric.atlas_x), @floatFromInt(metric.atlas_y) },
                     .kind = .glyph,
-                    .clip = clip,
+                    .clip = clip.rect,
+                    .clip_round = clip.round,
+                    .clip_radius = clip.radius,
                 });
             },
             .arc => |arc| {
                 if (!(arc.radius > 0 and arc.thickness > 0 and arc.sweep > 0)) continue;
                 if (!std.math.isFinite(arc.radius) or !std.math.isFinite(arc.sweep)) continue;
-                try self.push(arcInstance(arc, node.rect.x, node.rect.y, node.rect.w, scale, clip));
+                var instance = arcInstance(arc, node.rect.x, node.rect.y, node.rect.w, scale, clip.rect);
+                instance.clip_round = clip.round;
+                instance.clip_radius = clip.radius;
+                try self.push(instance);
             },
             .text => |t| {
                 const line_height: f32 = @floatFromInt(t.style.metrics().line_height);
@@ -238,16 +262,32 @@ pub fn paint(self: *KitPainter, tree: *const Tree, font: *KitFont, atlas: *Atlas
                         .center => slack / 2,
                         .end => slack,
                     };
-                    const line_clip = if (t.wrap != .word and line.width > node.rect.w)
-                        intersect(clip, clipOf(layout.snap(node.rect, scale)))
-                    else
-                        clip;
+                    var line_clip = clip;
+                    if (t.wrap != .word and line.width > node.rect.w) {
+                        line_clip.rect = intersect(clip.rect, clipOf(layout.snap(node.rect, scale)));
+                    }
                     const append_ellipsis = t.wrap == .ellipsis and line.end < t.bytes.len and line.width > 0;
                     try self.paintLine(t.bytes[line.start..line.end], append_ellipsis, t.style, t.figures, t.color, (node.rect.x + offset_x) * scale, @round(top + font.baseline(t.style)), line_clip, font, atlas);
                 }
             },
         }
     }
+}
+
+fn narrowClip(mask: ClipMask, node: *const Tree.Node, scale: f32) ClipMask {
+    const outer = layout.snap(node.rect, scale);
+    const rect = intersect(mask.rect, clipOf(outer));
+    if (node.box.radius == 0) {
+        return .{ .end = node.end, .rect = rect, .round = mask.round, .radius = mask.radius };
+    }
+    const stroke = if (node.box.border.a == 0) 0 else layout.strokePixels(node.box.border_width, scale);
+    const s = @min(stroke, @divFloor(@max(0, @min(outer.w, outer.h)), 2));
+    return .{
+        .end = node.end,
+        .rect = rect,
+        .round = clipOf(.{ .x = outer.x + s, .y = outer.y + s, .w = outer.w - 2 * s, .h = outer.h - 2 * s }),
+        .radius = @max(0, @as(f32, @floatFromInt(node.box.radius)) * scale - @as(f32, @floatFromInt(stroke))),
+    };
 }
 
 fn clipOf(rect: layout.PixelRect) Clip {
@@ -263,7 +303,7 @@ fn intersect(a: Clip, b: Clip) Clip {
     return .{ @max(a[0], b[0]), @max(a[1], b[1]), @min(a[2], b[2]), @min(a[3], b[3]) };
 }
 
-fn paintBox(self: *KitPainter, box: Tree.Box, box_rect: Tree.Rect, border_sweep: u16, scale: f32, clip: Clip) Error!void {
+fn paintBox(self: *KitPainter, box: Tree.Box, box_rect: Tree.Rect, border_sweep: u16, scale: f32, clip: ClipMask) Error!void {
     const stroke = if (box.border.a == 0) 0 else layout.strokePixels(box.border_width, scale);
     if (box.fill.a == 0 and stroke == 0) return;
     const rect = layout.snap(box_rect, scale);
@@ -274,8 +314,10 @@ fn paintBox(self: *KitPainter, box: Tree.Box, box_rect: Tree.Rect, border_sweep:
         .border = box.border,
         .params = .{ @as(f32, @floatFromInt(box.radius)) * scale, @floatFromInt(stroke) },
         .kind = .box,
-        .clip = clip,
+        .clip = clip.rect,
         .arc = .{ sweep, 0 },
+        .clip_round = clip.round,
+        .clip_radius = clip.radius,
     });
 }
 
@@ -302,7 +344,7 @@ fn pixels(rect: layout.PixelRect) [4]f32 {
     return .{ @floatFromInt(rect.x), @floatFromInt(rect.y), @floatFromInt(rect.w), @floatFromInt(rect.h) };
 }
 
-fn paintLine(self: *KitPainter, bytes: []const u8, append_ellipsis: bool, style: text.Style, figures: text.Figures, color: Color, left: f32, baseline: f32, clip: Clip, font: *KitFont, atlas: *Atlas) Error!void {
+fn paintLine(self: *KitPainter, bytes: []const u8, append_ellipsis: bool, style: text.Style, figures: text.Figures, color: Color, left: f32, baseline: f32, clip: ClipMask, font: *KitFont, atlas: *Atlas) Error!void {
     const simple = figures == .proportional and style.metrics().tracking == 0;
     var pen = left;
     var previous: ?u21 = null;
@@ -331,7 +373,7 @@ fn paintLine(self: *KitPainter, bytes: []const u8, append_ellipsis: bool, style:
     }
 }
 
-fn paintGlyph(self: *KitPainter, style: text.Style, codepoint: u21, color: Color, pen: f32, baseline: f32, clip: Clip, font: *KitFont, atlas: *Atlas) Error!void {
+fn paintGlyph(self: *KitPainter, style: text.Style, codepoint: u21, color: Color, pen: f32, baseline: f32, clip: ClipMask, font: *KitFont, atlas: *Atlas) Error!void {
     const metric = self.glyph(style, codepoint, font, atlas) catch |err| switch (err) {
         error.GlyphCacheFull => return error.GlyphCacheFull,
         // A glyph that cannot be rasterized or packed leaves a gap of
@@ -354,7 +396,9 @@ fn paintGlyph(self: *KitPainter, style: text.Style, codepoint: u21, color: Color
         .fill = color,
         .params = .{ @floatFromInt(metric.atlas_x), @floatFromInt(metric.atlas_y) },
         .kind = .glyph,
-        .clip = clip,
+        .clip = clip.rect,
+        .clip_round = clip.round,
+        .clip_radius = clip.radius,
     });
 }
 

@@ -9,6 +9,8 @@ layout(location = 3) in vec2 a_params; // box: radius, border width; glyph: atla
 layout(location = 4) in uint a_kind;   // 0 = box, 1 = glyph, 2 = arc, 3 = dash
 layout(location = 5) in ivec4 a_clip;  // left, top, right, bottom in pixels
 layout(location = 6) in vec2 a_arc;    // arc: start angle, clockwise sweep
+layout(location = 7) in ivec4 a_clip_round; // rounded clip bounds in pixels
+layout(location = 8) in float a_clip_radius; // rounded clip radius in pixels
 
 uniform vec2 u_fb;    // framebuffer size in pixels
 uniform vec2 u_atlas; // atlas texture size in pixels
@@ -17,6 +19,8 @@ out vec2 v_local;           // pixels from the box centre
 out vec2 v_uv;              // glyph texture coordinate
 out vec2 v_pixel;           // framebuffer pixels, top left origin
 flat out vec4 v_clip;
+flat out vec4 v_clip_round;
+flat out float v_clip_radius;
 flat out vec2 v_half;       // half the box size
 flat out vec4 v_fill;
 flat out vec4 v_border;
@@ -42,6 +46,8 @@ void main() {
   v_kind = a_kind;
   v_pixel = position;
   v_clip = vec4(a_clip);
+  v_clip_round = vec4(a_clip_round);
+  v_clip_radius = a_clip_radius;
 
   vec2 ndc = position / u_fb * 2.0 - 1.0;
   gl_Position = vec4(ndc.x, -ndc.y, 0.0, 1.0);

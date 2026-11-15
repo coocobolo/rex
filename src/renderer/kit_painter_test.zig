@@ -396,9 +396,15 @@ fn render(scene: Scene, variant: Theme.Variant, background: Color, scale: f32, k
         _ = try toast_stack.place(&result.toasts, &tree, 0, &table, 0);
     }
     result.tree_len = tree.len;
+    result.frame = try drawToFrame(&painter, &font, &atlas, &tree, view_width, view_height, scale, background);
+    result.instances = painter.len;
+    return result;
+}
 
-    const width: u32 = @intFromFloat(@round(view_width * scale));
-    const height: u32 = @intFromFloat(@round(view_height * scale));
+fn drawToFrame(painter: *KitPainter, font: *KitFont, atlas: *Atlas, tree: *const Tree, logical_w: f32, logical_h: f32, scale: f32, background: Color) !Frame {
+    const gpa = testing.allocator;
+    const width: u32 = @intFromFloat(@round(logical_w * scale));
+    const height: u32 = @intFromFloat(@round(logical_h * scale));
 
     var target: gl.GLuint = 0;
     gl.genTextures(1, &target);
@@ -424,9 +430,8 @@ fn render(scene: Scene, variant: Theme.Variant, background: Color, scale: f32, k
     gl.clear(gl.COLOR_BUFFER_BIT);
 
     painter.begin();
-    try painter.paint(&tree, &font, &atlas);
-    painter.draw(&atlas, @floatFromInt(width), @floatFromInt(height));
-    result.instances = painter.len;
+    try painter.paint(tree, font, atlas);
+    painter.draw(atlas, @floatFromInt(width), @floatFromInt(height));
 
     // GL rows run bottom-up; store them top-down.
     const row = @as(usize, width) * 4;
@@ -438,8 +443,7 @@ fn render(scene: Scene, variant: Theme.Variant, background: Color, scale: f32, k
     const pixels = try gpa.alloc(u8, raw.len);
     for (0..height) |y| @memcpy(pixels[y * row ..][0..row], raw[(height - 1 - y) * row ..][0..row]);
 
-    result.frame = .{ .width = width, .height = height, .pixels = pixels, .scale = scale };
-    return result;
+    return .{ .width = width, .height = height, .pixels = pixels, .scale = scale };
 }
 
 test "KitPainter: an arc instance is the square around its centre" {
@@ -840,5 +844,133 @@ test "KitPainter: text alignment shifts lines and wrap = .none / .ellipsis clip 
         if (inst.rect[1] >= 68) {
             try testing.expectEqual(@as(i16, 120), inst.clip[2]);
         }
+    }
+}
+
+test "KitPainter: rounded overflow clip cuts children cleanly at corners" {
+    try testGlContext();
+    const theme = &Theme.dark;
+    for ([_]f32{ 1, 1.5 }) |scale| {
+        var atlas = try Atlas.init(testing.allocator, .{ .width = 512, .height = 512 });
+        defer atlas.deinit();
+        var font = try KitFont.init(inter, .{ .scale = scale });
+        defer font.deinit();
+        var painter = try KitPainter.init();
+        defer painter.deinit();
+
+        var nodes: [8]Tree.Node = undefined;
+        var lines: [8]text.Line = undefined;
+        var tree: Tree = .init(&nodes, &lines);
+        const root = try tree.open(.{ .width = .fill, .height = .fill, .padding = .all(20) });
+        const rounded = try tree.open(.{
+            .width = .{ .fixed = 100 },
+            .height = .{ .fixed = 100 },
+            .overflow = .clip,
+            .radius = 12,
+        });
+        _ = try tree.leaf(.{ .width = .fill, .height = .fill, .fill = theme.destructive });
+        tree.close(rounded);
+        tree.close(root);
+        try tree.layout(font.measurer(), 160, 160);
+
+        var frame = try drawToFrame(&painter, &font, &atlas, &tree, 160, 160, scale, terminal_dark);
+        defer frame.deinit();
+
+        try testing.expectEqual(rgb(theme.destructive), frame.at(70, 70));
+        try testing.expectEqual(rgb(terminal_dark), frame.at(21, 21));
+        try testing.expectEqual(rgb(terminal_dark), frame.at(118, 21));
+        try testing.expectEqual(rgb(terminal_dark), frame.at(21, 118));
+        try testing.expectEqual(rgb(terminal_dark), frame.at(118, 118));
+    }
+}
+
+test "KitPainter: bordered rounded clip insets child clip inside its border" {
+    try testGlContext();
+    const theme = &Theme.dark;
+    var atlas = try Atlas.init(testing.allocator, .{ .width = 512, .height = 512 });
+    defer atlas.deinit();
+    var font = try KitFont.init(inter, .{});
+    defer font.deinit();
+    var painter = try KitPainter.init();
+    defer painter.deinit();
+
+    var nodes: [8]Tree.Node = undefined;
+    var lines: [8]text.Line = undefined;
+    var tree: Tree = .init(&nodes, &lines);
+    const root = try tree.open(.{ .width = .fill, .height = .fill, .padding = .all(20) });
+    const rounded = try tree.open(.{
+        .width = .{ .fixed = 100 },
+        .height = .{ .fixed = 100 },
+        .padding = .all(1),
+        .overflow = .clip,
+        .fill = theme.popover,
+        .border = theme.info,
+        .border_width = 1,
+        .radius = 12,
+    });
+    _ = try tree.leaf(.{ .width = .fill, .height = .fill, .fill = theme.destructive });
+    tree.close(rounded);
+    tree.close(root);
+    try tree.layout(font.measurer(), 160, 160);
+
+    var frame = try drawToFrame(&painter, &font, &atlas, &tree, 160, 160, 1, terminal_dark);
+    defer frame.deinit();
+
+    // Outside corner stays background; corner border pixel is blue (not painted over by red);
+    // straight top border stays blue; interior corner pixel inside the border is red.
+    try testing.expectEqual(rgb(terminal_dark), frame.at(21, 21));
+    try testing.expectEqual(rgb(theme.info), frame.at(70, 20));
+    const corner_border = frame.at(23, 23);
+    try testing.expect(corner_border[2] > corner_border[0]);
+    try testing.expectEqual(rgb(theme.destructive), frame.at(26, 26));
+}
+
+test "KitPainter: inner square clip and nowrap text keep outer rounded clip" {
+    try testGlContext();
+    const theme = &Theme.dark;
+    var atlas = try Atlas.init(testing.allocator, .{ .width = 512, .height = 512 });
+    defer atlas.deinit();
+    var font = try KitFont.init(inter, .{});
+    defer font.deinit();
+    var painter = try KitPainter.init();
+    defer painter.deinit();
+
+    var nodes: [16]Tree.Node = undefined;
+    var lines: [16]text.Line = undefined;
+    var tree: Tree = .init(&nodes, &lines);
+    const root = try tree.open(.{ .width = .fill, .height = .fill, .padding = .all(20) });
+    const outer = try tree.open(.{
+        .width = .{ .fixed = 120 },
+        .height = .{ .fixed = 120 },
+        .overflow = .clip,
+        .radius = 16,
+    });
+    const inner = try tree.open(.{
+        .width = .fill,
+        .height = .fill,
+        .overflow = .clip,
+    });
+    _ = try tree.leaf(.{ .overlay = true, .width = .fill, .height = .fill, .fill = theme.destructive });
+    _ = try tree.text("This long text exercises nowrap horizontal clip", .{
+        .color = theme.foreground,
+        .width = .fill,
+        .wrap = .none,
+    });
+    tree.close(inner);
+    tree.close(outer);
+    tree.close(root);
+    try tree.layout(font.measurer(), 180, 180);
+
+    var frame = try drawToFrame(&painter, &font, &atlas, &tree, 180, 180, 1, terminal_dark);
+    defer frame.deinit();
+
+    // Inner fill and glyphs inherit the outer rounded clip despite the inner square clip
+    // and nowrap rectangular clip narrowing.
+    try testing.expectEqual(rgb(terminal_dark), frame.at(22, 22));
+    try testing.expectEqual(rgb(theme.destructive), frame.at(80, 80));
+    try testing.expect(painter.len > 2);
+    for (painter.instances[0..painter.len]) |inst| {
+        try testing.expectEqual(@as(f32, 16), inst.clip_radius);
+        try testing.expectEqual([4]i16{ 20, 20, 140, 140 }, inst.clip_round);
     }
 }
