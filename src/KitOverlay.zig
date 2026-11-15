@@ -19,15 +19,14 @@ const Atlas = @import("renderer/Atlas.zig");
 const KitPainter = @import("renderer/KitPainter.zig");
 const KitFont = @import("freetype/KitFont.zig");
 const Theme = @import("kit/Theme.zig");
-const layout = @import("kit/layout.zig");
 const memory = @import("kit/memory.zig");
-const motion_zig = @import("kit/motion.zig");
+const frame_ms = @import("kit/motion.zig").frame_ms;
 const text = @import("kit/text.zig");
 const alert_mod = @import("kit/alert.zig");
 const alert_dialog = @import("kit/alert_dialog.zig");
 const lock_mod = @import("kit/lock_screen.zig");
 const toast = @import("kit/toast.zig");
-const tree_zig = @import("kit/tree.zig");
+const Tree = @import("kit/Tree.zig");
 const widget_mod = @import("kit/wellbeing_widget.zig");
 const Ui = @import("config/Config.zig").Ui;
 
@@ -43,10 +42,10 @@ font: KitFont,
 painter: KitPainter,
 /// Lock screen and modal dialogs take the full frame under a scrim; alert
 /// banner, toast stack and wellbeing widget share non-scrim frames.
-nodes: [node_capacity]tree_zig.Node = undefined,
+nodes: [node_capacity]Tree.Node = undefined,
 lines: [line_capacity]text.Line = undefined,
 /// The last built frame, for hit-testing. Empty after `skipFrame`.
-tree: tree_zig.Tree,
+tree: Tree,
 toasts: toast.State = .empty,
 alert: alert_mod.State = .empty,
 dialog: alert_dialog.State = .empty,
@@ -253,7 +252,7 @@ pub fn wakeMs(self: *const KitOverlay) ?u32 {
     best = minWake(best, self.dialog.phase.wakeMs());
     best = minWake(best, self.alert.wakeMs());
     if (!self.hasScrim() and self.motion == .moving) {
-        best = minWake(best, motion_zig.frame_ms);
+        best = minWake(best, frame_ms);
     }
     best = minWake(best, self.toasts.wakeMs());
     return best;
@@ -453,7 +452,7 @@ pub fn buildFrame(self: *KitOverlay, atlas: *Atlas, width: f32, height: f32, bac
 fn build(self: *KitOverlay, atlas: *Atlas, width: f32, height: f32, theme: *const Theme, dt_ms: u32) !void {
     if (self.lock_screen.isShown()) {
         try lock_mod.view(&self.lock_screen, &self.tree, theme);
-        try layout.layout(&self.tree, self.font.measurer(), width, height);
+        try self.tree.layout(self.font.measurer(), width, height);
         self.motion = .settled;
         try self.painter.paint(&self.tree, &self.font, atlas);
         return;
@@ -461,7 +460,7 @@ fn build(self: *KitOverlay, atlas: *Atlas, width: f32, height: f32, theme: *cons
     if (self.dialog.phase != .closed) {
         // The scrim covers the window, so non-modal surfaces are not built.
         _ = try alert_dialog.view(&self.dialog, &self.tree, theme);
-        try layout.layout(&self.tree, self.font.measurer(), width, height);
+        try self.tree.layout(self.font.measurer(), width, height);
         self.motion = .settled;
         try self.painter.paint(&self.tree, &self.font, atlas);
         return;
@@ -470,7 +469,7 @@ fn build(self: *KitOverlay, atlas: *Atlas, width: f32, height: f32, theme: *cons
     const banner = try alert_mod.view(&self.alert, &self.tree, theme);
     const stack = try toast.view(&self.toasts, &self.tree, theme);
     const widget_tip = try widget_mod.viewTooltip(&self.wellbeing_widget, &self.tree, theme, width, height);
-    try layout.layout(&self.tree, self.font.measurer(), width, height);
+    try self.tree.layout(self.font.measurer(), width, height);
     widget_mod.place(&self.wellbeing_widget, &self.tree, widget_root, width, height);
     widget_mod.placeTooltip(&self.tree, widget_root, widget_tip, width, height);
     alert_mod.place(&self.alert, &self.tree, banner);

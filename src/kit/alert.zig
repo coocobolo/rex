@@ -1,4 +1,4 @@
-//! Persistent status banner (shadcn Alert composition): an icon, a title,
+//! Persistent status banner: an icon, a title,
 //! an optional description and a close action. Unlike a toast, it stays on
 //! screen until its cause is resolved or the user dismisses it.
 //!
@@ -13,12 +13,11 @@ const Color = Theme.Color;
 const button = @import("button.zig");
 const dialog = @import("dialog.zig");
 const icons = @import("icons.zig");
-const motion_zig = @import("motion.zig");
+const motion = @import("motion.zig");
 const text = @import("text.zig");
-const tree_zig = @import("tree.zig");
-const Tree = tree_zig.Tree;
-const Id = tree_zig.Id;
-const Index = tree_zig.Index;
+const Tree = @import("Tree.zig");
+const Id = Tree.Id;
+const Index = Tree.Index;
 
 pub const max_width: f32 = 560;
 pub const padding: f32 = 14;
@@ -33,7 +32,7 @@ pub const card_id = Id.of("alert.card");
 pub const close_id = Id.of("alert.close");
 
 pub const Placement = enum(u8) { floating, docked };
-pub const Position = tree_zig.ScreenAnchor;
+pub const Position = Tree.ScreenAnchor;
 
 pub const Option = struct {
     max_width: f32 = max_width,
@@ -81,7 +80,7 @@ pub const State = struct {
     phase: dialog.Phase = .closed,
     kind: Kind = .err,
     touch: button.State = .normal,
-    motion: motion_zig.Mode = .full,
+    motion: motion.Mode = .full,
     option: Option = .{},
     title_len: u8 = 0,
     description_len: u16 = 0,
@@ -207,7 +206,7 @@ pub const line_max = title_capacity + 1 + description_capacity + 1;
 pub const node_max = 7 + button.node_max;
 
 /// Writes the alert banner anchored per `state.option`, or returns null when closed.
-pub fn view(state: *const State, tree: *Tree, theme: *const Theme) tree_zig.Error!?Index {
+pub fn view(state: *const State, tree: *Tree, theme: *const Theme) Tree.Error!?Index {
     if (state.phase == .closed) return null;
     const presence = state.phase.presence(state.motion);
     const style = state.kind.accent(theme);
@@ -272,7 +271,7 @@ pub fn view(state: *const State, tree: *Tree, theme: *const Theme) tree_zig.Erro
     return root;
 }
 
-/// Applies enter/leave vertical slide after `layout.layout`.
+/// Applies enter/leave vertical slide after `Tree.layout`.
 pub fn place(state: *const State, tree: *Tree, root: ?Index) void {
     const start = root orelse return;
     if (state.motion == .none) return;

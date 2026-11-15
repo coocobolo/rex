@@ -25,10 +25,9 @@ const icons = @import("icons.zig");
 const kbd = @import("kbd.zig");
 const motion = @import("motion.zig");
 const text = @import("text.zig");
-const tree_zig = @import("tree.zig");
-const Tree = tree_zig.Tree;
-const Id = tree_zig.Id;
-const Index = tree_zig.Index;
+const Tree = @import("Tree.zig");
+const Id = Tree.Id;
+const Index = Tree.Index;
 
 /// The card's width in logical pixels, padding included. A narrower window
 /// shrinks it.
@@ -98,24 +97,24 @@ pub const Action = struct {
     key_cap: []const u8 = "",
 };
 
-const Button = struct {
-    variant: button.Variant,
-    role: Role,
-    label_len: u8,
-    key_cap_len: u8,
-    label_bytes: [label_capacity]u8,
-    key_cap_bytes: [key_cap_capacity]u8,
-
-    fn label(self: *const Button) []const u8 {
-        return self.label_bytes[0..self.label_len];
-    }
-
-    fn keyCap(self: *const Button) []const u8 {
-        return self.key_cap_bytes[0..self.key_cap_len];
-    }
-};
-
 pub const State = struct {
+    const Button = struct {
+        variant: button.Variant,
+        role: Role,
+        label_len: u8,
+        key_cap_len: u8,
+        label_bytes: [label_capacity]u8,
+        key_cap_bytes: [key_cap_capacity]u8,
+
+        fn label(self: *const Button) []const u8 {
+            return self.label_bytes[0..self.label_len];
+        }
+
+        fn keyCap(self: *const Button) []const u8 {
+            return self.key_cap_bytes[0..self.key_cap_len];
+        }
+    };
+
     phase: dialog.Phase = .closed,
     /// The action with the focus ring, taken by `activate`; `no_action`
     /// for none, when `activate` does nothing.
@@ -354,7 +353,7 @@ fn hasDestructiveAction(self: *const State) bool {
     return false;
 }
 
-fn estimateActionWidth(action: *const Button) f32 {
+fn estimateActionWidth(action: *const State.Button) f32 {
     // Ring margin, horizontal face padding, generous glyph advance estimate,
     // and optional key cap so narrow cards stack before labels wrap.
     var w: f32 = @floatFromInt(2 * Theme.ring_width + 2 * button.Size.default.pad() + @as(u16, action.label_len) * 9);
@@ -381,7 +380,7 @@ pub const node_max = dialog.node_max + 6 + actions_max * button.node_max;
 /// Writes the dialog as one root, the scrim, and returns it, or null when
 /// the dialog is closed and nothing was written. The texts point into
 /// `state`: rebuild the view after every `update`.
-pub fn view(state: *const State, tree: *Tree, theme: *const Theme) tree_zig.Error!?Index {
+pub fn view(state: *const State, tree: *Tree, theme: *const Theme) Tree.Error!?Index {
     if (state.phase == .closed) return null;
     const presence = state.phase.presence(state.motion);
 

@@ -16,8 +16,8 @@ const toast = @import("kit/toast.zig");
 const wellbeing_widget = @import("kit/wellbeing_widget.zig");
 const Theme = @import("kit/Theme.zig");
 const motion = @import("kit/motion.zig");
-const Id = @import("kit/tree.zig").Id;
-const Rect = @import("kit/tree.zig").Rect;
+const Id = @import("kit/Tree.zig").Id;
+const Rect = @import("kit/Tree.zig").Rect;
 
 const inter: @import("freetype/KitFont.zig").Files = .{
     .regular = "assets/fonts/Inter-Regular.ttf",

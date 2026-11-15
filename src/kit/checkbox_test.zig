@@ -4,14 +4,13 @@ const testing = std.testing;
 const Theme = @import("Theme.zig");
 const icons = @import("icons.zig");
 const text = @import("text.zig");
-const tree_zig = @import("tree.zig");
+const Tree = @import("Tree.zig");
 const checkbox = @import("checkbox.zig");
 
-const Tree = tree_zig.Tree;
-const Id = tree_zig.Id;
+const Id = Tree.Id;
 
 test "checkbox: checked emits check icon; unchecked omits it" {
-    var nodes: [checkbox.node_max]tree_zig.Node = undefined;
+    var nodes: [checkbox.node_max]Tree.Node = undefined;
     var lines: [4]text.Line = undefined;
 
     var unchecked = Tree.init(&nodes, &lines);
@@ -27,7 +26,7 @@ test "checkbox: checked emits check icon; unchecked omits it" {
 }
 
 test "checkbox: standalone without label" {
-    var nodes: [checkbox.node_max]tree_zig.Node = undefined;
+    var nodes: [checkbox.node_max]Tree.Node = undefined;
     var lines: [4]text.Line = undefined;
     var tree = Tree.init(&nodes, &lines);
     try checkbox.view(&tree, &Theme.dark, .{ .id = Id.of("cb") });

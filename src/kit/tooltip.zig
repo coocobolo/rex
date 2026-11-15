@@ -12,10 +12,9 @@ const assert = std.debug.assert;
 
 const Theme = @import("Theme.zig");
 const Color = Theme.Color;
-const tree_zig = @import("tree.zig");
-const Tree = tree_zig.Tree;
-const Id = tree_zig.Id;
-const Index = tree_zig.Index;
+const Tree = @import("Tree.zig");
+const Id = Tree.Id;
+const Index = Tree.Index;
 
 /// Horizontal padding inside the card.
 pub const pad_x = 12;
@@ -40,7 +39,7 @@ pub fn nodes(count: usize) usize {
 
 /// Opens the card as a root, anchored to `anchor`. Write the lines, then
 /// `close`.
-pub fn open(tree: *Tree, theme: *const Theme, anchor: Id) tree_zig.Error!Index {
+pub fn open(tree: *Tree, theme: *const Theme, anchor: Id) Tree.Error!Index {
     const card = try openCard(tree, theme);
     try tree.anchorTo(card, anchor);
     return card;
@@ -48,14 +47,14 @@ pub fn open(tree: *Tree, theme: *const Theme, anchor: Id) tree_zig.Error!Index {
 
 /// Opens the card as a root, placed near `(x, y)` in logical pixels.
 /// Write the lines, then `close`.
-pub fn openAt(tree: *Tree, theme: *const Theme, x: f32, y: f32) tree_zig.Error!Index {
+pub fn openAt(tree: *Tree, theme: *const Theme, x: f32, y: f32) Tree.Error!Index {
     const card = try openCard(tree, theme);
     try tree.anchorAt(card, x, y);
     return card;
 }
 
-fn openCard(tree: *Tree, theme: *const Theme) tree_zig.Error!Index {
-    assert(tree.current == tree_zig.none);
+fn openCard(tree: *Tree, theme: *const Theme) Tree.Error!Index {
+    assert(tree.current == Tree.none);
     return tree.open(.{
         .padding = .symmetric(pad_x, pad_y),
         .gap = gap,
@@ -71,7 +70,7 @@ pub fn close(tree: *Tree, card: Index) void {
 }
 
 /// One fact: a swatch, its name and its value.
-pub fn line(tree: *Tree, theme: *const Theme, item: Line) tree_zig.Error!void {
+pub fn line(tree: *Tree, theme: *const Theme, item: Line) Tree.Error!void {
     const row = try tree.open(.{
         .axis = .row,
         .gap = gap,

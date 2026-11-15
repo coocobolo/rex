@@ -5,9 +5,7 @@ const std_tau = std.math.tau;
 const Theme = @import("Theme.zig");
 const chart = @import("chart.zig");
 const text = @import("text.zig");
-const tree_zig = @import("tree.zig");
-const Tree = tree_zig.Tree;
-const layout = @import("layout.zig").layout;
+const Tree = @import("Tree.zig");
 
 const byte_width = 7;
 
@@ -19,7 +17,7 @@ var no_state: u8 = 0;
 const measurer: text.Measurer = .{ .context = &no_state, .widthFn = fixedWidth };
 
 const Fixture = struct {
-    nodes: [64]tree_zig.Node = undefined,
+    nodes: [64]Tree.Node = undefined,
     lines: [16]text.Line = undefined,
 
     fn tree(self: *Fixture) Tree {
@@ -28,7 +26,7 @@ const Fixture = struct {
 };
 
 fn lay(tree: *Tree) !void {
-    try layout(tree, measurer, 200, 400);
+    try tree.layout(measurer, 200, 400);
 }
 
 test "chart: a fraction fills that much of its parent" {
@@ -120,7 +118,8 @@ test "chart: day bars share a scale and the limit lines up" {
     // A part larger than its total fills the bar and no more.
     try testing.expectApproxEqAbs(inner, findFill(&tree, second, Theme.dark.primary).?.rect.h, 0.01);
 
-    const line = findFill(&tree, group, Theme.dark.border).?;
+    const line = findDash(&tree, group, Theme.dark.border).?;
+    try testing.expectEqual(@as(u8, 3), line.content.dash.step);
     try testing.expectEqual(tree.nodes[group].rect.w, line.rect.w);
     try testing.expectEqual(@as(f32, 1), line.rect.h);
     // The hairline's bottom edge is at the limit: 10 of 20, half the bars'
@@ -136,9 +135,9 @@ test "chart: an overlay covers its parent and does not grow it" {
     _ = try tree.leaf(.{ .width = .{ .fixed = 10 }, .height = .{ .fixed = 10 } });
     tree.close(parent);
     try lay(&tree);
-    try testing.expectEqual(tree_zig.Rect{ .x = 0, .y = 0, .w = 100, .h = 40 }, tree.nodes[0].rect);
+    try testing.expectEqual(Tree.Rect{ .x = 0, .y = 0, .w = 100, .h = 40 }, tree.nodes[0].rect);
     try testing.expectEqual(tree.nodes[0].rect, tree.nodes[1].rect);
-    try testing.expectEqual(tree_zig.Rect{ .x = 0, .y = 0, .w = 10, .h = 10 }, tree.nodes[2].rect);
+    try testing.expectEqual(Tree.Rect{ .x = 0, .y = 0, .w = 10, .h = 10 }, tree.nodes[2].rect);
 }
 
 test "chart: an overlay keeps its parent's size beside a fill sibling" {
@@ -150,9 +149,9 @@ test "chart: an overlay keeps its parent's size beside a fill sibling" {
     _ = try tree.leaf(.{ .width = .fill, .height = .{ .fixed = 10 } });
     tree.close(parent);
     try lay(&tree);
-    try testing.expectEqual(tree_zig.Rect{ .x = 0, .y = 0, .w = 100, .h = 40 }, tree.nodes[1].rect);
-    try testing.expectEqual(tree_zig.Rect{ .x = 0, .y = 0, .w = 40, .h = 10 }, tree.nodes[2].rect);
-    try testing.expectEqual(tree_zig.Rect{ .x = 40, .y = 0, .w = 60, .h = 10 }, tree.nodes[3].rect);
+    try testing.expectEqual(Tree.Rect{ .x = 0, .y = 0, .w = 100, .h = 40 }, tree.nodes[1].rect);
+    try testing.expectEqual(Tree.Rect{ .x = 0, .y = 0, .w = 40, .h = 10 }, tree.nodes[2].rect);
+    try testing.expectEqual(Tree.Rect{ .x = 40, .y = 0, .w = 60, .h = 10 }, tree.nodes[3].rect);
 }
 
 test "chart: a ring is a full track and a clockwise sweep" {
@@ -162,15 +161,15 @@ test "chart: a ring is a full track and a clockwise sweep" {
     try lay(&tree);
     try testing.expectEqual(chart.ring_nodes, tree.len);
     const side = chart.ring_radius * 2;
-    try testing.expectEqual(tree_zig.Rect{ .x = 0, .y = 0, .w = side, .h = side }, tree.nodes[0].rect);
+    try testing.expectEqual(Tree.Rect{ .x = 0, .y = 0, .w = side, .h = side }, tree.nodes[0].rect);
     try testing.expectEqual(tree.nodes[0].rect, tree.nodes[1].rect);
     const track = tree.nodes[1].content.arc;
     const ink = tree.nodes[2].content.arc;
     try testing.expectApproxEqAbs(std_tau, track.sweep, 0.001);
-    try testing.expectEqual(tree_zig.Caps.butt, track.caps);
+    try testing.expectEqual(Tree.Arc.Caps.butt, track.caps);
     try testing.expectEqual(Theme.dark.muted, track.fill);
     try testing.expectApproxEqAbs(@as(f32, std_tau) / 4, ink.sweep, 0.001);
-    try testing.expectEqual(tree_zig.Caps.round, ink.caps);
+    try testing.expectEqual(Tree.Arc.Caps.round, ink.caps);
     try testing.expectEqual(Theme.dark.primary, ink.fill);
 }
 
@@ -178,19 +177,19 @@ test "chart: donut slices share the square and the gaps" {
     var fixture: Fixture = .{};
     var tree = fixture.tree();
     const parts = [_]chart.Part{
-        .{ .id = tree_zig.Id.of("part").item(0), .label = "Rex", .value = 1, .fill = Theme.dark.primary },
-        .{ .id = tree_zig.Id.of("part").item(1), .label = "Shell", .value = 3, .fill = Theme.dark.info },
+        .{ .id = Tree.Id.of("part").item(0), .label = "Rex", .value = 1, .fill = Theme.dark.primary },
+        .{ .id = Tree.Id.of("part").item(1), .label = "Shell", .value = 3, .fill = Theme.dark.info },
     };
     try chart.share(&tree, &Theme.dark, .donut, &parts);
     try lay(&tree);
     try testing.expectEqual(chart.donutNodes(parts.len), tree.len);
     const side = chart.donut_radius * 2;
-    try testing.expectEqual(tree_zig.Rect{ .x = 0, .y = 0, .w = side, .h = side }, tree.nodes[0].rect);
+    try testing.expectEqual(Tree.Rect{ .x = 0, .y = 0, .w = side, .h = side }, tree.nodes[0].rect);
     try testing.expectEqual(tree.nodes[0].rect, tree.nodes[1].rect);
     const smaller = tree.nodes[1].content.arc;
     const larger = tree.nodes[2].content.arc;
     try testing.expectApproxEqAbs(smaller.sweep * 3, larger.sweep, 0.001);
-    try testing.expectEqual(tree_zig.Caps.butt, smaller.caps);
+    try testing.expectEqual(Tree.Arc.Caps.butt, smaller.caps);
     try testing.expectApproxEqAbs(smaller.sweep + (chart.donut_gap / (chart.donut_radius - chart.donut_thickness / 2)), larger.start, 0.001);
 
     // Hit-testing picks the exact wedge on the ring, and misses the hollow center.
@@ -208,12 +207,19 @@ test "chart: a missing limit draws no line" {
         .{ .total = 5, .part = 1, .fill = Theme.dark.muted, .part_fill = Theme.dark.primary },
     };
     try dayChart(&tree, &items, null);
-    try testing.expect(findFill(&tree, 1, Theme.dark.border) == null);
+    try testing.expect(findDash(&tree, 1, Theme.dark.border) == null);
 }
 
-fn findFill(tree: *const Tree, column: usize, color: Theme.Color) ?*const tree_zig.Node {
+fn findFill(tree: *const Tree, column: usize, color: Theme.Color) ?*const Tree.Node {
     for (tree.nodes[column + 1 .. tree.nodes[column].end]) |*node| {
         if (node.box.fill == color and node.rect.h > 0) return node;
+    }
+    return null;
+}
+
+fn findDash(tree: *const Tree, parent: usize, color: Theme.Color) ?*const Tree.Node {
+    for (tree.nodes[parent + 1 .. tree.nodes[parent].end]) |*node| {
+        if (node.content == .dash and node.content.dash.color == color and node.rect.h > 0) return node;
     }
     return null;
 }

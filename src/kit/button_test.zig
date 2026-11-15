@@ -6,10 +6,8 @@ const button = @import("button.zig");
 const icons = @import("icons.zig");
 const kbd = @import("kbd.zig");
 const text = @import("text.zig");
-const tree_zig = @import("tree.zig");
-const Tree = tree_zig.Tree;
-const Id = tree_zig.Id;
-const layout = @import("layout.zig").layout;
+const Tree = @import("Tree.zig");
+const Id = Tree.Id;
 
 const byte_width = 7;
 
@@ -22,7 +20,7 @@ var no_state: u8 = 0;
 const measurer: text.Measurer = .{ .context = &no_state, .widthFn = fixedWidth };
 
 const Fixture = struct {
-    nodes: [32]tree_zig.Node = undefined,
+    nodes: [32]Tree.Node = undefined,
     lines: [16]text.Line = undefined,
 
     fn tree(self: *Fixture) Tree {
@@ -37,7 +35,7 @@ const id = Id.of("test.button");
 fn one(fixture: *Fixture, theme: *const Theme, options: button.Options) !Tree {
     var tree = fixture.tree();
     try button.view(&tree, theme, options);
-    try layout(&tree, measurer, 400, 200);
+    try tree.layout(measurer, 400, 200);
     return tree;
 }
 
@@ -91,9 +89,9 @@ test "button: the pointer is a hand over a button, an arrow over a disabled one"
     const theme = &Theme.dark;
     var fixture: Fixture = .{};
     var tree = try one(&fixture, theme, .{ .id = id, .label = "Save" });
-    try testing.expectEqual(tree_zig.PointerShape.hand, tree.hit(10, 10).?.box.pointer);
+    try testing.expectEqual(Tree.PointerShape.hand, tree.hit(10, 10).?.box.pointer);
     tree = try one(&fixture, theme, .{ .id = id, .label = "Save", .state = .disabled });
-    try testing.expectEqual(tree_zig.PointerShape.arrow, tree.hit(10, 10).?.box.pointer);
+    try testing.expectEqual(Tree.PointerShape.arrow, tree.hit(10, 10).?.box.pointer);
 }
 
 test "button: the focus ring surrounds the face without moving it, and carries the id" {
@@ -101,7 +99,7 @@ test "button: the focus ring surrounds the face without moving it, and carries t
     var fixture: Fixture = .{};
     var tree = try one(&fixture, theme, .{ .id = id, .label = "Save" });
     const face = tree.nodes[1].rect;
-    try testing.expectEqual(tree_zig.Rect{ .x = Theme.ring_width, .y = Theme.ring_width, .w = 2 * 16 + 4 * byte_width, .h = Theme.control }, face);
+    try testing.expectEqual(Tree.Rect{ .x = Theme.ring_width, .y = Theme.ring_width, .w = 2 * 16 + 4 * byte_width, .h = Theme.control }, face);
 
     tree = try one(&fixture, theme, .{ .id = id, .label = "Save", .focused = true });
     try testing.expectEqual(face, tree.nodes[1].rect);
@@ -156,7 +154,7 @@ test "kbd: a group is its caps in a row" {
     var tree = fixture.tree();
     const keys = [_][]const u8{ "Ctrl", "Shift", "P" };
     try kbd.group(&tree, &Theme.dark, &keys, 1);
-    try layout(&tree, measurer, 400, 200);
+    try tree.layout(measurer, 400, 200);
 
     try testing.expectEqual(kbd.groupNodes(keys.len), tree.len);
     // Caps are nodes 1, 3 and 5; each is its text plus 6 px on both sides.
@@ -180,7 +178,7 @@ test "button: fill width and wrapped label grow face height cleanly" {
         .label = "Close terminal window",
         .fill_width = true,
     });
-    try layout(&tree, measurer, 120, 200);
+    try tree.layout(measurer, 120, 200);
 
     const face = tree.nodes[1].rect;
     const label = tree.nodes[2];

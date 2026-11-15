@@ -1,11 +1,10 @@
 const std = @import("std");
 const kit = @import("root.zig");
 const input = kit.input;
-const layout = kit.layout;
 const Theme = kit.Theme;
-const Tree = kit.tree.Tree;
-const Id = kit.tree.Id;
-const Node = kit.tree.Node;
+const Tree = kit.Tree;
+const Id = kit.Tree.Id;
+const Node = kit.Tree.Node;
 const Line = kit.text.Line;
 
 fn measure(_: *anyopaque, bytes: []const u8, _: kit.text.Style, _: kit.text.Figures) f32 {
@@ -116,10 +115,10 @@ test "input view: node budget, layout, focus, selection, and invalid/disabled st
     });
     tree.close(root);
 
-    try layout.layout(&tree, measurer, 300, 200);
+    try tree.layout(measurer, 300, 200);
 
     const focused_ring = tree.nodes[1];
-    try std.testing.expectEqual(kit.tree.PointerShape.text, focused_ring.box.pointer);
+    try std.testing.expectEqual(kit.Tree.PointerShape.text, focused_ring.box.pointer);
     try std.testing.expect(focused_ring.box.border.a > 0);
     const expected_h: f32 = @floatFromInt(Theme.control_sm + 2 * Theme.ring_width);
     try std.testing.expectEqual(expected_h, focused_ring.rect.h);
@@ -132,6 +131,6 @@ test "input view: node budget, layout, focus, selection, and invalid/disabled st
     // Disabled input shows arrow cursor and suppresses ring.
     const disabled_ring_idx = invalid_ring_idx + 5; // ring, face, clip, caret, placeholder
     try std.testing.expectEqual(Id.of("in-disabled"), tree.nodes[disabled_ring_idx].box.id);
-    try std.testing.expectEqual(kit.tree.PointerShape.arrow, tree.nodes[disabled_ring_idx].box.pointer);
+    try std.testing.expectEqual(kit.Tree.PointerShape.arrow, tree.nodes[disabled_ring_idx].box.pointer);
     try std.testing.expectEqual(@as(u8, 0), tree.nodes[disabled_ring_idx].box.border.a);
 }

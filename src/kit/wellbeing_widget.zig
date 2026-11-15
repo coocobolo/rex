@@ -15,10 +15,9 @@ const button = @import("button.zig");
 const icons = @import("icons.zig");
 const text = @import("text.zig");
 const tooltip = @import("tooltip.zig");
-const tree_zig = @import("tree.zig");
-const Tree = tree_zig.Tree;
-const Id = tree_zig.Id;
-const Index = tree_zig.Index;
+const Tree = @import("Tree.zig");
+const Id = Tree.Id;
+const Index = Tree.Index;
 
 pub const min_width: f32 = 96;
 pub const max_width: f32 = 320;
@@ -389,7 +388,7 @@ pub fn view(
     theme: *const Theme,
     viewport_w: f32,
     viewport_h: f32,
-) tree_zig.Error!?Index {
+) Tree.Error!?Index {
     if (!state.visible) return null;
 
     const eff = state.effectiveSize(viewport_w, viewport_h);
@@ -426,7 +425,7 @@ pub fn view(
     return card;
 }
 
-fn viewMini(state: *const State, tree: *Tree, theme: *const Theme, grid: Grid, w: f32, h: f32) tree_zig.Error!void {
+fn viewMini(state: *const State, tree: *Tree, theme: *const Theme, grid: Grid, w: f32, h: f32) Tree.Error!void {
     const pad: u8 = if (w < 108 or h < 96) 3 else if (grid == .horizontal and h >= 96) 6 else 4;
     const surface = try tree.open(.{
         .axis = .column,
@@ -502,7 +501,7 @@ fn viewMini(state: *const State, tree: *Tree, theme: *const Theme, grid: Grid, w
     tree.close(surface);
 }
 
-fn viewHorizontalNormal(state: *const State, tree: *Tree, theme: *const Theme, w: f32, h: f32) tree_zig.Error!void {
+fn viewHorizontalNormal(state: *const State, tree: *Tree, theme: *const Theme, w: f32, h: f32) Tree.Error!void {
     const roomy = w >= 290 and h >= 144;
     const hpad: u8 = if (roomy) 14 else 12;
     const vpad: u8 = if (roomy) 12 else 10;
@@ -602,7 +601,7 @@ fn viewProgressBorderOverlay(
     box_state: button.State,
     border_w: u8,
     radius: u8,
-) tree_zig.Error!void {
+) Tree.Error!void {
     if (state.fraction <= 0 or state.phase == .idle) return;
     const sweep_val: u16 = @max(1, @as(u16, @intFromFloat(@round(clamp01(state.fraction) * 65535.0))));
     _ = try tree.leaf(.{
@@ -624,7 +623,7 @@ fn viewDialTile(
     ring_side: f32,
     thickness: f32,
     radius: u8,
-) tree_zig.Error!void {
+) Tree.Error!void {
     const box_state = buttonState(state, .play_pause);
     const tile = try tree.open(.{
         .id = play_pause_id,
@@ -648,7 +647,7 @@ fn viewDialGraphic(
     theme: *const Theme,
     side: f32,
     thickness: f32,
-) tree_zig.Error!void {
+) Tree.Error!void {
     const radius = side / 2;
     const dial = try tree.open(.{
         .width = .{ .fixed = side },
@@ -715,7 +714,7 @@ fn fitTimerStyle(avail_w: f32, avail_h: f32, len: usize, allow_hero: bool) text.
     return .sm_medium;
 }
 
-fn viewResizeHandle(state: *const State, tree: *Tree, theme: *const Theme) tree_zig.Error!void {
+fn viewResizeHandle(state: *const State, tree: *Tree, theme: *const Theme) Tree.Error!void {
     const corner_active = state.hovered == .resize or state.capture == .resize;
     const grip_color = if (corner_active) theme.foreground else theme.muted_foreground.alpha(65);
     const corner = try tree.open(.{
@@ -751,7 +750,7 @@ pub fn viewTooltip(
     theme: *const Theme,
     viewport_w: f32,
     viewport_h: f32,
-) tree_zig.Error!?Index {
+) Tree.Error!?Index {
     if (!state.visible) return null;
     if (!state.pointer_inside and state.hovered == .none) return null;
     if (state.capture == .move or state.capture == .resize) return null;
@@ -824,8 +823,8 @@ pub fn placeTooltip(tree: *Tree, widget_root: ?Index, tip_root: ?Index, viewport
 
 fn tooltipCandidate(
     side: TooltipSide,
-    card: tree_zig.Rect,
-    tip: tree_zig.Rect,
+    card: Tree.Rect,
+    tip: Tree.Rect,
     gap: f32,
     margin: f32,
     viewport_w: f32,
@@ -871,7 +870,7 @@ fn alignTooltipCross(card_pos: f32, card_span: f32, tip_span: f32, margin: f32, 
     return std.math.clamp(pos, margin, max_pos);
 }
 
-fn rectOverlapArea(ax: f32, ay: f32, aw: f32, ah: f32, b: tree_zig.Rect) f32 {
+fn rectOverlapArea(ax: f32, ay: f32, aw: f32, ah: f32, b: Tree.Rect) f32 {
     const ox = @max(0, @min(ax + aw, b.x + b.w) - @max(ax, b.x));
     const oy = @max(0, @min(ay + ah, b.y + b.h) - @max(ay, b.y));
     return ox * oy;

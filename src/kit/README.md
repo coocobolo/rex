@@ -55,7 +55,7 @@ Rules that hold everywhere:
 | `Theme.zig` | Tokens: colors in a dark and a light variant, radii, the spacing step, control heights, durations |
 | `text.zig` | Text styles, the measurer interface, line wrapping |
 | `icons.zig` | Code points in the bundled icon font |
-| `tree.zig` | The node array a view writes, ids, hit-testing |
+| `Tree.zig` | The node array a view writes, ids, hit-testing |
 | `layout.zig` | Rectangles for every node; logical to physical pixels |
 | `memory.zig` | Per-id memory that outlives a rebuild of the view |
 | `motion.zig` | The one duration and curve every surface uses |

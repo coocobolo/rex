@@ -3,17 +3,17 @@ const testing = std.testing;
 
 const Theme = @import("Theme.zig");
 const text = @import("text.zig");
-const tree_zig = @import("tree.zig");
+const Tree = @import("Tree.zig");
 const slider = @import("slider.zig");
 
 test "Slider: view builds track, thumb, and optional value label within node_max" {
-    var nodes: [64]tree_zig.Node = undefined;
+    var nodes: [64]Tree.Node = undefined;
     var lines: [16]text.Line = undefined;
-    var t: tree_zig.Tree = .init(&nodes, &lines);
+    var t: Tree = .init(&nodes, &lines);
     const theme = Theme.dark;
 
     try slider.view(&t, &theme, .{
-        .id = tree_zig.Id.of("opacity"),
+        .id = Tree.Id.of("opacity"),
         .value = 0.5,
         .value_label = "50%",
         .focused = true,
@@ -23,27 +23,27 @@ test "Slider: view builds track, thumb, and optional value label within node_max
 }
 
 test "Slider: boundary values 0.0 and 1.0 omit empty track segment" {
-    var nodes: [64]tree_zig.Node = undefined;
+    var nodes: [64]Tree.Node = undefined;
     var lines: [16]text.Line = undefined;
     const theme = Theme.dark;
 
-    var t0: tree_zig.Tree = .init(&nodes, &lines);
+    var t0: Tree = .init(&nodes, &lines);
     try slider.view(&t0, &theme, .{
-        .id = tree_zig.Id.of("min"),
+        .id = Tree.Id.of("min"),
         .value = 0.0,
     });
     try testing.expectEqual(@as(usize, 5), t0.len);
 
-    var t1: tree_zig.Tree = .init(&nodes, &lines);
+    var t1: Tree = .init(&nodes, &lines);
     try slider.view(&t1, &theme, .{
-        .id = tree_zig.Id.of("max"),
+        .id = Tree.Id.of("max"),
         .value = 1.0,
     });
     try testing.expectEqual(@as(usize, 5), t1.len);
 }
 
 test "Slider: ratioFromX clamps to [0, 1] across the thumb travel range" {
-    const rect: tree_zig.Rect = .{
+    const rect: Tree.Rect = .{
         .x = 100,
         .y = 20,
         .w = 180 + Theme.ring_width * 2,

@@ -14,10 +14,9 @@ const assert = std.debug.assert;
 
 const Theme = @import("Theme.zig");
 const icons = @import("icons.zig");
-const tree_zig = @import("tree.zig");
-const Tree = tree_zig.Tree;
-const Id = tree_zig.Id;
-const Index = tree_zig.Index;
+const Tree = @import("Tree.zig");
+const Id = Tree.Id;
+const Index = Tree.Index;
 
 /// Padding inside the card, around its items.
 pub const padding = 4;
@@ -38,8 +37,8 @@ pub const Options = struct {
 
 /// Writes the layer and opens the card, which must be a root: call it
 /// after the page is closed. Write the items, then `close` the card.
-pub fn open(tree: *Tree, theme: *const Theme, options: Options) tree_zig.Error!Index {
-    assert(tree.current == tree_zig.none);
+pub fn open(tree: *Tree, theme: *const Theme, options: Options) Tree.Error!Index {
+    assert(tree.current == Tree.none);
     _ = try tree.leaf(.{ .id = options.layer_id, .width = .fill, .height = .fill });
     const card = try tree.open(.{
         .padding = .all(padding),
@@ -68,7 +67,7 @@ pub const ItemOptions = struct {
 
 /// Writes one item into the open card: a row the card's width, with the
 /// label on the left and a check mark on the right when selected.
-pub fn item(tree: *Tree, theme: *const Theme, options: ItemOptions) tree_zig.Error!void {
+pub fn item(tree: *Tree, theme: *const Theme, options: ItemOptions) Tree.Error!void {
     const row = try tree.open(.{
         .id = options.id,
         .pointer = .hand,

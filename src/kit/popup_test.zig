@@ -5,10 +5,9 @@ const Theme = @import("Theme.zig");
 const layout = @import("layout.zig");
 const popup = @import("popup.zig");
 const text = @import("text.zig");
-const tree_zig = @import("tree.zig");
-const Rect = tree_zig.Rect;
-const Tree = tree_zig.Tree;
-const Id = tree_zig.Id;
+const Tree = @import("Tree.zig");
+const Rect = Tree.Rect;
+const Id = Tree.Id;
 
 const trigger_id = Id.of("test.trigger");
 const page_id = Id.of("test.page");
@@ -31,10 +30,10 @@ fn measurer() text.Measurer {
 }
 
 const Fixture = struct {
-    nodes: [16]tree_zig.Node = undefined,
+    nodes: [16]Tree.Node = undefined,
     lines: [16]text.Line = undefined,
     tree: Tree = undefined,
-    card: tree_zig.Index = 0,
+    card: Tree.Index = 0,
 
     /// A page with a 120 by 36 trigger at `x`, `y`, and the popup against
     /// it with "Dark" selected and "Light" highlighted.
@@ -54,7 +53,7 @@ const Fixture = struct {
             });
         }
         popup.close(&self.tree, self.card);
-        try layout.layout(&self.tree, measurer(), width, height);
+        try self.tree.layout(measurer(), width, height);
     }
 
     fn rectOf(self: *const Fixture, id: Id) Rect {
@@ -99,9 +98,9 @@ test "popup: the card and the layer take the pointer from the page" {
 test "popup: the hand shows over items, the arrow over the layer" {
     var fixture: Fixture = .{};
     try fixture.build(40, 100, 800, 600);
-    try testing.expectEqual(tree_zig.PointerShape.hand, fixture.tree.hit(60, 190).?.box.pointer);
+    try testing.expectEqual(Tree.PointerShape.hand, fixture.tree.hit(60, 190).?.box.pointer);
     // Over the trigger the page would show, the layer's arrow wins.
-    try testing.expectEqual(tree_zig.PointerShape.arrow, fixture.tree.hit(60, 110).?.box.pointer);
+    try testing.expectEqual(Tree.PointerShape.arrow, fixture.tree.hit(60, 110).?.box.pointer);
 }
 
 test "popup: highlighted items are filled, the selected one is checked" {
@@ -117,21 +116,21 @@ test "popup: highlighted items are filled, the selected one is checked" {
 }
 
 test "popup: without its anchor, the card stays at the top left" {
-    var nodes: [4]tree_zig.Node = undefined;
+    var nodes: [4]Tree.Node = undefined;
     var lines: [4]text.Line = undefined;
     var tree = Tree.init(&nodes, &lines);
     const card = try popup.open(&tree, &Theme.dark, .{ .layer_id = layer_id, .anchor = trigger_id });
     _ = try tree.leaf(.{ .width = .{ .fixed = 50 }, .height = .{ .fixed = 20 } });
     popup.close(&tree, card);
-    try layout.layout(&tree, measurer(), 800, 600);
+    try tree.layout(measurer(), 800, 600);
     try testing.expectEqual(Rect{ .x = 0, .y = 0, .w = 58, .h = 28 }, tree.nodes[card].rect);
 }
 
 test "popup: a view holds anchor_max popups" {
-    var nodes: [2 * (tree_zig.anchor_max + 1)]tree_zig.Node = undefined;
+    var nodes: [2 * (Tree.anchor_max + 1)]Tree.Node = undefined;
     var lines: [1]text.Line = undefined;
     var tree = Tree.init(&nodes, &lines);
-    for (0..tree_zig.anchor_max) |_| {
+    for (0..Tree.anchor_max) |_| {
         popup.close(&tree, try popup.open(&tree, &Theme.dark, .{ .layer_id = layer_id, .anchor = trigger_id }));
     }
     try testing.expectError(error.OutOfAnchors, popup.open(&tree, &Theme.dark, .{ .layer_id = layer_id, .anchor = trigger_id }));

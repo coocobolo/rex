@@ -4,15 +4,14 @@ const testing = std.testing;
 const Theme = @import("Theme.zig");
 const icons = @import("icons.zig");
 const text = @import("text.zig");
-const tree_zig = @import("tree.zig");
+const Tree = @import("Tree.zig");
 const select = @import("select.zig");
 
-const Tree = tree_zig.Tree;
-const Id = tree_zig.Id;
+const Id = Tree.Id;
 
 test "select: trigger writes value and chevron; list opens anchored popup" {
     const choices = [_][]const u8{ "Dark", "Light", "Auto" };
-    var nodes: [select.trigger_node_max + select.list_node_max + choices.len * select.item_node_max]tree_zig.Node = undefined;
+    var nodes: [select.trigger_node_max + select.list_node_max + choices.len * select.item_node_max]Tree.Node = undefined;
     var lines: [8]text.Line = undefined;
     var tree = Tree.init(&nodes, &lines);
 

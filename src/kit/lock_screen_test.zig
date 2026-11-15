@@ -3,9 +3,7 @@ const testing = std.testing;
 
 const Theme = @import("Theme.zig");
 const text = @import("text.zig");
-const tree_zig = @import("tree.zig");
-const Tree = tree_zig.Tree;
-const layout = @import("layout.zig").layout;
+const Tree = @import("Tree.zig");
 const lock_screen = @import("lock_screen.zig");
 
 const byte_width = 7;
@@ -64,11 +62,11 @@ test "lock_screen: view fits nodes, centers card, and hit-tests scrim vs card vs
     _ = lock_screen.update(&state, .{ .sync = sample });
     _ = lock_screen.update(&state, .{ .tick = Theme.duration });
 
-    var nodes: [lock_screen.node_max]tree_zig.Node = undefined;
+    var nodes: [lock_screen.node_max]Tree.Node = undefined;
     var lines: [lock_screen.line_max]text.Line = undefined;
     var tree: Tree = .init(&nodes, &lines);
     try lock_screen.view(&state, &tree, &Theme.dark);
-    try layout(&tree, measurer, 800, 600);
+    try tree.layout(measurer, 800, 600);
 
     const card = tree.find(lock_screen.card_id).?.rect;
     try testing.expectApproxEqAbs(lock_screen.width, card.w, 1);

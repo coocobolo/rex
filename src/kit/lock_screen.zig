@@ -13,11 +13,10 @@ const Color = Theme.Color;
 const button = @import("button.zig");
 const chart = @import("chart.zig");
 const dialog = @import("dialog.zig");
-const motion_zig = @import("motion.zig");
+const motion = @import("motion.zig");
 const text = @import("text.zig");
-const tree_zig = @import("tree.zig");
-const Tree = tree_zig.Tree;
-const Id = tree_zig.Id;
+const Tree = @import("Tree.zig");
+const Id = Tree.Id;
 
 pub const width: f32 = 440;
 
@@ -63,7 +62,7 @@ pub const State = struct {
     tone: Tone = .healthy,
     touch: button.State = .normal,
     focused: bool = false,
-    motion: motion_zig.Mode = .full,
+    motion: motion.Mode = .full,
     scrim_alpha: u8 = 128,
     steps_total: u8 = 0,
     steps_done: u8 = 0,
@@ -275,7 +274,7 @@ pub const line_max = title_capacity + 1 + subtitle_capacity + 1 + prompt_capacit
 pub const node_max = dialog.node_max + 9 + steps_max + chart.progress_nodes + button.node_max;
 
 /// Writes the lock screen over the terminal, or nothing when closed.
-pub fn view(state: *const State, tree: *Tree, theme: *const Theme) tree_zig.Error!void {
+pub fn view(state: *const State, tree: *Tree, theme: *const Theme) Tree.Error!void {
     if (state.phase == .closed) return;
     const presence = state.phase.presence(state.motion);
     const accent = state.tone.accent(theme).fade(presence);

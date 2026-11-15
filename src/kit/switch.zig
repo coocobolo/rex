@@ -5,9 +5,8 @@
 //! `disabled` and handles clicks by `id`.
 
 const Theme = @import("Theme.zig");
-const tree_zig = @import("tree.zig");
-const Tree = tree_zig.Tree;
-const Id = tree_zig.Id;
+const Tree = @import("Tree.zig");
+const Id = Tree.Id;
 
 pub const track_width: f32 = 36;
 pub const track_height: f32 = 20;
@@ -25,7 +24,7 @@ pub const Options = struct {
     disabled: bool = false,
 };
 
-pub fn view(tree: *Tree, theme: *const Theme, options: Options) tree_zig.Error!void {
+pub fn view(tree: *Tree, theme: *const Theme, options: Options) Tree.Error!void {
     const presence: f32 = if (options.disabled) 0.5 else 1.0;
     const ring_color = if (options.focused and !options.disabled)
         theme.ring.alpha(Theme.ring_opacity)

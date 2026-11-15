@@ -10,9 +10,8 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 
 const Theme = @import("Theme.zig");
-const tree_zig = @import("tree.zig");
-const Tree = tree_zig.Tree;
-const Id = tree_zig.Id;
+const Tree = @import("Tree.zig");
+const Id = Tree.Id;
 
 pub const min_width: f32 = 160;
 pub const caret_width: f32 = 1.5;
@@ -250,7 +249,7 @@ pub const Options = struct {
     placeholder: []const u8 = "",
     cursor: usize = 0,
     anchor: usize = 0,
-    width: tree_zig.Size = .{ .at_least = min_width },
+    width: Tree.Size = .{ .at_least = min_width },
     height: u8 = Theme.control_sm,
     hovered: bool = false,
     focused: bool = false,
@@ -260,7 +259,7 @@ pub const Options = struct {
     borderless: bool = false,
 };
 
-pub fn view(tree: *Tree, theme: *const Theme, options: Options) tree_zig.Error!void {
+pub fn view(tree: *Tree, theme: *const Theme, options: Options) Tree.Error!void {
     const presence: f32 = if (options.disabled) 0.5 else 1.0;
     const active = options.focused and !options.disabled;
     const ring_color = if (!active)
@@ -356,7 +355,7 @@ pub fn view(tree: *Tree, theme: *const Theme, options: Options) tree_zig.Error!v
     tree.close(ring);
 }
 
-fn emitCaret(tree: *Tree, theme: *const Theme) tree_zig.Error!void {
+fn emitCaret(tree: *Tree, theme: *const Theme) Tree.Error!void {
     const caret = try tree.open(.{
         .width = .{ .fixed = caret_width },
         .height = .{ .fixed = caret_height },

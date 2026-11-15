@@ -207,27 +207,11 @@ pub fn isDark(self: *const Theme) bool {
 
 /// WCAG 2.x relative luminance of an sRGB color, 0 (black) to 1 (white).
 /// https://www.w3.org/TR/WCAG21/#dfn-relative-luminance
-fn relativeLuminance(color: [3]u8) f32 {
+pub fn relativeLuminance(color: [3]u8) f32 {
     var linear: [3]f32 = undefined;
     for (color, &linear) |channel, *out| {
         const c = @as(f32, @floatFromInt(channel)) / 255.0;
         out.* = if (c <= 0.04045) c / 12.92 else std.math.pow(f32, (c + 0.055) / 1.055, 2.4);
     }
     return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2];
-}
-
-test "ColorScheme: auto follows the background, the others force a variant" {
-    const white = [3]u8{ 255, 255, 255 };
-    const black = [3]u8{ 0, 0, 0 };
-    try std.testing.expectEqual(Variant.light, ColorScheme.auto.variant(white));
-    try std.testing.expectEqual(Variant.dark, ColorScheme.auto.variant(black));
-    try std.testing.expectEqual(Variant.dark, ColorScheme.dark.variant(white));
-    try std.testing.expectEqual(Variant.light, ColorScheme.light.variant(black));
-}
-
-test relativeLuminance {
-    try std.testing.expectEqual(0, relativeLuminance(.{ 0, 0, 0 }));
-    try std.testing.expectApproxEqAbs(1, relativeLuminance(.{ 255, 255, 255 }), 1e-4);
-    // Mid gray #808080 is about 0.216.
-    try std.testing.expectApproxEqAbs(0.2159, relativeLuminance(.{ 0x80, 0x80, 0x80 }), 1e-3);
 }

@@ -15,12 +15,11 @@ const Theme = @import("Theme.zig");
 const Color = Theme.Color;
 const icons = @import("icons.zig");
 const memory = @import("memory.zig");
-const motion_zig = @import("motion.zig");
+const motion = @import("motion.zig");
 const text = @import("text.zig");
-const tree_zig = @import("tree.zig");
-const Tree = tree_zig.Tree;
-const Id = tree_zig.Id;
-const Index = tree_zig.Index;
+const Tree = @import("Tree.zig");
+const Id = Tree.Id;
+const Index = Tree.Index;
 
 /// In logical pixels.
 pub const width = 356;
@@ -45,7 +44,7 @@ const glide_ms = 40;
 /// The title's line, which the icon and the close button center on.
 const line_height = text.Style.sm_medium.metrics().line_height;
 
-pub const Position = tree_zig.ScreenAnchor;
+pub const Position = Tree.ScreenAnchor;
 
 pub const Option = struct {
     width: f32 = width,
@@ -108,12 +107,12 @@ pub const Entry = struct {
     }
 
     /// 0 (invisible, `rise` below its place) to 1 (at rest).
-    fn presence(self: *const Entry, mode: motion_zig.Mode) f32 {
+    fn presence(self: *const Entry, mode: motion.Mode) f32 {
         return switch (self.phase) {
             .waiting => 0,
-            .entering => |elapsed| motion_zig.progress(mode, elapsed),
+            .entering => |elapsed| motion.progress(mode, elapsed),
             .shown => 1,
-            .leaving => |elapsed| 1 - motion_zig.progress(mode, elapsed),
+            .leaving => |elapsed| 1 - motion.progress(mode, elapsed),
         };
     }
 };
@@ -134,7 +133,7 @@ pub const State = struct {
     /// Timers stand still while the pointer is over the stack.
     pointer: Pointer = .away,
     /// Set by the owner, from the user's setting.
-    motion: motion_zig.Mode = .full,
+    motion: motion.Mode = .full,
     option: Option = .{},
 
     pub const empty: State = .{};
@@ -187,7 +186,7 @@ pub const State = struct {
     }
 
     fn tick(self: *State, dt_ms: u32) bool {
-        const duration = motion_zig.duration(self.motion);
+        const duration = motion.duration(self.motion);
         const dt_short = std.math.lossyCast(u16, dt_ms);
         var changed = false;
         var index: usize = 0;
@@ -237,7 +236,7 @@ pub const State = struct {
             // Leaves from as far as it got, so it does not jump to full
             // presence first.
             .entering => |elapsed| {
-                const duration = motion_zig.duration(self.motion);
+                const duration = motion.duration(self.motion);
                 entry.phase = .{ .leaving = duration - @min(elapsed, duration) };
             },
             .shown => entry.phase = .{ .leaving = 0 },
@@ -271,7 +270,7 @@ pub const State = struct {
         for (self.visible()) |entry| {
             switch (entry.phase) {
                 .waiting => unreachable, // `visible` holds none
-                .entering, .leaving => return motion_zig.frame_ms,
+                .entering, .leaving => return motion.frame_ms,
                 .shown => |remaining| if (self.pointer == .away) {
                     wake = @min(wake orelse remaining, remaining);
                 },
@@ -349,7 +348,7 @@ pub const node_max = 1 + visible_max * 8;
 /// Writes the stack as one root that fills the window, and returns it, or
 /// null when no toast is on screen and nothing was written. The texts
 /// point into `state`: rebuild the view after every `update`.
-pub fn view(state: *const State, tree: *Tree, theme: *const Theme) tree_zig.Error!?Index {
+pub fn view(state: *const State, tree: *Tree, theme: *const Theme) Tree.Error!?Index {
     const entries = state.visible();
     if (entries.len == 0) return null;
 
@@ -410,8 +409,8 @@ pub const Motion = enum { settled, moving };
 /// if no `tick` changes the state.
 pub fn place(state: *const State, tree: *Tree, stack: ?Index, table: *memory.Table, dt_ms: u32) memory.Error!Motion {
     defer table.sweep();
-    var motion: Motion = .settled;
-    var card: Index = (stack orelse return motion) + 1;
+    var status: Motion = .settled;
+    var card: Index = (stack orelse return status) + 1;
     for (state.visible()) |*entry| {
         const node = &tree.nodes[card];
         assert(node.box.id == cardId(entry.serial));
@@ -422,12 +421,12 @@ pub fn place(state: *const State, tree: *Tree, stack: ?Index, table: *memory.Tab
             .none => target,
         };
         try table.set(node.box.id, drawn);
-        if (drawn != target) motion = .moving;
+        if (drawn != target) status = .moving;
         const rise_offset: f32 = if (state.option.position.isTop()) -rise else rise;
         tree.translate(card, 0, drawn - target + (1 - entry.presence(state.motion)) * rise_offset);
         card = node.end;
     }
-    return motion;
+    return status;
 }
 
 /// `from` after `dt_ms` of closing in on `to`: the distance left decays

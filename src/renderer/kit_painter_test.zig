@@ -14,8 +14,7 @@ const Theme = @import("../kit/Theme.zig");
 const Color = Theme.Color;
 const text = @import("../kit/text.zig");
 const icons = @import("../kit/icons.zig");
-const tree_zig = @import("../kit/tree.zig");
-const Tree = tree_zig.Tree;
+const Tree = @import("../kit/Tree.zig");
 const layout = @import("../kit/layout.zig");
 const memory = @import("../kit/memory.zig");
 const badge = @import("../kit/badge.zig");
@@ -63,17 +62,17 @@ const Scene = enum {
 const clip_text = "A line far longer than the box that holds it";
 
 const Marks = struct {
-    toast: tree_zig.Index = tree_zig.none,
-    title: tree_zig.Index = tree_zig.none,
-    dialog: tree_zig.Index = tree_zig.none,
-    confirm: tree_zig.Index = tree_zig.none,
-    cancel: tree_zig.Index = tree_zig.none,
-    alert_card: tree_zig.Index = tree_zig.none,
-    alert_close: tree_zig.Index = tree_zig.none,
-    lock_card: tree_zig.Index = tree_zig.none,
-    lock_unlock: tree_zig.Index = tree_zig.none,
+    toast: Tree.Index = Tree.none,
+    title: Tree.Index = Tree.none,
+    dialog: Tree.Index = Tree.none,
+    confirm: Tree.Index = Tree.none,
+    cancel: Tree.Index = Tree.none,
+    alert_card: Tree.Index = Tree.none,
+    alert_close: Tree.Index = Tree.none,
+    lock_card: Tree.Index = Tree.none,
+    lock_unlock: Tree.Index = Tree.none,
     /// The clipping box of the `clip` scene.
-    clip: tree_zig.Index = tree_zig.none,
+    clip: Tree.Index = Tree.none,
 };
 
 fn toast(tree: *Tree, theme: *const Theme, icon: Color, title: []const u8, description: []const u8, marks: ?*Marks) !void {
@@ -187,7 +186,7 @@ fn specimen(tree: *Tree, theme: *const Theme, marks: *Marks) !void {
         const line = try tree.open(.{ .axis = .row, .gap = button.gap, .cross = .center });
         _ = try tree.text(row.name, .{ .color = theme.muted_foreground, .style = .xs, .width = .{ .fixed = name_width } });
         const first = tree.len;
-        const id = tree_zig.Id.of("specimen.button").item(@intCast(at));
+        const id = Tree.Id.of("specimen.button").item(@intCast(at));
         try button.view(tree, theme, .{ .id = id, .label = row.label, .variant = row.variant });
         try button.view(tree, theme, .{ .id = id, .label = row.label, .variant = row.variant, .state = .hovered });
         try button.view(tree, theme, .{ .id = id, .label = row.label, .variant = row.variant, .state = .pressed });
@@ -204,14 +203,14 @@ fn specimen(tree: *Tree, theme: *const Theme, marks: *Marks) !void {
     const small = try tree.open(.{ .axis = .row, .gap = button.gap, .cross = .center });
     _ = try tree.text("Small", .{ .color = theme.muted_foreground, .style = .xs, .width = .{ .fixed = name_width } });
     for (rows) |row| {
-        try button.view(tree, theme, .{ .id = tree_zig.Id.of("specimen.small"), .label = row.label, .variant = row.variant, .size = .sm });
+        try button.view(tree, theme, .{ .id = Tree.Id.of("specimen.small"), .label = row.label, .variant = row.variant, .size = .sm });
     }
     tree.close(small);
     const caps = try tree.open(.{ .axis = .row, .gap = 16, .cross = .center });
     _ = try tree.text("Kbd", .{ .color = theme.muted_foreground, .style = .xs, .width = .{ .fixed = name_width - 8 } });
     try kbd.view(tree, theme, "Esc", 1);
     try kbd.group(tree, theme, &.{ "Ctrl", "Shift", "P" }, 1);
-    try button.view(tree, theme, .{ .id = tree_zig.Id.of("specimen.cap"), .label = "Cancel", .key_cap = "Esc" });
+    try button.view(tree, theme, .{ .id = Tree.Id.of("specimen.cap"), .label = "Cancel", .key_cap = "Esc" });
     tree.close(caps);
     const badges = try tree.open(.{ .axis = .row, .gap = 8, .cross = .center });
     _ = try tree.text("Badge", .{ .color = theme.muted_foreground, .style = .xs, .width = .{ .fixed = name_width } });
@@ -247,7 +246,7 @@ const Frame = struct {
     }
 
     /// How many pixels of a logical rectangle differ from `color`.
-    fn countNot(self: *const Frame, rect: tree_zig.Rect, color: [3]u8) u32 {
+    fn countNot(self: *const Frame, rect: Tree.Rect, color: [3]u8) u32 {
         const area = layout.snap(rect, self.scale);
         var count: u32 = 0;
         var y = area.y;
@@ -284,8 +283,8 @@ const Frame = struct {
 
 const Rendered = struct {
     frame: Frame,
-    tree_nodes: [128]tree_zig.Node,
-    tree_len: tree_zig.Index,
+    tree_nodes: [128]Tree.Node,
+    tree_len: Tree.Index,
     marks: Marks,
     instances: u32,
     /// The texts of the `toasts` scene live here.
@@ -297,19 +296,19 @@ const Rendered = struct {
     /// The texts of the `lock_screen` scene live here.
     lock_screen: lock_screen.State,
 
-    fn card(self: *const Rendered, serial: u32) tree_zig.Rect {
+    fn card(self: *const Rendered, serial: u32) Tree.Rect {
         for (self.tree_nodes[0..self.tree_len]) |node| {
             if (node.box.id == toast_stack.cardId(serial)) return node.rect;
         }
         unreachable; // the scene shows every toast it pushed
     }
 
-    fn rect(self: *const Rendered, index: tree_zig.Index) tree_zig.Rect {
+    fn rect(self: *const Rendered, index: Tree.Index) Tree.Rect {
         return self.tree_nodes[index].rect;
     }
 };
 
-fn nodeWithId(tree: *const Tree, id: tree_zig.Id) tree_zig.Index {
+fn nodeWithId(tree: *const Tree, id: Tree.Id) Tree.Index {
     for (tree.nodes[0..tree.len], 0..) |node, index| {
         if (node.box.id == id) return @intCast(index);
     }
@@ -391,7 +390,7 @@ fn render(scene: Scene, variant: Theme.Variant, background: Color, scale: f32, k
     _ = toast_stack.update(&result.toasts, .{ .tick = Theme.duration / 2 });
 
     result.marks = try build(&tree, scene, variant.theme(), &result.toasts, &result.dialog, &result.alert, &result.lock_screen);
-    try layout.layout(&tree, font.measurer(), view_width, view_height);
+    try tree.layout(font.measurer(), view_width, view_height);
     if (scene == .toasts) {
         var table: memory.Table = .empty;
         _ = try toast_stack.place(&result.toasts, &tree, 0, &table, 0);
@@ -444,7 +443,7 @@ fn render(scene: Scene, variant: Theme.Variant, background: Color, scale: f32, k
 }
 
 test "KitPainter: an arc instance is the square around its centre" {
-    const arc: tree_zig.Arc = .{
+    const arc: Tree.Arc = .{
         .radius = 10,
         .thickness = 4,
         .start = 1,
@@ -523,7 +522,7 @@ test "KitPainter: a toast's icon is a line drawing in its kind's color" {
         const theme = &Theme.dark;
 
         // The first toast is an error: its card, a slot, then the icon.
-        var icon_rect: ?tree_zig.Rect = null;
+        var icon_rect: ?Tree.Rect = null;
         for (rendered.tree_nodes[0..rendered.tree_len]) |node| {
             switch (node.content) {
                 .icon => |icon| if (icon.codepoint == icons.circle_x) {
@@ -675,11 +674,11 @@ test "KitPainter: more instances than fit is an error" {
     var painter = try KitPainter.init();
     defer painter.deinit();
 
-    var nodes: [4]tree_zig.Node = undefined;
+    var nodes: [4]Tree.Node = undefined;
     var lines: [4]text.Line = undefined;
     var tree: Tree = .init(&nodes, &lines);
     _ = try tree.text("x" ** (KitPainter.capacity + 1), .{ .color = Theme.dark.foreground });
-    try layout.layout(&tree, font.measurer(), 100_000, 100);
+    try tree.layout(font.measurer(), 100_000, 100);
 
     painter.begin();
     try testing.expectError(error.OutOfInstances, painter.paint(&tree, &font, &atlas));
@@ -735,7 +734,7 @@ test "KitPainter: border_sweep draws clockwise rounded border progress" {
     var painter = try KitPainter.init();
     defer painter.deinit();
 
-    var nodes: [4]tree_zig.Node = undefined;
+    var nodes: [4]Tree.Node = undefined;
     var lines: [4]text.Line = undefined;
     var tree: Tree = .init(&nodes, &lines);
     const sweep_val: u16 = 16384; // ~25%: top-right quadrant from top-center to right-middle
@@ -748,7 +747,7 @@ test "KitPainter: border_sweep draws clockwise rounded border progress" {
         .border = border_color,
         .border_sweep = sweep_val,
     });
-    try layout.layout(&tree, font.measurer(), 100, 100);
+    try tree.layout(font.measurer(), 100, 100);
 
     var target: gl.GLuint = 0;
     gl.genTextures(1, &target);

@@ -7,10 +7,9 @@
 const Theme = @import("Theme.zig");
 const icons = @import("icons.zig");
 const popup = @import("popup.zig");
-const tree_zig = @import("tree.zig");
-const Tree = tree_zig.Tree;
-const Id = tree_zig.Id;
-const Index = tree_zig.Index;
+const Tree = @import("Tree.zig");
+const Id = Tree.Id;
+const Index = Tree.Index;
 
 pub const min_width: f32 = 160;
 /// Focus ring wrapper, trigger face, value text, and chevron icon.
@@ -23,7 +22,7 @@ pub const TriggerOptions = struct {
     id: Id,
     /// Borrowed until the view is rebuilt.
     value: []const u8,
-    width: tree_zig.Size = .{ .at_least = min_width },
+    width: Tree.Size = .{ .at_least = min_width },
     height: u8 = Theme.control_sm,
     hovered: bool = false,
     open: bool = false,
@@ -31,7 +30,7 @@ pub const TriggerOptions = struct {
     disabled: bool = false,
 };
 
-pub fn trigger(tree: *Tree, theme: *const Theme, options: TriggerOptions) tree_zig.Error!void {
+pub fn trigger(tree: *Tree, theme: *const Theme, options: TriggerOptions) Tree.Error!void {
     const presence: f32 = if (options.disabled) 0.5 else 1.0;
     const ring_color = if (options.focused and !options.disabled)
         theme.ring.alpha(Theme.ring_opacity)
@@ -74,11 +73,11 @@ pub fn trigger(tree: *Tree, theme: *const Theme, options: TriggerOptions) tree_z
     tree.close(ring);
 }
 
-pub fn openList(tree: *Tree, theme: *const Theme, options: popup.Options) tree_zig.Error!Index {
+pub fn openList(tree: *Tree, theme: *const Theme, options: popup.Options) Tree.Error!Index {
     return popup.open(tree, theme, options);
 }
 
-pub fn item(tree: *Tree, theme: *const Theme, options: popup.ItemOptions) tree_zig.Error!void {
+pub fn item(tree: *Tree, theme: *const Theme, options: popup.ItemOptions) Tree.Error!void {
     return popup.item(tree, theme, options);
 }
 

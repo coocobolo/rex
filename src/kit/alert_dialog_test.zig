@@ -5,10 +5,8 @@ const Theme = @import("Theme.zig");
 const icons = @import("icons.zig");
 const motion = @import("motion.zig");
 const text = @import("text.zig");
-const tree_zig = @import("tree.zig");
-const Tree = tree_zig.Tree;
-const Id = tree_zig.Id;
-const layout = @import("layout.zig").layout;
+const Tree = @import("Tree.zig");
+const Id = Tree.Id;
 const alert_dialog = @import("alert_dialog.zig");
 const dialog = @import("dialog.zig");
 const State = alert_dialog.State;
@@ -41,7 +39,7 @@ fn sample() alert_dialog.Request {
 }
 
 const Fixture = struct {
-    nodes: [alert_dialog.node_max]tree_zig.Node = undefined,
+    nodes: [alert_dialog.node_max]Tree.Node = undefined,
     lines: [8]text.Line = undefined,
 
     fn tree(self: *Fixture) Tree {
@@ -49,7 +47,7 @@ const Fixture = struct {
     }
 };
 
-fn nodeById(tree: *const Tree, id: Id) ?*const tree_zig.Node {
+fn nodeById(tree: *const Tree, id: Id) ?*const Tree.Node {
     for (tree.items()) |*node| {
         if (node.box.id == id) return node;
     }
@@ -58,14 +56,14 @@ fn nodeById(tree: *const Tree, id: Id) ?*const tree_zig.Node {
 
 /// The face of the button of action `index`: the only child of the ring
 /// slot that carries the id.
-fn face(tree: *const Tree, index: u8) *const tree_zig.Node {
+fn face(tree: *const Tree, index: u8) *const Tree.Node {
     for (tree.items(), 0..) |node, at| {
         if (node.box.id == alert_dialog.actionId(index)) return &tree.nodes[at + 1];
     }
     unreachable;
 }
 
-fn textByBytes(tree: *const Tree, bytes: []const u8) ?*const tree_zig.Node {
+fn textByBytes(tree: *const Tree, bytes: []const u8) ?*const Tree.Node {
     for (tree.items()) |*node| {
         switch (node.content) {
             .text => |t| if (std.mem.eql(u8, t.bytes, bytes)) return node,
@@ -235,14 +233,14 @@ test "dialog: the card is centered, actions run left to right, the ring is on th
     var fixture: Fixture = .{};
     var tree = fixture.tree();
     const scrim = (try alert_dialog.view(&state, &tree, &Theme.dark)).?;
-    try layout(&tree, measurer, 1000, 600);
+    try tree.layout(measurer, 1000, 600);
     try testing.expectEqual(128, tree.nodes[scrim].box.fill.a);
 
     // Body box: 24 + (28 + 8 + 20) + 24 = 104, separator: 1, footer: 16 + 42 + 16 = 74 -> 179 high.
     // x = (1000 - 420) / 2, y = (600 - 179) / 2.
     const card = &tree.nodes[scrim + 1];
     try testing.expectEqual(alert_dialog.card_id, card.box.id);
-    try testing.expectEqual(tree_zig.Rect{ .x = 290, .y = 210.5, .w = alert_dialog.width, .h = 179 }, card.rect);
+    try testing.expectEqual(Tree.Rect{ .x = 290, .y = 210.5, .w = alert_dialog.width, .h = 179 }, card.rect);
 
     const stay_button = face(&tree, stay);
     const close_button = face(&tree, close);
@@ -316,7 +314,7 @@ test "dialog: media is an icon in a box above the title" {
     var fixture: Fixture = .{};
     var tree = fixture.tree();
     const scrim = (try alert_dialog.view(&state, &tree, &Theme.dark)).?;
-    try layout(&tree, measurer, 1000, 600);
+    try tree.layout(measurer, 1000, 600);
 
     // Scrim, card, body_box, header, then the box and its icon, then the title.
     const box = tree.nodes[scrim + 4];
@@ -343,7 +341,7 @@ test "dialog: a window narrower than the card shrinks it and keeps a margin" {
     var fixture: Fixture = .{};
     var tree = fixture.tree();
     const scrim = (try alert_dialog.view(&state, &tree, &Theme.dark)).?;
-    try layout(&tree, measurer, 360, 600);
+    try tree.layout(measurer, 360, 600);
 
     const card = tree.nodes[scrim + 1].rect;
     try testing.expectEqual(dialog.margin, card.x);
@@ -411,7 +409,7 @@ test "dialog: option configures position, dimensions, and fallback scrim alpha" 
     var fixture: Fixture = .{};
     var tree = fixture.tree();
     const scrim = (try alert_dialog.view(&state, &tree, &Theme.dark)).?;
-    try layout(&tree, measurer, 1000, 600);
+    try tree.layout(measurer, 1000, 600);
 
     const scrim_node = tree.nodes[scrim];
     const card = tree.nodes[scrim + 1];
@@ -420,9 +418,9 @@ test "dialog: option configures position, dimensions, and fallback scrim alpha" 
     try testing.expectEqual(@as(u8, 64), scrim_node.box.fill.a);
     try testing.expectEqual(@as(f32, 360), card.rect.w);
     try testing.expectEqual(@as(f32, 30), card.rect.y);
-    try testing.expectEqual(tree_zig.Edges.all(18), body_box.box.padding);
+    try testing.expectEqual(Tree.Edges.all(18), body_box.box.padding);
     try testing.expectEqual(@as(u16, 12), body_box.box.gap);
-    try testing.expectEqual(tree_zig.Edges.symmetric(18, 12), footer_box.box.padding);
+    try testing.expectEqual(Tree.Edges.symmetric(18, 12), footer_box.box.padding);
 
     // Explicit per-request scrim_alpha overrides the live option fallback.
     state.option.scrim_alpha = 180;
@@ -478,7 +476,7 @@ test "dialog: narrow widths stack footer buttons instead of wrapping labels" {
     var fixture: Fixture = .{};
     var tree = fixture.tree();
     const scrim = (try alert_dialog.view(&state, &tree, &Theme.dark)).?;
-    try layout(&tree, measurer, 1000, 600);
+    try tree.layout(measurer, 1000, 600);
 
     const card = tree.nodes[scrim + 1].rect;
     try testing.expectEqual(@as(f32, 240), card.w);

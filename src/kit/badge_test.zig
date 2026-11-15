@@ -4,10 +4,8 @@ const testing = std.testing;
 const Theme = @import("Theme.zig");
 const badge = @import("badge.zig");
 const icons = @import("icons.zig");
-const layout = @import("layout.zig");
 const text = @import("text.zig");
-const tree_zig = @import("tree.zig");
-const Tree = tree_zig.Tree;
+const Tree = @import("Tree.zig");
 
 fn measurer() text.Measurer {
     const Fixed = struct {
@@ -24,7 +22,7 @@ test "badge: variants map cleanly to theme tokens and respect node_max" {
     const theme = &Theme.dark;
 
     for (variants) |variant| {
-        var nodes: [badge.node_max]tree_zig.Node = undefined;
+        var nodes: [badge.node_max]Tree.Node = undefined;
         var lines: [1]text.Line = undefined;
         var tree = Tree.init(&nodes, &lines);
         try badge.view(&tree, theme, .{
@@ -33,7 +31,7 @@ test "badge: variants map cleanly to theme tokens and respect node_max" {
             .variant = variant,
         });
         try testing.expectEqual(@as(usize, badge.node_max), tree.len);
-        try layout.layout(&tree, measurer(), 200, 100);
+        try tree.layout(measurer(), 200, 100);
         try testing.expect(tree.nodes[0].rect.w > 0);
         try testing.expectEqual(Theme.radius_sm, tree.nodes[0].box.radius);
 
@@ -76,7 +74,7 @@ test "badge: variants map cleanly to theme tokens and respect node_max" {
 }
 
 test "badge: sizes step padding and typography" {
-    var nodes: [badge.node_max * 3]tree_zig.Node = undefined;
+    var nodes: [badge.node_max * 3]Tree.Node = undefined;
     var lines: [4]text.Line = undefined;
     var tree = Tree.init(&nodes, &lines);
 

@@ -12,9 +12,8 @@ const Theme = @import("Theme.zig");
 const Color = Theme.Color;
 const icons = @import("icons.zig");
 const kbd = @import("kbd.zig");
-const tree_zig = @import("tree.zig");
-const Tree = tree_zig.Tree;
-const Id = tree_zig.Id;
+const Tree = @import("Tree.zig");
+const Id = Tree.Id;
 
 /// Between two buttons in a row, and between a label and its key cap.
 pub const gap = 8;
@@ -158,7 +157,7 @@ fn ringBorder(theme: *const Theme, options: Options) Color {
 const disabled_opacity = 0.5;
 
 /// Writes the button into the innermost open box.
-pub fn view(tree: *Tree, theme: *const Theme, options: Options) tree_zig.Error!void {
+pub fn view(tree: *Tree, theme: *const Theme, options: Options) Tree.Error!void {
     assert(!(options.focused and options.state == .disabled));
     assert(options.label.len > 0 or options.icon != icons.none);
     const colors = look(theme, options);

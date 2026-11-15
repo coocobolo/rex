@@ -1,4 +1,4 @@
-//! A compact status or metadata pill (shadcn Badge): a short label and
+//! A compact status or metadata pill: a short label and
 //! optional leading icon, styled purely from `Variant` and `Size`.
 //!
 //! It is a read-only view function and holds no state.
@@ -10,9 +10,8 @@ const Theme = @import("Theme.zig");
 const Color = Theme.Color;
 const icons = @import("icons.zig");
 const text = @import("text.zig");
-const tree_zig = @import("tree.zig");
-const Tree = tree_zig.Tree;
-const Id = tree_zig.Id;
+const Tree = @import("Tree.zig");
+const Id = Tree.Id;
 
 pub const Variant = enum(u8) {
     /// Solid `primary` pill with `primary_foreground` text.
@@ -36,12 +35,12 @@ pub const Variant = enum(u8) {
 pub const Size = enum(u8) {
     /// Inline compact pill (`6×1` padding, `xs` text).
     sm,
-    /// Standard shadcn pill (`8×2` padding, `xs` text).
+    /// Standard pill (`8×2` padding, `xs` text).
     default,
     /// Hero/card pill (`10×3` padding, `sm_medium` text).
     lg,
 
-    pub fn padding(self: Size) tree_zig.Edges {
+    pub fn padding(self: Size) Tree.Edges {
         return switch (self) {
             .sm => .symmetric(6, 1),
             .default => .symmetric(8, 2),
@@ -132,7 +131,7 @@ fn look(theme: *const Theme, variant: Variant) Look {
 }
 
 /// Writes a pill badge into the innermost open box.
-pub fn view(tree: *Tree, theme: *const Theme, options: Options) tree_zig.Error!void {
+pub fn view(tree: *Tree, theme: *const Theme, options: Options) Tree.Error!void {
     assert(options.label.len > 0);
     const colors = look(theme, options.variant);
     const pill = try tree.open(.{

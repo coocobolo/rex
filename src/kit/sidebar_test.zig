@@ -3,12 +3,10 @@ const testing = std.testing;
 
 const Theme = @import("Theme.zig");
 const icons = @import("icons.zig");
-const layout = @import("layout.zig");
 const sidebar = @import("sidebar.zig");
 const text = @import("text.zig");
-const tree_zig = @import("tree.zig");
-const Rect = tree_zig.Rect;
-const Tree = tree_zig.Tree;
+const Tree = @import("Tree.zig");
+const Rect = Tree.Rect;
 
 const groups = [_]sidebar.Group{
     .{ .label = "General", .items = &.{
@@ -31,7 +29,7 @@ fn measurer() text.Measurer {
 }
 
 const Fixture = struct {
-    nodes: [sidebar.nodeMax(&groups) + 1]tree_zig.Node = undefined,
+    nodes: [sidebar.nodeMax(&groups) + 1]Tree.Node = undefined,
     lines: [sidebar.lineMax(&groups) + 8]text.Line = undefined,
     tree: Tree = undefined,
 
@@ -41,11 +39,11 @@ const Fixture = struct {
         const frame = try sidebar.begin(&self.tree, theme, &groups, state, .{ .padding = .all(24) });
         _ = try self.tree.text("Section", .{ .color = theme.foreground });
         try sidebar.end(&self.tree, theme, &groups, state, frame);
-        try layout.layout(&self.tree, measurer(), width, 600);
+        try self.tree.layout(measurer(), width, 600);
         return frame;
     }
 
-    fn node(self: *const Fixture, id: tree_zig.Id) ?*const tree_zig.Node {
+    fn node(self: *const Fixture, id: Tree.Id) ?*const Tree.Node {
         for (self.tree.items()) |*n| {
             if (n.box.id == id) return n;
         }

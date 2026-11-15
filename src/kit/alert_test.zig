@@ -3,9 +3,7 @@ const testing = std.testing;
 
 const Theme = @import("Theme.zig");
 const text = @import("text.zig");
-const tree_zig = @import("tree.zig");
-const Tree = tree_zig.Tree;
-const layout = @import("layout.zig").layout;
+const Tree = @import("Tree.zig");
 const alert = @import("alert.zig");
 
 const byte_width = 7;
@@ -80,11 +78,11 @@ test "alert: view centers at top, slides during enter, and hit-tests close butto
     } });
     _ = alert.update(&state, .{ .tick = Theme.duration / 2 });
 
-    var nodes: [alert.node_max]tree_zig.Node = undefined;
+    var nodes: [alert.node_max]Tree.Node = undefined;
     var lines: [alert.line_max]text.Line = undefined;
     var tree: Tree = .init(&nodes, &lines);
     const root = (try alert.view(&state, &tree, &Theme.dark)).?;
-    try layout(&tree, measurer, 800, 600);
+    try tree.layout(measurer, 800, 600);
     const before_y = tree.find(alert.card_id).?.rect.y;
     alert.place(&state, &tree, root);
     const after_y = tree.find(alert.card_id).?.rect.y;
@@ -124,11 +122,11 @@ test "alert: docked banner fills width with square corners" {
     };
     _ = alert.update(&state, .{ .show = .{ .kind = .warn, .title = "Docked" } });
 
-    var nodes: [alert.node_max]tree_zig.Node = undefined;
+    var nodes: [alert.node_max]Tree.Node = undefined;
     var lines: [alert.line_max]text.Line = undefined;
     var tree: Tree = .init(&nodes, &lines);
     const root = (try alert.view(&state, &tree, &Theme.dark)).?;
-    try layout(&tree, measurer, 800, 600);
+    try tree.layout(measurer, 800, 600);
     alert.place(&state, &tree, root);
 
     const card = tree.find(alert.card_id).?;
@@ -136,7 +134,7 @@ test "alert: docked banner fills width with square corners" {
     try testing.expectEqual(@as(f32, 800), card.rect.w);
     try testing.expectApproxEqAbs(@as(f32, 600), card.rect.y + card.rect.h, 0.5);
     try testing.expectEqual(@as(f32, 0), card.box.radius);
-    try testing.expectEqual(tree_zig.Edges.all(10), card.box.padding);
+    try testing.expectEqual(Tree.Edges.all(10), card.box.padding);
 }
 
 test "alert: bottom_right placement anchors at bottom right and slides upward" {
@@ -150,11 +148,11 @@ test "alert: bottom_right placement anchors at bottom right and slides upward" {
     _ = alert.update(&state, .{ .show = .{ .kind = .info, .title = "Note" } });
     _ = alert.update(&state, .{ .tick = Theme.duration / 2 });
 
-    var nodes: [alert.node_max]tree_zig.Node = undefined;
+    var nodes: [alert.node_max]Tree.Node = undefined;
     var lines: [alert.line_max]text.Line = undefined;
     var tree: Tree = .init(&nodes, &lines);
     const root = (try alert.view(&state, &tree, &Theme.dark)).?;
-    try layout(&tree, measurer, 800, 600);
+    try tree.layout(measurer, 800, 600);
     const before = tree.find(alert.card_id).?.rect;
     try testing.expectApproxEqAbs(@as(f32, 800 - 24), before.x + before.w, 0.5);
     try testing.expectApproxEqAbs(@as(f32, 600 - 24), before.y + before.h, 0.5);

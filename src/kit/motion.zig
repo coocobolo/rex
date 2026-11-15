@@ -30,13 +30,3 @@ pub fn progress(mode: Mode, elapsed_ms: u16) f32 {
         },
     }
 }
-
-test progress {
-    const testing = @import("std").testing;
-    try testing.expectEqual(0, progress(.full, 0));
-    try testing.expectEqual(0.875, progress(.full, Theme.duration / 2));
-    try testing.expectEqual(1, progress(.full, Theme.duration));
-    try testing.expectEqual(1, progress(.full, 60_000));
-    try testing.expectEqual(1, progress(.none, 0));
-    try testing.expectEqual(0, duration(.none));
-}

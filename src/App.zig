@@ -4100,7 +4100,7 @@ fn alertDialogMedia(icon: @import("config/overlay.zig").AlertDialog.Icon) alert_
     };
 }
 
-fn overlayAnchor(pos: @import("config/overlay.zig").Position) @import("kit/tree.zig").ScreenAnchor {
+fn overlayAnchor(pos: @import("config/overlay.zig").Position) @import("kit/Tree.zig").ScreenAnchor {
     return switch (pos) {
         .top_left => .top_left,
         .top_center => .top_center,

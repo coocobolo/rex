@@ -8,7 +8,7 @@ const keys = @import("../config/keys.zig");
 const host = @import("host.zig");
 const settings = @import("settings.zig");
 
-const Id = kit.tree.Id;
+const Id = kit.Tree.Id;
 
 fn measure(_: *anyopaque, bytes: []const u8, _: kit.text.Style, _: kit.text.Figures) f32 {
     return @as(f32, @floatFromInt(bytes.len)) * 8.0;
@@ -35,7 +35,7 @@ test "settings: every page fits node_max and line_max at narrow and wide sizes" 
     });
     defer settings.deinit(&state);
 
-    var nodes: [settings.node_max]kit.tree.Node = undefined;
+    var nodes: [settings.node_max]kit.Tree.Node = undefined;
     var lines: [settings.line_max]kit.text.Line = undefined;
 
     for ([_]bool{ false, true }) |ansi_open| {
@@ -44,9 +44,9 @@ test "settings: every page fits node_max and line_max at narrow and wide sizes" 
             _ = settings.update(&state, .{ .size = .{ .width = sz[0], .height = sz[1] } });
             for (0..@typeInfo(settings.Page).@"enum".fields.len) |page_idx| {
                 state.frame.current = @intCast(page_idx);
-                var tree = kit.tree.Tree.init(&nodes, &lines);
+                var tree = kit.Tree.init(&nodes, &lines);
                 try settings.view(&state, &tree, &kit.Theme.dark);
-                try kit.layout.layout(&tree, measurer, sz[0], sz[1]);
+                try tree.layout(measurer, sz[0], sz[1]);
             }
         }
     }
@@ -275,8 +275,8 @@ test "settings: Tab scrolls viewport when moving to an offscreen control" {
     const gpa = testing.allocator;
     const cfg = config_defaults.default;
     const Helper = struct {
-        var tree: kit.tree.Tree = undefined;
-        fn getRect(_: *const anyopaque, id: Id) ?kit.tree.Rect {
+        var tree: kit.Tree = undefined;
+        fn getRect(_: *const anyopaque, id: Id) ?kit.Tree.Rect {
             for (tree.nodes[0..tree.len]) |node| {
                 if (node.box.id == id) return node.rect;
             }
@@ -298,12 +298,12 @@ test "settings: Tab scrolls viewport when moving to an offscreen control" {
     // Narrow viewport height so bottom controls on Appearance are offscreen.
     _ = settings.update(&state, .{ .size = .{ .width = 1000, .height = 420 } });
 
-    var nodes: [settings.node_max]kit.tree.Node = undefined;
+    var nodes: [settings.node_max]kit.Tree.Node = undefined;
     var lines: [settings.line_max]kit.text.Line = undefined;
     const theme = kit.Theme.dark;
     Helper.tree = .init(&nodes, &lines);
     try settings.view(&state, &Helper.tree, &theme);
-    try kit.layout.layout(&Helper.tree, measurer, 1000, 420);
+    try Helper.tree.layout(measurer, 1000, 420);
 
     // Tab several times until focus moves past the bottom of the 420px viewport.
     for (0..10) |_| {
@@ -324,8 +324,8 @@ test "settings: theme select popup windows long list and saves selection" {
 
     const cfg = config_defaults.default;
     const Helper = struct {
-        var tree: kit.tree.Tree = undefined;
-        fn getRect(_: *const anyopaque, id: Id) ?kit.tree.Rect {
+        var tree: kit.Tree = undefined;
+        fn getRect(_: *const anyopaque, id: Id) ?kit.Tree.Rect {
             for (tree.nodes[0..tree.len]) |node| {
                 if (node.box.id == id) return node.rect;
             }
@@ -362,12 +362,12 @@ test "settings: theme select popup windows long list and saves selection" {
     }
     try testing.expect(state.open_select.?.top > 0);
 
-    var nodes: [settings.node_max]kit.tree.Node = undefined;
+    var nodes: [settings.node_max]kit.Tree.Node = undefined;
     var lines: [settings.line_max]kit.text.Line = undefined;
     const ui_theme = kit.Theme.dark;
     Helper.tree = .init(&nodes, &lines);
     try settings.view(&state, &Helper.tree, &ui_theme);
-    try kit.layout.layout(&Helper.tree, measurer, 960, 600);
+    try Helper.tree.layout(measurer, 960, 600);
 
     const sel_rect = Helper.getRect(undefined, Id.of("settings.choice").item(12)).?;
     try testing.expect(sel_rect.y + sel_rect.h <= 600);
@@ -484,11 +484,11 @@ test "settings: ANSI palette collapsible hides color0..15 by default and updates
     const c0_input_id = Id.of("settings.input").item(c0_idx);
     const font_file_idx = keyIndex(.font, "file");
 
-    var nodes: [settings.node_max]kit.tree.Node = undefined;
+    var nodes: [settings.node_max]kit.Tree.Node = undefined;
     var lines: [settings.line_max]kit.text.Line = undefined;
 
     {
-        var tree = kit.tree.Tree.init(&nodes, &lines);
+        var tree = kit.Tree.init(&nodes, &lines);
         try settings.view(&state, &tree, &kit.Theme.dark);
         try testing.expect(tree.find(toggle_id) != null);
         try testing.expect(tree.find(c0_input_id) == null);
@@ -510,7 +510,7 @@ test "settings: ANSI palette collapsible hides color0..15 by default and updates
     try testing.expectEqual(settings.Target.ansi_colors_toggle, state.focused);
 
     {
-        var tree = kit.tree.Tree.init(&nodes, &lines);
+        var tree = kit.Tree.init(&nodes, &lines);
         try settings.view(&state, &tree, &kit.Theme.dark);
         try testing.expect(tree.find(c0_input_id) != null);
     }
@@ -629,11 +629,11 @@ test "settings: ui.color_scheme renders as three-icon segmented control under Ap
     // Hover the Dark segment so the tree includes its tooltip as well.
     _ = settings.update(&state, .{ .pointer = .{ .id = dark_id } });
 
-    var nodes: [settings.node_max]kit.tree.Node = undefined;
+    var nodes: [settings.node_max]kit.Tree.Node = undefined;
     var lines: [settings.line_max]kit.text.Line = undefined;
-    var tree = kit.tree.Tree.init(&nodes, &lines);
+    var tree = kit.Tree.init(&nodes, &lines);
     try settings.view(&state, &tree, &kit.Theme.dark);
-    try kit.layout.layout(&tree, measurer, 960, 720);
+    try tree.layout(measurer, 960, 720);
 
     var general_count: usize = 0;
     var general_pos: ?usize = null;
@@ -701,7 +701,7 @@ test "settings: ui.color_scheme renders as three-icon segmented control under Ap
     // Hovering the monitor segment shows the clarifying tooltip.
     tree.reset();
     try settings.view(&state, &tree, settings.currentTheme(&state));
-    try kit.layout.layout(&tree, measurer, 960, 720);
+    try tree.layout(measurer, 960, 720);
     var saw_match_tooltip = false;
     for (tree.nodes[0..tree.len]) |node| {
         if (node.content == .text and std.mem.eql(u8, node.content.text.bytes, "Match terminal theme")) {
@@ -738,11 +738,11 @@ test "settings: scrollbar controls appear under Window & Shell and edit config" 
     state.frame.current = @intFromEnum(settings.Page.window_shell);
     _ = settings.update(&state, .{ .size = .{ .width = 960, .height = 720 } });
 
-    var nodes: [settings.node_max]kit.tree.Node = undefined;
+    var nodes: [settings.node_max]kit.Tree.Node = undefined;
     var lines: [settings.line_max]kit.text.Line = undefined;
-    var tree = kit.tree.Tree.init(&nodes, &lines);
+    var tree = kit.Tree.init(&nodes, &lines);
     try settings.view(&state, &tree, &kit.Theme.dark);
-    try kit.layout.layout(&tree, measurer, 960, 720);
+    try tree.layout(measurer, 960, 720);
 
     var saw_scrollbar = false;
     var saw_width = false;
@@ -816,11 +816,11 @@ test "settings: Overlays page groups toast, banner, modal, and alert dialog cont
     state.frame.current = @intFromEnum(settings.Page.overlays);
     _ = settings.update(&state, .{ .size = .{ .width = 960, .height = 720 } });
 
-    var nodes: [settings.node_max]kit.tree.Node = undefined;
+    var nodes: [settings.node_max]kit.Tree.Node = undefined;
     var lines: [settings.line_max]kit.text.Line = undefined;
-    var tree = kit.tree.Tree.init(&nodes, &lines);
+    var tree = kit.Tree.init(&nodes, &lines);
     try settings.view(&state, &tree, &kit.Theme.dark);
-    try kit.layout.layout(&tree, measurer, 960, 720);
+    try tree.layout(measurer, 960, 720);
 
     var toast_pos: ?usize = null;
     var banner_pos: ?usize = null;
@@ -879,11 +879,11 @@ test "settings: Overlays preview buttons trigger, lay out, and dismiss in-window
     state.frame.current = @intFromEnum(settings.Page.overlays);
     _ = settings.update(&state, .{ .size = .{ .width = 960, .height = 720 } });
 
-    var nodes: [settings.node_max]kit.tree.Node = undefined;
+    var nodes: [settings.node_max]kit.Tree.Node = undefined;
     var lines: [settings.line_max]kit.text.Line = undefined;
-    var tree = kit.tree.Tree.init(&nodes, &lines);
+    var tree = kit.Tree.init(&nodes, &lines);
     try settings.view(&state, &tree, &kit.Theme.dark);
-    try kit.layout.layout(&tree, measurer, 960, 720);
+    try tree.layout(measurer, 960, 720);
 
     var saw_toast_btn = false;
     var saw_banner_btn = false;
@@ -907,7 +907,7 @@ test "settings: Overlays preview buttons trigger, lay out, and dismiss in-window
     const toast_serial = state.preview_toast.entries[0].serial;
     tree.reset();
     try settings.view(&state, &tree, &kit.Theme.dark);
-    try kit.layout.layout(&tree, measurer, 960, 720);
+    try tree.layout(measurer, 960, 720);
     settings.place(&state, &tree);
     try testing.expect(tree.find(kit.toast.cardId(toast_serial)) != null);
 
@@ -923,7 +923,7 @@ test "settings: Overlays preview buttons trigger, lay out, and dismiss in-window
 
     tree.reset();
     try settings.view(&state, &tree, &kit.Theme.dark);
-    try kit.layout.layout(&tree, measurer, 960, 720);
+    try tree.layout(measurer, 960, 720);
     settings.place(&state, &tree);
     try testing.expect(tree.find(kit.alert.card_id) != null);
 
@@ -942,7 +942,7 @@ test "settings: Overlays preview buttons trigger, lay out, and dismiss in-window
 
     tree.reset();
     try settings.view(&state, &tree, &kit.Theme.dark);
-    try kit.layout.layout(&tree, measurer, 960, 720);
+    try tree.layout(measurer, 960, 720);
     settings.place(&state, &tree);
     try testing.expect(tree.find(kit.alert_dialog.card_id) != null);
     try testing.expect(tree.find(kit.alert_dialog.scrim_id) != null);
@@ -1053,8 +1053,8 @@ test "settings: clicking select value label opens and switches directly between 
     defer gpa.free(cfg_path);
 
     const Helper = struct {
-        var tree: kit.tree.Tree = undefined;
-        fn getRect(_: *const anyopaque, id: Id) ?kit.tree.Rect {
+        var tree: kit.Tree = undefined;
+        fn getRect(_: *const anyopaque, id: Id) ?kit.Tree.Rect {
             return if (tree.find(id)) |n| n.rect else null;
         }
     };
@@ -1080,11 +1080,11 @@ test "settings: clicking select value label opens and switches directly between 
     state.frame.current = @intFromEnum(settings.Page.overlays);
     _ = settings.update(&state, .{ .size = .{ .width = 360, .height = 2000 } });
 
-    var nodes: [settings.node_max]kit.tree.Node = undefined;
+    var nodes: [settings.node_max]kit.Tree.Node = undefined;
     var lines: [settings.line_max]kit.text.Line = undefined;
     Helper.tree = .init(&nodes, &lines);
     try settings.view(&state, &Helper.tree, &kit.Theme.dark);
-    try kit.layout.layout(&Helper.tree, measurer, 360, 2000);
+    try Helper.tree.layout(measurer, 360, 2000);
 
     const pos_idx = keyIndex(.toast, "position");
     const place_idx = keyIndex(.banner, "placement");
@@ -1107,7 +1107,7 @@ test "settings: clicking select value label opens and switches directly between 
     // Rebuild with popup open; clicking directly onto Banner Placement switches dropdowns in one click.
     Helper.tree = .init(&nodes, &lines);
     try settings.view(&state, &Helper.tree, &kit.Theme.dark);
-    try kit.layout.layout(&Helper.tree, measurer, 360, 2000);
+    try Helper.tree.layout(measurer, 360, 2000);
 
     const layer = Helper.tree.hitTest(place_rect.x + 18, place_rect.y + place_rect.h / 2);
     try testing.expectEqual(Id.of("settings.layer"), layer);

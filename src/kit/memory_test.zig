@@ -1,7 +1,7 @@
 const std = @import("std");
 const testing = std.testing;
 
-const Id = @import("tree.zig").Id;
+const Id = @import("Tree.zig").Id;
 const memory = @import("memory.zig");
 
 test "Table: a value is kept while its id is written each frame" {

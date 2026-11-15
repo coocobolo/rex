@@ -4,9 +4,7 @@ const testing = std.testing;
 const Theme = @import("Theme.zig");
 const icons = @import("icons.zig");
 const text = @import("text.zig");
-const tree_zig = @import("tree.zig");
-const Tree = tree_zig.Tree;
-const layout = @import("layout.zig").layout;
+const Tree = @import("Tree.zig");
 const widget = @import("wellbeing_widget.zig");
 
 const byte_width = 7;
@@ -19,7 +17,7 @@ var no_state: u8 = 0;
 const measurer: text.Measurer = .{ .context = &no_state, .widthFn = fixedWidth };
 
 const Fixture = struct {
-    nodes: [widget.node_max]tree_zig.Node = undefined,
+    nodes: [widget.node_max]Tree.Node = undefined,
     lines: [widget.line_max]text.Line = undefined,
 
     fn tree(self: *Fixture) Tree {
@@ -27,7 +25,7 @@ const Fixture = struct {
     }
 };
 
-fn findNode(tree: *const Tree, id: tree_zig.Id) ?tree_zig.Rect {
+fn findNode(tree: *const Tree, id: Tree.Id) ?Tree.Rect {
     for (tree.nodes[0..tree.len]) |node| {
         if (node.box.id == id) return node.rect;
     }
@@ -57,7 +55,7 @@ test "wellbeing_widget: hidden produces no nodes and sync updates only on change
     try testing.expectEqual(widget.Outcome.redraw, widget.update(&state, .toggle_visible));
     try testing.expect(state.visible);
     const root = (try widget.view(&state, &tree, &Theme.dark, 800, 600)).?;
-    try layout(&tree, measurer, 800, 600);
+    try tree.layout(measurer, 800, 600);
     widget.place(&state, &tree, root, 800, 600);
     // Default position sits near the top-right corner.
     try testing.expect(tree.nodes[root].rect.x > 400);
@@ -73,7 +71,7 @@ test "wellbeing_widget: drag move and aspect-locked corner resize keep top-left 
         var fixture: Fixture = .{};
         var tree = fixture.tree();
         const root = (try widget.view(&state, &tree, &Theme.dark, 800, 600)).?;
-        try layout(&tree, measurer, 800, 600);
+        try tree.layout(measurer, 800, 600);
         widget.place(&state, &tree, root, 800, 600);
     }
     const anchored_x = state.x;
@@ -112,7 +110,7 @@ test "wellbeing_widget: drag move and aspect-locked corner resize keep top-left 
     var fixture: Fixture = .{};
     var tree = fixture.tree();
     const root = (try widget.view(&state, &tree, &Theme.dark, 300, 200)).?;
-    try layout(&tree, measurer, 300, 200);
+    try tree.layout(measurer, 300, 200);
     state.x = 999;
     state.y = 999;
     widget.place(&state, &tree, root, 300, 200);
@@ -160,7 +158,7 @@ test "wellbeing_widget: square mini scales cleanly and horizontal supports mini 
             var fixture: Fixture = .{};
             var tree = fixture.tree();
             const root = (try widget.view(&state, &tree, theme, case.vw, case.vh)).?;
-            try layout(&tree, measurer, case.vw, case.vh);
+            try tree.layout(measurer, case.vw, case.vh);
             widget.place(&state, &tree, root, case.vw, case.vh);
 
             const card_rect = tree.nodes[root].rect;
@@ -221,7 +219,7 @@ test "wellbeing_widget: outer border hides when unfocused and stays neutral on f
         var fixture: Fixture = .{};
         var tree = fixture.tree();
         const root = (try widget.view(&state, &tree, &Theme.dark, 800, 600)).?;
-        try layout(&tree, measurer, 800, 600);
+        try tree.layout(measurer, 800, 600);
         widget.place(&state, &tree, root, 800, 600);
 
         // Resizing card border and tile border must never tint with blue info accent.
@@ -301,7 +299,7 @@ test "wellbeing_widget: play_pause box drags past threshold and horizontal timer
     var fixture: Fixture = .{};
     var tree = fixture.tree();
     const root = (try widget.view(&state, &tree, &Theme.dark, 800, 600)).?;
-    try layout(&tree, measurer, 800, 600);
+    try tree.layout(measurer, 800, 600);
     widget.place(&state, &tree, root, 800, 600);
 
     const tile_rect = findNode(&tree, widget.play_pause_id).?;
@@ -356,7 +354,7 @@ test "wellbeing_widget: mini uses full space for foreground time with phase-colo
         var fixture: Fixture = .{};
         var tree = fixture.tree();
         const root = (try widget.view(&state, &tree, &Theme.dark, 800, 600)).?;
-        try layout(&tree, measurer, 800, 600);
+        try tree.layout(measurer, 800, 600);
         widget.place(&state, &tree, root, 800, 600);
 
         const play_rect = findNode(&tree, widget.play_pause_id).?;
@@ -434,7 +432,7 @@ test "wellbeing_widget: hover tooltip shows phase and cycle only in mini while n
         var tree = fixture.tree();
         const root = (try widget.view(&state, &tree, &Theme.dark, 800, 600)).?;
         const tip = (try widget.viewTooltip(&state, &tree, &Theme.dark, 800, 600)).?;
-        try layout(&tree, measurer, 800, 600);
+        try tree.layout(measurer, 800, 600);
         widget.place(&state, &tree, root, 800, 600);
         widget.placeTooltip(&tree, root, tip, 800, 600);
 
@@ -480,7 +478,7 @@ test "wellbeing_widget: hover tooltip shows phase and cycle only in mini while n
         var tree = fixture.tree();
         const root = (try widget.view(&state, &tree, &Theme.dark, 800, 600)).?;
         const tip = (try widget.viewTooltip(&state, &tree, &Theme.dark, 800, 600)).?;
-        try layout(&tree, measurer, 800, 600);
+        try tree.layout(measurer, 800, 600);
         widget.place(&state, &tree, root, 800, 600);
         widget.placeTooltip(&tree, root, tip, 800, 600);
 
@@ -571,7 +569,7 @@ test "wellbeing_widget: tooltip picks below/above/left/right side cleanly with f
         var tree = fixture.tree();
         const root = (try widget.view(&state, &tree, &Theme.dark, c.vw, c.vh)).?;
         const tip = (try widget.viewTooltip(&state, &tree, &Theme.dark, c.vw, c.vh)).?;
-        try layout(&tree, measurer, c.vw, c.vh);
+        try tree.layout(measurer, c.vw, c.vh);
         widget.place(&state, &tree, root, c.vw, c.vh);
         widget.placeTooltip(&tree, root, tip, c.vw, c.vh);
 

@@ -9,10 +9,9 @@ const std = @import("std");
 const Theme = @import("Theme.zig");
 const button = @import("button.zig");
 const motion = @import("motion.zig");
-const tree_zig = @import("tree.zig");
-const Tree = tree_zig.Tree;
-const Id = tree_zig.Id;
-const Index = tree_zig.Index;
+const Tree = @import("Tree.zig");
+const Id = Tree.Id;
+const Index = Tree.Index;
 
 /// Inside the card.
 pub const padding = 24;
@@ -140,7 +139,7 @@ pub const Position = enum(u8) {
     top_center,
     bottom_center,
 
-    fn mainAlign(self: Position) tree_zig.Align {
+    fn mainAlign(self: Position) Tree.Align {
         return switch (self) {
             .center => .center,
             .top_center => .start,
@@ -175,7 +174,7 @@ pub const node_max = 4;
 
 /// Starts a root, the scrim, and the card on it. What is written until
 /// `close` is the card's content, top to bottom.
-pub fn open(tree: *Tree, theme: *const Theme, options: Options) tree_zig.Error!Frame {
+pub fn open(tree: *Tree, theme: *const Theme, options: Options) Tree.Error!Frame {
     return openScrimCard(tree, theme, options, .all(options.padding), options.gap);
 }
 
@@ -185,9 +184,9 @@ pub fn openScrimCard(
     tree: *Tree,
     theme: *const Theme,
     options: Options,
-    card_padding: tree_zig.Edges,
+    card_padding: Tree.Edges,
     card_gap: u8,
-) tree_zig.Error!Frame {
+) Tree.Error!Frame {
     const scrim_base: Theme.Color = if (options.scrim_alpha) |alpha|
         .{ .r = theme.scrim.r, .g = theme.scrim.g, .b = theme.scrim.b, .a = alpha }
     else
@@ -215,7 +214,7 @@ pub fn openScrimCard(
 }
 
 /// Full-width 1 px horizontal divider for edge-to-edge card sections.
-pub fn separator(tree: *Tree, theme: *const Theme, presence: f32) tree_zig.Error!void {
+pub fn separator(tree: *Tree, theme: *const Theme, presence: f32) Tree.Error!void {
     _ = try tree.leaf(.{
         .width = .fill,
         .height = .{ .fixed = Theme.border_width },
@@ -230,13 +229,13 @@ pub fn close(tree: *Tree, frame: Frame) void {
 
 /// Starts the header: `title`, then `description` if there is one. End it
 /// with `Tree.close`.
-pub fn header(tree: *Tree) tree_zig.Error!Index {
+pub fn header(tree: *Tree) Tree.Error!Index {
     return tree.open(.{ .width = .fill, .gap = header_gap });
 }
 
 /// What the dialog asks or says, in a few words. `presence` is
 /// `Phase.presence`, as for `description`.
-pub fn title(tree: *Tree, theme: *const Theme, bytes: []const u8, presence: f32) tree_zig.Error!void {
+pub fn title(tree: *Tree, theme: *const Theme, bytes: []const u8, presence: f32) Tree.Error!void {
     _ = try tree.text(bytes, .{
         .color = theme.foreground.fade(presence),
         .style = .lg_semibold,
@@ -246,7 +245,7 @@ pub fn title(tree: *Tree, theme: *const Theme, bytes: []const u8, presence: f32)
 
 /// What the title leaves open. Wraps to the card; a line feed starts a new
 /// line.
-pub fn description(tree: *Tree, theme: *const Theme, bytes: []const u8, presence: f32) tree_zig.Error!void {
+pub fn description(tree: *Tree, theme: *const Theme, bytes: []const u8, presence: f32) Tree.Error!void {
     _ = try tree.text(bytes, .{
         .color = theme.muted_foreground.fade(presence),
         .width = .fill,
@@ -256,21 +255,21 @@ pub fn description(tree: *Tree, theme: *const Theme, bytes: []const u8, presence
 /// Starts the footer: buttons left to right, pushed to the right edge. By
 /// convention the action the dialog is about comes last. End it with
 /// `Tree.close`.
-pub fn footer(tree: *Tree) tree_zig.Error!Index {
+pub fn footer(tree: *Tree) Tree.Error!Index {
     return footerPadded(tree, .zero);
 }
 
 /// Starts the footer with explicit inner padding inside a zero-padded card.
-pub fn footerPadded(tree: *Tree, card_padding: tree_zig.Edges) tree_zig.Error!Index {
+pub fn footerPadded(tree: *Tree, card_padding: Tree.Edges) Tree.Error!Index {
     return footerBox(tree, card_padding, .row);
 }
 
 /// Starts a vertically stacked footer with full-width button slots for narrow cards.
-pub fn footerColumn(tree: *Tree, card_padding: tree_zig.Edges) tree_zig.Error!Index {
+pub fn footerColumn(tree: *Tree, card_padding: Tree.Edges) Tree.Error!Index {
     return footerBox(tree, card_padding, .column);
 }
 
-fn footerBox(tree: *Tree, card_padding: tree_zig.Edges, axis: tree_zig.Axis) tree_zig.Error!Index {
+fn footerBox(tree: *Tree, card_padding: Tree.Edges, axis: Tree.Axis) Tree.Error!Index {
     return tree.open(.{
         .axis = axis,
         .width = .fill,

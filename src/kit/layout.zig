@@ -19,12 +19,11 @@ const std = @import("std");
 const assert = std.debug.assert;
 
 const text = @import("text.zig");
-const tree_zig = @import("tree.zig");
-const Tree = tree_zig.Tree;
-const Node = tree_zig.Node;
-const Index = tree_zig.Index;
-const Rect = tree_zig.Rect;
-const Size = tree_zig.Size;
+const Tree = @import("Tree.zig");
+const Node = Tree.Node;
+const Index = Tree.Index;
+const Rect = Tree.Rect;
+const Size = Tree.Size;
 
 pub const Error = error{OutOfLines};
 
@@ -32,9 +31,10 @@ pub const Error = error{OutOfLines};
 /// `viewport_height` logical pixels. Every box must be closed.
 ///
 /// Roots are laid out one after another in drawing order, so an anchored
-/// root (`Tree.anchorTo`) finds its anchor already placed.
-pub fn layout(tree: *Tree, measurer: text.Measurer, viewport_width: f32, viewport_height: f32) Error!void {
-    assert(tree.current == tree_zig.none);
+/// root (`Tree.anchorTo`) finds its anchor already placed. Callers usually
+/// invoke this via `Tree.layout`.
+pub fn run(tree: *Tree, measurer: text.Measurer, viewport_width: f32, viewport_height: f32) Error!void {
+    assert(tree.current == Tree.none);
     tree.lines.len = 0;
     const nodes = tree.nodes[0..tree.len];
     var root: Index = 0;
@@ -110,7 +110,7 @@ fn clamp(value: f32, low: f32, high: f32) f32 {
     return @max(low, @min(value, high));
 }
 
-fn findBefore(nodes: []const Node, end: Index, id: tree_zig.Id) ?*const Node {
+fn findBefore(nodes: []const Node, end: Index, id: Tree.Id) ?*const Node {
     if (id == .none) return null;
     for (nodes[0..end]) |*node| {
         if (node.box.id == id) return node;
@@ -200,7 +200,7 @@ fn fit(nodes: []Node, range: Range, comptime dimension: Dimension, measurer: tex
             },
             .icon => |icon| @floatFromInt(icon.size),
             .arc => |arc| arc.radius * 2,
-            .box => contentExtent(nodes, i, dimension),
+            .box, .dash => contentExtent(nodes, i, dimension),
         };
         extent(node, dimension).* = switch (size(node, dimension)) {
             .fixed, .at_most => |value| value,
@@ -324,7 +324,7 @@ fn wrapTexts(tree: *Tree, range: Range, measurer: text.Measurer) Error!void {
                 t.line_count = try text.wrap(measurer, t.bytes, t.style, t.figures, node.rect.w, &tree.lines);
                 node.rect.h = @floatFromInt(t.line_count * t.style.metrics().line_height);
             },
-            .box, .icon, .arc => {},
+            .box, .dash, .icon, .arc => {},
         }
     }
 }
@@ -383,7 +383,7 @@ fn clamp01(value: f32) f32 {
     return @min(1, @max(0, value));
 }
 
-fn offset(alignment: tree_zig.Align, free: f32) f32 {
+fn offset(alignment: Tree.Align, free: f32) f32 {
     return switch (alignment) {
         .start => 0,
         .center => free / 2,

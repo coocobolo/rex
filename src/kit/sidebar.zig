@@ -17,10 +17,9 @@ const assert = std.debug.assert;
 const Theme = @import("Theme.zig");
 const icons = @import("icons.zig");
 const focus = @import("focus.zig");
-const tree_zig = @import("tree.zig");
-const Tree = tree_zig.Tree;
-const Id = tree_zig.Id;
-const Index = tree_zig.Index;
+const Tree = @import("Tree.zig");
+const Id = Tree.Id;
+const Index = Tree.Index;
 
 /// The column's width in logical pixels.
 pub const width = 256;
@@ -259,7 +258,7 @@ pub const Frame = struct {
 };
 
 pub const SectionOptions = struct {
-    padding: tree_zig.Edges = .zero,
+    padding: Tree.Edges = .zero,
     /// Between the section's children.
     gap: u8 = 0,
 };
@@ -272,7 +271,7 @@ pub fn begin(
     groups: []const Group,
     state: *const State,
     section: SectionOptions,
-) tree_zig.Error!Frame {
+) Tree.Error!Frame {
     const root = try tree.open(.{
         .axis = .row,
         .width = .fill,
@@ -295,7 +294,7 @@ pub fn begin(
 
 /// Closes what `begin` opened and, in a narrow window, writes the column
 /// over the pane, with the rest of the pane dimmed.
-pub fn end(tree: *Tree, theme: *const Theme, groups: []const Group, state: *const State, frame: Frame) tree_zig.Error!void {
+pub fn end(tree: *Tree, theme: *const Theme, groups: []const Group, state: *const State, frame: Frame) Tree.Error!void {
     tree.close(frame.section);
     tree.close(frame.pane);
     tree.close(frame.root);
@@ -308,7 +307,7 @@ pub fn end(tree: *Tree, theme: *const Theme, groups: []const Group, state: *cons
 }
 
 /// The column of `groups` and the line on its right edge.
-fn column(tree: *Tree, theme: *const Theme, groups: []const Group, state: *const State) tree_zig.Error!void {
+fn column(tree: *Tree, theme: *const Theme, groups: []const Group, state: *const State) Tree.Error!void {
     const box = try tree.open(.{
         .width = .{ .fixed = width },
         .height = .fill,
@@ -345,7 +344,7 @@ fn column(tree: *Tree, theme: *const Theme, groups: []const Group, state: *const
     });
 }
 
-fn menuButton(tree: *Tree, theme: *const Theme, item: Item, index: u8, state: *const State) tree_zig.Error!void {
+fn menuButton(tree: *Tree, theme: *const Theme, item: Item, index: u8, state: *const State) Tree.Error!void {
     const active = state.current == index;
     const hovered = std.meta.eql(state.hover, Target{ .item = index });
     const face = try tree.open(.{
@@ -372,7 +371,7 @@ fn menuButton(tree: *Tree, theme: *const Theme, item: Item, index: u8, state: *c
     tree.close(face);
 }
 
-fn toggleButton(tree: *Tree, theme: *const Theme, state: *const State) tree_zig.Error!void {
+fn toggleButton(tree: *Tree, theme: *const Theme, state: *const State) Tree.Error!void {
     const face = try tree.open(.{
         .id = toggle_id,
         .pointer = .hand,

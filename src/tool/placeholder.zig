@@ -12,8 +12,8 @@ const host = @import("host.zig");
 const sidebar = kit.sidebar;
 const popup = kit.popup;
 const Theme = kit.Theme;
-const Tree = kit.tree.Tree;
-const Id = kit.tree.Id;
+const Tree = kit.Tree;
+const Id = kit.Tree.Id;
 
 /// Names the lock file and the window.
 pub const name = "tool";
@@ -165,7 +165,7 @@ fn choose(state: *State, index: u8) void {
     state.dropdown = .closed;
 }
 
-pub fn view(state: *const State, tree: *Tree, theme: *const Theme) kit.tree.Error!void {
+pub fn view(state: *const State, tree: *Tree, theme: *const Theme) kit.Tree.Error!void {
     const frame = try sidebar.begin(tree, theme, &groups, &state.frame, .{ .padding = .symmetric(24, 0), .gap = 8 });
     _ = try tree.text(labels[state.frame.current], .{
         .color = theme.foreground,
@@ -196,7 +196,7 @@ pub fn view(state: *const State, tree: *Tree, theme: *const Theme) kit.tree.Erro
     }
 }
 
-fn dropdownRow(state: *const State, tree: *Tree, theme: *const Theme) kit.tree.Error!void {
+fn dropdownRow(state: *const State, tree: *Tree, theme: *const Theme) kit.Tree.Error!void {
     const row = try tree.open(.{ .axis = .row, .gap = 16, .cross = .center });
     _ = try tree.text(choice_label, .{ .color = theme.foreground, .style = .sm_medium });
     const touched = state.hover == .trigger or state.dropdown == .open;
@@ -285,7 +285,7 @@ test "placeholder: the dropdown opens on release, chooses, and closes beside the
 
 test "placeholder: the worst view fits its buffers" {
     const testing = std.testing;
-    var nodes: [node_max]kit.tree.Node = undefined;
+    var nodes: [node_max]kit.Tree.Node = undefined;
     var lines: [line_max]kit.text.Line = undefined;
     var tree = Tree.init(&nodes, &lines);
     var state: State = .empty;

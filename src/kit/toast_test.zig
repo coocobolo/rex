@@ -3,9 +3,7 @@ const testing = std.testing;
 
 const Theme = @import("Theme.zig");
 const text = @import("text.zig");
-const tree_zig = @import("tree.zig");
-const Tree = tree_zig.Tree;
-const layout = @import("layout.zig").layout;
+const Tree = @import("Tree.zig");
 const memory = @import("memory.zig");
 const toast = @import("toast.zig");
 const State = toast.State;
@@ -158,7 +156,7 @@ test "toast: long texts are cut between code points" {
 }
 
 const Fixture = struct {
-    nodes: [toast.node_max]tree_zig.Node = undefined,
+    nodes: [toast.node_max]Tree.Node = undefined,
     lines: [32]text.Line = undefined,
     table: memory.Table = .empty,
 
@@ -170,12 +168,12 @@ const Fixture = struct {
     fn frame(self: *Fixture, tree_: *Tree, state: *const State, dt_ms: u32) !toast.Motion {
         tree_.reset();
         const stack = try toast.view(state, tree_, &Theme.dark);
-        try layout(tree_, measurer, 1000, 700);
+        try tree_.layout(measurer, 1000, 700);
         return toast.place(state, tree_, stack, &self.table, dt_ms);
     }
 };
 
-fn cardRect(tree: *const Tree, serial: u32) ?tree_zig.Rect {
+fn cardRect(tree: *const Tree, serial: u32) ?Tree.Rect {
     for (tree.items()) |node| {
         if (node.box.id == toast.cardId(serial)) return node.rect;
     }
@@ -206,8 +204,8 @@ test "toast view: cards sit bottom right, the newest lowest, with hit targets" {
 
     // One title line plus padding; the newer has a description line too.
     // Right edge at 1000 - 24, bottom edge at 700 - 24, 14 between them.
-    try testing.expectEqual(tree_zig.Rect{ .x = 620, .y = 604, .w = 356, .h = 72 }, cardRect(&tree, newer).?);
-    try testing.expectEqual(tree_zig.Rect{ .x = 620, .y = 538, .w = 356, .h = 52 }, cardRect(&tree, older).?);
+    try testing.expectEqual(Tree.Rect{ .x = 620, .y = 604, .w = 356, .h = 72 }, cardRect(&tree, newer).?);
+    try testing.expectEqual(Tree.Rect{ .x = 620, .y = 538, .w = 356, .h = 52 }, cardRect(&tree, older).?);
 
     // The close button is the 20 px square at the card's top right.
     try testing.expectEqual(toast.Hit{ .close = older }, state.hit(tree.hitTest(950, 564)));
@@ -302,7 +300,7 @@ test "toast: with motion off it appears, leaves and moves at once" {
 }
 
 test "toast view: more nodes than the array holds is an error" {
-    var nodes: [toast.node_max - 1]tree_zig.Node = undefined;
+    var nodes: [toast.node_max - 1]Tree.Node = undefined;
     var lines: [32]text.Line = undefined;
     var tree: Tree = .init(&nodes, &lines);
     var state: State = .empty;
@@ -367,7 +365,7 @@ test "toast view: shrinks to fit narrow windows inside margin" {
     const serial = state.entries[0].serial;
 
     const stack = try toast.view(&state, &tree, &Theme.dark);
-    try layout(&tree, measurer, 360, 400);
+    try tree.layout(measurer, 360, 400);
     _ = try toast.place(&state, &tree, stack, &fixture.table, 0);
 
     const card = cardRect(&tree, serial).?;

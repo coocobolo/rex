@@ -11,9 +11,8 @@ const std = @import("std");
 
 const Theme = @import("Theme.zig");
 const Color = Theme.Color;
-const tree_zig = @import("tree.zig");
-const Tree = tree_zig.Tree;
-const Id = tree_zig.Id;
+const Tree = @import("Tree.zig");
+const Id = Tree.Id;
 
 /// Thickness of a progress bar unless the caller gives one.
 pub const thickness = 8;
@@ -88,7 +87,7 @@ pub fn donutNodes(count: usize) usize {
 /// A track and the fraction of it that `fraction` fills. Values outside
 /// 0..1 are clamped. `bar_height` is the bar's thickness; a ring keeps its
 /// own.
-pub fn progress(tree: *Tree, theme: *const Theme, mark: ProgressMark, fraction: f32, fill: Color, bar_height: f32) tree_zig.Error!void {
+pub fn progress(tree: *Tree, theme: *const Theme, mark: ProgressMark, fraction: f32, fill: Color, bar_height: f32) Tree.Error!void {
     switch (mark) {
         .bar => try fractionBar(tree, theme.muted, fill, fraction, bar_height),
         .ring => try ringChart(tree, theme, fraction, fill),
@@ -97,7 +96,7 @@ pub fn progress(tree: *Tree, theme: *const Theme, mark: ProgressMark, fraction: 
 
 /// Each part's share of the sum: one strip cut into segments, or a donut.
 /// The names are not drawn; the surface lists them beside the chart.
-pub fn share(tree: *Tree, theme: *const Theme, mark: ShareMark, parts: []const Part) tree_zig.Error!void {
+pub fn share(tree: *Tree, theme: *const Theme, mark: ShareMark, parts: []const Part) Tree.Error!void {
     _ = theme;
     switch (mark) {
         .bar => try shareStrip(tree, parts),
@@ -108,13 +107,13 @@ pub fn share(tree: *Tree, theme: *const Theme, mark: ShareMark, parts: []const P
 /// One column per day, as tall as the parent gives the row. `part` sits at
 /// the bottom of `total`. `limit` is in the same unit as `total`; null
 /// draws no line. The line spans the chart at the limit's height.
-pub fn days(tree: *Tree, theme: *const Theme, mark: DayMark, items: []const Day, limit: ?Limit) tree_zig.Error!void {
+pub fn days(tree: *Tree, theme: *const Theme, mark: DayMark, items: []const Day, limit: ?Limit) Tree.Error!void {
     switch (mark) {
         .bar => try dayBars(tree, theme, items, limit),
     }
 }
 
-fn fractionBar(tree: *Tree, track: Color, fill: Color, fraction: f32, height: f32) tree_zig.Error!void {
+fn fractionBar(tree: *Tree, track: Color, fill: Color, fraction: f32, height: f32) Tree.Error!void {
     const bar = try tree.open(.{
         .width = .fill,
         .height = .{ .fixed = height },
@@ -134,7 +133,7 @@ fn fractionBar(tree: *Tree, track: Color, fill: Color, fraction: f32, height: f3
 /// after each one but the last is padding inside its slot, so the
 /// fractions add up to the strip whatever its width. A segment is rounded
 /// on its own: a clip would cut the strip's corners square.
-fn shareStrip(tree: *Tree, parts: []const Part) tree_zig.Error!void {
+fn shareStrip(tree: *Tree, parts: []const Part) Tree.Error!void {
     var sum: f32 = 0;
     for (parts) |part| sum += finite(part.value);
     const strip = try tree.open(.{ .axis = .row, .width = .fill, .height = .{ .fixed = strip_height } });
@@ -157,7 +156,7 @@ const day_radius = 6;
 /// Room around the bar inside its column, where the slot shows.
 pub const slot_pad = 2;
 
-fn dayBars(tree: *Tree, theme: *const Theme, items: []const Day, limit: ?Limit) tree_zig.Error!void {
+fn dayBars(tree: *Tree, theme: *const Theme, items: []const Day, limit: ?Limit) Tree.Error!void {
     var scale: f32 = if (limit) |lim| finite(lim.value) else 0;
     for (items) |day| scale = @max(scale, finite(day.total));
     const group = try tree.open(.{
@@ -186,7 +185,7 @@ fn dayBars(tree: *Tree, theme: *const Theme, items: []const Day, limit: ?Limit) 
             _ = try tree.text(lim.label, .{ .color = theme.muted_foreground, .style = .xs });
             tree.close(label_box);
         }
-        _ = try tree.leaf(.{ .width = .fill, .height = .{ .fixed = 1 }, .fill = theme.border, .dash = 3 });
+        _ = try tree.dash(.{ .color = theme.border, .step = 3 }, .{ .width = .fill, .height = .{ .fixed = 1 } });
         _ = try tree.leaf(.{ .width = .fill, .height = .{ .fraction = if (scale == 0) 0 else finite(lim.value) / scale } });
         tree.close(overlay);
     }
@@ -195,7 +194,7 @@ fn dayBars(tree: *Tree, theme: *const Theme, items: []const Day, limit: ?Limit) 
 
 /// A column the row's height. Its bar stands on the baseline at `total`
 /// of the scale, the part inside it at `part` of the bar.
-fn dayColumn(tree: *Tree, day: Day, scale: f32) tree_zig.Error!void {
+fn dayColumn(tree: *Tree, day: Day, scale: f32) Tree.Error!void {
     const column = try tree.open(.{
         .id = day.id,
         .width = .fill,
@@ -225,7 +224,7 @@ fn dayColumn(tree: *Tree, day: Day, scale: f32) tree_zig.Error!void {
 
 const turn = std.math.tau;
 
-fn ringChart(tree: *Tree, theme: *const Theme, fraction: f32, fill: Color) tree_zig.Error!void {
+fn ringChart(tree: *Tree, theme: *const Theme, fraction: f32, fill: Color) Tree.Error!void {
     const side = ring_radius * 2;
     const square = try tree.open(.{
         .width = .{ .fixed = side },
@@ -247,7 +246,7 @@ fn ringChart(tree: *Tree, theme: *const Theme, fraction: f32, fill: Color) tree_
     tree.close(square);
 }
 
-fn donutChart(tree: *Tree, parts: []const Part) tree_zig.Error!void {
+fn donutChart(tree: *Tree, parts: []const Part) Tree.Error!void {
     const side = donut_radius * 2;
     const square = try tree.open(.{
         .width = .{ .fixed = side },
@@ -274,7 +273,7 @@ fn donutChart(tree: *Tree, parts: []const Part) tree_zig.Error!void {
     tree.close(square);
 }
 
-fn segment(tree: *Tree, arc: tree_zig.Arc, id: tree_zig.Id) tree_zig.Error!void {
+fn segment(tree: *Tree, arc: Tree.Arc, id: Tree.Id) Tree.Error!void {
     _ = try tree.arc(arc, .{ .id = id, .overlay = true, .width = .fill, .height = .fill });
 }
 

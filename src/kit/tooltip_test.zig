@@ -4,10 +4,9 @@ const Theme = @import("Theme.zig");
 const layout = @import("layout.zig");
 const text = @import("text.zig");
 const tooltip = @import("tooltip.zig");
-const tree_zig = @import("tree.zig");
-const Rect = tree_zig.Rect;
-const Tree = tree_zig.Tree;
-const Id = tree_zig.Id;
+const Tree = @import("Tree.zig");
+const Rect = Tree.Rect;
+const Id = Tree.Id;
 
 const page_id = Id.of("test.page");
 const bar_id = Id.of("test.bar");
@@ -23,10 +22,10 @@ fn measurer() text.Measurer {
 }
 
 const Fixture = struct {
-    nodes: [24]tree_zig.Node = undefined,
+    nodes: [24]Tree.Node = undefined,
     lines: [8]text.Line = undefined,
     tree: Tree = undefined,
-    card: tree_zig.Index = 0,
+    card: Tree.Index = 0,
 
     fn build(self: *Fixture, x: u8, y: u8, width: f32, height: f32) !void {
         const theme = &Theme.dark;
@@ -37,7 +36,7 @@ const Fixture = struct {
         self.card = try tooltip.open(&self.tree, theme, bar_id);
         try tooltip.line(&self.tree, theme, .{ .name = "Focus", .value = "2h", .swatch = theme.primary });
         tooltip.close(&self.tree, self.card);
-        try layout.layout(&self.tree, measurer(), width, height);
+        try self.tree.layout(measurer(), width, height);
     }
 };
 
@@ -70,10 +69,10 @@ test "tooltip: a hit on the card falls through to the page" {
 }
 
 test "tooltip: a view holds anchor_max tooltips" {
-    var nodes: [tree_zig.anchor_max + 1]tree_zig.Node = undefined;
+    var nodes: [Tree.anchor_max + 1]Tree.Node = undefined;
     var lines: [1]text.Line = undefined;
     var tree = Tree.init(&nodes, &lines);
-    for (0..tree_zig.anchor_max) |_| {
+    for (0..Tree.anchor_max) |_| {
         tooltip.close(&tree, try tooltip.open(&tree, &Theme.dark, bar_id));
     }
     try testing.expectError(error.OutOfAnchors, tooltip.open(&tree, &Theme.dark, bar_id));

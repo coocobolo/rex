@@ -10,7 +10,7 @@
 const std = @import("std");
 const assert = std.debug.assert;
 
-const Id = @import("tree.zig").Id;
+const Id = @import("Tree.zig").Id;
 
 pub const capacity = 16;
 

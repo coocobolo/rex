@@ -65,9 +65,9 @@ test "dashboard: an idle timer does not ask the host to wake" {
     // With one it sleeps until local midnight, at most a day.
     if (state.watch == null) return error.SkipZigTest;
     try testing.expect(dashboard.wait(&state).? > 1);
-    var nodes: [dashboard.node_max]kit.tree.Node = undefined;
+    var nodes: [dashboard.node_max]kit.Tree.Node = undefined;
     var lines: [dashboard.line_max]kit.text.Line = undefined;
-    var tree = kit.tree.Tree.init(&nodes, &lines);
+    var tree = kit.Tree.init(&nodes, &lines);
     try dashboard.view(&state, &tree, &kit.Theme.dark);
     // A full task, as the terminal shows an idle timer.
     try testing.expectEqualStrings("01:00", state.clock());
@@ -118,9 +118,9 @@ test "dashboard: a pause is visible to a second window" {
 }
 
 fn buildView(state: *const dashboard.State) !void {
-    var nodes: [dashboard.node_max]kit.tree.Node = undefined;
+    var nodes: [dashboard.node_max]kit.Tree.Node = undefined;
     var lines: [dashboard.line_max]kit.text.Line = undefined;
-    var tree = kit.tree.Tree.init(&nodes, &lines);
+    var tree = kit.Tree.init(&nodes, &lines);
     try dashboard.view(state, &tree, &kit.Theme.dark);
 }
 
@@ -216,7 +216,7 @@ test "dashboard: a click on a tab switches to it; the menu opens and closes" {
     var state = try openDashboard(&config, dir);
     defer dashboard.deinit(&state);
 
-    const history_tab = kit.tree.Id.of("wellbeing.tab").item(2);
+    const history_tab = kit.Tree.Id.of("wellbeing.tab").item(2);
     _ = dashboard.update(&state, .{ .pointer = .{ .id = history_tab } });
     _ = dashboard.update(&state, .{ .press = history_tab });
     try testing.expect(dashboard.update(&state, .release));
@@ -224,7 +224,7 @@ test "dashboard: a click on a tab switches to it; the menu opens and closes" {
 
     // A release away from where the press went down does nothing.
     state.page = .focus;
-    const more = kit.tree.Id.of("wellbeing.more");
+    const more = kit.Tree.Id.of("wellbeing.more");
     _ = dashboard.update(&state, .{ .pointer = .{ .id = more } });
     _ = dashboard.update(&state, .{ .press = more });
     _ = dashboard.update(&state, .{ .pointer = .{ .id = .none } });
@@ -235,7 +235,7 @@ test "dashboard: a click on a tab switches to it; the menu opens and closes" {
     _ = dashboard.update(&state, .{ .press = more });
     _ = dashboard.update(&state, .release);
     try testing.expectEqual(dashboard.Menu.more, state.menu);
-    try testing.expect(dashboard.update(&state, .{ .press = kit.tree.Id.of("wellbeing.layer") }));
+    try testing.expect(dashboard.update(&state, .{ .press = kit.Tree.Id.of("wellbeing.layer") }));
     try testing.expectEqual(dashboard.Menu.closed, state.menu);
 }
 
@@ -431,7 +431,7 @@ test "history: hovering a day fills its tooltip, and the period switch works" {
     state.wb.data.today = .{ .day = 20513, .active_screen_s = 3600, .tasks_completed = 1, .eyesight_breaks = 2 };
     dashboard.refreshHistoryAt(&state, 20513);
 
-    try testing.expect(dashboard.update(&state, .{ .pointer = .{ .id = kit.tree.Id.of("wellbeing.day").item(6), .x = 200, .y = 350 } }));
+    try testing.expect(dashboard.update(&state, .{ .pointer = .{ .id = kit.Tree.Id.of("wellbeing.day").item(6), .x = 200, .y = 350 } }));
     try testing.expectEqualStrings("Sunday, 1 March", state.tip.title.slice());
     try testing.expectEqualStrings("1h", state.tip.screen.slice());
     try testing.expectEqualStrings("0m", state.tip.focus.slice());
@@ -441,13 +441,13 @@ test "history: hovering a day fills its tooltip, and the period switch works" {
     // Same day tooltip works on Today's "This week" chart too.
     state.page = .today;
     try testing.expect(dashboard.update(&state, .{ .pointer = .{ .id = .none } }));
-    try testing.expect(dashboard.update(&state, .{ .pointer = .{ .id = kit.tree.Id.of("wellbeing.day").item(6), .x = 200, .y = 350 } }));
+    try testing.expect(dashboard.update(&state, .{ .pointer = .{ .id = kit.Tree.Id.of("wellbeing.day").item(6), .x = 200, .y = 350 } }));
     try testing.expectEqualStrings("Sunday, 1 March", state.tip.title.slice());
     try testing.expectEqualStrings("1h", state.tip.screen.slice());
     try buildView(&state);
     state.page = .history;
 
-    const fortnight = kit.tree.Id.of("wellbeing.period").item(1);
+    const fortnight = kit.Tree.Id.of("wellbeing.period").item(1);
     _ = dashboard.update(&state, .{ .pointer = .{ .id = fortnight } });
     _ = dashboard.update(&state, .{ .press = fortnight });
     try testing.expect(dashboard.update(&state, .release));
@@ -482,20 +482,20 @@ test "dashboard: the gear opens the view choices, and a choice changes the chart
     var state = try openDashboard(&config, dir);
     defer dashboard.deinit(&state);
 
-    const gear = kit.tree.Id.of("wellbeing.gear");
+    const gear = kit.Tree.Id.of("wellbeing.gear");
     _ = dashboard.update(&state, .{ .pointer = .{ .id = gear } });
     _ = dashboard.update(&state, .{ .press = gear });
     try testing.expect(dashboard.update(&state, .release));
     try testing.expectEqual(dashboard.Menu.view, state.menu);
 
-    const ring = kit.tree.Id.of("wellbeing.timer_chart").item(1);
+    const ring = kit.Tree.Id.of("wellbeing.timer_chart").item(1);
     _ = dashboard.update(&state, .{ .pointer = .{ .id = ring } });
     _ = dashboard.update(&state, .{ .press = ring });
     try testing.expect(dashboard.update(&state, .release));
     try testing.expectEqual(.ring, state.charts.timer_chart);
     // The menu stays open for the next choice; a press outside closes it.
     try testing.expectEqual(dashboard.Menu.view, state.menu);
-    try testing.expect(dashboard.update(&state, .{ .press = kit.tree.Id.of("wellbeing.layer") }));
+    try testing.expect(dashboard.update(&state, .{ .press = kit.Tree.Id.of("wellbeing.layer") }));
     try testing.expectEqual(dashboard.Menu.closed, state.menu);
 }
 
@@ -533,15 +533,15 @@ test "dashboard: stat cards in a row are as tall as the tallest" {
     state.page = .history;
     _ = dashboard.update(&state, .{ .size = .{ .width = 400, .height = 600 } });
 
-    var nodes: [dashboard.node_max]kit.tree.Node = undefined;
+    var nodes: [dashboard.node_max]kit.Tree.Node = undefined;
     var lines: [dashboard.line_max]kit.text.Line = undefined;
-    var tree = kit.tree.Tree.init(&nodes, &lines);
+    var tree = kit.Tree.init(&nodes, &lines);
     try dashboard.view(&state, &tree, &kit.Theme.dark);
     var no_state: u8 = 0;
-    try kit.layout.layout(&tree, .{ .context = &no_state, .widthFn = fixedWidth }, 400, 600);
+    try tree.layout(.{ .context = &no_state, .widthFn = fixedWidth }, 400, 600);
 
     // The first two cards share a row.
-    var cards: [2]kit.tree.Rect = undefined;
+    var cards: [2]kit.Tree.Rect = undefined;
     var found: usize = 0;
     for (tree.items()) |node| {
         if (node.content != .box or node.box.fill != kit.Theme.dark.card or found == cards.len) continue;
@@ -569,13 +569,13 @@ test "dashboard: a narrow page scrolls within what the host reports, and a new p
     // Already at the end: nothing changes, no redraw.
     try testing.expect(!dashboard.update(&state, .{ .scroll = .{ .dy = 48, .max = 250 } }));
 
-    var nodes: [dashboard.node_max]kit.tree.Node = undefined;
+    var nodes: [dashboard.node_max]kit.Tree.Node = undefined;
     var lines: [dashboard.line_max]kit.text.Line = undefined;
-    var tree = kit.tree.Tree.init(&nodes, &lines);
+    var tree = kit.Tree.init(&nodes, &lines);
     try dashboard.view(&state, &tree, &kit.Theme.dark);
     var no_state: u8 = 0;
-    try kit.layout.layout(&tree, .{ .context = &no_state, .widthFn = fixedWidth }, 400, 300);
-    try testing.expect(tree.scroll_index != kit.tree.none);
+    try tree.layout(.{ .context = &no_state, .widthFn = fixedWidth }, 400, 300);
+    try testing.expect(tree.scroll_index != kit.Tree.none);
     try testing.expect(tree.scroll_max > 0);
 
     _ = dashboard.update(&state, .{ .key = .{ .key = .tab, .mods = .{ .ctrl = true } } });
@@ -598,16 +598,16 @@ test "dashboard: a short window scrolls the programs card instead of squeezing i
     dashboard.refreshHistoryAt(&state, 9);
     _ = dashboard.update(&state, .{ .size = .{ .width = 760, .height = 380 } });
 
-    var nodes: [dashboard.node_max]kit.tree.Node = undefined;
+    var nodes: [dashboard.node_max]kit.Tree.Node = undefined;
     var lines: [dashboard.line_max]kit.text.Line = undefined;
-    var tree = kit.tree.Tree.init(&nodes, &lines);
+    var tree = kit.Tree.init(&nodes, &lines);
     try dashboard.view(&state, &tree, &kit.Theme.dark);
     var no_state: u8 = 0;
-    try kit.layout.layout(&tree, .{ .context = &no_state, .widthFn = fixedWidth }, 760, 380);
+    try tree.layout(.{ .context = &no_state, .widthFn = fixedWidth }, 760, 380);
     try testing.expect(tree.scroll_max > 0);
 
     // Every program row sits inside the programs card, below the one before.
-    var card: ?kit.tree.Rect = null;
+    var card: ?kit.Tree.Rect = null;
     var last_bottom: f32 = 0;
     var rows: usize = 0;
     for (tree.items()) |node| {
@@ -638,7 +638,7 @@ test "dashboard: program tooltip works on Today and History and stays near the p
     state.wb.data.today.top_apps[0].seconds = 2700;
     dashboard.refreshHistoryAt(&state, 20513);
 
-    const prog0 = kit.tree.Id.of("wellbeing.program").item(0);
+    const prog0 = kit.Tree.Id.of("wellbeing.program").item(0);
     for ([_]dashboard.Page{ .today, .history }) |page| {
         state.page = page;
         try testing.expect(dashboard.update(&state, .{ .pointer = .{ .id = prog0, .x = 500, .y = 400 } }));

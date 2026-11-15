@@ -3,8 +3,7 @@
 //! "P"). Display only: the caller binds the key.
 
 const Theme = @import("Theme.zig");
-const tree_zig = @import("tree.zig");
-const Tree = tree_zig.Tree;
+const Tree = @import("Tree.zig");
 
 /// A cap is never narrower than it is tall, so a single letter gets a
 /// square.
@@ -23,7 +22,7 @@ pub fn groupNodes(count: usize) usize {
 
 /// Writes a cap reading `key` into the innermost open box. `presence` is
 /// the opacity of the surface it sits on, 0 to 1.
-pub fn view(tree: *Tree, theme: *const Theme, key: []const u8, presence: f32) tree_zig.Error!void {
+pub fn view(tree: *Tree, theme: *const Theme, key: []const u8, presence: f32) Tree.Error!void {
     const cap = try tree.open(.{
         .width = .{ .at_least = width_min },
         .padding = .symmetric(6, 2),
@@ -40,7 +39,7 @@ pub fn view(tree: *Tree, theme: *const Theme, key: []const u8, presence: f32) tr
 }
 
 /// Writes the caps of a chord, in order, as one row.
-pub fn group(tree: *Tree, theme: *const Theme, keys: []const []const u8, presence: f32) tree_zig.Error!void {
+pub fn group(tree: *Tree, theme: *const Theme, keys: []const []const u8, presence: f32) Tree.Error!void {
     const row = try tree.open(.{ .axis = .row, .gap = gap, .cross = .center });
     for (keys) |key| try view(tree, theme, key, presence);
     tree.close(row);

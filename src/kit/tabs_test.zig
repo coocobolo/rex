@@ -4,10 +4,8 @@ const testing = std.testing;
 const Theme = @import("Theme.zig");
 const tabs = @import("tabs.zig");
 const text = @import("text.zig");
-const tree_zig = @import("tree.zig");
-const Tree = tree_zig.Tree;
-const Id = tree_zig.Id;
-const layout = @import("layout.zig").layout;
+const Tree = @import("Tree.zig");
+const Id = Tree.Id;
 
 const byte_width = 7;
 
@@ -29,7 +27,7 @@ const labels = [_]tabs.Tab{
 };
 
 const Fixture = struct {
-    nodes: [16]tree_zig.Node = undefined,
+    nodes: [16]Tree.Node = undefined,
     lines: [8]text.Line = undefined,
 
     fn tree(self: *Fixture) Tree {
@@ -40,15 +38,15 @@ const Fixture = struct {
 fn show(fixture: *Fixture, theme: *const Theme, options: tabs.Options) !Tree {
     var tree = fixture.tree();
     try tabs.view(&tree, theme, options);
-    try layout(&tree, measurer, 400, 200);
+    try tree.layout(measurer, 400, 200);
     return tree;
 }
 
-fn face(tree: *const Tree, index: usize) *const tree_zig.Node {
+fn face(tree: *const Tree, index: usize) *const Tree.Node {
     return &tree.nodes[1 + index * 2];
 }
 
-fn label(tree: *const Tree, index: usize) *const tree_zig.Node {
+fn label(tree: *const Tree, index: usize) *const Tree.Node {
     return &tree.nodes[2 + index * 2];
 }
 
@@ -65,7 +63,7 @@ test "tabs: the track is 32 tall and each face sits in the 3 px inset" {
     const first = face(&tree, 0).rect;
     const second = face(&tree, 1).rect;
     const width = tabs.pad * 2 + 5 * byte_width;
-    try testing.expectEqual(tree_zig.Rect{
+    try testing.expectEqual(Tree.Rect{
         .x = tabs.inset,
         .y = tabs.inset,
         .w = width,

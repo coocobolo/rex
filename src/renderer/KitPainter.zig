@@ -23,8 +23,7 @@ const Atlas = @import("Atlas.zig");
 const KitFont = @import("../freetype/KitFont.zig");
 const Color = @import("../kit/Theme.zig").Color;
 const text = @import("../kit/text.zig");
-const tree_zig = @import("../kit/tree.zig");
-const Tree = tree_zig.Tree;
+const Tree = @import("../kit/Tree.zig");
 const layout = @import("../kit/layout.zig");
 
 const log = std.log.scoped(.kit_painter);
@@ -163,7 +162,7 @@ pub fn paint(self: *KitPainter, tree: *const Tree, font: *KitFont, atlas: *Atlas
     const scale = font.scale;
     // The clipping boxes around the current node: where each one's
     // descendants end, and its cut intersected with those outside it.
-    var clips: [clip_depth_max]struct { end: tree_zig.Index, clip: Clip } = undefined;
+    var clips: [clip_depth_max]struct { end: Tree.Index, clip: Clip } = undefined;
     var depth: usize = 0;
     for (tree.items(), 0..) |*node, node_index| {
         while (depth > 0 and node_index >= clips[depth - 1].end) depth -= 1;
@@ -176,19 +175,6 @@ pub fn paint(self: *KitPainter, tree: *const Tree, font: *KitFont, atlas: *Atlas
         switch (node.content) {
             .box => {
                 const box = node.box;
-                if (box.dash > 0) {
-                    if (box.fill.a == 0) continue;
-                    const rect = layout.snap(node.rect, scale);
-                    const dash_px = @as(f32, @floatFromInt(box.dash)) * scale;
-                    try self.push(.{
-                        .rect = pixels(rect),
-                        .fill = box.fill,
-                        .params = .{ dash_px, dash_px },
-                        .kind = .dash,
-                        .clip = clip,
-                    });
-                    continue;
-                }
                 const stroke = if (box.border.a == 0) 0 else layout.strokePixels(box.border_width, scale);
                 if (box.fill.a == 0 and stroke == 0) continue;
                 const rect = layout.snap(node.rect, scale);
@@ -201,6 +187,28 @@ pub fn paint(self: *KitPainter, tree: *const Tree, font: *KitFont, atlas: *Atlas
                     .kind = .box,
                     .clip = clip,
                     .arc = .{ sweep, 0 },
+                });
+            },
+            .dash => |d| {
+                if (d.color.a == 0) continue;
+                const rect = layout.snap(node.rect, scale);
+                if (d.step == 0) {
+                    try self.push(.{
+                        .rect = pixels(rect),
+                        .fill = d.color,
+                        .params = .{ 0, 0 },
+                        .kind = .box,
+                        .clip = clip,
+                    });
+                    continue;
+                }
+                const dash_px = @as(f32, @floatFromInt(d.step)) * scale;
+                try self.push(.{
+                    .rect = pixels(rect),
+                    .fill = d.color,
+                    .params = .{ dash_px, dash_px },
+                    .kind = .dash,
+                    .clip = clip,
                 });
             },
             .icon => |icon| {
@@ -262,7 +270,7 @@ fn intersect(a: Clip, b: Clip) Clip {
 /// side `2 * radius` in physical pixels. `origin_x`, `origin_y` and `side`
 /// are the node's rectangle in logical pixels.
 /// `clip` is the clipping boxes' cut, as for every other instance.
-pub fn arcInstance(arc: tree_zig.Arc, origin_x: f32, origin_y: f32, side: f32, scale: f32, clip: Clip) Instance {
+pub fn arcInstance(arc: Tree.Arc, origin_x: f32, origin_y: f32, side: f32, scale: f32, clip: Clip) Instance {
     const center_x = (origin_x + side / 2) * scale;
     const center_y = (origin_y + side / 2) * scale;
     const outer = arc.radius * scale;

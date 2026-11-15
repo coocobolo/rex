@@ -31,8 +31,8 @@ const slider = kit.slider;
 const input = kit.input;
 const tooltip = kit.tooltip;
 const Theme = kit.Theme;
-const Tree = kit.tree.Tree;
-const Id = kit.tree.Id;
+const Tree = kit.Tree;
+const Id = kit.Tree.Id;
 
 pub const name = "settings";
 pub const title = "Rex Settings";
@@ -1151,7 +1151,7 @@ const preview_dialog_actions = [_]kit.alert_dialog.Action{
     .{ .label = "Close window", .variant = .destructive },
 };
 
-fn overlayAnchor(pos: overlay.Position) kit.tree.ScreenAnchor {
+fn overlayAnchor(pos: overlay.Position) kit.Tree.ScreenAnchor {
     return switch (pos) {
         .top_left => .top_left,
         .top_center => .top_center,
@@ -1380,7 +1380,7 @@ pub fn place(state: *State, tree: *Tree) void {
     if (state.preview_dialog.phase != .closed) return;
     if (state.preview_banner.phase != .closed) {
         if (tree.find(kit.alert.card_id)) |card| {
-            if (card.parent != kit.tree.none) {
+            if (card.parent != kit.Tree.none) {
                 kit.alert.place(&state.preview_banner, tree, card.parent);
             }
         }
@@ -1388,7 +1388,7 @@ pub fn place(state: *State, tree: *Tree) void {
     const visible = state.preview_toast.visible();
     if (visible.len > 0) {
         if (tree.find(kit.toast.cardId(visible[0].serial))) |card| {
-            if (card.parent != kit.tree.none) {
+            if (card.parent != kit.Tree.none) {
                 const dt = state.preview_glide_ms;
                 state.preview_glide_ms = 0;
                 state.preview_toast_motion = kit.toast.place(
@@ -2651,7 +2651,7 @@ fn setError(state: *State, idx: u16, msg: []const u8) void {
     state.error_msg.appendSlice(state.gpa, msg) catch {};
 }
 
-pub fn view(state: *const State, tree: *Tree, theme: *const Theme) kit.tree.Error!void {
+pub fn view(state: *const State, tree: *Tree, theme: *const Theme) kit.Tree.Error!void {
     const frame = try sidebar.begin(tree, theme, &groups, &state.frame, .{});
 
     const content_row = try tree.open(.{
@@ -2726,7 +2726,7 @@ pub fn view(state: *const State, tree: *Tree, theme: *const Theme) kit.tree.Erro
     }
 }
 
-fn viewScrollbar(state: *const State, tree: *Tree, theme: *const Theme) kit.tree.Error!void {
+fn viewScrollbar(state: *const State, tree: *Tree, theme: *const Theme) kit.Tree.Error!void {
     const rail = try tree.open(.{
         .width = .{ .fixed = 8 },
         .height = .fill,
@@ -2890,7 +2890,7 @@ fn viewAnsiCollapsible(
     tree: *Tree,
     theme: *const Theme,
     cfg: *const Config,
-) kit.tree.Error!void {
+) kit.Tree.Error!void {
     const hovered = std.meta.eql(state.hover, Target.ansi_colors_toggle);
     const focused = std.meta.eql(state.focused, Target.ansi_colors_toggle);
     const ansi = cfg.resolvedTheme().ansi;
@@ -3019,12 +3019,12 @@ fn viewAnsiCollapsible(
     tree.close(card);
 }
 
-fn viewPage(state: *const State, tree: *Tree, theme: *const Theme, page: Page) kit.tree.Error!void {
+fn viewPage(state: *const State, tree: *Tree, theme: *const Theme, page: Page) kit.Tree.Error!void {
     const cfg = state.activeConfig();
     var sec_buf: [max_section_count]keys.Section = undefined;
     var row_buf: [keys.table.len]u16 = undefined;
     for (pageSections(page, &sec_buf)) |sec| {
-        var section_open: ?kit.tree.Index = null;
+        var section_open: ?kit.Tree.Index = null;
         var first_in_section = true;
         var ansi_drawn = false;
 
@@ -3084,7 +3084,7 @@ fn viewPreviewRow(
     tree: *Tree,
     theme: *const Theme,
     sec: keys.Section,
-) kit.tree.Error!void {
+) kit.Tree.Error!void {
     const id: Id, const tgt: Target, const btn_label: []const u8, const desc: []const u8 = switch (sec) {
         .toast => .{
             preview_toast_id,
@@ -3169,8 +3169,8 @@ fn openGroupSegment(tree: *Tree, theme: *const Theme, options: struct {
     fill: ?Theme.Color = null,
     hovered: bool = false,
     disabled: bool = false,
-    width: kit.tree.Size = .fit,
-}) kit.tree.Error!kit.tree.Index {
+    width: kit.Tree.Size = .fit,
+}) kit.Tree.Error!kit.Tree.Index {
     const seg = try tree.open(.{
         .id = options.id,
         .axis = .row,
@@ -3234,7 +3234,7 @@ fn stepperSegment(tree: *Tree, theme: *const Theme, options: struct {
     label: []const u8,
     hovered: bool = false,
     disabled: bool = false,
-}) kit.tree.Error!void {
+}) kit.Tree.Error!void {
     const presence: f32 = if (options.disabled) 0.4 else 1.0;
     const cell = try openGroupSegment(tree, theme, .{
         .id = options.id,
@@ -3338,11 +3338,11 @@ fn viewKeyRow(
     info: RowInfo,
     idx: u16,
     cfg: *const Config,
-) kit.tree.Error!void {
+) kit.Tree.Error!void {
     const meta = info.meta;
     const pane_w = paneWidth(state);
     const compact = pane_w < 540;
-    const control_width: kit.tree.Size = if (compact)
+    const control_width: kit.Tree.Size = if (compact)
         .fill
     else if (pane_w >= 760)
         .{ .fixed = 280 }
@@ -3886,7 +3886,7 @@ fn viewSelectPopup(
     theme: *const Theme,
     key_idx: u16,
     highlight: usize,
-) kit.tree.Error!void {
+) kit.Tree.Error!void {
     const cfg = state.activeConfig();
     const info = row_infos[key_idx];
     const card = try popup.open(tree, theme, .{ .layer_id = layer_id, .anchor = selectId(key_idx) });

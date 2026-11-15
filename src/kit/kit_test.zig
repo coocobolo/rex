@@ -2,13 +2,13 @@ const std = @import("std");
 const testing = std.testing;
 
 const Theme = @import("Theme.zig");
+const focus = @import("focus.zig");
+const motion = @import("motion.zig");
 const text = @import("text.zig");
-const tree_zig = @import("tree.zig");
-const Tree = tree_zig.Tree;
-const Node = tree_zig.Node;
-const Id = tree_zig.Id;
-const layout_zig = @import("layout.zig");
-const layout = layout_zig.layout;
+const Tree = @import("Tree.zig");
+const Node = Tree.Node;
+const Id = Tree.Id;
+const layout = @import("layout.zig");
 
 /// A measurer where every byte is 7 pixels wide, so expected sizes can be
 /// worked out by hand.
@@ -31,7 +31,7 @@ const Fixture = struct {
     }
 };
 
-fn expectRect(tree: *const Tree, index: tree_zig.Index, x: f32, y: f32, w: f32, h: f32) !void {
+fn expectRect(tree: *const Tree, index: Tree.Index, x: f32, y: f32, w: f32, h: f32) !void {
     const rect = tree.nodes[index].rect;
     errdefer std.debug.print("node {d}: got {d} {d} {d} {d}\n", .{ index, rect.x, rect.y, rect.w, rect.h });
     try testing.expectEqual(x, rect.x);
@@ -85,14 +85,14 @@ test "Tree: nodes know their parent and where their descendants end" {
     const second_root = try tree.leaf(.{});
 
     try testing.expectEqual(5, tree.len);
-    try testing.expectEqual(tree_zig.none, tree.nodes[outer].parent);
+    try testing.expectEqual(Tree.none, tree.nodes[outer].parent);
     try testing.expectEqual(outer, tree.nodes[first].parent);
     try testing.expectEqual(inner, tree.nodes[nested].parent);
     try testing.expectEqual(4, tree.nodes[outer].end);
     try testing.expectEqual(4, tree.nodes[inner].end);
     try testing.expectEqual(2, tree.nodes[first].end);
-    try testing.expectEqual(tree_zig.none, tree.nodes[second_root].parent);
-    try testing.expectEqual(tree_zig.none, tree.current);
+    try testing.expectEqual(Tree.none, tree.nodes[second_root].parent);
+    try testing.expectEqual(Tree.none, tree.current);
 
     tree.reset();
     try testing.expectEqual(0, tree.len);
@@ -164,7 +164,7 @@ test "layout: a toast sizes its text column and wraps the description" {
     tree.close(body);
     tree.close(toast);
 
-    try layout(&tree, measurer, 800, 600);
+    try tree.layout(measurer, 800, 600);
 
     // Column: 356 - 2*16 padding - 16 icon - 10 gap.
     try expectRect(&tree, body, 42, 16, 298, 60);
@@ -190,7 +190,7 @@ test "layout: a root that fills the viewport anchors a toast stack bottom right"
     const newer = try tree.leaf(.{ .width = .{ .fixed = 356 }, .height = .{ .fixed = 80 } });
     tree.close(overlay);
 
-    try layout(&tree, measurer, 1000, 700);
+    try tree.layout(measurer, 1000, 700);
 
     try expectRect(&tree, overlay, 0, 0, 1000, 700);
     // Bottom edge at 700 - 24; right edge at 1000 - 24.
@@ -213,7 +213,7 @@ test "layout: a dialog is centered over a scrim, with its actions right-aligned"
     tree.close(dialog);
     tree.close(scrim);
 
-    try layout(&tree, measurer, 1000, 600);
+    try tree.layout(measurer, 1000, 600);
 
     // Height: 24 + 28 title + 16 gap + 36 actions + 24 = 128.
     try expectRect(&tree, dialog, 290, 236, 420, 128);
@@ -240,7 +240,7 @@ test "layout: fill children share what fixed and fit children leave" {
     const second = try tree.leaf(.{ .width = .fill, .height = .{ .fixed = 10 } });
     tree.close(row);
 
-    try layout(&tree, measurer, 800, 600);
+    try tree.layout(measurer, 800, 600);
 
     // 300 - 60 - 2 gaps of 10 leaves 220 for two.
     try expectRect(&tree, fixed, 0, 10, 60, 20);
@@ -258,7 +258,7 @@ test "layout: a long text in a row gives way and wraps" {
     const message = try tree.text("Unknown key font.sizee line 14", .{ .color = Theme.dark.foreground });
     tree.close(row);
 
-    try layout(&tree, measurer, 800, 600);
+    try tree.layout(measurer, 800, 600);
 
     try expectRect(&tree, dot, 0, 0, 8, 8);
     try expectRect(&tree, message, 16, 0, 184, 40);
@@ -272,7 +272,7 @@ test "layout: a root never grows past the viewport" {
     const message = try tree.text("a" ** 100, .{ .color = Theme.dark.foreground });
     tree.close(banner);
 
-    try layout(&tree, measurer, 320, 200);
+    try tree.layout(measurer, 320, 200);
 
     try expectRect(&tree, banner, 0, 0, 320, 44);
     // One unbreakable word: it overflows its 288 px box instead of vanishing.
@@ -288,13 +288,13 @@ test "layout: an at-most size is fixed until its parent is smaller" {
     tree.close(card);
     tree.close(scrim);
 
-    try layout(&tree, measurer, 800, 600);
+    try tree.layout(measurer, 800, 600);
     try expectRect(&tree, card, 190, 266, 420, 68);
     try expectRect(&tree, body, 214, 290, 372, 20);
 
     // Narrower than the card: it keeps the scrim's padding on both sides
     // and its text wraps to what is left.
-    try layout(&tree, measurer, 300, 600);
+    try tree.layout(measurer, 300, 600);
     try expectRect(&tree, card, 16, 256, 268, 88);
     try expectRect(&tree, body, 40, 280, 220, 40);
 }
@@ -312,7 +312,7 @@ test "layout: tabular figures are measured with the tabular width" {
     var fixture: Fixture = .{};
     var tree = fixture.tree();
     const value = try tree.text("12", .{ .color = Theme.dark.foreground, .style = .xl_semibold, .figures = .tabular });
-    try layout(&tree, figured, 800, 600);
+    try tree.layout(figured, 800, 600);
     // Two digits at 10 px, and the 24 / 32 card style.
     try expectRect(&tree, value, 0, 0, 20, 32);
 }
@@ -329,7 +329,7 @@ test "layout: an at-least size follows its content down to a minimum" {
     tree.close(wide);
     tree.close(row);
 
-    try layout(&tree, measurer, 800, 600);
+    try tree.layout(measurer, 800, 600);
 
     // 7 + 12 = 19 is under the minimum; the letter is centered in the 20.
     try expectRect(&tree, narrow, 0, 0, 20, 24);
@@ -345,26 +345,26 @@ test "layout: an at-most child in a row gives way like a fit child" {
     const field = try tree.leaf(.{ .width = .{ .at_most = 240 }, .height = .{ .fixed = 20 } });
     tree.close(row);
 
-    try layout(&tree, measurer, 800, 600);
+    try tree.layout(measurer, 800, 600);
 
     try expectRect(&tree, label, 0, 0, 100, 20);
     try expectRect(&tree, field, 110, 0, 190, 20);
 }
 
 test "snap: shared edges stay shared and hairlines stay visible at fractional scales" {
-    const left: tree_zig.Rect = .{ .x = 0, .y = 0, .w = 10.5, .h = 13 };
-    const right: tree_zig.Rect = .{ .x = 10.5, .y = 0, .w = 10.5, .h = 13 };
+    const left: Tree.Rect = .{ .x = 0, .y = 0, .w = 10.5, .h = 13 };
+    const right: Tree.Rect = .{ .x = 10.5, .y = 0, .w = 10.5, .h = 13 };
     for ([_]f32{ 1, 1.25, 1.5, 1.75, 2 }) |scale| {
-        const a = layout_zig.snap(left, scale);
-        const b = layout_zig.snap(right, scale);
+        const a = layout.snap(left, scale);
+        const b = layout.snap(right, scale);
         try testing.expectEqual(a.x + a.w, b.x);
-        try testing.expectEqual(1, layout_zig.strokePixels(1, scale) / @as(u32, @intFromFloat(@round(scale))));
+        try testing.expectEqual(1, layout.strokePixels(1, scale) / @as(u32, @intFromFloat(@round(scale))));
     }
-    try testing.expectEqual(layout_zig.PixelRect{ .x = 5, .y = 3, .w = 445, .h = 115 }, layout_zig.snap(.{ .x = 4, .y = 2, .w = 356, .h = 92 }, 1.25));
-    try testing.expectEqual(1, layout_zig.strokePixels(1, 1.25));
-    try testing.expectEqual(2, layout_zig.strokePixels(1, 1.5));
-    try testing.expectEqual(4, layout_zig.strokePixels(3, 1.25));
-    try testing.expectEqual(0, layout_zig.strokePixels(0, 2));
+    try testing.expectEqual(layout.PixelRect{ .x = 5, .y = 3, .w = 445, .h = 115 }, layout.snap(.{ .x = 4, .y = 2, .w = 356, .h = 92 }, 1.25));
+    try testing.expectEqual(1, layout.strokePixels(1, 1.25));
+    try testing.expectEqual(2, layout.strokePixels(1, 1.5));
+    try testing.expectEqual(4, layout.strokePixels(3, 1.25));
+    try testing.expectEqual(0, layout.strokePixels(0, 2));
 }
 
 test "sizes of the kit's types" {
@@ -374,25 +374,26 @@ test "sizes of the kit's types" {
     try testing.expectEqual(12, @sizeOf(text.Line));
     try testing.expectEqual(104, @sizeOf(Node));
     try testing.expectEqual(8, @alignOf(Node));
-    try testing.expectEqual(44, @sizeOf(tree_zig.Box));
-    try testing.expectEqual(40, @sizeOf(tree_zig.Content));
-    try testing.expectEqual(16, @sizeOf(tree_zig.Rect));
-    try testing.expectEqual(8, @sizeOf(tree_zig.Size));
+    try testing.expectEqual(44, @sizeOf(Tree.Box));
+    try testing.expectEqual(32, @sizeOf(Tree.Text));
+    try testing.expectEqual(40, @sizeOf(Tree.Node.Content));
+    try testing.expectEqual(16, @sizeOf(Tree.Rect));
+    try testing.expectEqual(8, @sizeOf(Tree.Size));
     try testing.expectEqual(120, @sizeOf(Tree));
 }
 
 test "tree: a node a clipping ancestor cuts away is not hit there" {
-    var nodes: [4]tree_zig.Node = undefined;
+    var nodes: [4]Tree.Node = undefined;
     var lines: [1]text.Line = undefined;
     var tree = Tree.init(&nodes, &lines);
-    const inner = tree_zig.Id.of("test.inner");
-    const outer = tree_zig.Id.of("test.outer");
+    const inner = Tree.Id.of("test.inner");
+    const outer = Tree.Id.of("test.outer");
     const box = try tree.open(.{ .id = outer, .width = .{ .fixed = 50 }, .height = .{ .fixed = 50 }, .overflow = .clip });
     _ = try tree.leaf(.{ .id = inner, .width = .{ .fixed = 200 }, .height = .{ .fixed = 20 } });
     tree.close(box);
-    try layout(&tree, measurer, 400, 400);
+    try tree.layout(measurer, 400, 400);
     try testing.expectEqual(inner, tree.hitTest(10, 10));
-    try testing.expectEqual(tree_zig.Id.none, tree.hitTest(100, 10));
+    try testing.expectEqual(Tree.Id.none, tree.hitTest(100, 10));
 
     tree.nodes[box].box.overflow = .visible;
     try testing.expectEqual(inner, tree.hitTest(100, 10));
@@ -407,7 +408,7 @@ fn scrolled(fixture: *Fixture, offset: f32) !Tree {
         _ = try tree.leaf(.{ .id = Id.of("row").item(@intCast(index)), .width = .fill, .height = .{ .fixed = 60 } });
     }
     tree.close(region);
-    try layout(&tree, measurer, 400, 400);
+    try tree.layout(measurer, 400, 400);
     return tree;
 }
 
@@ -435,11 +436,11 @@ test "layout: content shorter than its region does not scroll" {
     tree.scrollRegion(region, 30);
     _ = try tree.leaf(.{ .width = .fill, .height = .{ .fixed = 60 } });
     tree.close(region);
-    try layout(&tree, measurer, 400, 400);
+    try tree.layout(measurer, 400, 400);
     try testing.expectEqual(0, tree.scroll_max);
     try expectRect(&tree, 1, 0, 0, 50, 60);
     tree.reset();
-    try testing.expectEqual(tree_zig.none, tree.scroll_index);
+    try testing.expectEqual(Tree.none, tree.scroll_index);
 }
 
 test "layout: in a scroll region a fill child keeps its content's height" {
@@ -452,7 +453,7 @@ test "layout: in a scroll region a fill child keeps its content's height" {
     _ = try tree.leaf(.{ .width = .fill, .height = .{ .fixed = 60 } });
     tree.close(grows);
     tree.close(region);
-    try layout(&tree, measurer, 400, 400);
+    try tree.layout(measurer, 400, 400);
     // 30 is left for it, but its content needs 60: it scrolls instead.
     try expectRect(&tree, 2, 0, 70, 50, 60);
     try testing.expectEqual(30, tree.scroll_max);
@@ -465,7 +466,44 @@ test "layout: in a scroll region a fill child still takes the room left" {
     tree.scrollRegion(region, 0);
     _ = try tree.leaf(.{ .width = .fill, .height = .fill });
     tree.close(region);
-    try layout(&tree, measurer, 400, 400);
+    try tree.layout(measurer, 400, 400);
     try expectRect(&tree, 1, 0, 0, 50, 100);
     try testing.expectEqual(0, tree.scroll_max);
+}
+
+test "Theme: ColorScheme auto follows the background, others force a variant" {
+    const white = [3]u8{ 255, 255, 255 };
+    const black = [3]u8{ 0, 0, 0 };
+    try testing.expectEqual(Theme.Variant.light, Theme.ColorScheme.auto.variant(white));
+    try testing.expectEqual(Theme.Variant.dark, Theme.ColorScheme.auto.variant(black));
+    try testing.expectEqual(Theme.Variant.dark, Theme.ColorScheme.dark.variant(white));
+    try testing.expectEqual(Theme.Variant.light, Theme.ColorScheme.light.variant(black));
+}
+
+test "Theme: relativeLuminance matches WCAG 2.x benchmarks" {
+    try testing.expectEqual(0, Theme.relativeLuminance(.{ 0, 0, 0 }));
+    try testing.expectApproxEqAbs(1, Theme.relativeLuminance(.{ 255, 255, 255 }), 1e-4);
+    // Mid gray #808080 is about 0.216.
+    try testing.expectApproxEqAbs(0.2159, Theme.relativeLuminance(.{ 0x80, 0x80, 0x80 }), 1e-3);
+}
+
+test "focus: move wraps at ends and enters cleanly from none" {
+    const none = 3;
+    try testing.expectEqual(0, focus.move(none, 3, .next));
+    try testing.expectEqual(2, focus.move(none, 3, .previous));
+    try testing.expectEqual(1, focus.move(0, 3, .next));
+    try testing.expectEqual(0, focus.move(2, 3, .next));
+    try testing.expectEqual(2, focus.move(0, 3, .previous));
+    try testing.expectEqual(1, focus.move(2, 3, .previous));
+    try testing.expectEqual(0, focus.move(0, 1, .next));
+    try testing.expectEqual(0, focus.move(0, 1, .previous));
+}
+
+test "motion: progress eases out for full motion and snaps for none" {
+    try testing.expectEqual(0, motion.progress(.full, 0));
+    try testing.expectEqual(0.875, motion.progress(.full, Theme.duration / 2));
+    try testing.expectEqual(1, motion.progress(.full, Theme.duration));
+    try testing.expectEqual(1, motion.progress(.full, 60_000));
+    try testing.expectEqual(1, motion.progress(.none, 0));
+    try testing.expectEqual(0, motion.duration(.none));
 }

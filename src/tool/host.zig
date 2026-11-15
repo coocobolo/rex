@@ -5,7 +5,7 @@
 //!
 //! A tool declares `name` (the lock file), `title`, `node_max`, `line_max`,
 //! a `State`, `update(*State, Event) bool` and
-//! `view(*const State, *Tree, *const Theme) kit.tree.Error!void`. `State`
+//! `view(*const State, *Tree, *const Theme) kit.Tree.Error!void`. `State`
 //! has an `empty` value, or the tool declares `init(Context) !State` and
 //! `deinit(*State)`.
 //!
@@ -44,8 +44,8 @@ const Window = @import("../renderer/Window.zig");
 const KitFont = @import("../freetype/KitFont.zig");
 
 const Theme = kit.Theme;
-const Tree = kit.tree.Tree;
-const Id = kit.tree.Id;
+const Tree = kit.Tree;
+const Id = kit.Tree.Id;
 
 const log = std.log.scoped(.tool);
 
@@ -104,9 +104,9 @@ pub const Clipboard = struct {
 
 pub const NodeRect = struct {
     ctx: ?*const anyopaque = null,
-    getFn: ?*const fn (ctx: *const anyopaque, id: Id) ?kit.tree.Rect = null,
+    getFn: ?*const fn (ctx: *const anyopaque, id: Id) ?kit.Tree.Rect = null,
 
-    pub fn get(self: NodeRect, id: Id) ?kit.tree.Rect {
+    pub fn get(self: NodeRect, id: Id) ?kit.Tree.Rect {
         const ctx = self.ctx orelse return null;
         const f = self.getFn orelse return null;
         return f(ctx, id);
@@ -162,7 +162,7 @@ fn Host(comptime Tool: type) type {
         home: []const u8,
         user_config_path: []const u8,
         state: Tool.State,
-        nodes: [Tool.node_max]kit.tree.Node = undefined,
+        nodes: [Tool.node_max]kit.Tree.Node = undefined,
         lines: [Tool.line_max]kit.text.Line = undefined,
         /// The last frame drawn, for hit-testing. Points into `nodes` and
         /// `lines`, so the host lives on the heap and is never copied.
@@ -368,7 +368,7 @@ fn Host(comptime Tool: type) type {
         fn build(self: *Self, theme: *const Theme, width: f32, height: f32) !void {
             self.tree.reset();
             try Tool.view(&self.state, &self.tree, theme);
-            try kit.layout.layout(&self.tree, self.font.measurer(), width, height);
+            try self.tree.layout(self.font.measurer(), width, height);
             if (@hasDecl(Tool, "place")) Tool.place(&self.state, &self.tree);
             try self.painter.paint(&self.tree, &self.font, &self.atlas);
         }
@@ -409,7 +409,7 @@ fn Host(comptime Tool: type) type {
             self.send(.{ .pointer = .{ .id = id, .x = self.pointer_x, .y = self.pointer_y } });
         }
 
-        fn nodeRect(ctx: *const anyopaque, id: Id) ?kit.tree.Rect {
+        fn nodeRect(ctx: *const anyopaque, id: Id) ?kit.Tree.Rect {
             const self: *const Self = @ptrCast(@alignCast(ctx));
             const n = self.tree.find(id) orelse return null;
             return n.rect;

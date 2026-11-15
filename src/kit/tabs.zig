@@ -9,9 +9,8 @@ const assert = std.debug.assert;
 
 const Theme = @import("Theme.zig");
 const Color = Theme.Color;
-const tree_zig = @import("tree.zig");
-const Tree = tree_zig.Tree;
-const Id = tree_zig.Id;
+const Tree = @import("Tree.zig");
+const Id = Tree.Id;
 
 /// Padding inside the track, on every side.
 pub const inset = 3;
@@ -37,7 +36,7 @@ pub const Options = struct {
     /// Index with the focus ring. `none` when nothing has it.
     focused: u8 = none,
     /// Width of the track; `.fill` stretches each tab face to share it.
-    width: tree_zig.Size = .fit,
+    width: Tree.Size = .fit,
 };
 
 /// The track, then each tab's face and its label.
@@ -49,7 +48,7 @@ pub fn nodeMax(count: usize) usize {
 pub const face_height = Theme.control_sm - 2 * inset;
 
 /// Writes the list into the innermost open box.
-pub fn view(tree: *Tree, theme: *const Theme, options: Options) tree_zig.Error!void {
+pub fn view(tree: *Tree, theme: *const Theme, options: Options) Tree.Error!void {
     assert(options.tabs.len > 0 and options.tabs.len <= std.math.maxInt(u8));
     assert(options.current < options.tabs.len);
     const track = try tree.open(.{
