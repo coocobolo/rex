@@ -310,7 +310,7 @@ pub const Node = struct {
     end: Index,
 };
 
-pub const Error = error{ OutOfNodes, OutOfAnchors };
+pub const Error = error{ OutOfNodes, OutOfAnchors, OutOfScrollRegions };
 
 /// Attachment record binding a top-level root to an earlier node or point (`popup`, `tooltip`).
 ///
@@ -330,21 +330,78 @@ pub const Anchor = struct {
 /// Maximum anchored roots (popups/tooltips) per frame.
 pub const anchor_max = 4;
 
+/// Per-region scroll state and visibility helpers owned by `Tree`.
+pub const Scroll = struct {
+    /// Maximum independent scrolling clipping boxes per `Tree`.
+    pub const max = 8;
+
+    /// Requested content shift in logical pixels (`x` left, `y` up).
+    pub const Offset = struct {
+        x: f32 = 0,
+        y: f32 = 0,
+    };
+
+    /// Maximum scrollable extent in logical pixels reported by `layout`.
+    pub const Max = struct {
+        x: f32 = 0,
+        y: f32 = 0,
+    };
+
+    /// Laid-out bounds and offsets for one registered `Tree.scrollRegion`.
+    pub const Region = struct {
+        id: Id = .none,
+        node: Index = none,
+        offset: Offset = .{},
+        max: Max = .{},
+    };
+
+    /// Adjusts a single-axis scroll `offset` minimally so `[item_pos, item_pos + item_size]`
+    /// sits inside `[view_pos, view_pos + view_size]` with `margin` clearance.
+    pub fn ensureVisibleAxis(
+        offset: f32,
+        limit: ?f32,
+        view_pos: f32,
+        view_size: f32,
+        item_pos: f32,
+        item_size: f32,
+        margin: f32,
+    ) f32 {
+        const pad = @max(0, @min(margin, @max(0, (view_size - item_size) / 2)));
+        var next = offset;
+        if (item_pos < view_pos + pad) {
+            next = @max(0, offset - (view_pos + pad - item_pos));
+        } else if (item_pos + item_size > view_pos + view_size - pad) {
+            const delta = @min(item_pos + item_size - (view_pos + view_size - pad), @max(0, item_pos - view_pos));
+            next = offset + delta;
+        }
+        return if (limit) |m| std.math.clamp(next, 0, @max(0, m)) else @max(0, next);
+    }
+
+    /// Two-dimensional `ensureVisibleAxis` keeping `target` inside `viewport` with `margin`.
+    pub fn ensureVisibleRect(
+        viewport: Rect,
+        target: Rect,
+        margin: f32,
+        offset: Offset,
+        limit: ?Max,
+    ) Offset {
+        return .{
+            .x = ensureVisibleAxis(offset.x, if (limit) |m| m.x else null, viewport.x, viewport.w, target.x, target.w, margin),
+            .y = ensureVisibleAxis(offset.y, if (limit) |m| m.y else null, viewport.y, viewport.h, target.y, target.h, margin),
+        };
+    }
+};
+
 nodes: []Node,
 len: Index = 0,
 /// The innermost open box; new nodes become its children.
 current: Index = none,
 anchor_len: u8 = 0,
-/// The one box whose content scrolls (`scrollRegion`), or `none`.
-scroll_index: Index = none,
+scroll_len: u8 = 0,
 lines: Lines,
 anchors: [anchor_max]Anchor = undefined,
-/// How far the region's content moves up, as the surface asks; layout
-/// caps it at `scroll_max`.
-scroll_offset: f32 = 0,
-/// Set by layout: how much taller the region's content is than the
-/// region, so how far it can move up. 0 without a region.
-scroll_max: f32 = 0,
+/// Registered scroll regions (`scrollRegion`), kept sorted by ascending `node`.
+scrolls: [Scroll.max]Scroll.Region = undefined,
 
 /// `nodes` and `lines` are the caller's and bound how much one view
 /// can hold.
@@ -358,21 +415,81 @@ pub fn reset(self: *Tree) void {
     self.len = 0;
     self.current = none;
     self.anchor_len = 0;
+    self.scroll_len = 0;
     self.lines.len = 0;
-    self.scroll_index = none;
-    self.scroll_offset = 0;
-    self.scroll_max = 0;
 }
 
-/// Makes the clipping box `index` scroll: its content keeps its own
-/// height and moves up by `offset` logical pixels, which layout caps
-/// at what the content has beyond the box (`scroll_max`). One region
-/// per tree.
-pub fn scrollRegion(self: *Tree, index: Index, offset: f32) void {
+/// Makes the clipping box `index` scroll on `x` and `y`: content keeps its
+/// intrinsic extent along open overflow and shifts by `offset` logical pixels,
+/// clamped by `layout` to `[0, Region.max]`.
+pub fn scrollRegion(self: *Tree, index: Index, offset: Scroll.Offset) Error!void {
     assert(self.nodes[index].content == .box and self.nodes[index].box.overflow == .clip);
-    assert(self.scroll_index == none);
-    self.scroll_index = index;
-    self.scroll_offset = offset;
+    assert(!self.hasScrollRegion(index));
+    if (self.scroll_len == Scroll.max) return error.OutOfScrollRegions;
+    var insert_at: usize = self.scroll_len;
+    while (insert_at > 0 and self.scrolls[insert_at - 1].node > index) : (insert_at -= 1) {
+        self.scrolls[insert_at] = self.scrolls[insert_at - 1];
+    }
+    self.scrolls[insert_at] = .{
+        .id = self.nodes[index].box.id,
+        .node = index,
+        .offset = offset,
+    };
+    self.scroll_len += 1;
+}
+
+/// Laid-out scroll bounds for the region with `id`, or zeros if not registered.
+pub fn scrollMax(self: *const Tree, id: Id) Scroll.Max {
+    for (self.scrolls[0..self.scroll_len]) |region| {
+        if (region.id == id) return region.max;
+    }
+    return .{};
+}
+
+/// Registered scroll region record for node `index`, if any.
+pub fn scrollOf(self: *const Tree, index: Index) ?Scroll.Region {
+    for (self.scrolls[0..self.scroll_len]) |region| {
+        if (region.node == index) return region;
+    }
+    return null;
+}
+
+/// Whether node `index` is registered as a scrolling region.
+pub fn hasScrollRegion(self: *const Tree, index: Index) bool {
+    return self.scrollOf(index) != null;
+}
+
+/// Topmost unoccluded scroll region containing `(x, y)` that can scroll along
+/// the nonzero component(s) of `(dx, dy)`.
+pub fn scrollTargetAt(self: *const Tree, x: f32, y: f32, dx: f32, dy: f32) ?Scroll.Region {
+    if (dx == 0 and dy == 0) return null;
+    const top_hit = self.hitIndex(x, y, 0);
+    var i: usize = self.scroll_len;
+    while (i > 0) {
+        i -= 1;
+        const region = self.scrolls[i];
+        const region_node = &self.nodes[region.node];
+        if (!region_node.rect.contains(x, y)) continue;
+        if (self.clippedAt(region.node, x, y)) continue;
+        if (top_hit) |hit_index| {
+            if (hit_index >= region_node.end) continue;
+        }
+        if ((dx != 0 and region.max.x > 0) or (dy != 0 and region.max.y > 0)) {
+            return region;
+        }
+    }
+    return null;
+}
+
+/// Computes the clamped `Scroll.Offset` keeping `target_id` inside `region_id`
+/// with `margin` clearance, or `null` if either node is absent in `self`.
+pub fn ensureVisible(self: *const Tree, region_id: Id, target_id: Id, margin: f32) ?Scroll.Offset {
+    const target = self.find(target_id) orelse return null;
+    for (self.scrolls[0..self.scroll_len]) |region| {
+        if (region.id != region_id) continue;
+        return Scroll.ensureVisibleRect(self.nodes[region.node].rect, target.rect, margin, region.offset, region.max);
+    }
+    return null;
 }
 
 /// Places the root `index` against the node with id `target` (see
@@ -501,13 +618,17 @@ pub fn hitTest(self: *const Tree, x: f32, y: f32) Id {
 
 /// The node `hitTest` finds, or null.
 pub fn hit(self: *const Tree, x: f32, y: f32) ?*const Node {
+    return if (self.hitIndex(x, y, 0)) |index| &self.nodes[index] else null;
+}
+
+fn hitIndex(self: *const Tree, x: f32, y: f32, stop: Index) ?Index {
     var i = self.len;
-    while (i > 0) {
+    while (i > stop) {
         i -= 1;
         const node = &self.nodes[i];
         if (node.box.id == .none or !node.rect.contains(x, y)) continue;
         if (node.content == .arc and !arcContains(node.content.arc, node.rect, x, y)) continue;
-        if (!self.clippedAt(i, x, y)) return node;
+        if (!self.clippedAt(i, x, y)) return i;
     }
     return null;
 }

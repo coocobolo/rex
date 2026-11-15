@@ -420,7 +420,8 @@ test "sizes of the kit's types" {
     try testing.expectEqual(40, @sizeOf(Tree.Node.Content));
     try testing.expectEqual(16, @sizeOf(Tree.Rect));
     try testing.expectEqual(8, @sizeOf(Tree.Size));
-    try testing.expectEqual(120, @sizeOf(Tree));
+    try testing.expectEqual(24, @sizeOf(Tree.Scroll.Region));
+    try testing.expectEqual(304, @sizeOf(Tree));
 }
 
 test "tree: a node a clipping ancestor cuts away is not hit there" {
@@ -444,7 +445,7 @@ test "tree: a node a clipping ancestor cuts away is not hit there" {
 fn scrolled(fixture: *Fixture, offset: f32) !Tree {
     var tree = fixture.tree();
     const region = try tree.open(.{ .width = .{ .fixed = 50 }, .height = .{ .fixed = 100 }, .overflow = .clip });
-    tree.scrollRegion(region, offset);
+    try tree.scrollRegion(region, .{ .y = offset });
     for (0..3) |index| {
         _ = try tree.leaf(.{ .id = Id.of("row").item(@intCast(index)), .width = .fill, .height = .{ .fixed = 60 } });
     }
@@ -456,7 +457,7 @@ fn scrolled(fixture: *Fixture, offset: f32) !Tree {
 test "layout: a scroll region moves its content up, capped at what is below" {
     var fixture: Fixture = .{};
     var tree = try scrolled(&fixture, 50);
-    try testing.expectEqual(80, tree.scroll_max);
+    try testing.expectEqual(80, tree.scrollMax(.none).y);
     try expectRect(&tree, 0, 0, 0, 50, 100);
     try expectRect(&tree, 1, 0, -50, 50, 60);
     try expectRect(&tree, 3, 0, 70, 50, 60);
@@ -474,21 +475,21 @@ test "layout: content shorter than its region does not scroll" {
     var fixture: Fixture = .{};
     var tree = fixture.tree();
     const region = try tree.open(.{ .width = .{ .fixed = 50 }, .height = .{ .fixed = 100 }, .overflow = .clip });
-    tree.scrollRegion(region, 30);
+    try tree.scrollRegion(region, .{ .y = 30 });
     _ = try tree.leaf(.{ .width = .fill, .height = .{ .fixed = 60 } });
     tree.close(region);
     try tree.layout(measurer, 400, 400);
-    try testing.expectEqual(0, tree.scroll_max);
+    try testing.expectEqual(0, tree.scrollMax(.none).y);
     try expectRect(&tree, 1, 0, 0, 50, 60);
     tree.reset();
-    try testing.expectEqual(Tree.none, tree.scroll_index);
+    try testing.expectEqual(0, tree.scroll_len);
 }
 
 test "layout: in a scroll region a fill child keeps its content's height" {
     var fixture: Fixture = .{};
     var tree = fixture.tree();
     const region = try tree.open(.{ .width = .{ .fixed = 50 }, .height = .{ .fixed = 100 }, .overflow = .clip });
-    tree.scrollRegion(region, 0);
+    try tree.scrollRegion(region, .{});
     _ = try tree.leaf(.{ .width = .fill, .height = .{ .fixed = 70 } });
     const grows = try tree.open(.{ .width = .fill, .height = .fill });
     _ = try tree.leaf(.{ .width = .fill, .height = .{ .fixed = 60 } });
@@ -497,19 +498,19 @@ test "layout: in a scroll region a fill child keeps its content's height" {
     try tree.layout(measurer, 400, 400);
     // 30 is left for it, but its content needs 60: it scrolls instead.
     try expectRect(&tree, 2, 0, 70, 50, 60);
-    try testing.expectEqual(30, tree.scroll_max);
+    try testing.expectEqual(30, tree.scrollMax(.none).y);
 }
 
 test "layout: in a scroll region a fill child still takes the room left" {
     var fixture: Fixture = .{};
     var tree = fixture.tree();
     const region = try tree.open(.{ .width = .{ .fixed = 50 }, .height = .{ .fixed = 100 }, .overflow = .clip });
-    tree.scrollRegion(region, 0);
+    try tree.scrollRegion(region, .{});
     _ = try tree.leaf(.{ .width = .fill, .height = .fill });
     tree.close(region);
     try tree.layout(measurer, 400, 400);
     try expectRect(&tree, 1, 0, 0, 50, 100);
-    try testing.expectEqual(0, tree.scroll_max);
+    try testing.expectEqual(0, tree.scrollMax(.none).y);
 }
 
 test "Theme: ColorScheme auto follows the background, others force a variant" {
@@ -569,10 +570,11 @@ test "layout: fit_at_most hugs smaller content, caps at max, and gives way to a 
     });
     _ = try tree.leaf(.{ .width = .{ .fixed = 300 }, .height = .{ .fixed = 300 } });
     tree.close(scroll_box);
-    tree.scrollRegion(scroll_box, 30);
+    try tree.scrollRegion(scroll_box, .{ .y = 30 });
     try tree.layout(measurer, 800, 600);
     try expectRect(&tree, scroll_box, 0, 0, 200, 120);
-    try testing.expectEqual(@as(f32, 180), tree.scroll_max);
+    try testing.expectEqual(@as(f32, 180), tree.scrollMax(.none).y);
+    try testing.expectEqual(@as(f32, 100), tree.scrollMax(.none).x);
 
     // Parent narrower than the hugged/capped size shrinks it unless shrink = false.
     tree = fixture.tree();
@@ -734,4 +736,170 @@ test "layout: Box.wrap keeps fill children full-width and wraps shrinkable long 
     try expectRect(&tree, tag, 0, 0, 29, 24);
     try expectRect(&tree, note, 0, 30, 100, 40);
     try expectRect(&tree, rule, 0, 76, 100, 2);
+}
+
+test "layout: multi-region x/y scroll isolates offsets, stacks nested regions, and rejects overflow capacity" {
+    var fixture: Fixture = .{};
+    var tree = fixture.tree();
+
+    const outer_id = Id.of("scroll.outer");
+    const inner_id = Id.of("scroll.inner");
+    const child_id = Id.of("scroll.child");
+
+    const outer = try tree.open(.{
+        .id = outer_id,
+        .width = .{ .fixed = 200 },
+        .height = .{ .fixed = 150 },
+        .overflow = .clip,
+    });
+    _ = try tree.leaf(.{ .width = .{ .fixed = 100 }, .height = .{ .fixed = 100 } });
+    const inner = try tree.open(.{
+        .id = inner_id,
+        .axis = .row,
+        .width = .{ .fixed = 180 },
+        .height = .{ .fixed = 120 },
+        .overflow = .clip,
+    });
+    const wide_child = try tree.leaf(.{
+        .id = child_id,
+        .width = .{ .fixed = 300 },
+        .height = .{ .fixed = 50 },
+    });
+    tree.close(inner);
+    try tree.scrollRegion(inner, .{ .x = 40 });
+    tree.close(outer);
+    // Registered after close(outer): insertion keeps ascending node order.
+    try tree.scrollRegion(outer, .{ .y = 30 });
+
+    try tree.layout(measurer, 400, 400);
+
+    try testing.expectEqual(@as(f32, 0), tree.scrollMax(outer_id).x);
+    try testing.expectEqual(@as(f32, 70), tree.scrollMax(outer_id).y);
+    try testing.expectEqual(@as(f32, 120), tree.scrollMax(inner_id).x);
+    try testing.expectEqual(@as(f32, 0), tree.scrollMax(inner_id).y);
+
+    // Outer shifted y by -30; inner's child shifted both outer (-30 y) and inner (-40 x).
+    try expectRect(&tree, inner, 0, 70, 180, 120);
+    try expectRect(&tree, wide_child, -40, 70, 300, 50);
+
+    // Registering beyond Scroll.max returns OutOfScrollRegions cleanly.
+    tree = fixture.tree();
+    const root = try tree.open(.{ .width = .fill, .height = .fill });
+    for (0..Tree.Scroll.max) |i| {
+        const box = try tree.open(.{ .id = Id.of("cap").item(@intCast(i)), .width = .{ .fixed = 20 }, .height = .{ .fixed = 20 }, .overflow = .clip });
+        tree.close(box);
+        try tree.scrollRegion(box, .{});
+    }
+    const extra = try tree.open(.{ .id = Id.of("cap.extra"), .width = .{ .fixed = 20 }, .height = .{ .fixed = 20 }, .overflow = .clip });
+    tree.close(extra);
+    try testing.expectError(error.OutOfScrollRegions, tree.scrollRegion(extra, .{}));
+    tree.close(root);
+}
+
+test "tree: scrollTargetAt picks deepest unoccluded region, chains orthogonal axes, and blocks behind scrims" {
+    var fixture: Fixture = .{};
+    var tree = fixture.tree();
+
+    const outer_id = Id.of("target.outer");
+    const strip_id = Id.of("target.strip");
+    const scrim_id = Id.of("target.scrim");
+
+    // Root 0: vertical outer region with a nested horizontal strip.
+    const outer = try tree.open(.{
+        .id = outer_id,
+        .width = .{ .fixed = 200 },
+        .height = .{ .fixed = 150 },
+        .overflow = .clip,
+    });
+    const strip = try tree.open(.{
+        .id = strip_id,
+        .axis = .row,
+        .width = .{ .fixed = 160 },
+        .height = .{ .fixed = 50 },
+        .overflow = .clip,
+    });
+    _ = try tree.leaf(.{ .width = .{ .fixed = 300 }, .height = .{ .fixed = 40 } });
+    tree.close(strip);
+    _ = try tree.leaf(.{ .width = .fill, .height = .{ .fixed = 200 } });
+    tree.close(outer);
+    try tree.scrollRegion(outer, .{});
+    try tree.scrollRegion(strip, .{});
+    try tree.layout(measurer, 400, 400);
+
+    // Horizontal wheel over nested strip hits strip; vertical wheel chains out to outer.
+    try testing.expectEqual(strip_id, tree.scrollTargetAt(40, 20, 48, 0).?.id);
+    try testing.expectEqual(outer_id, tree.scrollTargetAt(40, 20, 0, 48).?.id);
+    // Vertical wheel below strip hits outer; zero delta returns null.
+    try testing.expectEqual(outer_id, tree.scrollTargetAt(40, 100, 0, 48).?.id);
+    try testing.expectEqual(@as(?Tree.Scroll.Region, null), tree.scrollTargetAt(40, 100, 0, 0));
+
+    // A non-interactive tooltip (id == .none) above outer does not block wheel scrolling.
+    tree = fixture.tree();
+    const page = try tree.open(.{ .id = outer_id, .width = .{ .fixed = 200 }, .height = .{ .fixed = 150 }, .overflow = .clip });
+    _ = try tree.leaf(.{ .width = .fill, .height = .{ .fixed = 300 } });
+    tree.close(page);
+    try tree.scrollRegion(page, .{});
+    const tip = try tree.open(.{ .width = .{ .fixed = 100 }, .height = .{ .fixed = 60 } });
+    tree.close(tip);
+    try tree.layout(measurer, 400, 400);
+    try testing.expectEqual(outer_id, tree.scrollTargetAt(50, 30, 0, 48).?.id);
+
+    // An interactive overlay scrim (id != .none) drawn after page occludes wheel events on it.
+    tree = fixture.tree();
+    const bg = try tree.open(.{ .id = outer_id, .width = .{ .fixed = 200 }, .height = .{ .fixed = 150 }, .overflow = .clip });
+    _ = try tree.leaf(.{ .width = .fill, .height = .{ .fixed = 300 } });
+    tree.close(bg);
+    try tree.scrollRegion(bg, .{});
+    _ = try tree.leaf(.{ .id = scrim_id, .width = .fill, .height = .fill });
+    try tree.layout(measurer, 400, 400);
+    try testing.expectEqual(@as(?Tree.Scroll.Region, null), tree.scrollTargetAt(50, 30, 0, 48));
+}
+
+test "tree: ensureVisible brings targets into padded bounds and handles narrow or oversized targets" {
+    // 1D axis checks.
+    try testing.expectEqual(@as(f32, 100), Tree.Scroll.ensureVisibleAxis(100, 300, 0, 200, 50, 40, 24));
+    try testing.expectEqual(@as(f32, 64), Tree.Scroll.ensureVisibleAxis(100, 300, 0, 200, -12, 40, 24));
+    try testing.expectEqual(@as(f32, 184), Tree.Scroll.ensureVisibleAxis(100, 300, 0, 200, 220, 40, 24));
+    // Oversized item (500 px inside 200 px viewport) aligns start without jumping past it.
+    try testing.expectEqual(@as(f32, 0), Tree.Scroll.ensureVisibleAxis(0, 400, 0, 200, 0, 500, 24));
+    try testing.expectEqual(@as(f32, 40), Tree.Scroll.ensureVisibleAxis(0, 400, 0, 200, 40, 500, 24));
+    // Unknown limit (null) allows positive scrolling before first wheel event; known limit clamps.
+    try testing.expectEqual(@as(f32, 444), Tree.Scroll.ensureVisibleAxis(100, null, 0, 200, 480, 40, 24));
+    try testing.expectEqual(@as(f32, 250), Tree.Scroll.ensureVisibleAxis(100, 250, 0, 200, 480, 40, 24));
+
+    // Tree.ensureVisible against laid-out 2D region.
+    var fixture: Fixture = .{};
+    var tree = fixture.tree();
+    const reg_id = Id.of("vis.region");
+    const tgt_id = Id.of("vis.target");
+    const region = try tree.open(.{ .id = reg_id, .axis = .row, .width = .{ .fixed = 100 }, .height = .{ .fixed = 100 }, .overflow = .clip });
+    _ = try tree.leaf(.{ .width = .{ .fixed = 120 }, .height = .{ .fixed = 200 } });
+    _ = try tree.leaf(.{ .id = tgt_id, .width = .{ .fixed = 60 }, .height = .{ .fixed = 30 } });
+    tree.close(region);
+    try tree.scrollRegion(region, .{});
+    try tree.layout(measurer, 400, 400);
+
+    // Target sits at x = [120, 180] in a 100-wide viewport (max.x = 80), margin 10 -> aligns x + w to 90 -> shift 80 (capped).
+    const next = tree.ensureVisible(reg_id, tgt_id, 10).?;
+    try testing.expectEqual(@as(f32, 80), next.x);
+    try testing.expectEqual(@as(f32, 0), next.y);
+
+    // A wrapping horizontal scroll region computes max.x from max wrapped line width, not single-line sum.
+    tree = fixture.tree();
+    const wrap_id = Id.of("vis.wrap_scroll");
+    const wrap_reg = try tree.open(.{
+        .id = wrap_id,
+        .axis = .row,
+        .wrap = true,
+        .width = .{ .fixed = 100 },
+        .height = .{ .fixed = 80 },
+        .gap = 8,
+        .overflow = .clip,
+    });
+    _ = try tree.leaf(.{ .width = .{ .fixed = 160 }, .height = .{ .fixed = 20 }, .shrink = false });
+    _ = try tree.leaf(.{ .width = .{ .fixed = 40 }, .height = .{ .fixed = 20 } });
+    tree.close(wrap_reg);
+    try tree.scrollRegion(wrap_reg, .{});
+    try tree.layout(measurer, 400, 400);
+    try testing.expectEqual(@as(f32, 60), tree.scrollMax(wrap_id).x);
 }

@@ -124,6 +124,7 @@ const gear_id = Id.of("wellbeing.gear");
 const timer_chart_id = Id.of("wellbeing.timer_chart");
 const program_chart_id = Id.of("wellbeing.program_chart");
 const scheme_id = Id.of("wellbeing.scheme");
+pub const page_id = Id.of("wellbeing.page");
 
 fn over(id: Id) Over {
     if (id == chip_id) return .chip;
@@ -521,8 +522,9 @@ pub fn update(state: *State, event: host.Event) bool {
         .key => |press| key(state, press),
         .char => false,
         .scroll => |wheel| blk: {
-            state.scroll = std.math.clamp(state.scroll + wheel.dy, 0, wheel.max);
-            break :blk false;
+            if (wheel.id != page_id) break :blk false;
+            state.scroll = std.math.clamp(state.scroll + wheel.dy, 0, wheel.max_y);
+            break :blk state.scroll != scrolled;
         },
     };
     if (state.page != page) {
@@ -769,13 +771,14 @@ fn stackNote(width: f32) bool {
 /// does not fit the window, wide or narrow, scrolls instead of squeezing.
 fn pageBox(state: *const State, tree: *Tree) kit.Tree.Error!kit.Tree.Index {
     const page = try tree.open(.{
+        .id = page_id,
         .width = .fill,
         .height = .fill,
         .padding = .{ .left = sideMargin(state.width), .right = sideMargin(state.width), .top = 4, .bottom = 24 },
         .gap = card_gap,
         .overflow = .clip,
     });
-    tree.scrollRegion(page, state.scroll);
+    try tree.scrollRegion(page, .{ .y = state.scroll });
     return page;
 }
 

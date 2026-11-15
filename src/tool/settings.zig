@@ -1600,8 +1600,9 @@ pub fn update(state: *State, event: host.Event) bool {
                 }
                 return false;
             }
-            state.scroll_max = wheel.max;
-            const next = std.math.clamp(state.scroll + wheel.dy, 0, wheel.max);
+            if (wheel.id != scroll_area_id) return false;
+            state.scroll_max = wheel.max_y;
+            const next = std.math.clamp(state.scroll + wheel.dy, 0, wheel.max_y);
             if (next == state.scroll) return false;
             state.scroll = next;
             return true;
@@ -2024,13 +2025,8 @@ fn ensureFocusedVisible(state: *State) void {
     const id = targetId(state.focused) orelse return;
     const area = state.node_rect.get(scroll_area_id) orelse return;
     const rect = state.node_rect.get(id) orelse return;
-    const pad: f32 = 24;
-    if (rect.y < area.y + pad) {
-        state.scroll = @max(0.0, state.scroll - (area.y + pad - rect.y));
-    } else if (rect.y + rect.h > area.y + area.h - pad) {
-        const needed = state.scroll + (rect.y + rect.h - (area.y + area.h - pad));
-        state.scroll = if (state.scroll_max > 0) @min(state.scroll_max, needed) else needed;
-    }
+    const limit: ?f32 = if (state.scroll_max > 0) state.scroll_max else null;
+    state.scroll = Tree.Scroll.ensureVisibleAxis(state.scroll, limit, area.y, area.h, rect.y, rect.h, 24);
 }
 
 fn copySelection(state: *State, inp: *const input.State) void {
@@ -2668,7 +2664,7 @@ pub fn view(state: *const State, tree: *Tree, theme: *const Theme) kit.Tree.Erro
         .padding = .symmetric(24, 16),
         .overflow = .clip,
     });
-    tree.scrollRegion(scroll_area, state.scroll);
+    try tree.scrollRegion(scroll_area, .{ .y = state.scroll });
 
     const content = try tree.open(.{
         .width = .{ .at_most = 800 },

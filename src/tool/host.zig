@@ -71,10 +71,16 @@ pub const Event = union(enum) {
     key: KeyPress,
     /// A printable Unicode codepoint typed on the keyboard.
     char: u21,
-    /// The wheel turned: `dy` logical pixels down (negative: up). `max` is
-    /// how far the view's scroll region could move up when last laid out
-    /// (`Tree.scroll_max`), so the tool can keep its offset in 0..max.
-    scroll: struct { dy: f32, max: f32 },
+    /// The wheel turned over the scroll region with `id` (or `.none` when
+    /// occluded or outside any region): `dx`/`dy` logical pixels right/down
+    /// (negative: left/up). `max_x` and `max_y` are the region's bounds.
+    scroll: struct {
+        id: Id = .none,
+        dx: f32 = 0,
+        dy: f32 = 0,
+        max_x: f32 = 0,
+        max_y: f32 = 0,
+    },
 };
 
 /// Logical pixels one wheel notch scrolls.
@@ -470,9 +476,23 @@ fn Host(comptime Tool: type) type {
             }
         }
 
-        fn onScroll(window: ?*c.GLFWwindow, _: f64, y: f64) callconv(.c) void {
+        fn onScroll(window: ?*c.GLFWwindow, x: f64, y: f64) callconv(.c) void {
             const self = fromWindow(window);
-            self.send(.{ .scroll = .{ .dy = scrollDelta(y), .max = self.tree.scroll_max } });
+            const dx = scrollDelta(x);
+            const dy = scrollDelta(y);
+            if (dx == 0 and dy == 0) return;
+            if (self.tree.scrollTargetAt(self.pointer_x, self.pointer_y, dx, dy)) |region| {
+                self.send(.{ .scroll = .{
+                    .id = region.id,
+                    .dx = dx,
+                    .dy = dy,
+                    .max_x = region.max.x,
+                    .max_y = region.max.y,
+                } });
+            } else {
+                // Occluded popups without their own `scrollRegion` still handle wheel via `id == .none`.
+                self.send(.{ .scroll = .{ .id = .none, .dx = dx, .dy = dy } });
+            }
         }
 
         fn clipboardGet(ptr: *anyopaque) ?[:0]const u8 {

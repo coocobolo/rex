@@ -54,13 +54,13 @@ pub fn run(tree: *Tree, measurer: text.Measurer, viewport_width: f32, viewport_h
             .fit_at_most => |value| nodes[root].rect.w = @min(@max(nodes[root].rect.w, rect.w), @max(0, value)),
             .fill, .fixed, .at_most, .fraction => {},
         };
-        distribute(nodes, range, .horizontal, viewport_width, tree.scroll_index);
+        distribute(nodes, range, .horizontal, viewport_width, tree);
         try wrapTexts(tree, range, measurer);
         fit(nodes, range, .vertical, measurer);
-        distribute(nodes, range, .vertical, viewport_height, tree.scroll_index);
+        distribute(nodes, range, .vertical, viewport_height, tree);
         place(nodes, range);
-        // Before later roots anchor to nodes inside the region.
-        if (tree.scroll_index >= range.start and tree.scroll_index < range.end) scroll(tree, nodes);
+        // Before later roots anchor to nodes inside any scrolling region.
+        scrollRange(tree, nodes, range);
         if (anchor) |a| switch (a.target) {
             .node => if (target) |rect| {
                 const at = anchorPosition(nodes[root].rect, rect, viewport_width, viewport_height);
@@ -227,15 +227,20 @@ fn wrappedLines(nodes: []Node, index: usize) WrappedLines {
 /// What the children of a box need in `dimension`, padding included.
 fn contentExtent(nodes: []Node, index: usize, comptime dimension: Dimension) f32 {
     const node = &nodes[index];
-    if (dimension == .vertical and node.box.wrap) {
+    if (node.box.wrap) {
         var total: f32 = 0;
         var line_count: u32 = 0;
         var lines = wrappedLines(nodes, index);
         while (lines.next()) |line| {
-            total += line.height;
+            switch (dimension) {
+                .vertical => total += line.height,
+                .horizontal => total = @max(total, line.width),
+            }
             line_count += 1;
         }
-        if (line_count > 1) total += @floatFromInt(@as(u32, node.box.gap) * (line_count - 1));
+        if (dimension == .vertical and line_count > 1) {
+            total += @floatFromInt(@as(u32, node.box.gap) * (line_count - 1));
+        }
         return total + padding(node, dimension);
     }
     const along = isAlong(node, dimension);
@@ -288,7 +293,7 @@ fn fit(nodes: []Node, range: Range, comptime dimension: Dimension, measurer: tex
 
 /// Top-down: the root takes its extent from the viewport, then every box
 /// hands its inner extent out to its children.
-fn distribute(nodes: []Node, range: Range, comptime dimension: Dimension, viewport: f32, scroll_index: Index) void {
+fn distribute(nodes: []Node, range: Range, comptime dimension: Dimension, viewport: f32, tree: *const Tree) void {
     const root = &nodes[range.start];
     const own = extent(root, dimension);
     own.* = switch (size(root, dimension)) {
@@ -301,7 +306,8 @@ fn distribute(nodes: []Node, range: Range, comptime dimension: Dimension, viewpo
         if (node.content != .box) continue;
         const inner = @max(0, extent(node, dimension).* - padding(node, dimension));
         if (isAlong(node, dimension)) {
-            distributeAlong(nodes, i, dimension, inner, i == scroll_index);
+            const scrolls = node.box.overflow == .clip and tree.hasScrollRegion(@intCast(i));
+            distributeAlong(nodes, i, dimension, inner, scrolls);
         } else {
             var it = children(nodes, i);
             while (it.next()) |child| {
@@ -398,17 +404,26 @@ fn distributeWrapped(nodes: []Node, index: usize, comptime dimension: Dimension,
     }
 }
 
-/// Moves the scroll region's content up by its offset, capped at what the
-/// content has beyond the region, and records that cap. The region clips,
-/// so the content kept its own height in `distribute`.
-fn scroll(tree: *Tree, nodes: []Node) void {
-    const index = tree.scroll_index;
-    const region = &nodes[index];
-    tree.scroll_max = @max(0, contentExtent(nodes, index, .vertical) - region.rect.h);
-    const moved = std.math.clamp(tree.scroll_offset, 0, tree.scroll_max);
-    // Also false for a NaN offset.
-    if (!(moved > 0)) return;
-    for (nodes[index + 1 .. region.end]) |*node| node.rect.y -= moved;
+/// Shifts each scroll region's descendants left/up by its clamped offset and
+/// records the region's `max.{x,y}` extent beyond its box.
+fn scrollRange(tree: *Tree, nodes: []Node, range: Range) void {
+    for (tree.scrolls[0..tree.scroll_len]) |*region| {
+        if (region.node < range.start or region.node >= range.end) continue;
+        const index = region.node;
+        const box_node = &nodes[index];
+        region.max = .{
+            .x = @max(0, contentExtent(nodes, index, .horizontal) - box_node.rect.w),
+            .y = @max(0, contentExtent(nodes, index, .vertical) - box_node.rect.h),
+        };
+        const moved_x = std.math.clamp(region.offset.x, 0, region.max.x);
+        const moved_y = std.math.clamp(region.offset.y, 0, region.max.y);
+        // Also false for NaN offsets.
+        if (!(moved_x > 0) and !(moved_y > 0)) continue;
+        for (nodes[index + 1 .. box_node.end]) |*child| {
+            child.rect.x -= moved_x;
+            child.rect.y -= moved_y;
+        }
+    }
 }
 
 /// Fits or wraps every text node's lines to the width it was given and sets its height.
