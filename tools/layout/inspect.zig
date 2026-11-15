@@ -34,10 +34,8 @@ const Entry = struct {
 const skip_decls = [_][]const u8{
     "gl",
     "glfw",
-    "FreeType",
     "c",
     "std",
-    "builtin",
 };
 
 const max_walk_depth = 4;
@@ -225,17 +223,9 @@ fn buildCatalog() []const Entry {
     comptime {
         var c: Collector = .{};
         c.walk("", rex, 0);
-        // Generic types instantiated with production options in App.
+        // `KitOverlay` is a private field type on `App` rather than a `pub const` declaration.
         const KitOverlayType = std.meta.Child(std.meta.Child(@FieldType(rex.App, "kit")));
         c.append("KitOverlay", KitOverlayType);
-        c.append("App.TerminalType", rex.App.TerminalType);
-        c.append("App.ScreenType", rex.App.ScreenType);
-        c.append("App.FrameType", rex.App.FrameType);
-        c.append("App.FrameBuilderType", rex.App.FrameBuilderType);
-        c.append("App.RendererType", rex.App.RendererType);
-        c.append("App.Driver", rex.App.Driver);
-        c.append("App.SingleDriverType", rex.App.SingleDriverType);
-        c.append("App.ThreadedDriverType", rex.App.ThreadedDriverType);
         const out = c.entries[0..c.len].*;
         return &out;
     }
@@ -267,6 +257,9 @@ pub fn main(init: std.process.Init) !void {
             opts.by_size = true;
         } else if (std.mem.eql(u8, arg, "-h") or std.mem.eql(u8, arg, "--help")) {
             opts.help = true;
+        } else if (std.mem.startsWith(u8, arg, "-")) {
+            std.log.err("unknown option: {s}", .{arg});
+            std.process.exit(2);
         } else {
             try filters.append(arena, arg);
         }
@@ -451,4 +444,22 @@ test "containsFold matches substrings case-insensitively" {
     try std.testing.expect(containsFold("renderer.KitPainter.Instance", "kitpainter.instance"));
     try std.testing.expect(containsFold("kit.Tree.Box", "Tree.Box"));
     try std.testing.expect(!containsFold("kit.Tree.Box", "Anchor"));
+}
+
+test "catalog walks rex namespaces including builtin, FreeType, kit, and KitOverlay" {
+    try std.testing.expect(catalog.len > 200);
+    var has_tree_node = false;
+    var has_builtin = false;
+    var has_freetype = false;
+    var has_overlay = false;
+    for (catalog) |entry| {
+        if (std.mem.eql(u8, entry.name, "kit.Tree.Node")) has_tree_node = true;
+        if (std.mem.startsWith(u8, entry.name, "builtin.")) has_builtin = true;
+        if (std.mem.startsWith(u8, entry.name, "FreeType.")) has_freetype = true;
+        if (std.mem.eql(u8, entry.name, "KitOverlay")) has_overlay = true;
+    }
+    try std.testing.expect(has_tree_node);
+    try std.testing.expect(has_builtin);
+    try std.testing.expect(has_freetype);
+    try std.testing.expect(has_overlay);
 }
