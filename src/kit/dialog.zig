@@ -9,6 +9,7 @@ const std = @import("std");
 const Theme = @import("Theme.zig");
 const button = @import("button.zig");
 const motion = @import("motion.zig");
+const separatorView = @import("separator.zig").view;
 const Tree = @import("Tree.zig");
 const Id = Tree.Id;
 const Index = Tree.Index;
@@ -215,11 +216,7 @@ pub fn openScrimCard(
 
 /// Full-width 1 px horizontal divider for edge-to-edge card sections.
 pub fn separator(tree: *Tree, theme: *const Theme, presence: f32) Tree.Error!void {
-    _ = try tree.leaf(.{
-        .width = .fill,
-        .height = .{ .fixed = Theme.border_width },
-        .fill = theme.border.fade(presence),
-    });
+    return separatorView(tree, theme, .{ .presence = presence });
 }
 
 pub fn close(tree: *Tree, frame: Frame) void {
