@@ -30,6 +30,7 @@ pub const SceneKey = struct {
     scrollbar_alpha: f32 = 0,
     selection_bg: ?[3]u8 = null,
     blur_radius: u8 = 0,
+    dim_alpha: u8 = 0,
     focused: bool = true,
     scrollbar_hover: bool = false,
     blink_rapid_on: bool = true,
@@ -186,6 +187,7 @@ pub fn filterPyramid(self: *Blur, blur_radius: u8) void {
 
     const base_offset: f32 = 1.0 + (@as(f32, @floatFromInt(blur_radius)) / 32.0) * 0.4;
 
+    gl.disable(gl.BLEND);
     gl.bindVertexArray(self.dummy_vao);
     gl.activeTexture(gl.TEXTURE0);
 
@@ -241,6 +243,7 @@ pub fn filterPyramid(self: *Blur, blur_radius: u8) void {
     gl.bindTexture(gl.TEXTURE_2D, 0);
     gl.bindVertexArray(0);
     gl.useProgram(0);
+    gl.enable(gl.BLEND);
 }
 
 /// Returns the blurred `levels[0]` texture produced by `filterPyramid`.
@@ -288,6 +291,49 @@ pub fn compositeCached(
     self.drawFinalPass(width, height, dim_alpha, scrim_rgb);
 }
 
+/// Blends the rendered terminal scene on framebuffer 0 toward `scrim_rgb` by
+/// `dim_alpha` while leaving the framebuffer's alpha channel untouched.
+pub fn drawDimScrim(
+    self: *const Blur,
+    width: u32,
+    height: u32,
+    dim_alpha: u8,
+    scrim_rgb: [3]u8,
+) void {
+    if (dim_alpha == 0) return;
+
+    gl.viewport(0, 0, @intCast(width), @intCast(height));
+    gl.enable(gl.BLEND);
+    gl.blendFuncSeparate(
+        gl.SRC_ALPHA,
+        gl.ONE_MINUS_SRC_ALPHA,
+        gl.ZERO,
+        gl.ONE,
+    );
+
+    gl.bindVertexArray(self.dummy_vao);
+    self.up_shader.use();
+    self.up_shader.set1i("u_is_final", 2);
+    self.up_shader.set1f("u_dim_alpha", @as(f32, @floatFromInt(dim_alpha)) / 255.0);
+    self.up_shader.set3f(
+        "u_scrim_color",
+        @as(f32, @floatFromInt(scrim_rgb[0])) / 255.0,
+        @as(f32, @floatFromInt(scrim_rgb[1])) / 255.0,
+        @as(f32, @floatFromInt(scrim_rgb[2])) / 255.0,
+    );
+
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+
+    gl.blendFuncSeparate(
+        gl.SRC_ALPHA,
+        gl.ONE_MINUS_SRC_ALPHA,
+        gl.ONE,
+        gl.ONE_MINUS_SRC_ALPHA,
+    );
+    gl.bindVertexArray(0);
+    gl.useProgram(0);
+}
+
 fn drawFinalPass(
     self: *const Blur,
     width: u32,
@@ -305,6 +351,7 @@ fn drawFinalPass(
 
     gl.bindFramebuffer(gl.FRAMEBUFFER, 0);
     gl.viewport(0, 0, @intCast(width), @intCast(height));
+    gl.disable(gl.BLEND);
 
     self.up_shader.set1i("u_is_final", 1);
     const top_src = &self.levels[0];
@@ -317,4 +364,5 @@ fn drawFinalPass(
 
     gl.bindVertexArray(0);
     gl.useProgram(0);
+    gl.enable(gl.BLEND);
 }

@@ -29,6 +29,9 @@ pub const Option = struct {
     selection: Selection.Option,
     modal_blur: bool = false,
     modal_blur_radius: u8 = 12,
+    inactive_blur: bool = false,
+    inactive_blur_radius: u8 = 8,
+    inactive_dim_alpha: u8 = 0,
 };
 
 pub fn Renderer(comptime option: TerminalOption) type {
@@ -55,6 +58,9 @@ pub fn Renderer(comptime option: TerminalOption) type {
         color_tint: [3]f32 = .{ 1.0, 1.0, 1.0 },
         modal_blur: bool = false,
         modal_blur_radius: u8 = 12,
+        inactive_blur: bool = false,
+        inactive_blur_radius: u8 = 8,
+        inactive_dim_alpha: u8 = 0,
 
         pub fn init(opt: Option) !Self {
             var background = try Background.init(max_cells, opt.background);
@@ -96,6 +102,9 @@ pub fn Renderer(comptime option: TerminalOption) type {
                 .selection = selection,
                 .modal_blur = opt.modal_blur,
                 .modal_blur_radius = opt.modal_blur_radius,
+                .inactive_blur = opt.inactive_blur,
+                .inactive_blur_radius = opt.inactive_blur_radius,
+                .inactive_dim_alpha = opt.inactive_dim_alpha,
             };
             self.setFontMetrics(opt.font_metrics);
             return self;
@@ -107,6 +116,16 @@ pub fn Renderer(comptime option: TerminalOption) type {
             if (self.modal_blur == enabled and self.modal_blur_radius == radius) return;
             self.modal_blur = enabled;
             self.modal_blur_radius = radius;
+            self.blur.invalidate();
+        }
+
+        /// Updates unfocused window blur and dim settings and invalidates any
+        /// cached blur pyramid when they change.
+        pub fn setInactiveEffects(self: *Self, blur: bool, blur_radius: u8, dim_alpha: u8) void {
+            if (self.inactive_blur == blur and self.inactive_blur_radius == blur_radius and self.inactive_dim_alpha == dim_alpha) return;
+            self.inactive_blur = blur;
+            self.inactive_blur_radius = blur_radius;
+            self.inactive_dim_alpha = dim_alpha;
             self.blur.invalidate();
         }
 
@@ -167,7 +186,11 @@ pub fn Renderer(comptime option: TerminalOption) type {
                 blink_rapid_on: bool,
             },
         ) void {
-            const blur_active = frame.overlay_has_modal and self.modal_blur;
+            const modal_blur_active = frame.overlay_has_modal and self.modal_blur and self.modal_blur_radius > 0;
+            const inactive_blur_active = !focused and self.inactive_blur and self.inactive_blur_radius > 0;
+            const blur_active = modal_blur_active or inactive_blur_active;
+            const active_blur_radius: u8 = if (modal_blur_active) self.modal_blur_radius else self.inactive_blur_radius;
+            const active_dim_alpha: u8 = if (!focused and !frame.overlay_has_modal) self.inactive_dim_alpha else 0;
             const fb_w: u32 = @intFromFloat(frame_dimension.width);
             const fb_h: u32 = @intFromFloat(frame_dimension.height);
             const scene_key: Blur.SceneKey = .{
@@ -178,7 +201,8 @@ pub fn Renderer(comptime option: TerminalOption) type {
                 .grayscale = self.grayscale,
                 .scrollbar_alpha = self.scrollbar.last_alpha,
                 .selection_bg = selection_bg,
-                .blur_radius = self.modal_blur_radius,
+                .blur_radius = active_blur_radius,
+                .dim_alpha = active_dim_alpha,
                 .focused = focused,
                 .scrollbar_hover = self.scrollbar.hover,
                 .blink_rapid_on = cursor_state.blink_rapid_on,
@@ -194,7 +218,7 @@ pub fn Renderer(comptime option: TerminalOption) type {
                     gl.ONE,
                     gl.ONE_MINUS_SRC_ALPHA,
                 );
-                self.blur.compositeCached(fb_w, fb_h, self.modal_blur_radius, 0, scrimColor(background_color));
+                self.blur.compositeCached(fb_w, fb_h, active_blur_radius, active_dim_alpha, scrimColor(background_color));
                 return;
             }
 
@@ -312,16 +336,23 @@ pub fn Renderer(comptime option: TerminalOption) type {
                 self.scrollbar.draw();
             }
 
-            // Pass 6: Frosted backdrop blur behind the UI kit's modal scrim.
+            // Pass 6: Frosted backdrop blur or unfocused window blur/dim.
             if (blur_active) {
                 self.blur.renderBlur(
                     fb_w,
                     fb_h,
-                    self.modal_blur_radius,
-                    0,
+                    active_blur_radius,
+                    active_dim_alpha,
                     scrimColor(background_color),
                 );
                 self.blur.markCached(scene_key);
+            } else if (active_dim_alpha > 0) {
+                self.blur.drawDimScrim(
+                    fb_w,
+                    fb_h,
+                    active_dim_alpha,
+                    scrimColor(background_color),
+                );
             }
         }
 

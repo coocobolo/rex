@@ -16,6 +16,11 @@ float dither(vec2 coord) {
 }
 
 void main() {
+    if (u_is_final == 2) {
+        frag_color = vec4(u_scrim_color, clamp(u_dim_alpha, 0.0, 1.0));
+        return;
+    }
+
     vec2 d = u_half_pixel * u_offset;
 
     // 9-tap 3x3 tent filter with bilinear hardware smoothing
@@ -48,7 +53,7 @@ void main() {
 
         // Screen-space triangular dither in [-0.5/255, +0.5/255] range to dissolve quantization banding
         float noise = (dither(gl_FragCoord.xy) - 0.5) / 255.0;
-        frag_color = vec4(clamp(tinted + vec3(noise), 0.0, 1.0), 1.0);
+        frag_color = vec4(clamp(tinted + vec3(noise), 0.0, 1.0), avg.a);
     } else {
         frag_color = avg;
     }

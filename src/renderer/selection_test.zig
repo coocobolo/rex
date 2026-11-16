@@ -100,3 +100,46 @@ test "selection backdrop blur spreads offscreen scene color inside the pill" {
     try testing.expectEqual(@as(u8, 0), pixels[outside_idx + 1]);
     try testing.expectEqual(@as(u8, 0), pixels[outside_idx + 2]);
 }
+
+test "Blur: drawDimScrim blends RGB toward the scrim color while preserving framebuffer alpha" {
+    try testGlContext();
+
+    const width = 32;
+    const height = 32;
+    var blur = try Blur.init();
+    defer blur.deinit();
+
+    var out_fbo: gl.GLuint = 0;
+    var out_tex: gl.GLuint = 0;
+    gl.genFramebuffers(1, &out_fbo);
+    defer gl.deleteFramebuffers(1, &out_fbo);
+    gl.genTextures(1, &out_tex);
+    defer gl.deleteTextures(1, &out_tex);
+
+    gl.bindTexture(gl.TEXTURE_2D, out_tex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, out_fbo);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, out_tex, 0);
+    defer gl.bindFramebuffer(gl.FRAMEBUFFER, 0);
+    try testing.expectEqual(@as(gl.GLenum, gl.FRAMEBUFFER_COMPLETE), gl.checkFramebufferStatus(gl.FRAMEBUFFER));
+
+    gl.viewport(0, 0, width, height);
+    gl.enable(gl.BLEND);
+    gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+    var clear_color: [4]f32 = undefined;
+    gl.getFloatv(gl.COLOR_CLEAR_VALUE, &clear_color);
+    defer gl.clearColor(clear_color[0], clear_color[1], clear_color[2], clear_color[3]);
+    gl.clearColor(1.0, 1.0, 1.0, 0.5);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+
+    // Dim a pure white, 50%-alpha scene by 50% (128/255) over a dark background.
+    blur.drawDimScrim(width, height, 128, .{ 0, 0, 0 });
+
+    var pixel: [4]u8 = undefined;
+    gl.readPixels(16, 16, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, &pixel);
+    // RGB is dimmed roughly halfway from 255 to 0, while alpha stays ~128 (0.5).
+    try testing.expect(pixel[0] > 110 and pixel[0] < 145);
+    try testing.expect(pixel[1] > 110 and pixel[1] < 145);
+    try testing.expect(pixel[2] > 110 and pixel[2] < 145);
+    try testing.expect(pixel[3] >= 126 and pixel[3] <= 129);
+}
