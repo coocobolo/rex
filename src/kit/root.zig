@@ -24,6 +24,7 @@ pub const focus = @import("focus.zig");
 pub const dialog = @import("dialog.zig");
 pub const toast = @import("toast.zig");
 pub const alert = @import("alert.zig");
+pub const callout = @import("callout.zig");
 pub const alert_dialog = @import("alert_dialog.zig");
 pub const lock_screen = @import("lock_screen.zig");
 pub const wellbeing_widget = @import("wellbeing_widget.zig");
@@ -44,6 +45,7 @@ test {
     _ = @import("memory_test.zig");
     _ = @import("toast_test.zig");
     _ = @import("alert_test.zig");
+    _ = @import("callout_test.zig");
     _ = @import("alert_dialog_test.zig");
     _ = @import("lock_screen_test.zig");
     _ = @import("wellbeing_widget_test.zig");
