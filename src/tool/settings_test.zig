@@ -276,11 +276,8 @@ test "settings: Tab scrolls viewport when moving to an offscreen control" {
     const cfg = config_defaults.default;
     const Helper = struct {
         var tree: kit.Tree = undefined;
-        fn getRect(_: *const anyopaque, id: Id) ?kit.Tree.Rect {
-            for (tree.nodes[0..tree.len]) |node| {
-                if (node.box.id == id) return node.rect;
-            }
-            return null;
+        fn getRect(t: *const kit.Tree, id: Id) ?kit.Tree.Rect {
+            return if (t.find(id)) |n| n.rect else null;
         }
     };
     var state = try settings.init(.{
@@ -288,7 +285,7 @@ test "settings: Tab scrolls viewport when moving to an offscreen control" {
         .io = testing.io,
         .config = &cfg,
         .state_dir = "",
-        .node_rect = .{ .ctx = &dummy, .getFn = Helper.getRect },
+        .node_rect = .init(kit.Tree, &Helper.tree, Helper.getRect),
         .wake_loop = struct {
             fn wake() void {}
         }.wake,
@@ -325,11 +322,8 @@ test "settings: theme select popup windows long list and saves selection" {
     const cfg = config_defaults.default;
     const Helper = struct {
         var tree: kit.Tree = undefined;
-        fn getRect(_: *const anyopaque, id: Id) ?kit.Tree.Rect {
-            for (tree.nodes[0..tree.len]) |node| {
-                if (node.box.id == id) return node.rect;
-            }
-            return null;
+        fn getRect(t: *const kit.Tree, id: Id) ?kit.Tree.Rect {
+            return if (t.find(id)) |n| n.rect else null;
         }
     };
 
@@ -340,7 +334,7 @@ test "settings: theme select popup windows long list and saves selection" {
         .config_path = cfg_path,
         .state_dir = dir_path,
         .home_dir = dir_path,
-        .node_rect = .{ .ctx = &dummy, .getFn = Helper.getRect },
+        .node_rect = .init(kit.Tree, &Helper.tree, Helper.getRect),
         .wake_loop = struct {
             fn wake() void {}
         }.wake,
@@ -369,7 +363,7 @@ test "settings: theme select popup windows long list and saves selection" {
     try settings.view(&state, &Helper.tree, &ui_theme);
     try Helper.tree.layout(measurer, 960, 600);
 
-    const sel_rect = Helper.getRect(undefined, Id.of("settings.choice").item(12)).?;
+    const sel_rect = Helper.getRect(&Helper.tree, Id.of("settings.choice").item(12)).?;
     try testing.expect(sel_rect.y + sel_rect.h <= 600);
 
     try testing.expect(settings.update(&state, .{ .key = .{ .key = .enter } }));
@@ -1054,8 +1048,9 @@ test "settings: clicking select value label opens and switches directly between 
 
     const Helper = struct {
         var tree: kit.Tree = undefined;
-        fn getRect(_: *const anyopaque, id: Id) ?kit.Tree.Rect {
-            return if (tree.find(id)) |n| n.rect else null;
+
+        fn getRect(t: *const kit.Tree, id: Id) ?kit.Tree.Rect {
+            return if (t.find(id)) |n| n.rect else null;
         }
     };
 
@@ -1070,10 +1065,7 @@ test "settings: clicking select value label opens and switches directly between 
         .wake_loop = struct {
             fn wake() void {}
         }.wake,
-        .node_rect = .{
-            .ctx = undefined,
-            .getFn = Helper.getRect,
-        },
+        .node_rect = .init(kit.Tree, &Helper.tree, Helper.getRect),
     });
     defer settings.deinit(&state);
 

@@ -112,6 +112,20 @@ pub const NodeRect = struct {
     ctx: ?*const anyopaque = null,
     getFn: ?*const fn (ctx: *const anyopaque, id: Id) ?kit.Tree.Rect = null,
 
+    /// Looks rectangles up with `f(ctx, id)`; `ctx` must outlive every `get`.
+    pub fn init(
+        comptime T: type,
+        ctx: *const T,
+        comptime f: fn (*const T, Id) ?kit.Tree.Rect,
+    ) NodeRect {
+        const Wrap = struct {
+            fn call(p: *const anyopaque, id: Id) ?kit.Tree.Rect {
+                return f(@ptrCast(@alignCast(p)), id);
+            }
+        };
+        return .{ .ctx = ctx, .getFn = Wrap.call };
+    }
+
     pub fn get(self: NodeRect, id: Id) ?kit.Tree.Rect {
         const ctx = self.ctx orelse return null;
         const f = self.getFn orelse return null;
@@ -300,10 +314,7 @@ fn Host(comptime Tool: type) type {
                     .getFn = clipboardGet,
                     .setFn = clipboardSet,
                 },
-                .node_rect = .{
-                    .ctx = self,
-                    .getFn = nodeRect,
-                },
+                .node_rect = .init(Self, self, nodeRect),
                 .tool_launcher = .{
                     .ctx = self,
                     .openFn = openTool,
@@ -434,8 +445,7 @@ fn Host(comptime Tool: type) type {
             self.send(.{ .pointer = .{ .id = id, .x = self.pointer_x, .y = self.pointer_y } });
         }
 
-        fn nodeRect(ctx: *const anyopaque, id: Id) ?kit.Tree.Rect {
-            const self: *const Self = @ptrCast(@alignCast(ctx));
+        fn nodeRect(self: *const Self, id: Id) ?kit.Tree.Rect {
             const n = self.tree.find(id) orelse return null;
             return n.rect;
         }
