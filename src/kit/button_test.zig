@@ -47,6 +47,8 @@ test "button: each variant has its fill, border and label color" {
         .{ .variant = .primary, .fill = theme.primary, .border = .transparent, .label = theme.primary_foreground },
         .{ .variant = .ghost, .fill = .transparent, .border = .transparent, .label = theme.ghost_foreground },
         .{ .variant = .destructive, .fill = theme.destructive.alpha(20), .border = .transparent, .label = theme.destructive },
+        .{ .variant = .secondary, .fill = theme.secondary.alpha(100), .border = .transparent, .label = theme.foreground },
+        .{ .variant = .link, .fill = .transparent, .border = .transparent, .label = theme.primary },
     };
     for (cases) |case| {
         var fixture: Fixture = .{};
@@ -67,6 +69,7 @@ test "button: hover and press change the fill" {
         .{ .variant = .ghost, .hovered = theme.accent, .pressed = theme.accent },
         .{ .variant = .primary, .hovered = theme.primary.alpha(90), .pressed = theme.primary.alpha(80) },
         .{ .variant = .destructive, .hovered = theme.destructive.alpha(20), .pressed = theme.destructive.alpha(30) },
+        .{ .variant = .secondary, .hovered = theme.secondary.alpha(90), .pressed = theme.secondary.alpha(80) },
     };
     for (cases) |case| {
         var fixture: Fixture = .{};
@@ -114,6 +117,21 @@ test "button: the small size is lower and narrower" {
     const tree = try one(&fixture, &Theme.dark, .{ .id = id, .label = "Open", .size = .sm });
     try testing.expectEqual(Theme.control_sm, tree.nodes[1].rect.h);
     try testing.expectEqual(2 * 12 + 4 * byte_width, tree.nodes[1].rect.w);
+}
+
+test "button: the extra-small size is lower and narrower" {
+    var fixture: Fixture = .{};
+    const tree = try one(&fixture, &Theme.dark, .{ .id = id, .label = "Go", .size = .xs });
+    try testing.expectEqual(Theme.control_xs, tree.nodes[1].rect.h);
+    try testing.expectEqual(2 * 8 + 2 * byte_width, tree.nodes[1].rect.w);
+}
+
+test "button: an icon-only extra-small button is square" {
+    var fixture: Fixture = .{};
+    const tree = try one(&fixture, &Theme.dark, .{ .id = id, .label = "", .icon = icons.settings, .size = .xs });
+    try testing.expectEqual(3, tree.len);
+    try testing.expectEqual(Theme.control_xs, tree.nodes[1].rect.w);
+    try testing.expectEqual(Theme.control_xs, tree.nodes[1].rect.h);
 }
 
 test "button: a key cap follows the label, and the node count holds" {

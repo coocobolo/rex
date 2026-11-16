@@ -155,7 +155,8 @@ pub const ring_width = 3;
 pub const ring_opacity = 50;
 /// The step every padding and gap is a multiple of.
 pub const space = 4;
-/// Heights of small, default and large controls.
+/// Heights of extra-small, small, default and large controls.
+pub const control_xs = 24;
 pub const control_sm = 32;
 pub const control = 36;
 pub const control_lg = 40;

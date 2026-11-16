@@ -21,6 +21,7 @@ pub const gap = 8;
 
 pub const Size = enum(u8) {
     default,
+    xs,
     sm,
     lg,
 
@@ -28,6 +29,7 @@ pub const Size = enum(u8) {
     pub fn height(self: Size) u8 {
         return switch (self) {
             .default => Theme.control,
+            .xs => Theme.control_xs,
             .sm => Theme.control_sm,
             .lg => Theme.control_lg,
         };
@@ -37,6 +39,7 @@ pub const Size = enum(u8) {
     pub fn pad(self: Size) u8 {
         return switch (self) {
             .default => 16,
+            .xs => 8,
             .sm => 12,
             .lg => 20,
         };
@@ -56,6 +59,10 @@ pub const Variant = enum(u8) {
     ghost,
     /// Filled with `destructive`: an action that cannot be undone.
     destructive,
+    /// Filled with `secondary`: an action of middle weight.
+    secondary,
+    /// A label in `primary` with no face: an action inside a sentence.
+    link,
 };
 
 /// What the pointer is doing to the button, or that it takes no input.
@@ -141,6 +148,16 @@ fn look(theme: *const Theme, options: Options) Look {
                 .label = theme.destructive,
             };
         },
+        .secondary => .{
+            .fill = theme.secondary.alpha(solid),
+            .border = .transparent,
+            .label = theme.foreground,
+        },
+        .link => .{
+            .fill = .transparent,
+            .border = .transparent,
+            .label = theme.primary,
+        },
     };
     if (options.focused and options.variant != .destructive) result.border = theme.ring;
     return result;
@@ -183,7 +200,10 @@ pub fn view(tree: *Tree, theme: *const Theme, options: Options) Tree.Error!void 
         .axis = .row,
         .width = if (square) .{ .fixed = height } else if (options.fill_width) .fill else .fit,
         .height = if (square) .{ .fixed = height } else .{ .at_least = height },
-        .padding = if (square) .zero else .symmetric(options.size.pad(), 6),
+        .padding = if (square) .zero else if (options.size == .xs)
+            .symmetric(options.size.pad(), 4)
+        else
+            .symmetric(options.size.pad(), 6),
         .gap = gap,
         .main = .center,
         .cross = .center,
@@ -200,7 +220,7 @@ pub fn view(tree: *Tree, theme: *const Theme, options: Options) Tree.Error!void 
     });
     if (!square) _ = try tree.text(options.label, .{
         .color = colors.label.fade(presence),
-        .style = .sm_medium,
+        .style = if (options.size == .xs) .xs else .sm_medium,
         .wrap = if (options.fill_width) .word else .none,
     });
     if (options.key_cap.len > 0) try kbd.view(tree, theme, options.key_cap, presence);
