@@ -67,7 +67,7 @@ test "tabs: the track is 32 tall and each face sits in the 3 px inset" {
         .x = tabs.inset,
         .y = tabs.inset,
         .w = width,
-        .h = tabs.face_height,
+        .h = tabs.horizontal_face_height,
     }, first);
     try testing.expectEqual(first.x + first.w, second.x);
     try testing.expectEqual(first.h, second.h);

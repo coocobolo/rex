@@ -48,9 +48,9 @@ pub const Options = struct {
     hovered: u8 = none,
     /// Index with the focus ring. `none` when nothing has it.
     focused: u8 = none,
-    /// Width of a horizontal track; unused when vertical. `.fill` shares it
-    /// between the tab faces.
-    width: Tree.Size = .fit,
+    /// Width of a horizontal track. `.fill` shares it between the tab faces.
+    /// A vertical track sizes itself; it has no equivalent of this field.
+    horizontal_width: Tree.Size = .fit,
     variant: Variant = .default,
     orientation: Orientation = .horizontal,
 };
@@ -61,8 +61,10 @@ pub fn nodeMax(count: usize) usize {
     return 1 + count * 3;
 }
 
-/// The face's height: the track minus the inset above and below it.
-pub const face_height = Theme.control_sm - 2 * inset;
+/// The horizontal face's height: the track minus the inset above and below it.
+pub const horizontal_face_height = Theme.control_sm - 2 * inset;
+/// The smallest height of a vertical face. Text and padding make it taller.
+pub const vertical_min_height = Theme.control_sm;
 /// Thickness of the current-tab indicator in the line variant.
 pub const indicator = 2;
 
@@ -74,7 +76,7 @@ pub fn view(tree: *Tree, theme: *const Theme, options: Options) Tree.Error!void 
     const line = options.variant == .line;
     const track = try tree.open(.{
         .axis = if (horizontal) .row else .column,
-        .width = if (horizontal) options.width else .{ .fixed = Theme.control_sm },
+        .width = if (horizontal) options.horizontal_width else .{ .fixed = Theme.control_sm },
         .height = if (horizontal) .{ .fixed = Theme.control_sm } else .fit,
         .padding = .all(inset),
         .cross = .center,
@@ -89,8 +91,8 @@ pub fn view(tree: *Tree, theme: *const Theme, options: Options) Tree.Error!void 
             .id = tab.id,
             .pointer = .hand,
             .axis = if (line) (if (horizontal) .column else .row) else .row,
-            .width = if (horizontal) (if (options.width == .fill) .fill else .fit) else .fill,
-            .height = if (horizontal) .{ .fixed = face_height } else .{ .at_least = face_height },
+            .width = if (horizontal) (if (options.horizontal_width == .fill) .fill else .fit) else .fill,
+            .height = if (horizontal) .{ .fixed = horizontal_face_height } else .{ .at_least = vertical_min_height },
             .padding = if (horizontal) .symmetric(pad, 6) else .symmetric(6, pad),
             .main = if (horizontal or line) .center else .start,
             .cross = .center,

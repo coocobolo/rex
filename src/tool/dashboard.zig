@@ -856,7 +856,7 @@ fn viewChoices(state: *const State, tree: *Tree, theme: *const Theme) kit.Tree.E
 fn choiceGroup(tree: *Tree, theme: *const Theme, label: []const u8, list: []const tabs.Tab, current: u8, hovered: u8) kit.Tree.Error!void {
     const group = try tree.open(.{ .width = .fill, .gap = 6 });
     _ = try tree.text(label, .{ .color = theme.muted_foreground, .style = .xs });
-    try tabs.view(tree, theme, .{ .tabs = list, .current = current, .hovered = hovered, .width = .fill });
+    try tabs.view(tree, theme, .{ .tabs = list, .current = current, .hovered = hovered, .horizontal_width = .fill });
     tree.close(group);
 }
 
