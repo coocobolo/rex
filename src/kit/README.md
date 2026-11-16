@@ -1,9 +1,10 @@
 # UI kit
 
-The kit draws Rex's own interface: toasts and dialogs in the terminal window
-today, whole tool windows later. The decision behind it is ADR 0009
-(`docs/decisions/`). This page is the working spec: the model, the components
-and how to add one.
+The kit draws Rex's own interface: transient surfaces in the terminal window
+and settings and the wellbeing dashboard in their own windows. The decision
+behind it is ADR 0008 (`docs/decisions/`), with the state and view model in
+ADR 0009. This page is the working spec: the model, the components and how
+to add one.
 
 The kit imports nothing outside this folder. It does not know about the
 terminal, the driver or OpenGL, so it runs in any process and its tests need
@@ -13,40 +14,79 @@ the `text.Measurer` a caller passes in.
 ## The model
 
 A **surface** is one whole piece of interface: the toast stack, an alert
-dialog. It has three parts.
+dialog. Its **State** is one plain struct holding everything about it,
+including which control is hovered, pressed or focused. Modes are enums or
+tagged unions. **`update(state, event)`** is the only function that changes
+the state, one exhaustive switch. **`view(state, tree, theme)`** writes the
+surface as a flat array of boxes, texts and icons into a `Tree`, rebuilt from
+the state every time without reading the previous view.
 
-- **State**: one plain struct with everything about the surface, including
-  which control is hovered, pressed or focused. Modes are enums or tagged
-  unions.
-- **`update(state, event)`**: the only function that changes the state, one
-  exhaustive switch. It returns whether anything on screen changed. A redraw
-  happens only then, or while something is animating.
-- **`view(state, tree, theme)`**: writes the surface as a flat array of nodes
-  (boxes, texts, icons) into a `Tree`. It is rebuilt from the state every
-  time; it never reads the previous view.
+```mermaid
+flowchart LR
+    E[event] --> U[update state, event]
+    U --> S[State]
+    U -->|changed| R[redraw]
+    A[animating] --> R
+    S --> V[view state, tree, theme]
+    V --> T[Tree nodes]
+    T --> L[layout]
+    L --> P[KitPainter]
+    P --> F[frame]
+```
 
-A **component** is smaller than a surface and owns nothing. It is:
-
-- a **view function** the surface's view calls with the values to show
-  (`button.view(tree, theme, .{ .label = ..., .state = .hovered })`);
-- where behaviour is worth sharing, a **helper** the surface's update calls
-  (`focus.move`, `dialog.Phase.tick`);
-- for what a surface should not have to carry, a slot in a `memory.Table`
-  keyed by the node's id (where a toast was last drawn).
+A **component** owns nothing. It is a view function the surface calls with
+values, such as `button.view(tree, theme, .{ .label = ..., .state = .hovered })`;
+a helper the update calls, such as `focus.move` or `dialog.Phase.tick`; or a
+slot in a `memory.Table` keyed by a node id, such as the last drawn position
+of a toast.
 
 There are no widget objects that keep their own state and call back. The
 state of a control lives in the surface that shows it, once.
 
-Rules that hold everywhere:
+Rules that hold everywhere: nothing allocates in update, view, layout or
+paint. Buffers are fixed and their sizes are checked at compile time
+(`node_max`, `line_max`); running out is an error, never a silently missing
+node. Sizes are logical pixels, multiplied by the display scale once and
+snapped to physical pixels in `layout.snap`. A component names tokens of
+`Theme`, never a color or a radius of its own. A button is taken when the
+pointer is let go, not when it goes down; the toast close mark and the scrim
+still act on the press.
 
-- Nothing allocates in update, view, layout or paint. Buffers are fixed and
-  their sizes are checked at compile time (`node_max`, `line_max`); running
-  out is an error, never a silently missing node.
-- Sizes are logical pixels. They are multiplied by the display scale once and
-  snapped to physical pixels in `layout.snap`.
-- A component names tokens of `Theme`, never a color or a radius of its own.
-- A button is taken when the pointer is let go on it, not when it goes down.
-  The toast's close mark and the scrim still act on the press.
+## Terms & Concepts
+
+| Term | Meaning |
+| --- | --- |
+| **Node** | One flat entry in a `Tree`: its input rules (`box`, `content`), its computed `rect`, and the `parent`/`end` bounds of its children. |
+| **Box** | The input half of a node: size, padding, gap, axis, alignment, fill, border, id and pointer shape. A view opens and closes boxes; layout later turns them into rectangles. |
+| **Root** | A node at the top level laid out against the window. A view writes one or more in drawing order; a root can be anchored to an earlier one. |
+| **Overlay child** | A node with `overlay = true`, drawn over its parent's padding box and not counted in the parent's size. |
+| **Container** | Any box whose purpose is to hold children, written with an `open`/`close` pair. The caller closes what it opens. |
+| **Card** | The bordered `theme.card` container from `card.zig`, with composable header, content and footer slots. |
+| **Field** | `field.zig`'s label, optional description and badge, a control slot, and an optional validation error line below the row. |
+| **Group** | `button_group.zig` / `input_group.zig`: a focus ring and a group box with segment or addon children. The surface owns selection and focus. |
+| **Scroll region / ScrollArea** | A scroll region is one node registered with `Tree.scrollRegion`; a view can register up to `Tree.Scroll.max` (8) of them. A `ScrollArea` is the clipped viewport plus the overlay thumb appended by `scroll_area.close`. |
+| **Layer / Scrim** | A layer is a node covering the whole window, drawn over the page, as `popup.open` writes; a scrim is the modal backdrop under a dialog or lock screen that takes the pointer away from the page. |
+| **Component vs Surface** | The distinction drawn below: state belongs to the surface, never to a component. |
+
+```mermaid
+flowchart TB
+    Surface[Surface] -->|owns| State
+    Surface --> Update[update]
+    Surface --> View[view]
+    Component[Component: owns nothing] --> ViewFn[view function]
+    Component --> Helper[update helper]
+    Component --> Slot[memory.Table slot, keyed by node id]
+    ViewFn -->|called by| View
+    Helper -->|called by| Update
+    Slot -->|read and written by| View
+    View -->|writes| Tree[Tree nodes]
+    Tree --> Layout[layout]
+    Layout --> Painter[KitPainter]
+```
+
+Notices follow the same split: a **callout** is a notice inside the page, a
+**field** error validates one control, and the **alert** is a transient overlay
+banner. Do not use one where another is meant.
 
 ## Files
 
@@ -61,7 +101,9 @@ Rules that hold everywhere:
 | `motion.zig` | The one duration and curve every surface uses |
 | `focus.zig` | Keyboard focus order over a row or list |
 | `button.zig`, `badge.zig`, `kbd.zig`, `dialog.zig`, `sidebar.zig`, `popup.zig`, `tabs.zig`, `chart.zig`, `tooltip.zig` | Components |
-| `toast.zig`, `alert_dialog.zig` | Surfaces |
+| `callout.zig`, `separator.zig`, `card.zig`, `collapsible.zig`, `field.zig`, `scroll_area.zig`, `button_group.zig`, `input_group.zig` | In-page layout components |
+| `checkbox.zig`, `switch.zig`, `slider.zig`, `input.zig`, `select.zig`, `toggle.zig` | Control views |
+| `toast.zig`, `alert.zig`, `alert_dialog.zig`, `lock_screen.zig`, `wellbeing_widget.zig` | Surfaces |
 
 ## Text
 
@@ -77,6 +119,8 @@ sits in one cell as wide as the widest digit, and is not kerned.
 | `base` | 16 / 24 | regular | 0 | settings body |
 | `lg_semibold` | 18 / 28 | semibold | 0 | dialog titles |
 | `xl_semibold` | 24 / 32 | semibold | 0 | card values |
+| `display_sm` | 36 / 42 | semibold | −1 | compact display values |
+| `display_md` | 44 / 52 | semibold | −1 | medium display values |
 | `xxl_semibold` | 56 / 64 | semibold | −1 | compact timer |
 | `xxxl_semibold` | 80 / 88 | semibold | −2 | timer |
 
@@ -118,10 +162,10 @@ the anchor's width when `match_anchor_width = true`.
 
 | | Values |
 | --- | --- |
-| Variant | `outline`, `primary`, `ghost`, `destructive` |
-| Size | `default` (36 px), `sm` (32 px) |
+| Variant | `outline`, `primary`, `ghost`, `destructive`, `secondary`, `link` |
+| Size | `default` (36 px), `xs` (24 px), `sm` (32 px), `lg` (40 px) |
 | State | `normal`, `hovered`, `pressed`, `disabled` |
-| Also | `focused` draws the ring; `key_cap` shows a key after the label |
+| Also | `focused` draws the ring; `key_cap` shows a key after the label; an empty label with `icon` makes a square button at any size |
 
 The focus ring sits in a slot around the face, so a row does not shift when
 the focus moves. The button's id is on that slot. A disabled button is drawn
@@ -164,13 +208,53 @@ first and last.
 
 ### Tabs (`tabs.zig`)
 
-A row `control_sm` tall (32 px) filled with `muted`, with 3 px of padding.
-The current tab is a face of the height left inside that padding: `background`
-in the light theme, and `input` at 30% with an `input` border in the dark
-theme. Other labels are `muted_foreground`; the label under the pointer is
-`foreground`. Focus draws the ring as that face's border, so the row does
-not grow. The surface keeps the current, hovered and focused indexes and
-draws the page itself.
+Two variants: `default` is a track `control_sm` tall (32 px) filled with
+`muted`, with 3 px of padding; `line` is transparent with a 2 px foreground
+indicator just inside the bottom (or right, when vertical) of the current
+face. The current tab of the default variant is a face of `horizontal_face_height`
+(26 px): `background` in the light theme, and `input` at 30% with an `input`
+border in the dark theme. Other labels are `muted_foreground`; the label
+under the pointer is `foreground`. Focus draws the ring as that face's border,
+so the row does not grow.
+
+`orientation` is `horizontal` (the default) or `vertical`. A vertical track
+sizes itself and has no equivalent of `horizontal_width`; its faces use
+`vertical_min_height` (32 px) as a minimum and are taller once text and
+padding are counted. The surface keeps the current, hovered and focused
+indexes and draws the page itself.
+
+### Callout (`callout.zig`)
+
+An in-page notice with `default` and `destructive` variants. A surface opens
+`view`, writes `title` and optional `description` into the returned frame,
+then calls `close`. The destructive variant tints the title destructively and
+the description at 90% of that colour. It owns no state or timer; the surface
+decides when it is shown. It is distinct from the transient alert banner and
+from a field's validation line.
+
+### Separator, card, collapsible, field and scroll area
+
+`separator.view` writes a 1 px divider, horizontal or vertical. `card.open`
+opens a bordered `theme.card` panel with composable header/content/footer
+slots; the caller closes what it opens. `collapsible` opens a card with a
+disclosure trigger and a content body. `field.open` writes a label, optional
+description and badge, a control slot and an optional validation error; its
+`Frame` carries the boxes to close. `scroll_area.open` opens a clipped viewport
+and registers one scroll region; `scroll_area.close` appends the overlay
+thumb. A view can register up to `Tree.Scroll.max` (8) independent scrolling
+clip boxes.
+
+### Button and input groups (`button_group.zig`, `input_group.zig`)
+
+Both open a focus ring and a group box, with `openSegment` / `openAddon` for
+their children. The surface owns selection and focus; the views only draw.
+
+### Controls
+
+`checkbox`, `switch`, `slider`, `input`, `select` and `toggle` are view
+functions taking their current value and state in `Options`. They keep no
+state: the surface stores the value, hover, focus and disabled flags and
+passes them in.
 
 ### Chart (`chart.zig`)
 
@@ -182,9 +266,10 @@ draws one column per day at a fixed height, with `part` at the bottom of
 
 ### Tooltip (`tooltip.zig`)
 
-A card anchored to a node, written after the page. It has no full-window
-layer, and the card has no id, so the page under it still takes hover and
-clicks. `tooltip.line` writes an 8 px swatch, a name and a value in `xs`.
+A card anchored to a node, written after the page. It has no layer covering
+the whole window, and the card has no id, so the page under it still takes
+hover and clicks. `tooltip.line` writes an 8 px swatch, a name and a value in
+`xs`.
 The surface decides when the card is open.
 
 ### Popup (`popup.zig`)
@@ -207,6 +292,15 @@ turn. Kinds: `default`, `success`, `info`, `warning`, `err`. A
 toast leaves when its time is up; the time stands still while the pointer is
 over the stack.
 
+### Alert banner (`alert.zig`)
+
+A transient banner for a config error. It owns phase, motion and placement
+(`floating` or `docked`) in its state; the surface ticks it and decides when
+to show it. It has an icon, a title, an optional body and a close button, and
+stays until it is answered or dismissed. This is the overlay notice; an
+notice inside the page is a callout and a message for one field is
+`field.errorText`.
+
 ### Alert dialog (`alert_dialog.zig`)
 
 Built from the dialog parts: an optional icon (`Request.media`), a title, an
@@ -220,10 +314,12 @@ caller decides what a click on the scrim does.
 ## Seeing it
 
 `xvfb-run -a zig build -j2 test -Dtest-filter=KitPainter -Dkit-shots=<dir>`
-writes frames of every surface as PPM files, among them
-`specimen-dark-100` and `specimen-light-100`: every component in every
-variant, size and state. Look at the specimen after any change to a
-component, and add the new variant to it (`renderer/kit_painter_test.zig`).
+writes frames of every surface as PPM files. The specimen sheet has its own
+taller frame and produces `specimen-dark-100` and `specimen-light-100`:
+every component in both themes, with every variant, size and state. It also
+has a mark and presence/geometry assertion per component. Look at the
+specimen after any change to a component, and add new components and variants
+to it (`renderer/kit_painter_test.zig`).
 
 ## Adding a component
 
@@ -238,11 +334,5 @@ component, and add the new variant to it (`renderer/kit_painter_test.zig`).
 
 ## Planned
 
-Specified here when built, in the ticket that first uses them:
-
-- Alert (the config-error banner): an icon, a title, a description and an
-  action. It stays in place until its cause is gone, which is what sets it
-  apart from a toast.
-- For the tool windows: checkbox, switch,
-  dropdown (its list is a popup), list row, text input, scroll container.
-- A focus order taken from the view, for surfaces with many controls.
+Specified here when built, in the ticket that first uses them: a focus order
+taken from the view, for surfaces with many controls.
