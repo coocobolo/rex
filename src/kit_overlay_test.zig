@@ -585,3 +585,24 @@ test "KitOverlay: normal widget badge stays single-line across every size and ph
         }
     }
 }
+
+test "KitOverlay: pointerShape reports hand on buttons, arrow on cards, and null outside" {
+    var fixture: Fixture = try .init(1);
+    defer fixture.deinit();
+    const kit = fixture.kit;
+
+    const pushed = kit.pushTracked(.{ .title = "Copied", .duration_ms = 3000 });
+    try testing.expect(pushed.changed);
+    _ = kit.tick(Theme.duration);
+    _ = fixture.frame();
+
+    const card = kit.tree.find(toast.cardId(pushed.serial)) orelse return error.ToastCardMissing;
+    const close = kit.tree.find(toast.closeId(pushed.serial)) orelse return error.ToastCloseMissing;
+
+    // Outside both nodes.
+    try testing.expectEqual(null, kit.pointerShape(100, 100));
+    // Over the card body, away from the close button: arrow.
+    try testing.expectEqual(.arrow, kit.pointerShape(card.rect.x + card.rect.w / 2, card.rect.y + card.rect.h / 2));
+    // Over the close button: hand.
+    try testing.expectEqual(.hand, kit.pointerShape(close.rect.x + close.rect.w / 2, close.rect.y + close.rect.h / 2));
+}

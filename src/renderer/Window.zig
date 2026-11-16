@@ -148,6 +148,7 @@ silent_bell_logged: bool = false,
 /// Whether a PRIMARY write this platform can't do has been logged, so it's
 /// logged once.
 no_primary_logged: bool = false,
+pointer_visible: bool = true,
 /// The standard cursors made so far, by shape; destroyed with the window.
 cursors: [@typeInfo(PointerShape).@"enum".fields.len]?*c.GLFWcursor = @splat(null),
 pointer_shape: PointerShape = .arrow,
@@ -477,6 +478,17 @@ pub fn setPointerShape(self: *Window, shape: PointerShape) void {
     // Null is the platform's default arrow.
     c.glfwSetCursor(self.handle, slot.*);
     self.pointer_shape = shape;
+}
+
+/// Shows or hides the mouse pointer while it is inside the window.
+pub fn setPointerVisible(self: *Window, visible: bool) void {
+    if (visible == self.pointer_visible) return;
+    c.glfwSetInputMode(
+        self.handle,
+        c.GLFW_CURSOR,
+        if (visible) c.GLFW_CURSOR_NORMAL else c.GLFW_CURSOR_HIDDEN,
+    );
+    self.pointer_visible = visible;
 }
 
 /// The smallest size the user can resize the window to, in screen

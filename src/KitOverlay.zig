@@ -302,6 +302,14 @@ pub fn pointerLeft(self: *KitOverlay) bool {
     return widget_changed or alert_changed or dialog_changed or lock_changed;
 }
 
+/// Returns the pointer shape requested by the kit surface at `(x, y)` in
+/// logical pixels, or null when the pointer is over the terminal.
+pub fn pointerShape(self: *const KitOverlay, x: f32, y: f32) ?Tree.PointerShape {
+    if (self.tree.hit(x, y)) |node| return node.box.pointer;
+    if (self.hasScrim()) return .arrow;
+    return null;
+}
+
 pub const Press = union(enum) {
     /// Not on the kit's UI: the press belongs to the terminal.
     outside,

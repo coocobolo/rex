@@ -173,6 +173,7 @@ mouse_held: HeldButtons = .{},
 mouse_last_click_ms: f64 = 0,
 mouse_last_click_pos: rex.Selection.Position = .empty,
 mouse_click_count: u2 = 0,
+pointer_visibility: PointerVisibility = .{ .visible = .{} },
 
 // Selection state
 selection: rex.Selection = .empty,
@@ -248,6 +249,125 @@ const PeriodicTimer = struct {
         return self.period_ms - self.elapsed_ms;
     }
 };
+
+pub const PointerVisibility = union(enum) {
+    visible: Visible,
+    hidden,
+
+    pub const Visible = struct {
+        idle_ms: u64 = 0,
+    };
+
+    pub const Rules = struct {
+        mode: Config.Window.MouseAutoHide,
+        timeout_ms: ?u64 = null,
+
+        /// Hiding is fully disabled: the pointer never hides on its own.
+        fn disabled(self: Rules) bool {
+            return self.mode == .never and self.timeout_ms == null;
+        }
+    };
+
+    /// Live window state. Changes every frame.
+    pub const State = struct {
+        focused: bool,
+        modal_active: bool = false,
+
+        fn suspended(self: State) bool {
+            return !self.focused or self.modal_active;
+        }
+    };
+
+    pub fn onTyping(self: *PointerVisibility, rules: Rules, window: State) bool {
+        if (rules.mode != .on_typing or window.suspended()) return false;
+
+        switch (self.*) {
+            .hidden => return false,
+            .visible => {
+                self.* = .hidden;
+                return true;
+            },
+        }
+    }
+
+    pub fn show(self: *PointerVisibility) bool {
+        switch (self.*) {
+            .hidden => {
+                self.* = .{ .visible = .{} };
+                return true;
+            },
+            .visible => |*v| {
+                v.idle_ms = 0;
+                return false;
+            },
+        }
+    }
+
+    pub fn tick(self: *PointerVisibility, dt_ms: u64, rules: Rules, window: State) bool {
+        const is_suspended = window.suspended();
+        const is_disabled = rules.disabled();
+
+        switch (self.*) {
+            // Come back when auto-hide is paused, or when hiding is disabled.
+            .hidden => {
+                if (is_suspended or is_disabled) {
+                    self.* = .{ .visible = .{} };
+                    return true;
+                }
+                return false;
+            },
+            .visible => |*v| {
+                if (is_suspended) {
+                    v.idle_ms = 0;
+                    return false;
+                }
+                const limit = rules.timeout_ms orelse {
+                    v.idle_ms = 0;
+                    return false;
+                };
+                v.idle_ms +|= dt_ms;
+                if (v.idle_ms >= limit) {
+                    self.* = .hidden;
+                    return true;
+                }
+                return false;
+            },
+        }
+    }
+
+    pub const default_wake_ms = std.math.maxInt(u64);
+
+    pub fn wakeMs(self: PointerVisibility, rules: Rules, window: State) u64 {
+        if (window.suspended()) return default_wake_ms;
+        const limit = rules.timeout_ms orelse default_wake_ms;
+        return switch (self) {
+            .hidden => std.math.maxInt(u64),
+            .visible => |v| if (limit > v.idle_ms) limit - v.idle_ms else 1,
+        };
+    }
+
+    pub fn isVisible(self: PointerVisibility) bool {
+        return self == .visible;
+    }
+};
+
+/// Resolves the window pointer shape from the topmost hit surface.
+pub fn resolvePointerShape(
+    kit_pointer: ?rex.kit.Tree.PointerShape,
+    modal_active: bool,
+    scrollbar_active: bool,
+    mouse_reporting: bool,
+    shift_held: bool,
+) Window.PointerShape {
+    if (kit_pointer) |kp| return switch (kp) {
+        .arrow => .arrow,
+        .hand => .hand,
+        .text => .text,
+    };
+    if (modal_active or scrollbar_active) return .arrow;
+    if (mouse_reporting and !shift_held) return .arrow;
+    return .text;
+}
 
 /// Picks the moment to draw so `swapBuffers` blocks for about `margin_ns`
 /// instead of a whole refresh. `next_vblank_ns == 0` means the next vblank
@@ -561,6 +681,11 @@ pub fn init(
         .selection = rendererSelectionOption(active_config.selection),
         .modal_blur = active_config.window.modal.blur,
         .modal_blur_radius = active_config.window.modal.blur_radius,
+        // The renderer stores the configured effects; `draw` applies the
+        // current focus itself, so query the helpers as if unfocused.
+        .inactive_blur = active_config.window.effectiveInactiveBlur(false),
+        .inactive_blur_radius = active_config.window.inactive_blur_radius,
+        .inactive_dim_alpha = renderer_mod.Frame.alphaByte(active_config.window.effectiveInactiveDimAlpha(false)),
     });
     errdefer renderer.deinit();
 
@@ -751,6 +876,7 @@ pub fn run(self: *App) !void {
     const focused_now = self.window.focused();
     self.window_focused = focused_now;
     self.wellbeing_state.window_focused = focused_now;
+    self.syncWindowEffects();
     if (focused_now) self.applyPendingBanner();
     self.window.setWindowCloseCallback(windowCloseCb);
     self.window.setWindowContentScaleCallback(contentScaleCb);
@@ -850,6 +976,7 @@ pub fn run(self: *App) !void {
             if (kit.tick(dt_ms)) self.needs_redraw = true;
             self.syncWellbeingKit(false);
         }
+        self.tickPointerIdle(dt_ms);
         if (self.renderer.tick(dt_clamped)) {
             self.renderer_dirty = true;
             self.needs_redraw = true;
@@ -878,6 +1005,69 @@ pub fn run(self: *App) !void {
         if (latency_trace.enabled) self.latency.?.eventsHandled();
         self.flushScroll();
     }
+}
+
+fn syncWindowEffects(self: *App) void {
+    const win_cfg = &self.config.window;
+    self.background_color[3] = win_cfg.effectiveBackgroundAlpha(self.window_focused);
+    self.renderer.background.option.alpha = self.background_color[3];
+    // As in init: the renderer stores configured effects; draw applies focus.
+    self.renderer.setInactiveEffects(
+        win_cfg.effectiveInactiveBlur(false),
+        win_cfg.inactive_blur_radius,
+        renderer_mod.Frame.alphaByte(win_cfg.effectiveInactiveDimAlpha(false)),
+    );
+}
+
+fn showPointer(self: *App) void {
+    _ = self.pointer_visibility.show();
+    self.window.setPointerVisible(true);
+}
+
+fn hidePointerOnTyping(self: *App) void {
+    if (self.hasModalOverlay()) return;
+    if (self.pointer_visibility.onTyping(
+        .{
+            .mode = self.config.window.mouse_auto_hide,
+            .timeout_ms = self.config.window.mouse_idle_timeout_ms,
+        },
+        .{ .focused = self.window_focused },
+    )) {
+        self.window.setPointerVisible(false);
+    }
+}
+
+fn tickPointerIdle(self: *App, dt_ms: u64) void {
+    if (self.pointer_visibility.tick(
+        dt_ms,
+        .{
+            .mode = self.config.window.mouse_auto_hide,
+            .timeout_ms = self.config.window.mouse_idle_timeout_ms,
+        },
+        .{
+            .focused = self.window_focused,
+            .modal_active = self.hasModalOverlay(),
+        },
+    )) {
+        self.window.setPointerVisible(self.pointer_visibility.isVisible());
+    }
+}
+
+fn updatePointerShape(self: *App, shift_held: bool) void {
+    const kit_pointer = if (self.kit) |kit|
+        kit.pointerShape(self.mouse_x / self.content_scale, self.mouse_y / self.content_scale)
+    else
+        null;
+    const scrollbar_active = self.scrollbar_dragging or self.renderer.scrollbar.hover;
+    const mouse_reporting = self.driver.getModes().mouse_reporting;
+    const shape = resolvePointerShape(
+        kit_pointer,
+        self.hasModalOverlay(),
+        scrollbar_active,
+        mouse_reporting,
+        shift_held,
+    );
+    self.window.setPointerShape(shape);
 }
 
 /// Starts tracing bytes about to go to the driver; pair with
@@ -925,6 +1115,9 @@ fn renderFrame(self: *App) !bool {
         }
         frame.overlay_has_modal = kit.hasScrim();
     }
+    const shift_held = c.glfwGetKey(self.window.handle, c.GLFW_KEY_LEFT_SHIFT) == c.GLFW_PRESS or
+        c.glfwGetKey(self.window.handle, c.GLFW_KEY_RIGHT_SHIFT) == c.GLFW_PRESS;
+    self.updatePointerShape(shift_held);
 
     if (!frame.dirty.any() and !self.renderer_dirty) {
         self.frame_latch.used_prediction = false;
@@ -996,6 +1189,19 @@ fn waitForNextEvent(self: *App, had_data: bool) void {
                 self.wellbeing_state.focus_state.msUntilTick(),
                 self.wellbeing_state.msUntilSync(self.wallMs()),
             ),
+        ),
+    );
+    ms = @min(
+        ms,
+        self.pointer_visibility.wakeMs(
+            .{
+                .timeout_ms = self.config.window.mouse_idle_timeout_ms,
+                .mode = self.config.window.mouse_auto_hide,
+            },
+            .{
+                .focused = self.window_focused,
+                .modal_active = self.hasModalOverlay(),
+            },
         ),
     );
     if (self.kit) |kit| {
@@ -1608,7 +1814,10 @@ pub fn reloadConfig(self: *App) void {
 
     // Live update renderer background color, alpha, and terminal theme
     const resolved_theme = self.config.resolvedTheme();
-    self.background_color = normalizedRgba(resolved_theme.background, self.config.window.background.alpha);
+    self.background_color = normalizedRgba(
+        resolved_theme.background,
+        self.config.window.effectiveBackgroundAlpha(self.window_focused),
+    );
     self.renderer.setSelectionOption(rendererSelectionOption(self.config.selection));
     self.renderer.setScrollbarOption(rendererScrollbarOption(self.config.scrollbar));
     self.updateScrollbarHover();
@@ -1630,11 +1839,13 @@ pub fn reloadConfig(self: *App) void {
     if (self.config.clipboard.osc52_write != .ask) self.clipboard_session.allow_write = false;
     if (self.config.clipboard.osc52_read != .ask) self.clipboard_session.allow_read = false;
     self.reconcilePendingClipboard();
-    self.renderer.background.option.alpha = self.config.window.background.alpha;
+    self.syncWindowEffects();
     self.renderer.setModalBlur(self.config.window.modal.blur, self.config.window.modal.blur_radius);
+    self.tickPointerIdle(0);
     self.driver.setTheme(resolved_theme);
     self.updateWindowTitle();
     self.frame_builder.last_generation = null;
+    self.renderer_dirty = true;
 
     self.frame_builder.dim_alpha = renderer_mod.Frame.alphaByte(self.config.window.dim_alpha);
 
@@ -2126,6 +2337,8 @@ pub fn requestQuit(self: *App) void {
         .scrim_alpha = null,
     })) {
         self.dialog_kind = .quit;
+        self.showPointer();
+        self.updatePointerShape(false);
     }
     self.needs_redraw = true;
 }
@@ -2348,6 +2561,7 @@ const charCb: c.GLFWcharfun = struct {
         var buf: [4]u8 = undefined;
         const len = std.unicode.utf8Encode(cp, &buf) catch return;
         if (len > 0) {
+            app.hidePointerOnTyping();
             const seq = if (latency_trace.enabled) app.latencyBeginSend() else {};
             app.driver.sendBytes(buf[0..len]) catch |err| {
                 log.err("charCallback: driver sendBytes failed: {}", .{err});
@@ -2380,6 +2594,7 @@ const keyCb: c.GLFWkeyfun = struct {
         if (maybe_key == null or !maybe_key.?.isModifier()) {
             app.selection = .empty;
             app.needs_redraw = true;
+            if (maybe_key != null) app.hidePointerOnTyping();
             // Its bytes may come from here or from the char callback.
             if (latency_trace.enabled) app.latency.?.keyPressed(pressed_at);
         }
@@ -2627,6 +2842,8 @@ fn maybeOpenClipboardDialog(self: *App) void {
     );
     if (kit.openDialog(req)) {
         self.dialog_kind = .clipboard_ask;
+        self.showPointer();
+        self.updatePointerShape(false);
         self.needs_redraw = true;
     }
 }
@@ -2880,11 +3097,13 @@ const mouseButtonCb: c.GLFWmousebuttonfun = struct {
     fn cb(handle: ?*c.GLFWwindow, button: c_int, action: c_int, mods: c_int) callconv(.c) void {
         const app: *App = @ptrCast(@alignCast(c.glfwGetWindowUserPointer(handle) orelse return));
         app.wellbeing_state.recordActivity();
+        app.showPointer();
         const press = (action == c.GLFW_PRESS);
 
         app.trackMouseButton(button, press);
         const mod_byte = vtModByte(mods);
         const shift_held = (mods & c.GLFW_MOD_SHIFT) != 0;
+        defer app.updatePointerShape(shift_held);
 
         const col, const row = app.mouseCellPos(app.mouse_x, app.mouse_y);
         const driver_modes = app.driver.getModes();
@@ -3085,6 +3304,7 @@ const scrollCb: c.GLFWscrollfun = struct {
     fn cb(handle: ?*c.GLFWwindow, _: f64, y_offset: f64) callconv(.c) void {
         const app: *App = @ptrCast(@alignCast(c.glfwGetWindowUserPointer(handle) orelse return));
         app.wellbeing_state.recordActivity();
+        app.showPointer();
         if (app.hasModalOverlay()) return;
 
         // Clear sub-line fractional remainder on scroll direction reversal to eliminate hysteresis
@@ -3126,6 +3346,7 @@ const cursorEnterCb: c.GLFWcursorenterfun = struct {
     fn cb(handle: ?*c.GLFWwindow, entered: c_int) callconv(.c) void {
         const app: *App = @ptrCast(@alignCast(c.glfwGetWindowUserPointer(handle) orelse return));
         if (entered != 0) return;
+        app.showPointer();
         if (app.kit) |kit| {
             if (kit.pointerLeft()) app.needs_redraw = true;
         }
@@ -3136,8 +3357,17 @@ const cursorPosCb: c.GLFWcursorposfun = struct {
     fn cb(handle: ?*c.GLFWwindow, xpos: f64, ypos: f64) callconv(.c) void {
         const app: *App = @ptrCast(@alignCast(c.glfwGetWindowUserPointer(handle) orelse return));
 
-        app.mouse_x = @floatCast(xpos);
-        app.mouse_y = @floatCast(ypos);
+        const new_x: f32 = @floatCast(xpos);
+        const new_y: f32 = @floatCast(ypos);
+        if (new_x != app.mouse_x or new_y != app.mouse_y) {
+            app.showPointer();
+        }
+        app.mouse_x = new_x;
+        app.mouse_y = new_y;
+        const shift_held = app.selection.phase == .dragging or
+            c.glfwGetKey(handle, c.GLFW_KEY_LEFT_SHIFT) == c.GLFW_PRESS or
+            c.glfwGetKey(handle, c.GLFW_KEY_RIGHT_SHIFT) == c.GLFW_PRESS;
+        defer app.updatePointerShape(shift_held);
         if (app.kit) |kit| {
             if (kit.pointerMoved(app.mouse_x / app.content_scale, app.mouse_y / app.content_scale)) app.needs_redraw = true;
             if (kit.holdsPress()) return;
@@ -3233,7 +3463,13 @@ const windowFocusCb: c.GLFWwindowfocusfun = struct {
     fn cb(handle: ?*c.GLFWwindow, focused: c_int) callconv(.c) void {
         const app: *App = @ptrCast(@alignCast(c.glfwGetWindowUserPointer(handle) orelse return));
         const is_focused = (focused != 0);
-        app.window_focused = is_focused;
+        if (app.window_focused != is_focused) {
+            app.window_focused = is_focused;
+            app.syncWindowEffects();
+            app.renderer_dirty = true;
+            app.needs_redraw = true;
+        }
+        app.showPointer();
         app.wellbeing_state.windowFocusChanged(is_focused);
         if (is_focused) {
             app.applyPendingBanner();

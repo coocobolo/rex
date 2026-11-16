@@ -32,6 +32,7 @@ test {
     _ = @import("driver/root.zig");
     _ = @import("config/root.zig");
     _ = @import("flag_set.zig");
+    _ = @import("app_test.zig");
     _ = @import("kit_overlay_test.zig");
     std.testing.refAllDecls(@This());
 }
