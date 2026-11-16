@@ -139,3 +139,7 @@ test "tabs: a press lands on the tab under it" {
     try testing.expectEqual(focus, tree.hitTest(at.x + 4, at.y + 4));
     try testing.expectEqual(Id.none, tree.hitTest(1, 1));
 }
+
+test "tabs: Options keeps its 32-byte layout after adding variant and orientation" {
+    try testing.expectEqual(32, @sizeOf(tabs.Options));
+}

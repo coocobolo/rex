@@ -61,6 +61,14 @@ test "button: each variant has its fill, border and label color" {
     }
 }
 
+test "button: a link label brightens on hover" {
+    var fixture: Fixture = .{};
+    const plain = try one(&fixture, &Theme.dark, .{ .id = id, .label = "More", .variant = .link });
+    try testing.expectEqual(Theme.dark.primary, plain.nodes[2].content.text.color);
+    const hovered = try one(&fixture, &Theme.dark, .{ .id = id, .label = "More", .variant = .link, .state = .hovered });
+    try testing.expectEqual(Theme.dark.foreground, hovered.nodes[2].content.text.color);
+}
+
 test "button: hover and press change the fill" {
     const theme = &Theme.light;
     const Case = struct { variant: button.Variant, hovered: Theme.Color, pressed: Theme.Color };

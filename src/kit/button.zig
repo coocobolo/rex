@@ -156,7 +156,7 @@ fn look(theme: *const Theme, options: Options) Look {
         .link => .{
             .fill = .transparent,
             .border = .transparent,
-            .label = theme.primary,
+            .label = if (touched) theme.foreground else theme.primary,
         },
     };
     if (options.focused and options.variant != .destructive) result.border = theme.ring;
