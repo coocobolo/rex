@@ -1,7 +1,7 @@
-//! A pseudoterminal ("pty") interfaces interface for cross-platform API.
+//! A pseudoterminal (pty) interface for cross-platform APIs.
 //!
-//! PTY is a pair of virtual character devices that provide a bidirec‐tional communication channel.
-//! One end of the channel is called the master; the other end is called the slave.
+//! A pty is a pair of virtual character devices providing a bidirectional
+//! communication channel. One end is the master; the other is the slave.
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -64,7 +64,7 @@ pub const Pty = blk: {
 
 pub const SignalTarget = enum { process, session };
 
-/// Errors that can occurs during spawn, before or shortly after forking.
+/// Errors that can occur during spawn, before or shortly after forking.
 ///
 /// OpenPtyFailed: openpty() itself failed, no fds or child exist yet.
 /// PipeFailed: one of the two pipes (stdout capture or error reporting) could not be opened.
@@ -77,21 +77,21 @@ pub const WaitSpawnErr = error{SpawnFailed} || posix.UnexpectedError;
 
 /// A POSIX pty (pseudo-terminal) plus the child process attached to its slave side.
 ///
-/// Owns the resources of master and slave end fd, child's pid, and additionals
-/// pipe read-capture ends (stdout and reporting). All are released together by close().
-/// A posix value that has a real fds means its active, inactive when those values set to
-/// sentinel fds; so its easier to handle the state exists in between (zombie).
+/// Owns the master and slave fds, the child's pid, and the additional pipe
+/// read ends (stdout capture and error reporting). close() releases them all.
+/// A value with real fds is active; sentinel fds mark it inactive, which
+/// makes the in-between (zombie) state easier to handle.
 ///
-/// The reporting approach is the child cannot report as Zig errors directly (cause of its address
-/// space is about to be replaced by execute program call). So setup failures between forking and
-/// execute a prograrm are sent to the master end as a tiny (stage, errorno) pair through a pipe
-/// that closes itself (CLOEXEC) the moment executing program succeeds.
+/// The child cannot report setup failures as Zig errors: its address space is
+/// about to be replaced by execve. Instead, failures between fork and execve
+/// are sent to the master as a tiny (stage, errno) pair through a pipe that
+/// closes itself (CLOEXEC) as soon as execve succeeds.
 ///
 /// A zero-byte read therefore only means "the child reached execve()", it says nothing about
 /// whether the exec'd program itself will run correctly. That part is tracked separately, later,
 /// by calling wait() or isAlive(), not waitForSpawn().
 ///
-/// Sentinels is an fd == (-1) means Closed. A pid <= 0 means that no live child proces.
+/// Sentinels: an fd == -1 means closed; a pid <= 0 means no live child process.
 pub const Posix = struct {
     master: posix.fd_t,
 
@@ -717,14 +717,12 @@ pub fn foregroundGroup(master: posix.fd_t) ?posix.pid_t {
     return if (group > 0) group else null;
 }
 
-/// The name of the terminal's foreground program: on Linux, the `comm`
-/// of the foreground group's leader from `/proc/<pid>/comm` (up to 15
-/// bytes); on macOS, `proc_name()` from libproc. Null when there is no
-/// foreground group or the name cannot be read, as when the leader has
-/// exited. The result lies in `out`.
-pub fn foregroundComm(master: posix.fd_t, out: []u8) ?[]const u8 {
+/// The name of the foreground program for an already-known process `group`.
+/// On Linux this is the leader's `comm` from `/proc/<pid>/comm` (up to 15
+/// bytes); on macOS it is `proc_name()`. Null when the name cannot be read,
+/// as when the leader has exited. The result lies in `out`.
+pub fn foregroundCommForGroup(group: posix.pid_t, out: []u8) ?[]const u8 {
     if (out.len == 0) return null;
-    const group = foregroundGroup(master) orelse return null;
     if (comptime native_os == .macos) {
         const darwin = struct {
             extern "c" fn proc_name(pid: c_int, buffer: ?*anyopaque, buffersize: u32) c_int;
@@ -749,6 +747,14 @@ pub fn foregroundComm(master: posix.fd_t, out: []u8) ?[]const u8 {
     if (n <= 0) return null;
     const trimmed = std.mem.trimEnd(u8, out[0..@intCast(n)], "\r\n \x00");
     return if (trimmed.len > 0) trimmed else null;
+}
+
+/// The name of the terminal's foreground program. Reads the foreground group
+/// once and delegates to `foregroundCommForGroup`. The result lies in `out`.
+pub fn foregroundComm(master: posix.fd_t, out: []u8) ?[]const u8 {
+    if (out.len == 0) return null;
+    const group = foregroundGroup(master) orelse return null;
+    return foregroundCommForGroup(group, out);
 }
 
 /// A setup step in the child that failed, and its errno.

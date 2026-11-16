@@ -2366,7 +2366,7 @@ fn quitDialogBodyFor(running: bool, program: ?[]const u8, buf: []u8) []const u8 
 fn foregroundProgram(self: *const App, buf: []u8) ?[]const u8 {
     const group = rex.termio.pty.foregroundGroup(self.driver.getMasterFd()) orelse return null;
     if (group == self.driver.getPid()) return null;
-    const name = rex.termio.pty.foregroundComm(self.driver.getMasterFd(), buf) orelse return null;
+    const name = rex.termio.pty.foregroundCommForGroup(group, buf) orelse return null;
     for (name) |byte| if (byte < 0x20 or byte > 0x7e) return null;
     return name;
 }
