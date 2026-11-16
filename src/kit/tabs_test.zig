@@ -54,7 +54,7 @@ test "tabs: the track is 32 tall and each face sits in the 3 px inset" {
     var fixture: Fixture = .{};
     const tree = try show(&fixture, &Theme.dark, .{ .tabs = &labels, .current = 0 });
 
-    try testing.expectEqual(tabs.nodeMax(labels.len), tree.len);
+    try testing.expectEqual(1 + labels.len * 2, tree.len);
     const track = tree.nodes[0];
     try testing.expectEqual(Theme.control_sm, track.rect.h);
     try testing.expectEqual(Theme.dark.muted, track.box.fill);
@@ -101,6 +101,35 @@ test "tabs: focus is the face's border, and the list does not grow" {
     try testing.expectEqual(track, ringed.nodes[0].rect);
     try testing.expectEqual(history_rect, face(&ringed, 2).rect);
     try testing.expectEqual(Theme.dark.ring, face(&ringed, 2).box.border);
+}
+
+test "tabs: the line variant adds one indicator node per tab" {
+    var fixture: Fixture = .{};
+    const tree = try show(&fixture, &Theme.dark, .{ .tabs = &labels, .current = 1, .variant = .line });
+
+    try testing.expectEqual(tabs.nodeMax(labels.len), tree.len);
+    try testing.expectEqual(Theme.Color.transparent, tree.nodes[0].box.fill);
+    try testing.expectEqual(0, tree.nodes[0].box.radius);
+    // Each tab is a face, a label, then the indicator.
+    try testing.expectEqual(Theme.Color.transparent, tree.nodes[1 + 1 * 3].box.fill);
+    try testing.expectEqual(Theme.dark.foreground, tree.nodes[1 + 1 * 3 + 2].box.fill);
+    try testing.expectEqual(Theme.Color.transparent, tree.nodes[1 + 0 * 3 + 2].box.fill);
+    const mark = tree.nodes[1 + 1 * 3 + 2].rect;
+    try testing.expectEqual(tabs.indicator, mark.h);
+    try testing.expectEqual(tree.nodes[1 + 1 * 3].rect.w - 2 * tabs.pad, mark.w);
+}
+
+test "tabs: the vertical orientation stacks the faces and aligns their labels" {
+    var fixture: Fixture = .{};
+    const tree = try show(&fixture, &Theme.dark, .{ .tabs = &labels, .current = 0, .orientation = .vertical });
+
+    try testing.expectEqual(.column, tree.nodes[0].box.axis);
+    try testing.expectEqual(Theme.control_sm, tree.nodes[0].rect.w);
+    const first = tree.nodes[1].rect;
+    const second = tree.nodes[3].rect;
+    try testing.expectEqual(first.y + first.h, second.y);
+    try testing.expectEqual(first.x, second.x);
+    try testing.expectEqual(tree.nodes[2].content.text.alignment, .start);
 }
 
 test "tabs: a press lands on the tab under it" {

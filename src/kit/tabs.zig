@@ -1,4 +1,5 @@
-//! A tab list: a muted track with one raised tab for the current item.
+//! A tab list: a muted track with one raised tab, or a transparent track
+//! with a short indicator on the current tab.
 //!
 //! It is a view function and keeps nothing. The surface that shows it
 //! holds which tab is current, hovered or focused and passes that in.
@@ -27,38 +28,58 @@ pub const Tab = struct {
     label: []const u8,
 };
 
+pub const Variant = enum(u8) {
+    /// A muted track with a raised face on the current tab.
+    default,
+    /// A transparent track with a short indicator on the current tab.
+    line,
+};
+
+pub const Orientation = enum(u8) {
+    horizontal,
+    vertical,
+};
+
 pub const Options = struct {
     tabs: []const Tab,
-    /// Index of the raised tab.
+    /// Index of the current tab.
     current: u8,
     /// Index under the pointer. `none` when it is elsewhere.
     hovered: u8 = none,
     /// Index with the focus ring. `none` when nothing has it.
     focused: u8 = none,
-    /// Width of the track; `.fill` stretches each tab face to share it.
+    /// Width of a horizontal track; unused when vertical. `.fill` shares it
+    /// between the tab faces.
     width: Tree.Size = .fit,
+    variant: Variant = .default,
+    orientation: Orientation = .horizontal,
 };
 
-/// The track, then each tab's face and its label.
+/// The track, then each tab's face and label, plus one indicator per tab in
+/// the line variant.
 pub fn nodeMax(count: usize) usize {
-    return 1 + count * 2;
+    return 1 + count * 3;
 }
 
 /// The face's height: the track minus the inset above and below it.
 pub const face_height = Theme.control_sm - 2 * inset;
+/// Thickness of the current-tab indicator in the line variant.
+pub const indicator = 2;
 
 /// Writes the list into the innermost open box.
 pub fn view(tree: *Tree, theme: *const Theme, options: Options) Tree.Error!void {
     assert(options.tabs.len > 0 and options.tabs.len <= std.math.maxInt(u8));
     assert(options.current < options.tabs.len);
+    const horizontal = options.orientation == .horizontal;
+    const line = options.variant == .line;
     const track = try tree.open(.{
-        .axis = .row,
-        .width = options.width,
-        .height = .{ .fixed = Theme.control_sm },
+        .axis = if (horizontal) .row else .column,
+        .width = if (horizontal) options.width else .{ .fixed = Theme.control_sm },
+        .height = if (horizontal) .{ .fixed = Theme.control_sm } else .fit,
         .padding = .all(inset),
         .cross = .center,
-        .fill = theme.muted,
-        .radius = Theme.radius,
+        .fill = if (line) .transparent else theme.muted,
+        .radius = if (line) 0 else Theme.radius,
         .shrink = false,
     });
     for (options.tabs, 0..) |tab, index| {
@@ -67,21 +88,33 @@ pub fn view(tree: *Tree, theme: *const Theme, options: Options) Tree.Error!void 
         const face = try tree.open(.{
             .id = tab.id,
             .pointer = .hand,
-            .width = if (options.width == .fill) .fill else .fit,
-            .height = .{ .fixed = face_height },
-            .padding = .symmetric(pad, 0),
-            .main = .center,
+            .axis = if (line) (if (horizontal) .column else .row) else .row,
+            .width = if (horizontal) (if (options.width == .fill) .fill else .fit) else .fill,
+            .height = if (horizontal) .{ .fixed = face_height } else .{ .at_least = face_height },
+            .padding = if (horizontal) .symmetric(pad, 6) else .symmetric(6, pad),
+            .main = if (horizontal or line) .center else .start,
             .cross = .center,
-            .fill = if (current) raisedFill(theme) else .transparent,
-            .border = border(theme, current, i == options.focused),
+            .fill = if (current and !line) raisedFill(theme) else .transparent,
+            .border = if (line)
+                (if (i == options.focused) theme.ring else .transparent)
+            else
+                border(theme, current, i == options.focused),
             .border_width = Theme.border_width,
-            .radius = Theme.radius_md,
+            .radius = if (line) 0 else Theme.radius_md,
             .shrink = false,
         });
         _ = try tree.text(tab.label, .{
             .color = if (current or i == options.hovered) theme.foreground else theme.muted_foreground,
             .style = .sm_medium,
         });
+        if (line) {
+            const mark = try tree.open(.{
+                .width = if (horizontal) .fill else .{ .fixed = indicator },
+                .height = if (horizontal) .{ .fixed = indicator } else .fill,
+                .fill = if (current) theme.foreground else .transparent,
+            });
+            tree.close(mark);
+        }
         tree.close(face);
     }
     tree.close(track);
