@@ -11,7 +11,6 @@ const pipe = @import("pipe.zig");
 
 test "Posix: inactive" {
     var pair: pty.Posix = .inactive;
-
     defer pair.close(testing.io);
 
     try testing.expectEqual(-1, pair.master);

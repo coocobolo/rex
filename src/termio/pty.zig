@@ -749,10 +749,9 @@ pub fn foregroundCommForGroup(group: posix.pid_t, out: []u8) ?[]const u8 {
     return if (trimmed.len > 0) trimmed else null;
 }
 
-/// The name of the terminal's foreground program. Reads the foreground group
-/// once and delegates to `foregroundCommForGroup`. The result lies in `out`.
+/// The name of the terminal's foreground program, or null when it cannot be
+/// read. The result lies in `out`.
 pub fn foregroundComm(master: posix.fd_t, out: []u8) ?[]const u8 {
-    if (out.len == 0) return null;
     const group = foregroundGroup(master) orelse return null;
     return foregroundCommForGroup(group, out);
 }
