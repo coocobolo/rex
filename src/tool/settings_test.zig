@@ -1109,3 +1109,53 @@ test "settings: clicking select value label opens and switches directly between 
     _ = settings.update(&state, .release);
     try testing.expectEqual(place_idx, state.open_select.?.key);
 }
+
+test "settings: on_inactive reveals only the sub-rows matching enabled effects" {
+    const gpa = testing.allocator;
+    var cfg = config_defaults.default;
+    var state = try settings.init(.{
+        .gpa = gpa,
+        .io = testing.io,
+        .config = &cfg,
+        .state_dir = "",
+        .wake_loop = struct {
+            fn wake() void {}
+        }.wake,
+    });
+    defer settings.deinit(&state);
+
+    state.frame.current = @intFromEnum(settings.Page.window_shell);
+    _ = settings.update(&state, .{ .size = .{ .width = 800, .height = 900 } });
+
+    const bg_idx = keyIndex(.window, "inactive_background_opacity");
+    const dim_idx = keyIndex(.window, "inactive_dim_opacity");
+    const blur_idx = keyIndex(.window, "inactive_blur_radius");
+    const bg_id = Id.of("settings.slider").item(bg_idx);
+    const dim_id = Id.of("settings.slider").item(dim_idx);
+    const blur_id = Id.of("settings.input").item(blur_idx);
+
+    var nodes: [settings.node_max]kit.Tree.Node = undefined;
+    var lines: [settings.line_max]kit.text.Line = undefined;
+
+    // 1. Default (`on_inactive = none`): all three sub-rows are hidden.
+    try testing.expect(!settings.rowVisible(bg_idx, &cfg));
+    try testing.expect(!settings.rowVisible(dim_idx, &cfg));
+    try testing.expect(!settings.rowVisible(blur_idx, &cfg));
+    var tree = kit.Tree.init(&nodes, &lines);
+    try settings.view(&state, &tree, &kit.Theme.dark);
+    try testing.expectEqual(null, tree.find(bg_id));
+    try testing.expectEqual(null, tree.find(dim_id));
+    try testing.expectEqual(null, tree.find(blur_id));
+
+    // 2. Enable `opacity` and `blur`: only those two sub-rows appear.
+    cfg.window.on_inactive.insert(.opacity);
+    cfg.window.on_inactive.insert(.blur);
+    try testing.expect(settings.rowVisible(bg_idx, &cfg));
+    try testing.expect(!settings.rowVisible(dim_idx, &cfg));
+    try testing.expect(settings.rowVisible(blur_idx, &cfg));
+    tree = kit.Tree.init(&nodes, &lines);
+    try settings.view(&state, &tree, &kit.Theme.dark);
+    try testing.expect(tree.find(bg_id) != null);
+    try testing.expectEqual(null, tree.find(dim_id));
+    try testing.expect(tree.find(blur_id) != null);
+}

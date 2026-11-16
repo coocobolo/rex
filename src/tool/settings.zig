@@ -202,6 +202,24 @@ fn keyMeta(comptime section: keys.Section, comptime key_name: []const u8) KeyMet
         } else if (std.mem.eql(u8, key_name, "dim_text_opacity")) .{
             .label = "Dim Text Opacity",
             .description = "Brightness multiplier for dimmed terminal text (0.0–1.0).",
+        } else if (std.mem.eql(u8, key_name, "on_inactive")) .{
+            .label = "On Inactive Window",
+            .description = "Visual effects applied while the terminal window is unfocused.",
+        } else if (std.mem.eql(u8, key_name, "inactive_background_opacity")) .{
+            .label = "Inactive Background Opacity",
+            .description = "Window background opacity while unfocused when Opacity is enabled in On Inactive Window (0.0–1.0).",
+        } else if (std.mem.eql(u8, key_name, "inactive_dim_opacity")) .{
+            .label = "Inactive Dim Opacity",
+            .description = "How strongly terminal content fades toward the background when Dim is enabled in On Inactive Window (0.0–1.0).",
+        } else if (std.mem.eql(u8, key_name, "inactive_blur_radius")) .{
+            .label = "Inactive Blur Radius",
+            .description = "Blur strength in pixels while unfocused when Blur is enabled in On Inactive Window (1–64).",
+        } else if (std.mem.eql(u8, key_name, "mouse_auto_hide")) .{
+            .label = "Auto-hide Pointer",
+            .description = "Whether to hide the mouse pointer automatically when typing in the terminal.",
+        } else if (std.mem.eql(u8, key_name, "mouse_idle_timeout")) .{
+            .label = "Pointer Idle Timeout",
+            .description = "Hide the mouse pointer after a period of inactivity (or none).",
         } else if (std.mem.eql(u8, key_name, "on_close")) .{
             .label = "Close Behavior",
             .description = "Whether to confirm before closing when child processes are active.",
@@ -1855,6 +1873,37 @@ fn handleKey(state: *State, press: host.KeyPress) bool {
 
 const max_section_count = @typeInfo(keys.Section).@"enum".fields.len;
 
+// These keys are declared in keys.zig, so the lookups are comptime invariants.
+const on_inactive_idx = keys.lookup(.window, "on_inactive") orelse unreachable;
+const inactive_bg_opacity_idx = keys.lookup(.window, "inactive_background_opacity") orelse unreachable;
+const inactive_dim_opacity_idx = keys.lookup(.window, "inactive_dim_opacity") orelse unreachable;
+const inactive_blur_radius_idx = keys.lookup(.window, "inactive_blur_radius") orelse unreachable;
+
+const inactive_sub_rows = [_]u16{
+    inactive_bg_opacity_idx,
+    inactive_dim_opacity_idx,
+    inactive_blur_radius_idx,
+};
+
+fn isInactiveSubRow(idx: u16) bool {
+    return switch (idx) {
+        inactive_bg_opacity_idx,
+        inactive_dim_opacity_idx,
+        inactive_blur_radius_idx,
+        => true,
+        else => false,
+    };
+}
+
+pub fn rowVisible(idx: u16, cfg: *const Config) bool {
+    return switch (idx) {
+        inactive_bg_opacity_idx => cfg.window.on_inactive.contains(.opacity),
+        inactive_dim_opacity_idx => cfg.window.on_inactive.contains(.dim),
+        inactive_blur_radius_idx => cfg.window.on_inactive.contains(.blur),
+        else => true,
+    };
+}
+
 fn pageSections(page: Page, out: *[max_section_count]keys.Section) []const keys.Section {
     var seen = std.EnumSet(keys.Section).initEmpty();
     var count: usize = 0;
@@ -1890,13 +1939,14 @@ fn sectionRows(page: Page, sec: keys.Section, out: *[keys.table.len]u16) []const
     return out[0..count];
 }
 
-fn pageFocusTargets(page: Page, ansi_open: bool, out: []Target) usize {
+fn pageFocusTargets(page: Page, ansi_open: bool, cfg: *const Config, out: []Target) usize {
     var count: usize = 0;
     var sec_buf: [max_section_count]keys.Section = undefined;
     var row_buf: [keys.table.len]u16 = undefined;
     for (pageSections(page, &sec_buf)) |sec| {
         var ansi_toggle_added = false;
         for (sectionRows(page, sec, &row_buf)) |idx| {
+            if (!rowVisible(idx, cfg)) continue;
             const info = row_infos[idx];
             if (info.is_ansi_color) {
                 if (!ansi_toggle_added) {
@@ -1966,7 +2016,7 @@ fn cycleFocus(state: *State, reverse: bool) bool {
         targets[0] = .sidebar;
         count = 1;
     }
-    count += pageFocusTargets(page, state.ansi_colors_open, targets[count..]);
+    count += pageFocusTargets(page, state.ansi_colors_open, state.activeConfig(), targets[count..]);
     if (count == 0) return false;
 
     state.open_select = null;
@@ -2917,6 +2967,7 @@ fn viewPage(state: *const State, tree: *Tree, theme: *const Theme, page: Page) k
         var ansi_drawn = false;
 
         for (sectionRows(page, sec, &row_buf)) |idx| {
+            if (isInactiveSubRow(idx) or !rowVisible(idx, cfg)) continue;
             const info = row_infos[idx];
             if (info.is_ansi_color) {
                 if (!ansi_drawn) {
@@ -2941,6 +2992,29 @@ fn viewPage(state: *const State, tree: *Tree, theme: *const Theme, page: Page) k
             }
             first_in_section = false;
             try viewKeyRow(state, tree, theme, info, idx, cfg);
+
+            if (idx == on_inactive_idx and !cfg.window.on_inactive.eql(.empty)) {
+                const sub_group = try tree.open(.{
+                    .width = .fill,
+                    .axis = .column,
+                    .padding = .all(12),
+                    .gap = 10,
+                    .fill = theme.background,
+                    .border = theme.border,
+                    .border_width = Theme.border_width,
+                    .radius = Theme.radius_sm,
+                });
+                var first_sub = true;
+                for (inactive_sub_rows) |sub_idx| {
+                    if (!rowVisible(sub_idx, cfg)) continue;
+                    if (!first_sub) {
+                        try separator.horizontal(tree, theme);
+                    }
+                    first_sub = false;
+                    try viewKeyRow(state, tree, theme, row_infos[sub_idx], sub_idx, cfg);
+                }
+                tree.close(sub_group);
+            }
         }
         if (section_open) |open_box| {
             if (page == .overlays and (sec == .toast or sec == .banner or sec == .alert_dialog)) {
