@@ -72,8 +72,9 @@ test "apply: integers are decimal digits within bounds and type" {
     try std.testing.expectError(error.OutOfRange, applyText(&config, .@"modal.blur", "radius", "256"));
     try std.testing.expectError(error.OutOfRange, applyText(&config, .scroll, "step_lines", "99999999999999999999999"));
     try std.testing.expectEqual(5, config.scroll.lines);
-    try applyText(&config, .@"modal.blur", "radius", "0");
-    try std.testing.expectEqual(0, config.window.modal.blur_radius);
+    try applyText(&config, .@"modal.blur", "radius", "1");
+    try std.testing.expectEqual(1, config.window.modal.blur_radius);
+    try std.testing.expectError(error.OutOfRange, applyText(&config, .@"modal.blur", "radius", "0"));
 }
 
 test "apply: floats are digits with an optional fraction" {
@@ -416,6 +417,8 @@ const enum_names = [_]struct { []const u8, []const []const u8 }{
     .{ "modal.on_outside_click", &.{ "close", "ignore" } },
     .{ "alert_dialog.default_focus", &.{ "confirm", "cancel" } },
     .{ "alert_dialog.icon", &.{ "warning", "info", "error", "none" } },
+    .{ "window.on_inactive", &.{ "opacity", "dim", "blur" } },
+    .{ "window.mouse_auto_hide", &.{ "never", "on_typing" } },
     .{ "window.on_close", &.{ "ask", "ask_if_running", "close" } },
     .{ "ui.motion", &.{ "full", "none" } },
     .{ "ui.color_scheme", &.{ "auto", "dark", "light" } },
@@ -644,4 +647,49 @@ test "apply: [toast], [banner], [modal], and [alert_dialog] layout keys" {
     try std.testing.expectError(error.OutOfRange, applyText(&config, .modal, "padding", "65"));
     try std.testing.expectError(error.OutOfRange, applyText(&config, .alert_dialog, "width", "1201"));
     try std.testing.expectError(error.InvalidValue, applyText(&config, .modal, "position", "top_left"));
+}
+
+test "apply: [window] inactive effects and mouse auto-hide keys" {
+    const window_types = @import("window.zig");
+    var config = testConfig();
+    try applyText(&config, .window, "background_opacity", "0.95");
+    try applyText(&config, .window, "on_inactive", "opacity, dim, blur");
+    try applyText(&config, .window, "inactive_background_opacity", "0.75");
+    try applyText(&config, .window, "inactive_dim_opacity", "0.4");
+    try applyText(&config, .window, "inactive_blur_radius", "16");
+    try applyText(&config, .window, "mouse_auto_hide", "never");
+    try applyText(&config, .window, "mouse_idle_timeout", "3s");
+
+    try std.testing.expect(config.window.on_inactive.eql(.full));
+    try std.testing.expectApproxEqAbs(@as(f32, 0.75), config.window.inactive_background_alpha, 1e-6);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.4), config.window.inactive_dim_alpha, 1e-6);
+    try std.testing.expectEqual(@as(u8, 16), config.window.inactive_blur_radius);
+    try std.testing.expectEqual(window_types.MouseAutoHide.never, config.window.mouse_auto_hide);
+    try std.testing.expectEqual(@as(?u64, 3000), config.window.mouse_idle_timeout_ms);
+
+    try std.testing.expectApproxEqAbs(@as(f32, 0.95), config.window.effectiveBackgroundAlpha(true), 1e-6);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.75), config.window.effectiveBackgroundAlpha(false), 1e-6);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.0), config.window.effectiveInactiveDimAlpha(true), 1e-6);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.4), config.window.effectiveInactiveDimAlpha(false), 1e-6);
+    try std.testing.expect(!config.window.effectiveInactiveBlur(true));
+    try std.testing.expect(config.window.effectiveInactiveBlur(false));
+
+    try applyText(&config, .window, "on_inactive", "none");
+    try std.testing.expect(config.window.on_inactive.eql(.empty));
+    try std.testing.expectApproxEqAbs(@as(f32, 0.95), config.window.effectiveBackgroundAlpha(false), 1e-6);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.0), config.window.effectiveInactiveDimAlpha(false), 1e-6);
+    try std.testing.expect(!config.window.effectiveInactiveBlur(false));
+
+    try applyText(&config, .window, "mouse_idle_timeout", "none");
+    try std.testing.expectEqual(@as(?u64, null), config.window.mouse_idle_timeout_ms);
+    try applyText(&config, .window, "mouse_auto_hide", "default");
+    try std.testing.expectEqual(window_types.MouseAutoHide.on_typing, config.window.mouse_auto_hide);
+
+    try std.testing.expectError(error.OutOfRange, applyText(&config, .window, "inactive_background_opacity", "1.1"));
+    try std.testing.expectError(error.OutOfRange, applyText(&config, .window, "inactive_dim_opacity", "1.5"));
+    try std.testing.expectError(error.InvalidValue, applyText(&config, .window, "inactive_dim_opacity", "-0.1"));
+    try std.testing.expectError(error.OutOfRange, applyText(&config, .window, "inactive_blur_radius", "0"));
+    try std.testing.expectError(error.OutOfRange, applyText(&config, .window, "inactive_blur_radius", "65"));
+    try std.testing.expectError(error.OutOfRange, applyText(&config, .window, "mouse_idle_timeout", "0ms"));
+    try std.testing.expectError(error.InvalidValue, applyText(&config, .window, "mouse_auto_hide", "always"));
 }

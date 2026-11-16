@@ -129,6 +129,18 @@ pub const Window = struct {
     alert_dialog: overlay.AlertDialog = .{},
     /// What closing the window does.
     on_close: OnClose = .ask_if_running,
+    /// Visual effects applied while the window is unfocused.
+    on_inactive: window_types.InactiveSet = .empty,
+    /// Window background opacity when unfocused and `on_inactive` contains `opacity`.
+    inactive_background_alpha: f32 = 0.85,
+    /// Content dimming opacity toward the background color when unfocused and `on_inactive` contains `dim`.
+    inactive_dim_alpha: f32 = 0.3,
+    /// Blur radius in pixels when unfocused and `on_inactive` contains `blur`.
+    inactive_blur_radius: u8 = 8,
+    /// When to hide the mouse pointer over the terminal.
+    mouse_auto_hide: window_types.MouseAutoHide = .on_typing,
+    /// Inactivity duration in milliseconds before hiding the mouse pointer, or null to disable.
+    mouse_idle_timeout_ms: ?u64 = null,
 
     pub const OnClose = enum {
         /// Show the quit dialog first.
@@ -138,11 +150,35 @@ pub const Window = struct {
         ask_if_running,
         close,
     };
+    pub const InactiveEffect = window_types.InactiveEffect;
+    pub const InactiveSet = window_types.InactiveSet;
+    pub const MouseAutoHide = window_types.MouseAutoHide;
 
     /// Neutral values: every option's own preset.
     pub const default: Window = .{
         .background = .default,
     };
+
+    /// Returns the active window background opacity for `focused`.
+    pub fn effectiveBackgroundAlpha(self: *const Window, focused: bool) f32 {
+        return if (!focused and self.on_inactive.contains(.opacity))
+            self.inactive_background_alpha
+        else
+            self.background.alpha;
+    }
+
+    /// Returns the inactive content dim opacity for `focused` (0 when focused or `dim` is not enabled).
+    pub fn effectiveInactiveDimAlpha(self: *const Window, focused: bool) f32 {
+        return if (!focused and self.on_inactive.contains(.dim))
+            self.inactive_dim_alpha
+        else
+            0.0;
+    }
+
+    /// Returns whether the inactive content blur effect is active for `focused`.
+    pub fn effectiveInactiveBlur(self: *const Window, focused: bool) bool {
+        return !focused and self.on_inactive.contains(.blur);
+    }
 };
 
 /// What runs in the terminal (`[shell]`). Read once, when Rex starts.

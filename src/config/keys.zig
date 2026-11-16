@@ -230,6 +230,12 @@ const tail_rows = [_]Key{
 
     .{ .section = .window, .name = "background_opacity", .field = "window.background.alpha", .kind = .fraction },
     .{ .section = .window, .name = "dim_text_opacity", .field = "window.dim_alpha", .kind = .fraction },
+    .{ .section = .window, .name = "on_inactive", .field = "window.on_inactive", .kind = .set },
+    .{ .section = .window, .name = "inactive_background_opacity", .field = "window.inactive_background_alpha", .kind = .fraction },
+    .{ .section = .window, .name = "inactive_dim_opacity", .field = "window.inactive_dim_alpha", .kind = .fraction },
+    .{ .section = .window, .name = "inactive_blur_radius", .field = "window.inactive_blur_radius", .bounds = .{ .min = 1, .max = 64 } },
+    .{ .section = .window, .name = "mouse_auto_hide", .field = "window.mouse_auto_hide" },
+    .{ .section = .window, .name = "mouse_idle_timeout", .field = "window.mouse_idle_timeout_ms", .kind = .duration, .bounds = at_least_one, .null_keyword = .none },
     .{ .section = .window, .name = "on_close", .field = "window.on_close" },
     .{ .section = .window, .name = "platform", .field = "window.platform", .reload = .restart, .os = .linux },
     // The size the window opens with.
@@ -262,7 +268,7 @@ const tail_rows = [_]Key{
     .{ .section = .modal, .name = "padding", .field = "window.modal.padding", .bounds = .{ .min = 0, .max = 64 } },
     .{ .section = .modal, .name = "gap", .field = "window.modal.gap", .bounds = .{ .min = 0, .max = 64 } },
     .{ .section = .@"modal.blur", .name = "enabled", .field = "window.modal.blur" },
-    .{ .section = .@"modal.blur", .name = "radius", .field = "window.modal.blur_radius" },
+    .{ .section = .@"modal.blur", .name = "radius", .field = "window.modal.blur_radius", .bounds = .{ .min = 1 } },
 
     .{ .section = .alert_dialog, .name = "width", .field = "window.alert_dialog.width", .bounds = .{ .min = 200, .max = 1200 } },
     .{ .section = .alert_dialog, .name = "default_focus", .field = "window.alert_dialog.default_focus" },
