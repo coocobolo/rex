@@ -17,6 +17,8 @@ const Id = Tree.Id;
 pub const inset = 3;
 /// Horizontal padding inside a tab face.
 pub const pad = 8;
+/// Vertical padding inside a horizontal tab face.
+pub const vertical_pad = 6;
 
 /// No tab: the pointer is elsewhere, or the focus is not on the list.
 pub const none: u8 = std.math.maxInt(u8);
@@ -93,7 +95,7 @@ pub fn view(tree: *Tree, theme: *const Theme, options: Options) Tree.Error!void 
             .axis = if (line) (if (horizontal) .column else .row) else .row,
             .width = if (horizontal) (if (options.horizontal_width == .fill) .fill else .fit) else .fill,
             .height = if (horizontal) .{ .fixed = horizontal_face_height } else .{ .at_least = vertical_min_height },
-            .padding = if (horizontal) .symmetric(pad, 6) else .symmetric(6, pad),
+            .padding = if (horizontal) .symmetric(pad, vertical_pad) else .symmetric(vertical_pad, pad),
             .main = if (horizontal or line) .center else .start,
             .cross = .center,
             .fill = if (current and !line) raisedFill(theme) else .transparent,

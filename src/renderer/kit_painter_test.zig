@@ -24,6 +24,19 @@ const alert = @import("../kit/alert.zig");
 const alert_dialog = @import("../kit/alert_dialog.zig");
 const lock_screen = @import("../kit/lock_screen.zig");
 const toast_stack = @import("../kit/toast.zig");
+const separator = @import("../kit/separator.zig");
+const tabs = @import("../kit/tabs.zig");
+const checkbox = @import("../kit/checkbox.zig");
+const switch_control = @import("../kit/switch.zig");
+const slider = @import("../kit/slider.zig");
+const input = @import("../kit/input.zig");
+const card = @import("../kit/card.zig");
+const callout = @import("../kit/callout.zig");
+const collapsible = @import("../kit/collapsible.zig");
+const field = @import("../kit/field.zig");
+const scroll_area = @import("../kit/scroll_area.zig");
+const button_group = @import("../kit/button_group.zig");
+const input_group = @import("../kit/input_group.zig");
 
 const inter: KitFont.Files = .{
     .regular = "assets/fonts/Inter-Regular.ttf",
@@ -73,6 +86,21 @@ const Marks = struct {
     lock_unlock: Tree.Index = Tree.none,
     /// The clipping box of the `clip` scene.
     clip: Tree.Index = Tree.none,
+    /// Shared components in the specimen scene.
+    separator: Tree.Index = Tree.none,
+    tabs: Tree.Index = Tree.none,
+    tabs_line: Tree.Index = Tree.none,
+    checkbox: Tree.Index = Tree.none,
+    switch_control: Tree.Index = Tree.none,
+    slider: Tree.Index = Tree.none,
+    input: Tree.Index = Tree.none,
+    callout: Tree.Index = Tree.none,
+    card: Tree.Index = Tree.none,
+    collapsible: Tree.Index = Tree.none,
+    field: Tree.Index = Tree.none,
+    scroll_area: Tree.Index = Tree.none,
+    button_group: Tree.Index = Tree.none,
+    input_group: Tree.Index = Tree.none,
 };
 
 fn toast(tree: *Tree, theme: *const Theme, icon: Color, title: []const u8, description: []const u8, marks: ?*Marks) !void {
@@ -170,8 +198,8 @@ fn build(
 }
 
 /// One row per button variant with its states left to right (normal,
-/// hovered, pressed, focused, disabled), then the small size, then key
-/// caps.
+/// hovered, pressed, focused, disabled), the sizes and key caps on the left;
+/// the remaining shared components on the right.
 fn specimen(tree: *Tree, theme: *const Theme, marks: *Marks) !void {
     const Row = struct { name: []const u8, variant: button.Variant, label: []const u8 };
     const rows = [_]Row{
@@ -179,9 +207,15 @@ fn specimen(tree: *Tree, theme: *const Theme, marks: *Marks) !void {
         .{ .name = "Outline", .variant = .outline, .label = "Cancel" },
         .{ .name = "Ghost", .variant = .ghost, .label = "Skip" },
         .{ .name = "Destructive", .variant = .destructive, .label = "Delete" },
+        .{ .name = "Secondary", .variant = .secondary, .label = "Save" },
+        .{ .name = "Link", .variant = .link, .label = "More" },
     };
     const name_width = 96;
     const sheet = try tree.open(.{ .width = .fill, .height = .fill, .padding = .all(20), .gap = 10, .fill = theme.background });
+    const columns = try tree.open(.{ .axis = .row, .width = .fill, .height = .fill, .gap = 20 });
+    // The button rows need about 460 px; an explicit width keeps them from
+    // overlapping the component column when both use `.fill`.
+    const left = try tree.open(.{ .axis = .column, .width = .{ .fixed = 460 }, .gap = 8 });
     for (rows, 0..) |row, at| {
         const line = try tree.open(.{ .axis = .row, .gap = button.gap, .cross = .center });
         _ = try tree.text(row.name, .{ .color = theme.muted_foreground, .style = .xs, .width = .{ .fixed = name_width } });
@@ -205,6 +239,8 @@ fn specimen(tree: *Tree, theme: *const Theme, marks: *Marks) !void {
     for (rows) |row| {
         try button.view(tree, theme, .{ .id = Tree.Id.of("specimen.small"), .label = row.label, .variant = row.variant, .size = .sm });
     }
+    try button.view(tree, theme, .{ .id = Tree.Id.of("specimen.xs"), .label = "Go", .size = .xs });
+    try button.view(tree, theme, .{ .id = Tree.Id.of("specimen.icon"), .label = "", .icon = icons.settings, .variant = .ghost, .size = .sm });
     tree.close(small);
     const caps = try tree.open(.{ .axis = .row, .gap = 16, .cross = .center });
     _ = try tree.text("Kbd", .{ .color = theme.muted_foreground, .style = .xs, .width = .{ .fixed = name_width - 8 } });
@@ -223,6 +259,109 @@ fn specimen(tree: *Tree, theme: *const Theme, marks: *Marks) !void {
     try badge.view(tree, theme, .{ .label = "Break", .variant = .success });
     try badge.view(tree, theme, .{ .label = "Warn", .variant = .warning });
     tree.close(badges);
+    tree.close(left);
+
+    const right = try tree.open(.{ .axis = .column, .width = .fill, .gap = 8 });
+    const sep_id = Tree.Id.of("specimen.separator");
+    try separator.view(tree, theme, .{ .id = sep_id });
+    marks.separator = nodeWithId(tree, sep_id);
+
+    const tab_ids = [_]Tree.Id{ Tree.Id.of("specimen.tab0"), Tree.Id.of("specimen.tab1") };
+    const tabs_raised = [_]tabs.Tab{
+        .{ .id = tab_ids[0], .label = "Today" },
+        .{ .id = tab_ids[1], .label = "Focus" },
+    };
+    try tabs.view(tree, theme, .{ .tabs = &tabs_raised, .current = 0, .horizontal_width = .fill });
+    marks.tabs = nodeWithId(tree, tab_ids[0]);
+
+    const line_ids = [_]Tree.Id{ Tree.Id.of("specimen.line0"), Tree.Id.of("specimen.line1") };
+    const tabs_line = [_]tabs.Tab{
+        .{ .id = line_ids[0], .label = "Today" },
+        .{ .id = line_ids[1], .label = "Focus" },
+    };
+    try tabs.view(tree, theme, .{ .tabs = &tabs_line, .current = 0, .variant = .line, .horizontal_width = .fill });
+    marks.tabs_line = nodeWithId(tree, line_ids[0]);
+
+    const checkbox_id = Tree.Id.of("specimen.checkbox");
+    try checkbox.view(tree, theme, .{ .id = checkbox_id, .checked = true, .label = "Checked" });
+    marks.checkbox = nodeWithId(tree, checkbox_id);
+
+    const switch_id = Tree.Id.of("specimen.switch");
+    try switch_control.view(tree, theme, .{ .id = switch_id, .checked = true });
+    marks.switch_control = nodeWithId(tree, switch_id);
+
+    const slider_id = Tree.Id.of("specimen.slider");
+    try slider.view(tree, theme, .{ .id = slider_id, .value = 0.6, .value_label = "60%" });
+    marks.slider = nodeWithId(tree, slider_id);
+
+    const input_id = Tree.Id.of("specimen.input");
+    try input.view(tree, theme, .{ .id = input_id, .value = "value", .placeholder = "placeholder" });
+    marks.input = nodeWithId(tree, input_id);
+
+    const callout_id = Tree.Id.of("specimen.callout");
+    const callout_frame = try callout.view(tree, theme, .{ .id = callout_id, .variant = .destructive });
+    try callout.title(tree, theme, callout_frame, "Config error");
+    try callout.description(tree, theme, callout_frame, "the file could not be written");
+    callout.close(tree, callout_frame);
+    marks.callout = nodeWithId(tree, callout_id);
+
+    const card_id = Tree.Id.of("specimen.card");
+    const card_box = try card.open(tree, theme, .{ .id = card_id, .padding = .all(8), .gap = 4 });
+    _ = try tree.text("Card", .{ .color = theme.foreground, .style = .sm });
+    card.close(tree, card_box);
+    marks.card = nodeWithId(tree, card_id);
+
+    const collapsible_id = Tree.Id.of("specimen.collapsible");
+    const collapsible_box = try collapsible.open(tree, theme, .{ .id = collapsible_id });
+    const trigger = try collapsible.openTrigger(tree, theme, .{
+        .id = Tree.Id.of("specimen.collapsible.trigger"),
+        .title = "Details",
+        .open = true,
+    });
+    try collapsible.closeTrigger(tree, theme, trigger);
+    const collapsible_body = try collapsible.openContent(tree, theme, .{});
+    _ = try tree.text("Body", .{ .color = theme.foreground, .style = .xs });
+    collapsible.closeContent(tree, collapsible_body);
+    collapsible.close(tree, collapsible_box);
+    marks.collapsible = nodeWithId(tree, collapsible_id);
+
+    const field_id = Tree.Id.of("specimen.field");
+    const field_frame = try field.open(tree, theme, .{
+        .id = field_id,
+        .label = "Label",
+        .description = "Description",
+    });
+    try field.close(tree, theme, field_frame);
+    marks.field = nodeWithId(tree, field_id);
+
+    const scroll_id = Tree.Id.of("specimen.scroll");
+    const scroll_box = try scroll_area.open(tree, .{
+        .id = scroll_id,
+        .height = .{ .fixed = 48 },
+    });
+    _ = try tree.text("Scrolled", .{ .color = theme.foreground, .style = .xs });
+    try scroll_area.close(tree, theme, scroll_box);
+    marks.scroll_area = nodeWithId(tree, scroll_id);
+
+    const group_id = Tree.Id.of("specimen.buttons");
+    const group_frame = try button_group.open(tree, theme, .{ .id = group_id, .width = .fill });
+    const segment = try button_group.openSegment(tree, theme, .{ .selected = true });
+    _ = try tree.text("One", .{ .color = theme.foreground, .style = .xs });
+    button_group.closeSegment(tree, segment);
+    button_group.close(tree, group_frame);
+    marks.button_group = nodeWithId(tree, group_id);
+
+    const input_group_id = Tree.Id.of("specimen.input-group");
+    const ig_frame = try input_group.open(tree, theme, .{ .id = input_group_id });
+    const addon = try input_group.openAddon(tree, theme, .{});
+    _ = try tree.text("@", .{ .color = theme.foreground, .style = .xs });
+    input_group.closeAddon(tree, addon);
+    input_group.close(tree, ig_frame);
+    marks.input_group = nodeWithId(tree, input_group_id);
+
+    tree.close(right);
+
+    tree.close(columns);
     tree.close(sheet);
 }
 
@@ -283,7 +422,7 @@ const Frame = struct {
 
 const Rendered = struct {
     frame: Frame,
-    tree_nodes: [128]Tree.Node,
+    tree_nodes: [256]Tree.Node,
     tree_len: Tree.Index,
     marks: Marks,
     instances: u32,
@@ -333,7 +472,7 @@ fn render(scene: Scene, variant: Theme.Variant, background: Color, scale: f32, k
     defer painter.deinit();
 
     var result: Rendered = undefined;
-    var lines: [64]text.Line = undefined;
+    var lines: [128]text.Line = undefined;
     var tree: Tree = .init(&result.tree_nodes, &lines);
     result.toasts = .empty;
     result.dialog = .empty;
@@ -390,13 +529,15 @@ fn render(scene: Scene, variant: Theme.Variant, background: Color, scale: f32, k
     _ = toast_stack.update(&result.toasts, .{ .tick = Theme.duration / 2 });
 
     result.marks = try build(&tree, scene, variant.theme(), &result.toasts, &result.dialog, &result.alert, &result.lock_screen);
-    try tree.layout(font.measurer(), view_width, view_height);
+    // The specimen sheet needs more vertical room than the overlay scenes.
+    const scene_height: f32 = if (scene == .specimen) 700 else @floatFromInt(view_height);
+    try tree.layout(font.measurer(), view_width, scene_height);
     if (scene == .toasts) {
         var table: memory.Table = .empty;
         _ = try toast_stack.place(&result.toasts, &tree, 0, &table, 0);
     }
     result.tree_len = tree.len;
-    result.frame = try drawToFrame(&painter, &font, &atlas, &tree, view_width, view_height, scale, background);
+    result.frame = try drawToFrame(&painter, &font, &atlas, &tree, view_width, scene_height, scale, background);
     result.instances = painter.len;
     return result;
 }
@@ -671,6 +812,34 @@ test "KitPainter: the specimen sheet draws every component in both themes" {
         const faded = frame.at(disabled.x + 6, disabled.y + disabled.h / 2);
         try testing.expect(!std.mem.eql(u8, &faded, &rgb(theme.primary)));
         try testing.expect(!std.mem.eql(u8, &faded, &rgb(theme.background)));
+
+        // Every component added to the sheet has a measured rectangle.
+        const marks = rendered.marks;
+        const component_marks = [_]Tree.Index{
+            marks.separator,      marks.tabs,        marks.tabs_line, marks.checkbox,
+            marks.switch_control, marks.slider,      marks.input,     marks.callout,
+            marks.card,           marks.collapsible, marks.field,     marks.scroll_area,
+            marks.button_group,   marks.input_group,
+        };
+        for (component_marks) |mark| {
+            try testing.expect(mark != Tree.none);
+            const rect = rendered.rect(mark);
+            try testing.expect(rect.w > 0 and rect.h > 0);
+        }
+
+        // The line indicator sits just inside the bottom of its face (the
+        // face, its label and the indicator are the three nodes of a
+        // line-variant tab).
+        const line_face = rendered.rect(marks.tabs_line);
+        const line_mark = rendered.rect(marks.tabs_line + 2);
+        try testing.expectEqual(
+            line_face.y + line_face.h - tabs.vertical_pad - tabs.indicator,
+            line_mark.y,
+        );
+
+        // The separator and the card use their theme fills.
+        try testing.expectEqual(theme.border, rendered.tree_nodes[marks.separator].box.fill);
+        try testing.expectEqual(theme.card, rendered.tree_nodes[marks.card].box.fill);
     }
 }
 
@@ -703,12 +872,12 @@ test "KitPainter: persistent alert banner renders top-center with close action" 
         var name_buffer: [48]u8 = undefined;
         try frame.save(try std.fmt.bufPrint(&name_buffer, "alert-dark-{d}", .{@as(u32, @intFromFloat(scale * 100))}));
 
-        const card = rendered.rect(rendered.marks.alert_card);
-        try testing.expectApproxEqAbs(@as(f32, view_width) / 2, card.x + card.w / 2, 1.0);
-        try testing.expectEqual(@as(f32, alert.margin), card.y);
-        try testing.expectEqual(rgb(theme.popover), frame.at(card.x + 12, card.y + card.h / 2));
+        const card_rect = rendered.rect(rendered.marks.alert_card);
+        try testing.expectApproxEqAbs(@as(f32, view_width) / 2, card_rect.x + card_rect.w / 2, 1.0);
+        try testing.expectEqual(@as(f32, alert.margin), card_rect.y);
+        try testing.expectEqual(rgb(theme.popover), frame.at(card_rect.x + 12, card_rect.y + card_rect.h / 2));
         try testing.expectEqual(rgb(terminal_dark), frame.at(20, 20));
-        try testing.expect(frame.countNot(card, rgb(theme.popover)) > 200);
+        try testing.expect(frame.countNot(card_rect, rgb(theme.popover)) > 200);
         const close_btn = rendered.rect(rendered.marks.alert_close);
         try testing.expect(frame.countNot(close_btn, rgb(theme.popover)) > 10);
     }
@@ -723,12 +892,12 @@ test "KitPainter: lock screen renders dimmed scrim, progress bar and unlock butt
         var name_buffer: [48]u8 = undefined;
         try frame.save(try std.fmt.bufPrint(&name_buffer, "lock-screen-dark-{d}", .{@as(u32, @intFromFloat(scale * 100))}));
 
-        const card = rendered.rect(rendered.marks.lock_card);
-        try testing.expectEqual(rgb(theme.popover), frame.at(card.x + 12, card.y + card.h / 2));
+        const card_rect = rendered.rect(rendered.marks.lock_card);
+        try testing.expectEqual(rgb(theme.popover), frame.at(card_rect.x + 12, card_rect.y + card_rect.h / 2));
         // Scrim darkens terminal behind the lock card.
         const outside = frame.at(20, 20);
         try testing.expect(outside[0] < terminal_dark.r);
-        try testing.expect(frame.countNot(card, rgb(theme.popover)) > 400);
+        try testing.expect(frame.countNot(card_rect, rgb(theme.popover)) > 400);
         const unlock = rendered.rect(rendered.marks.lock_unlock);
         try testing.expect(frame.countNot(unlock, rgb(theme.popover)) > 100);
     }
