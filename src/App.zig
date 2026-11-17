@@ -31,8 +31,10 @@ const unicode = rex.unicode;
 const renderer_mod = rex.renderer;
 const Atlas = renderer_mod.Atlas;
 const gl = renderer_mod.gl;
-const Window = renderer_mod.Window;
-const c = @import("glfw");
+const Window = @import("platform/Window.zig");
+const Platform = @import("platform/Platform.zig");
+const PlatformEvents = @import("platform/Event.zig");
+const Choice = @import("platform/root.zig").Choice;
 
 const Background = renderer_mod.Background;
 const Cursor = renderer_mod.Cursor;
@@ -161,6 +163,8 @@ kit: ?*KitOverlay = null,
 pending_banner: ?PendingAlert = null,
 
 window: Window,
+/// Owns the native platform process for this application's lifetime.
+platform: Platform,
 
 // Mouse reporting state
 mouse_x: f32 = 0,
@@ -635,20 +639,21 @@ pub fn init(
 
     log.debug("termio.pty: {f}", .{pty});
 
-    const platform = Window.choosePlatform(active_config.window.platform, wayland_session);
-    log.debug("platform: {f}, forced: {}", .{ platform, platform.forced });
+    const platform_choice: Choice = Platform.choose(active_config.window.platform, wayland_session);
+    log.debug("platform: {f}, forced: {}", .{ platform_choice, platform_choice.forced });
 
-    var win: Window = try .init(.{
+    var app_platform: Platform = try .init(platform_choice);
+    errdefer app_platform.deinit();
+    var win: Window = try app_platform.createWindow(.{
         .width = active_config.window.size.width,
         .height = active_config.window.size.height,
         .title = active_config.window.title orelse Config.Window.default_title,
-        .platform = platform,
     });
     errdefer win.deinit();
 
     // The font is rasterized at the display's scale; the config's size is
     // in logical pixels.
-    const content_scale = win.getWindowContentScale().width;
+    const content_scale = win.contentScale().width;
     const font_pixels: Freetype.FontConfig = .{
         .faces = active_config.font.faces,
         .height = Freetype.FontConfig.pixelSize(active_config.font.size, content_scale),
@@ -672,7 +677,7 @@ pub fn init(
 
     atlas.preRasterize(gpa, &rasterizer, .{ .start = 0x20, .end = 0x7F });
 
-    var renderer = try RendererType.init(.{
+    var renderer: RendererType = try .init(.{
         .background = active_config.window.background,
         .font_metrics = rasterizer.metrics,
         .cursor = .default,
@@ -727,7 +732,7 @@ pub fn init(
     const clipboard_buf = try gpa.create([terminal_option.max_clipboard_bytes + 1]u8);
     errdefer gpa.destroy(clipboard_buf);
 
-    driver.setWakeupFn(Window.glfwPostEmptyEvent);
+    driver.setWakeupFn(Platform.postWakeup);
 
     const background_alpha = active_config.window.background.alpha;
 
@@ -769,7 +774,8 @@ pub fn init(
         .latency = latency,
         .latency_path = latency_path,
         .window = win,
-        .frame_latch = .init(Window.primaryRefreshHz()),
+        .platform = app_platform,
+        .frame_latch = .init(app_platform.primaryRefreshHz()),
         .background_color = normalizedRgba(resolved_theme.background, background_alpha),
         .blink = .{ .period_ms = blink_half_period_ms },
         .blink_rapid = .{ .period_ms = rapid_blink_half_period_ms },
@@ -813,6 +819,7 @@ pub fn deinit(self: *App, gpa: std.mem.Allocator) void {
     self.atlas.deinit();
     self.rasterizer.deinit(gpa);
     self.window.deinit();
+    self.platform.deinit();
     self.driver.deinit();
     gpa.destroy(self.clipboard_buf);
     if (latency_trace.enabled) {
@@ -853,22 +860,14 @@ pub fn tick(self: *App, dt_ms: u64) bool {
 }
 
 pub fn run(self: *App) !void {
-    // initialize glfw window size and pty window size
+    // initialize window size and pty window size
     {
-        const frame_buffer_size = self.window.frameBufferSize(u16);
+        const frame_buffer_size = self.window.framebufferSize(u16);
         self.handleResize(frame_buffer_size);
     }
 
-    // Register current window callbacks
-    self.window.setWindowUserPointer(self);
-    self.window.setCharCallback(charCb);
-    self.window.setCursorPosCallback(cursorPosCb);
-    self.window.setCursorEnterCallback(cursorEnterCb);
-    self.window.setFramebufferSizeCallback(framebufferSizeCb);
-    self.window.setKeyCallback(keyCb);
-    self.window.setMouseButtonCallback(mouseButtonCb);
-    self.window.setScrollCallback(scrollCb);
-    self.window.setWindowFocusCallback(windowFocusCb);
+    // The platform backend installs the window callbacks when it creates the
+    // window; events are drained from its ring after each event-loop wait.
     // A window can open unfocused and then never get a focus event. Both
     // flags start true, so that window would count screen time and fire
     // reminders. Assigning the flag skips `windowFocusChanged`, which would
@@ -878,11 +877,9 @@ pub fn run(self: *App) !void {
     self.wellbeing_state.window_focused = focused_now;
     self.syncWindowEffects();
     if (focused_now) self.applyPendingBanner();
-    self.window.setWindowCloseCallback(windowCloseCb);
-    self.window.setWindowContentScaleCallback(contentScaleCb);
 
     start: while (true) {
-        if (self.window.windowShouldClose()) {
+        if (self.window.shouldClose()) {
             if (self.config.window.on_close == .close or self.quit_confirmed) break :start;
             self.requestQuit();
         }
@@ -941,7 +938,7 @@ pub fn run(self: *App) !void {
         if (f.hard_reset) {
             self.selection = .empty;
             self.frame_buffer_size = .empty;
-            self.handleResize(self.window.frameBufferSize(u16));
+            self.handleResize(self.window.framebufferSize(u16));
         }
 
         if (f.selection_reset) {
@@ -1067,6 +1064,7 @@ fn updatePointerShape(self: *App, shift_held: bool) void {
         mouse_reporting,
         shift_held,
     );
+    // The renderer and platform shapes share their order and values.
     self.window.setPointerShape(shape);
 }
 
@@ -1115,8 +1113,8 @@ fn renderFrame(self: *App) !bool {
         }
         frame.overlay_has_modal = kit.hasScrim();
     }
-    const shift_held = c.glfwGetKey(self.window.handle, c.GLFW_KEY_LEFT_SHIFT) == c.GLFW_PRESS or
-        c.glfwGetKey(self.window.handle, c.GLFW_KEY_RIGHT_SHIFT) == c.GLFW_PRESS;
+    const shift_held = self.platform.isKeyDown(self.window, .left_shift) or
+        self.platform.isKeyDown(self.window, .right_shift);
     self.updatePointerShape(shift_held);
 
     if (!frame.dirty.any() and !self.renderer_dirty) {
@@ -1127,7 +1125,7 @@ fn renderFrame(self: *App) !bool {
 
     if (latency_trace.enabled) self.latency.?.frameBuilt(latency_trace.now(self.io));
 
-    const dimension = self.window.frameBufferSize(f32);
+    const dimension = self.window.framebufferSize(f32);
     self.renderer.draw(
         frame,
         atlas,
@@ -1150,13 +1148,37 @@ fn renderFrame(self: *App) !bool {
     return true;
 }
 
+/// Delivers every queued platform event in order, then reports any the
+/// bounded ring had to drop.
+fn drainPlatformEvents(self: *App) void {
+    var event: PlatformEvents.Event = undefined;
+    while (self.platform.nextEvent(&event)) {
+        switch (event) {
+            .key => |e| self.onKey(e),
+            .text => |e| self.onText(e.codepoint),
+            .preedit => {},
+            .mouse_button => |e| self.onMouseButton(e),
+            .cursor_pos => |e| self.onCursorPos(e.x, e.y),
+            .scroll => |e| self.onScroll(e.dx, e.dy),
+            .cursor_enter => |e| self.onCursorEnter(e.entered),
+            .focus => |e| self.onFocus(e.focused),
+            .framebuffer_size => |e| self.onFramebufferSize(e.width, e.height),
+            .content_scale => |e| self.onContentScale(e.x, e.y),
+            .close => self.onClose(),
+        }
+    }
+    const dropped = self.platform.takeDropped();
+    if (dropped > 0) log.warn("dropped {} platform events", .{dropped});
+}
+
 /// Sleeps until this frame's draw should start. The long gap is one sleep:
-/// `glfwWaitEventsTimeout` returns on the worker's empty event and was
-/// ending the wait early. The last 1.5 ms is polled in short slices so a
-/// key and its character are delivered while the echo can still publish.
+/// the event wait returns on the worker's empty event and was ending the
+/// wait early. The last 1.5 ms is polled in short slices so a key and its
+/// character are delivered while the echo can still publish.
 fn waitUntilFrame(self: *App) void {
     self.frame_latch.used_prediction = self.frame_latch.pending(awakeNs(self.io));
-    Window.glfwPollEvents();
+    self.platform.pollEvents();
+    self.drainPlatformEvents();
     while (true) {
         const sleep = self.frame_latch.sleepNs(awakeNs(self.io));
         if (sleep == 0) break;
@@ -1165,7 +1187,8 @@ fn waitUntilFrame(self: *App) void {
             // The Io is shutting down: stop waiting and draw now.
             error.Canceled => break,
         };
-        Window.glfwPollEvents();
+        self.platform.pollEvents();
+        self.drainPlatformEvents();
     }
 }
 
@@ -1173,7 +1196,8 @@ fn waitUntilFrame(self: *App) void {
 /// focus tick or an input event (capped to 8ms if a redraw is pending).
 fn waitForNextEvent(self: *App, had_data: bool) void {
     if (had_data or self.driver.hasNewFrame()) {
-        Window.glfwPollEvents();
+        self.platform.pollEvents();
+        self.drainPlatformEvents();
         return;
     }
 
@@ -1211,7 +1235,8 @@ fn waitForNextEvent(self: *App, had_data: bool) void {
     if (animating) ms = @min(ms, 33);
     if (self.needs_redraw) ms = @min(ms, 8);
 
-    Window.glfwWaitEventsTimeout(@max(0.001, @as(f64, @floatFromInt(ms)) / 1000.0));
+    self.platform.waitEvents(@as(f64, @floatFromInt(ms)));
+    self.drainPlatformEvents();
 }
 
 fn buildSelectionState(self: *App, frame: *const FrameType) ?SelectionState {
@@ -1294,7 +1319,7 @@ fn buildSelectionState(self: *App, frame: *const FrameType) ?SelectionState {
 
 fn updateWindowTitle(self: *App) void {
     var buf: [rex.terminal.max_title_len:0]u8 = undefined;
-    self.window.setWindowTitle(windowTitle(self.config.window.title, self.driver.copyTitle(&buf)));
+    self.window.setTitle(windowTitle(self.config.window.title, self.driver.copyTitle(&buf)));
 }
 
 /// The title to show: the configured text when it is set, else the title
@@ -1353,8 +1378,7 @@ pub fn handleResize(self: *App, dimension: Dimension(u16)) void {
 }
 
 fn pasteFromClipboard(self: *App) void {
-    const raw = c.glfwGetClipboardString(self.window.handle) orelse return;
-    const text: []const u8 = std.mem.span(raw);
+    const text: []const u8 = self.window.getClipboard() orelse return;
 
     self.selection = .empty;
     self.driver.writePaste(text) catch |err| {
@@ -1533,7 +1557,7 @@ fn startWellbeingWatch(gpa: std.mem.Allocator, state: *const wellbeing.Wellbeing
     if (comptime builtin.os.tag != .linux) return null;
     if (!state.option.enabled) return null;
     const dir = state.stateDir(default_state_dir);
-    return FileWatch.create(gpa, dir, state.option.privacy.state_filename, Window.glfwPostEmptyEvent) catch |err| {
+    return FileWatch.create(gpa, dir, state.option.privacy.state_filename, Platform.postWakeup) catch |err| {
         log.warn("not watching {s} for wellbeing changes ({t}); checking once a second", .{ dir, err });
         return null;
     };
@@ -1736,7 +1760,7 @@ fn rebuildFont(self: *App, size: u32, scale: f32) bool {
     // Reset cached fb size to force handleResize to recompute rows/cols
     self.frame_buffer_size = .empty;
 
-    const fb = self.window.frameBufferSize(u16);
+    const fb = self.window.framebufferSize(u16);
     self.handleResize(fb);
     return true;
 }
@@ -2312,7 +2336,7 @@ pub fn requestQuit(self: *App) void {
         self.dialog_kind = .none;
         denyPendingClipboard(&self.pending_clipboard, &self.driver);
     }
-    self.window.setWindowShouldClose(false);
+    self.window.setShouldClose(false);
     // The body names the program that closing would end, and says
     // nothing of one when `ask` asks at an idle shell.
     var name_buf: [32]u8 = undefined;
@@ -2444,7 +2468,7 @@ fn programRunning(self: *const App) bool {
 /// Marks the quit prompt as confirmed and signals the window to close on the next event loop iteration.
 pub fn confirmQuit(self: *App) void {
     self.quit_confirmed = true;
-    self.window.setWindowShouldClose(true);
+    self.window.setShouldClose(true);
 }
 
 fn hasModalOverlay(self: *const App) bool {
@@ -2542,90 +2566,83 @@ fn handleDialogKey(self: *App, k: rex.input.Key, mods: rex.input.Modifiers) void
     if (event) |ev| self.applyDialogOutcome(kit.dialogInput(ev));
 }
 
-const charCb: c.GLFWcharfun = struct {
-    fn cb(window: ?*c.GLFWwindow, codepoint: c_uint) callconv(.c) void {
-        const app: *App = @ptrCast(@alignCast(c.glfwGetWindowUserPointer(window) orelse return));
-        if (app.skip_next_char) {
-            app.skip_next_char = false;
-            return;
-        }
-        if (app.dialogTakesInput() or app.wellbeing_state.input_locked) return;
-        app.wellbeing_state.recordActivity();
-        app.selection = .empty;
-        app.needs_redraw = true;
-
-        // GLFW passes a u32; anything that is not a code point is dropped.
-        const cp = std.math.cast(u21, codepoint) orelse return;
-        if (cp == 0) return;
-
-        var buf: [4]u8 = undefined;
-        const len = std.unicode.utf8Encode(cp, &buf) catch return;
-        if (len > 0) {
-            app.hidePointerOnTyping();
-            const seq = if (latency_trace.enabled) app.latencyBeginSend() else {};
-            app.driver.sendBytes(buf[0..len]) catch |err| {
-                log.err("charCallback: driver sendBytes failed: {}", .{err});
-                return;
-            };
-            if (latency_trace.enabled) app.latencyQueued(seq);
-            app.snapToLiveView();
-        }
+fn onText(self: *App, codepoint: u21) void {
+    if (self.skip_next_char) {
+        self.skip_next_char = false;
+        return;
     }
-}.cb;
+    if (self.dialogTakesInput() or self.wellbeing_state.input_locked) return;
+    self.wellbeing_state.recordActivity();
+    self.selection = .empty;
+    self.needs_redraw = true;
 
-const keyCb: c.GLFWkeyfun = struct {
-    fn cb(window: ?*c.GLFWwindow, key: c_int, _: c_int, action: c_int, mods: c_int) callconv(.c) void {
-        const app: *App = @ptrCast(@alignCast(c.glfwGetWindowUserPointer(window) orelse return));
-        if (action == c.GLFW_RELEASE) return;
-        const pressed_at = if (latency_trace.enabled) latency_trace.now(app.io) else {};
-        app.wellbeing_state.recordActivity();
+    if (codepoint == 0) return;
 
-        const maybe_key = rex.renderer.glfw_key.key(key);
-        const key_mods = rex.renderer.glfw_key.modifiers(mods);
-
-        if (app.routeKeyToUi(maybe_key, key_mods)) {
-            app.skip_next_char = true;
+    var buf: [4]u8 = undefined;
+    const len = std.unicode.utf8Encode(codepoint, &buf) catch return;
+    if (len > 0) {
+        self.hidePointerOnTyping();
+        const seq = if (latency_trace.enabled) self.latencyBeginSend() else {};
+        self.driver.sendBytes(buf[0..len]) catch |err| {
+            log.err("charCallback: driver sendBytes failed: {}", .{err});
             return;
-        }
-        app.skip_next_char = false;
-
-        // A bare modifier keeps the selection, since it may start a
-        // combination such as Ctrl+Shift+C.
-        if (maybe_key == null or !maybe_key.?.isModifier()) {
-            app.selection = .empty;
-            app.needs_redraw = true;
-            if (maybe_key != null) app.hidePointerOnTyping();
-            // Its bytes may come from here or from the char callback.
-            if (latency_trace.enabled) app.latency.?.keyPressed(pressed_at);
-        }
-
-        // Terminal key encoding
-        const driver_modes = app.driver.getModes();
-        const key_modes: input.encode.Modes = .{
-            .modify_other_keys = driver_modes.modify_other_keys,
-            .cursor_keys = driver_modes.cursor_keys,
-            .keypad_app = driver_modes.keypad_app,
-            .eight_bit_controls = driver_modes.eight_bit_controls,
         };
-
-        var buf: [input.encode.max_len]u8 = undefined;
-        // A key Rex has no name for sends nothing by itself.
-        const bytes = if (maybe_key) |k| input.encode.encode(k, key_mods, key_modes, &buf) else "";
-        if (bytes.len > 0) {
-            // The key went out encoded, so its character must not follow
-            // (Shift+letter under modifyOtherKeys 2). The next key event
-            // clears the flag if no character comes.
-            app.skip_next_char = true;
-            const seq = if (latency_trace.enabled) app.latencyBeginSend() else {};
-            app.driver.sendBytes(bytes) catch |err| {
-                log.err("keyCallback: driver sendBytes failed: {}", .{err});
-                return;
-            };
-            if (latency_trace.enabled) app.latencyQueued(seq);
-            app.snapToLiveView();
-        }
+        if (latency_trace.enabled) self.latencyQueued(seq);
+        self.snapToLiveView();
     }
-}.cb;
+}
+
+fn onKey(self: *App, event: PlatformEvents.KeyEvent) void {
+    if (event.action == .release) return;
+    const pressed_at = if (latency_trace.enabled) latency_trace.now(self.io) else {};
+    self.wellbeing_state.recordActivity();
+
+    // The backend drops keys Rex has no name for, so this is always present.
+    const maybe_key: ?input.Key = event.key;
+    const key_mods = event.mods;
+
+    if (self.routeKeyToUi(maybe_key, key_mods)) {
+        self.skip_next_char = true;
+        return;
+    }
+    self.skip_next_char = false;
+
+    // A bare modifier keeps the selection, since it may start a
+    // combination such as Ctrl+Shift+C.
+    if (maybe_key == null or !maybe_key.?.isModifier()) {
+        self.selection = .empty;
+        self.needs_redraw = true;
+        if (maybe_key != null) self.hidePointerOnTyping();
+        // Its bytes may come from here or from the char callback.
+        if (latency_trace.enabled) self.latency.?.keyPressed(pressed_at);
+    }
+
+    // Terminal key encoding
+    const driver_modes = self.driver.getModes();
+    const key_modes: input.encode.Modes = .{
+        .modify_other_keys = driver_modes.modify_other_keys,
+        .cursor_keys = driver_modes.cursor_keys,
+        .keypad_app = driver_modes.keypad_app,
+        .eight_bit_controls = driver_modes.eight_bit_controls,
+    };
+
+    var buf: [input.encode.max_len]u8 = undefined;
+    // A key Rex has no name for sends nothing by itself.
+    const bytes = if (maybe_key) |k| input.encode.encode(k, key_mods, key_modes, &buf) else "";
+    if (bytes.len > 0) {
+        // The key went out encoded, so its character must not follow
+        // (Shift+letter under modifyOtherKeys 2). The next key event
+        // clears the flag if no character comes.
+        self.skip_next_char = true;
+        const seq = if (latency_trace.enabled) self.latencyBeginSend() else {};
+        self.driver.sendBytes(bytes) catch |err| {
+            log.err("keyCallback: driver sendBytes failed: {}", .{err});
+            return;
+        };
+        if (latency_trace.enabled) self.latencyQueued(seq);
+        self.snapToLiveView();
+    }
+}
 
 fn mouseCellPos(self: *App, xpos: f32, ypos: f32) struct { u16, u16 } {
     const cw, const ch = .{ self.rasterizer.cell_width, self.rasterizer.cell_height };
@@ -2981,36 +2998,34 @@ fn copySelectionToClipboard(self: *App) void {
     var buf: [max_copy_size]u8 = undefined;
     const len = self.driver.copySelectionText(self.selection, &buf);
     if (len == 0) return;
-    buf[len] = 0; // null-terminate for GLFW
-    c.glfwSetClipboardString(self.window.handle, buf[0..len :0].ptr);
+    buf[len] = 0; // null-terminate for the platform
+    self.window.setClipboard(buf[0..len :0]);
 }
 
-/// The report number of a GLFW button, or null for buttons past the
-/// first three. GLFW numbers right before middle; xterm the reverse.
-fn mouseButtonOf(glfw_button: c_int) ?MouseButton {
-    return switch (glfw_button) {
-        c.GLFW_MOUSE_BUTTON_LEFT => .left,
-        c.GLFW_MOUSE_BUTTON_MIDDLE => .middle,
-        c.GLFW_MOUSE_BUTTON_RIGHT => .right,
-        else => null,
+/// The xterm report button for a platform button.
+fn mouseButtonOf(button: PlatformEvents.MouseButton) MouseButton {
+    return switch (button) {
+        .left => .left,
+        .middle => .middle,
+        .right => .right,
     };
 }
 
-fn trackMouseButton(self: *App, button: c_int, press: bool) void {
-    const held = mouseButtonOf(button) orelse return;
+fn trackMouseButton(self: *App, button: PlatformEvents.MouseButton, press: bool) void {
+    const held = mouseButtonOf(button);
     if (press) self.mouse_held.press(held) else self.mouse_held.release(held);
 }
 
-fn vtModByte(mods: c_int) u8 {
+fn vtModByte(mods: input.Modifiers) u8 {
     var m: u8 = 0;
-    if (mods & c.GLFW_MOD_SHIFT != 0) m |= 4;
-    if (mods & c.GLFW_MOD_ALT != 0) m |= 8;
-    if (mods & c.GLFW_MOD_CONTROL != 0) m |= 16;
+    if (mods.shift) m |= 4;
+    if (mods.alt) m |= 8;
+    if (mods.ctrl) m |= 16;
     return m;
 }
 
-fn detectMouseClickKind(self: *App, anchor: i32, col: u16, mods: c_int, scroll_gen: i64, scrollback_used: i64) rex.Selection.Kind {
-    const now_ms = Window.glfwGetTime() * 1000.0;
+fn detectMouseClickKind(self: *App, anchor: i32, col: u16, mods: input.Modifiers, scroll_gen: i64, scrollback_used: i64) rex.Selection.Kind {
+    const now_ms = self.platform.now() * 1000.0;
 
     self.mouse_click_count = blk: {
         const prev_anchor = resolveAnchor(self.mouse_last_click_pos, scroll_gen, scrollback_used);
@@ -3035,10 +3050,10 @@ fn detectMouseClickKind(self: *App, anchor: i32, col: u16, mods: c_int, scroll_g
         3 => .line,
         else => .character,
     };
-    return if (mods & c.GLFW_MOD_ALT != 0) .block else kind;
+    return if (mods.alt) .block else kind;
 }
 
-fn handleSelectionPress(self: *App, row: u16, col: u16, mods: c_int) void {
+fn handleSelectionPress(self: *App, row: u16, col: u16, mods: input.Modifiers) void {
     const frame = self.driver.getFrame();
     const viewport_offset = @as(i32, @intCast(frame.viewport_offset));
     const anchor = @as(i32, row) - viewport_offset;
@@ -3076,8 +3091,8 @@ fn handleSelectionRelease(self: *App) void {
     }
 }
 
-fn reportMouseButton(self: *App, col: u16, row: u16, button: c_int, mod_byte: u8, press: bool) void {
-    const held = mouseButtonOf(button) orelse return;
+fn reportMouseButton(self: *App, col: u16, row: u16, button: PlatformEvents.MouseButton, mod_byte: u8, press: bool) void {
+    const held = mouseButtonOf(button);
     self.mouse_report_col = col;
     self.mouse_report_row = row;
     self.driver.sendInput(.{
@@ -3093,98 +3108,95 @@ fn reportMouseButton(self: *App, col: u16, row: u16, button: c_int, mod_byte: u8
     };
 }
 
-const mouseButtonCb: c.GLFWmousebuttonfun = struct {
-    fn cb(handle: ?*c.GLFWwindow, button: c_int, action: c_int, mods: c_int) callconv(.c) void {
-        const app: *App = @ptrCast(@alignCast(c.glfwGetWindowUserPointer(handle) orelse return));
-        app.wellbeing_state.recordActivity();
-        app.showPointer();
-        const press = (action == c.GLFW_PRESS);
+fn onMouseButton(self: *App, event: PlatformEvents.MouseButtonEvent) void {
+    self.wellbeing_state.recordActivity();
+    self.showPointer();
+    const press = (event.action == .press);
 
-        app.trackMouseButton(button, press);
-        const mod_byte = vtModByte(mods);
-        const shift_held = (mods & c.GLFW_MOD_SHIFT) != 0;
-        defer app.updatePointerShape(shift_held);
+    self.trackMouseButton(event.button, press);
+    const mod_byte = vtModByte(event.mods);
+    const shift_held = event.mods.shift;
+    defer self.updatePointerShape(shift_held);
 
-        const col, const row = app.mouseCellPos(app.mouse_x, app.mouse_y);
-        const driver_modes = app.driver.getModes();
-        const mouse_reporting = driver_modes.mouse_reporting;
-        const frame = app.driver.getFrame();
-        const scrollback_used = frame.scrollback_used;
+    const col, const row = self.mouseCellPos(self.mouse_x, self.mouse_y);
+    const driver_modes = self.driver.getModes();
+    const mouse_reporting = driver_modes.mouse_reporting;
+    const frame = self.driver.getFrame();
+    const scrollback_used = frame.scrollback_used;
 
-        const modal_active = app.hasModalOverlay();
+    const modal_active = self.hasModalOverlay();
 
-        if (button == c.GLFW_MOUSE_BUTTON_LEFT) {
-            if (press) {
-                if (app.kit) |kit| switch (kit.press(app.mouse_x / app.content_scale, app.mouse_y / app.content_scale)) {
-                    .outside => {},
-                    .taken => return,
-                    .changed => {
-                        app.needs_redraw = true;
-                        return;
-                    },
-                    .scrim => {
-                        const event: alert_dialog.Event = if (app.config.window.modal.on_outside_click == .close) .dismiss else .blur;
-                        app.applyDialogOutcome(kit.dialogInput(event));
-                        return;
-                    },
-                };
-                if (modal_active) return;
-                if (scrollback_used > 0 and app.handleScrollbarClick()) return;
-            } else {
-                if (app.kit) |kit| {
-                    // A dialog button is taken when the pointer is let go
-                    // on it.
-                    if (kit.holdsPress()) {
-                        switch (kit.release(app.mouse_x / app.content_scale, app.mouse_y / app.content_scale)) {
-                            .quiet => {},
-                            .redraw => app.needs_redraw = true,
-                            .dialog => |outcome| app.applyDialogOutcome(outcome),
-                            .lock_unlocked => app.unlockLockScreen(),
-                            .wellbeing_widget => |act| {
-                                switch (act) {
-                                    .toggle => {
-                                        app.wellbeing_state.toggleFocus(app.wallMs());
-                                        app.ringBell();
-                                    },
-                                    .skip => {
-                                        app.wellbeing_state.skipFocus(app.wallMs());
-                                        app.ringBell();
-                                    },
-                                    .reset => app.wellbeing_state.resetFocus(app.wallMs()),
-                                }
-                                app.needs_redraw = true;
-                                app.syncWellbeingKit(false);
-                            },
-                        }
-                        return;
+    if (event.button == .left) {
+        if (press) {
+            if (self.kit) |kit| switch (kit.press(self.mouse_x / self.content_scale, self.mouse_y / self.content_scale)) {
+                .outside => {},
+                .taken => return,
+                .changed => {
+                    self.needs_redraw = true;
+                    return;
+                },
+                .scrim => {
+                    const outcome: alert_dialog.Event = if (self.config.window.modal.on_outside_click == .close) .dismiss else .blur;
+                    self.applyDialogOutcome(kit.dialogInput(outcome));
+                    return;
+                },
+            };
+            if (modal_active) return;
+            if (scrollback_used > 0 and self.handleScrollbarClick()) return;
+        } else {
+            if (self.kit) |kit| {
+                // A dialog button is taken when the pointer is let go
+                // on it.
+                if (kit.holdsPress()) {
+                    switch (kit.release(self.mouse_x / self.content_scale, self.mouse_y / self.content_scale)) {
+                        .quiet => {},
+                        .redraw => self.needs_redraw = true,
+                        .dialog => |outcome| self.applyDialogOutcome(outcome),
+                        .lock_unlocked => self.unlockLockScreen(),
+                        .wellbeing_widget => |act| {
+                            switch (act) {
+                                .toggle => {
+                                    self.wellbeing_state.toggleFocus(self.wallMs());
+                                    self.ringBell();
+                                },
+                                .skip => {
+                                    self.wellbeing_state.skipFocus(self.wallMs());
+                                    self.ringBell();
+                                },
+                                .reset => self.wellbeing_state.resetFocus(self.wallMs()),
+                            }
+                            self.needs_redraw = true;
+                            self.syncWellbeingKit(false);
+                        },
                     }
-                }
-                if (modal_active) {
-                    _ = app.handleScrollbarRelease();
-                    app.handleSelectionRelease();
                     return;
                 }
-                if (app.handleScrollbarRelease()) return;
             }
-        } else if (modal_active) {
-            return;
-        }
-
-        const is_primary = !frame.is_alternate;
-        // log.debug("mouse_reporting={} shift_held={} is_primary={}", .{ mouse_reporting, shift_held, is_primary });
-        if (is_primary and (!mouse_reporting or shift_held)) {
-            if (press and button == c.GLFW_MOUSE_BUTTON_LEFT) {
-                app.handleSelectionPress(row, col, mods);
-            } else if (!press) {
-                app.handleSelectionRelease();
+            if (modal_active) {
+                _ = self.handleScrollbarRelease();
+                self.handleSelectionRelease();
+                return;
             }
+            if (self.handleScrollbarRelease()) return;
         }
+    } else if (modal_active) {
+        return;
+    }
 
-        if (mouse_reporting and !shift_held) {
-            app.reportMouseButton(col, row, button, mod_byte, press);
+    const is_primary = !frame.is_alternate;
+    // log.debug("mouse_reporting={} shift_held={} is_primary={}", .{ mouse_reporting, shift_held, is_primary });
+    if (is_primary and (!mouse_reporting or shift_held)) {
+        if (press and event.button == .left) {
+            self.handleSelectionPress(row, col, event.mods);
+        } else if (!press) {
+            self.handleSelectionRelease();
         }
     }
-}.cb;
+
+    if (mouse_reporting and !shift_held) {
+        self.reportMouseButton(col, row, event.button, mod_byte, press);
+    }
+}
 
 fn handleScrollbarRelease(self: *App) bool {
     if (!self.scrollbar_dragging) return false;
@@ -3300,28 +3312,26 @@ fn sendViewportInput(self: *App, event: InputEvent) void {
     self.driver.sendInput(event) catch {};
 }
 
-const scrollCb: c.GLFWscrollfun = struct {
-    fn cb(handle: ?*c.GLFWwindow, _: f64, y_offset: f64) callconv(.c) void {
-        const app: *App = @ptrCast(@alignCast(c.glfwGetWindowUserPointer(handle) orelse return));
-        app.wellbeing_state.recordActivity();
-        app.showPointer();
-        if (app.hasModalOverlay()) return;
+fn onScroll(self: *App, dx: f64, dy: f64) void {
+    _ = dx; // horizontal wheel movement is not reported today
+    self.wellbeing_state.recordActivity();
+    self.showPointer();
+    if (self.hasModalOverlay()) return;
 
-        // Clear sub-line fractional remainder on scroll direction reversal to eliminate hysteresis
-        if ((app.scroll_accumulator_y > 0 and y_offset < 0) or (app.scroll_accumulator_y < 0 and y_offset > 0)) {
-            app.scroll_accumulator_y = 0;
-        }
-
-        const modes = app.driver.getModes();
-        const multiplier: f64 = if (modes.reports_wheel)
-            1.0
-        else
-            @as(f64, @floatFromInt(app.config.scroll.wheel_lines));
-
-        app.scroll_accumulator_y += y_offset * multiplier;
-        app.flushScroll();
+    // Clear sub-line fractional remainder on scroll direction reversal to eliminate hysteresis
+    if ((self.scroll_accumulator_y > 0 and dy < 0) or (self.scroll_accumulator_y < 0 and dy > 0)) {
+        self.scroll_accumulator_y = 0;
     }
-}.cb;
+
+    const modes = self.driver.getModes();
+    const multiplier: f64 = if (modes.reports_wheel)
+        1.0
+    else
+        @as(f64, @floatFromInt(self.config.scroll.wheel_lines));
+
+    self.scroll_accumulator_y += dy * multiplier;
+    self.flushScroll();
+}
 
 fn sendMouseMotion(self: *App, col: u16, row: u16) void {
     if (col == self.mouse_report_col and row == self.mouse_report_row) return;
@@ -3342,177 +3352,157 @@ fn sendMouseMotion(self: *App, col: u16, row: u16) void {
 
 /// Only leaving matters: the move that follows an enter says where the
 /// pointer is.
-const cursorEnterCb: c.GLFWcursorenterfun = struct {
-    fn cb(handle: ?*c.GLFWwindow, entered: c_int) callconv(.c) void {
-        const app: *App = @ptrCast(@alignCast(c.glfwGetWindowUserPointer(handle) orelse return));
-        if (entered != 0) return;
-        app.showPointer();
-        if (app.kit) |kit| {
-            if (kit.pointerLeft()) app.needs_redraw = true;
-        }
+fn onCursorEnter(self: *App, entered: bool) void {
+    if (entered) return;
+    self.showPointer();
+    if (self.kit) |kit| {
+        if (kit.pointerLeft()) self.needs_redraw = true;
     }
-}.cb;
+}
 
-const cursorPosCb: c.GLFWcursorposfun = struct {
-    fn cb(handle: ?*c.GLFWwindow, xpos: f64, ypos: f64) callconv(.c) void {
-        const app: *App = @ptrCast(@alignCast(c.glfwGetWindowUserPointer(handle) orelse return));
-
-        const new_x: f32 = @floatCast(xpos);
-        const new_y: f32 = @floatCast(ypos);
-        if (new_x != app.mouse_x or new_y != app.mouse_y) {
-            app.showPointer();
-        }
-        app.mouse_x = new_x;
-        app.mouse_y = new_y;
-        const shift_held = app.selection.phase == .dragging or
-            c.glfwGetKey(handle, c.GLFW_KEY_LEFT_SHIFT) == c.GLFW_PRESS or
-            c.glfwGetKey(handle, c.GLFW_KEY_RIGHT_SHIFT) == c.GLFW_PRESS;
-        defer app.updatePointerShape(shift_held);
-        if (app.kit) |kit| {
-            if (kit.pointerMoved(app.mouse_x / app.content_scale, app.mouse_y / app.content_scale)) app.needs_redraw = true;
-            if (kit.holdsPress()) return;
-        }
-
-        // update scrollbar hover detection
-        app.updateScrollbarHover();
-        if (app.hasModalOverlay()) return;
-
-        // Scrollbar drag
-        if (app.handleScrollbarDrag()) return;
-
-        const col, const row = app.mouseCellPos(app.mouse_x, app.mouse_y);
-
-        const driver_modes = app.driver.getModes();
-        const mouse_reporting = driver_modes.mouse_reporting;
-
-        // A shift-drag selects text even while the host tracks the mouse.
-        if (mouse_reporting and app.selection.phase != .dragging) {
-            if (driver_modes.reports_motion) {
-                app.sendMouseMotion(col, row);
-            }
-            return;
-        }
-
-        const left_held = app.mouse_held.isHeld(.left);
-
-        if (left_held and app.selection.phase == .dragging) {
-            const frame = app.driver.getFrame();
-            if (frame.is_alternate) return;
-
-            const viewport_offset = @as(i32, @intCast(frame.viewport_offset));
-            const anchor: i32 = @as(i32, row) - viewport_offset;
-            const scroll_gen = frame.total_lines_scrolled;
-            const scrollback_used = @as(i64, @intCast(frame.scrollback_used));
-
-            switch (app.selection.kind) {
-                .character, .block => {
-                    _ = app.selection.range.set(.end, .{ .row = anchor, .col = col, .captured_scroll_gen = scroll_gen });
-                },
-                .word => {
-                    const join_option = app.word_classifier.option.join;
-                    // Union the drag-point's word bounds with the ORIGINAL click's word
-                    // bounds, extending outward from the click, not re-snapping independently.
-                    const left, const right = frame.wordsBoundsAt(&app.word_classifier, row, col, join_option);
-
-                    const click_anchor = resolveAnchor(
-                        app.mouse_last_click_pos,
-                        scroll_gen,
-                        scrollback_used,
-                    ) orelse return; // click row evicted from scrollback, bail, don't extend a dead selection
-                    const click_col = app.mouse_last_click_pos.col;
-                    const click_row_i = click_anchor + @as(i64, @intCast(frame.viewport_offset));
-                    const click_row: usize = if (click_row_i >= 0 and click_row_i < frame.active_rows)
-                        @intCast(click_row_i)
-                    else
-                        @intCast(row);
-                    const click_left, const click_right = frame.wordsBoundsAt(&app.word_classifier, click_row, click_col, join_option);
-
-                    if (@as(i64, anchor) < click_anchor or (anchor == click_anchor and col < click_col)) {
-                        // dragging backward: end snaps to the far-left word boundary,
-                        // start stays pinned to the click's right boundary
-                        app.selection.range.start.set(@intCast(click_anchor), click_right, scroll_gen);
-                        app.selection.range.end.set(anchor, left, scroll_gen);
-                    } else {
-                        app.selection.range.start.set(@intCast(click_anchor), click_left, scroll_gen);
-                        app.selection.range.end.set(anchor, right, scroll_gen);
-                    }
-                },
-                .line => {
-                    const last_col = frame.active_cols - 1;
-                    const click_anchor = resolveAnchor(
-                        app.mouse_last_click_pos,
-                        scroll_gen,
-                        scrollback_used,
-                    ) orelse return; // click row evicted from scrollback, bail, don't extend a dead selection
-                    if (@as(i64, anchor) < click_anchor) {
-                        app.selection.range.start.set(@intCast(click_anchor), last_col, scroll_gen);
-                        app.selection.range.end.set(anchor, 0, scroll_gen);
-                    } else {
-                        app.selection.range.start.set(@intCast(click_anchor), 0, scroll_gen);
-                        app.selection.range.end.set(anchor, last_col, scroll_gen);
-                    }
-                },
-            }
-
-            app.needs_redraw = true;
-        }
+fn onCursorPos(self: *App, x: f64, y: f64) void {
+    const new_x: f32 = @floatCast(x);
+    const new_y: f32 = @floatCast(y);
+    if (new_x != self.mouse_x or new_y != self.mouse_y) {
+        self.showPointer();
     }
-}.cb;
+    self.mouse_x = new_x;
+    self.mouse_y = new_y;
+    const shift_held = self.selection.phase == .dragging or
+        self.platform.isKeyDown(self.window, .left_shift) or
+        self.platform.isKeyDown(self.window, .right_shift);
+    defer self.updatePointerShape(shift_held);
+    if (self.kit) |kit| {
+        if (kit.pointerMoved(self.mouse_x / self.content_scale, self.mouse_y / self.content_scale)) self.needs_redraw = true;
+        if (kit.holdsPress()) return;
+    }
 
-const windowFocusCb: c.GLFWwindowfocusfun = struct {
-    fn cb(handle: ?*c.GLFWwindow, focused: c_int) callconv(.c) void {
-        const app: *App = @ptrCast(@alignCast(c.glfwGetWindowUserPointer(handle) orelse return));
-        const is_focused = (focused != 0);
-        if (app.window_focused != is_focused) {
-            app.window_focused = is_focused;
-            app.syncWindowEffects();
-            app.renderer_dirty = true;
-            app.needs_redraw = true;
+    // update scrollbar hover detection
+    self.updateScrollbarHover();
+    if (self.hasModalOverlay()) return;
+
+    // Scrollbar drag
+    if (self.handleScrollbarDrag()) return;
+
+    const col, const row = self.mouseCellPos(self.mouse_x, self.mouse_y);
+
+    const driver_modes = self.driver.getModes();
+    const mouse_reporting = driver_modes.mouse_reporting;
+
+    // A shift-drag selects text even while the host tracks the mouse.
+    if (mouse_reporting and self.selection.phase != .dragging) {
+        if (driver_modes.reports_motion) {
+            self.sendMouseMotion(col, row);
         }
-        app.showPointer();
-        app.wellbeing_state.windowFocusChanged(is_focused);
-        if (is_focused) {
-            app.applyPendingBanner();
-            app.maybeOpenClipboardDialog();
+        return;
+    }
+
+    const left_held = self.mouse_held.isHeld(.left);
+
+    if (left_held and self.selection.phase == .dragging) {
+        const frame = self.driver.getFrame();
+        if (frame.is_alternate) return;
+
+        const viewport_offset = @as(i32, @intCast(frame.viewport_offset));
+        const anchor: i32 = @as(i32, row) - viewport_offset;
+        const scroll_gen = frame.total_lines_scrolled;
+        const scrollback_used = @as(i64, @intCast(frame.scrollback_used));
+
+        switch (self.selection.kind) {
+            .character, .block => {
+                _ = self.selection.range.set(.end, .{ .row = anchor, .col = col, .captured_scroll_gen = scroll_gen });
+            },
+            .word => {
+                const join_option = self.word_classifier.option.join;
+                // Union the drag-point's word bounds with the ORIGINAL click's word
+                // bounds, extending outward from the click, not re-snapping independently.
+                const left, const right = frame.wordsBoundsAt(&self.word_classifier, row, col, join_option);
+
+                const click_anchor = resolveAnchor(
+                    self.mouse_last_click_pos,
+                    scroll_gen,
+                    scrollback_used,
+                ) orelse return; // click row evicted from scrollback, bail, don't extend a dead selection
+                const click_col = self.mouse_last_click_pos.col;
+                const click_row_i = click_anchor + @as(i64, @intCast(frame.viewport_offset));
+                const click_row: usize = if (click_row_i >= 0 and click_row_i < frame.active_rows)
+                    @intCast(click_row_i)
+                else
+                    @intCast(row);
+                const click_left, const click_right = frame.wordsBoundsAt(&self.word_classifier, click_row, click_col, join_option);
+
+                if (@as(i64, anchor) < click_anchor or (anchor == click_anchor and col < click_col)) {
+                    // dragging backward: end snaps to the far-left word boundary,
+                    // start stays pinned to the click's right boundary
+                    self.selection.range.start.set(@intCast(click_anchor), click_right, scroll_gen);
+                    self.selection.range.end.set(anchor, left, scroll_gen);
+                } else {
+                    self.selection.range.start.set(@intCast(click_anchor), click_left, scroll_gen);
+                    self.selection.range.end.set(anchor, right, scroll_gen);
+                }
+            },
+            .line => {
+                const last_col = frame.active_cols - 1;
+                const click_anchor = resolveAnchor(
+                    self.mouse_last_click_pos,
+                    scroll_gen,
+                    scrollback_used,
+                ) orelse return; // click row evicted from scrollback, bail, don't extend a dead selection
+                if (@as(i64, anchor) < click_anchor) {
+                    self.selection.range.start.set(@intCast(click_anchor), last_col, scroll_gen);
+                    self.selection.range.end.set(anchor, 0, scroll_gen);
+                } else {
+                    self.selection.range.start.set(@intCast(click_anchor), 0, scroll_gen);
+                    self.selection.range.end.set(anchor, last_col, scroll_gen);
+                }
+            },
         }
-        const modes = app.driver.getModes();
-        if (!modes.focus_events) return;
-        app.driver.sendInput(.{ .focus = is_focused }) catch |err| {
-            log.err("windowFocusCallback: sendInput failed: {}", .{err});
-        };
-    }
-}.cb;
 
-const framebufferSizeCb: c.GLFWframebuffersizefun = struct {
-    fn cb(handle: ?*c.GLFWwindow, w: c_int, h: c_int) callconv(.c) void {
-        const app: *App = @ptrCast(@alignCast(c.glfwGetWindowUserPointer(handle) orelse return));
-        // GLFW reports a scale change just before the framebuffer size it
-        // causes (wl_window.c, fractionalScaleHandlePreferredScale). Applying
-        // the scale first resizes the grid once, with the new font; otherwise
-        // the pty sees an extra resize computed with the old cell size.
-        if (app.content_scale_pending) |scale| {
-            app.content_scale_pending = null;
-            app.applyContentScale(scale);
-        }
-        // A no-op when applyContentScale already resized to this size.
-        app.handleResize(.{ .height = @intCast(h), .width = @intCast(w) });
+        self.needs_redraw = true;
     }
-}.cb;
+}
 
-const contentScaleCb: c.GLFWwindowcontentscalefun = struct {
-    fn cb(handle: ?*c.GLFWwindow, xscale: f32, yscale: f32) callconv(.c) void {
-        _ = yscale; // GLFW reports one scale per axis; Rex uses the horizontal one
-        const app: *App = @ptrCast(@alignCast(c.glfwGetWindowUserPointer(handle) orelse return));
-        app.content_scale_pending = xscale;
+fn onFocus(self: *App, focused: bool) void {
+    if (self.window_focused != focused) {
+        self.window_focused = focused;
+        self.syncWindowEffects();
+        self.renderer_dirty = true;
+        self.needs_redraw = true;
     }
-}.cb;
+    self.showPointer();
+    self.wellbeing_state.windowFocusChanged(focused);
+    if (focused) {
+        self.applyPendingBanner();
+        self.maybeOpenClipboardDialog();
+    }
+    const modes = self.driver.getModes();
+    if (!modes.focus_events) return;
+    self.driver.sendInput(.{ .focus = focused }) catch |err| {
+        log.err("windowFocusCallback: sendInput failed: {}", .{err});
+    };
+}
 
-const windowCloseCb: c.GLFWwindowclosefun = struct {
-    fn cb(handle: ?*c.GLFWwindow) callconv(.c) void {
-        const app: *App = @ptrCast(@alignCast(c.glfwGetWindowUserPointer(handle) orelse return));
-        app.requestQuit();
+fn onFramebufferSize(self: *App, width: u32, height: u32) void {
+    // The backend reports a scale change just before the framebuffer size it
+    // causes (wl_window.c, fractionalScaleHandlePreferredScale). Applying
+    // the scale first resizes the grid once, with the new font; otherwise
+    // the pty sees an extra resize computed with the old cell size.
+    if (self.content_scale_pending) |scale| {
+        self.content_scale_pending = null;
+        self.applyContentScale(scale);
     }
-}.cb;
+    // A no-op when applyContentScale already resized to this size.
+    self.handleResize(.{ .height = @intCast(height), .width = @intCast(width) });
+}
+
+fn onContentScale(self: *App, x: f32, y: f32) void {
+    _ = y; // the backend reports one scale per axis; Rex uses the horizontal one
+    self.content_scale_pending = x;
+}
+
+fn onClose(self: *App) void {
+    self.requestQuit();
+}
 
 test "FrameLatch: starts at the monitor's refresh rate, or 60 Hz" {
     try std.testing.expectEqual(@as(u64, 1_000_000_000 / 60), FrameLatch.init(60).period_ns);
@@ -3795,9 +3785,9 @@ test "clipboard ask dialog: copy, focus safety, and icons" {
 
 test "OSC 52 ask: Deny replies empty while Allow Once and Always Allow answer or set clipboard" {
     const testing = std.testing;
-    var rig = try ClipboardRig.init();
+    var rig: ClipboardRig = try .init();
     defer rig.deinit();
-    if (c.glfwGetPlatform() != c.GLFW_PLATFORM_X11) return error.SkipZigTest;
+    if (rig.platform.choice.system != .x11) return error.SkipZigTest;
     const kit = try KitOverlay.create(testing.allocator, .{
         .regular = "assets/fonts/Inter-Regular.ttf",
         .medium = "assets/fonts/Inter-Medium.ttf",
@@ -3880,27 +3870,45 @@ test "writeReadReply: exact bytes in 7-bit and 8-bit form, empty and not" {
     try std.testing.expectEqualStrings("\x1b]52;c;\x1b\\", writeReadReply(buf[0..readReplyLen(.s7c1t, 0)], .s7c1t, 'c', ""));
 }
 
-/// A single driver on a socket pair and the test's hidden GLFW window, for
-/// OSC 52 round trips through `serveClipboard`. `child` is the program's
-/// end of the pty.
+/// Readies the shared GL context used by display tests. A platform value is
+/// needed only to reach the backend helper; no GLFW type appears here.
+fn readyTestGlContext() !void {
+    const probe: Platform = .{ .choice = .{ .system = .x11, .forced = false } };
+    try probe.testGlContext();
+}
+
+/// A single driver on a socket pair and a real platform window, for OSC 52
+/// round trips through `serveClipboard`. `child` is the program's end of the
+/// pty.
 const ClipboardRig = struct {
     driver: Driver,
     child: posix.fd_t,
+    platform: Platform,
     window: Window,
     buf: *[terminal_option.max_clipboard_bytes + 1]u8,
 
     fn init() !ClipboardRig {
-        try Window.testGlContext();
+        // The backend context helper skips when there is no display.
+        try readyTestGlContext();
+        const session_type = if (std.c.getenv("XDG_SESSION_TYPE")) |v| std.mem.span(v) else "";
+        const wayland_session = std.c.getenv("WAYLAND_DISPLAY") != null or
+            std.mem.eql(u8, session_type, "wayland");
+        const choice: Choice = Platform.choose(.auto, wayland_session);
+        var app_platform: Platform = try .init(choice);
+        errdefer app_platform.deinit();
+        var win: Window = try app_platform.createWindow(.{ .width = 1, .height = 1, .title = "test" });
+        errdefer win.deinit();
         var sv: [2]posix.fd_t = undefined;
         try rex.termio.pipe.openSocketPair(&sv, .{ .NONBLOCK = true });
         errdefer _ = system.close(sv[1]);
         const pty: rex.termio.pty.Posix = .{ .master = sv[0], .pid = -1, .stdout_read_fd = -1, .error_read_fd = -1 };
-        var driver: Driver = .{ .single = try SingleDriverType.init(std.testing.allocator, std.testing.io, pty, .{ .theme = .default, .sync_output_timeout_ms = 150 }) };
+        var driver: Driver = .{ .single = try .init(std.testing.allocator, std.testing.io, pty, .{ .theme = .default, .sync_output_timeout_ms = 150 }) };
         errdefer driver.deinit();
         return .{
             .driver = driver,
             .child = sv[1],
-            .window = .{ .handle = c.glfwGetCurrentContext().? },
+            .platform = app_platform,
+            .window = win,
             .buf = try std.testing.allocator.create([terminal_option.max_clipboard_bytes + 1]u8),
         };
     }
@@ -3909,6 +3917,8 @@ const ClipboardRig = struct {
         std.testing.allocator.destroy(self.buf);
         self.driver.deinit();
         _ = system.close(self.child);
+        self.window.deinit();
+        self.platform.deinit();
     }
 
     /// The program writes `bytes`; returns the request the terminal made.
@@ -3956,9 +3966,9 @@ const clipboard_texts = [_][]const u8{
 };
 
 test "OSC 52 copy: the program's text reaches CLIPBOARD and PRIMARY unchanged" {
-    var rig = try ClipboardRig.init();
+    var rig: ClipboardRig = try .init();
     defer rig.deinit();
-    if (c.glfwGetPlatform() != c.GLFW_PLATFORM_X11) return error.SkipZigTest;
+    if (rig.platform.choice.system != .x11) return error.SkipZigTest;
     const allow: Config.Clipboard = .{ .osc52_write = .allow, .osc52_read = .allow };
     var seq: [16 + base64_encoder.calcSize(10_000)]u8 = undefined;
 
@@ -3987,9 +3997,9 @@ test "OSC 52 copy: the program's text reaches CLIPBOARD and PRIMARY unchanged" {
 }
 
 test "OSC 52 paste: the reply carries the selection's text unchanged" {
-    var rig = try ClipboardRig.init();
+    var rig: ClipboardRig = try .init();
     defer rig.deinit();
-    if (c.glfwGetPlatform() != c.GLFW_PLATFORM_X11) return error.SkipZigTest;
+    if (rig.platform.choice.system != .x11) return error.SkipZigTest;
     const allow: Config.Clipboard = .{ .osc52_write = .allow, .osc52_read = .allow };
     var text_z: [10_001]u8 = undefined;
     var out: [32 + base64_encoder.calcSize(10_000)]u8 = undefined;
@@ -4043,7 +4053,7 @@ test "Driver: single and threaded polymorphic dispatch" {
     };
 
     const driver_options: rex.driver.Options = .{ .theme = .default, .sync_output_timeout_ms = 150 };
-    const single_driver = try SingleDriverType.init(allocator, testing.io, pty_single, driver_options);
+    const single_driver: SingleDriverType = try .init(allocator, testing.io, pty_single, driver_options);
     var driver_s: Driver = .{ .single = single_driver };
     defer driver_s.deinit();
 
@@ -4472,7 +4482,7 @@ test "kitOverlayOptions: maps overlay config sections onto KitOverlay options" {
 
 test "focus gating: unfocused window skips toasts and defers banners until focused" {
     const testing = std.testing;
-    try Window.testGlContext();
+    try readyTestGlContext();
     const kit = try KitOverlay.create(testing.allocator, .{
         .regular = "assets/fonts/Inter-Regular.ttf",
         .medium = "assets/fonts/Inter-Medium.ttf",

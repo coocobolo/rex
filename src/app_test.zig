@@ -4,7 +4,7 @@
 const std = @import("std");
 
 const App = @import("App.zig");
-const Window = @import("renderer/root.zig").Window;
+const Window = @import("platform/Window.zig");
 const Blur = @import("renderer/root.zig").Blur;
 
 const PointerVisibility = App.PointerVisibility;
@@ -35,7 +35,7 @@ test "PointerVisibility: typing auto-hide, idle timeout, and modal/focus restore
     try testing.expect(vis.isVisible());
     try testing.expectEqual(@as(usize, 16), @sizeOf(PointerVisibility));
     try testing.expectEqual(@as(usize, 56), @sizeOf(Blur.SceneKey));
-    try testing.expectEqual(@as(usize, 72), @sizeOf(Window));
+    try testing.expectEqual(@as(usize, 8), @sizeOf(Window));
 
     // `never` keeps the pointer visible when typing.
     try testing.expect(!vis.onTyping(never_off, active));

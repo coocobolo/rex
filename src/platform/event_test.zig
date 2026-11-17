@@ -14,20 +14,25 @@ fn text(codepoint: u21) Event {
     return .{ .text = .{ .window = window(), .codepoint = codepoint } };
 }
 
+fn next(ring: *Ring) ?Event {
+    var event: Event = undefined;
+    return if (ring.next(&event)) event else null;
+}
+
 test "Ring: events come back in push order" {
     var ring: Ring = .{};
     try testing.expectEqual(@as(usize, 0), ring.count());
-    try testing.expect(ring.next() == null);
+    try testing.expect(next(&ring) == null);
 
     ring.push(text('a'));
     ring.push(text('b'));
     ring.push(text('c'));
     try testing.expectEqual(@as(usize, 3), ring.count());
 
-    try testing.expectEqual(@as(u21, 'a'), (ring.next().?.text).codepoint);
-    try testing.expectEqual(@as(u21, 'b'), (ring.next().?.text).codepoint);
-    try testing.expectEqual(@as(u21, 'c'), (ring.next().?.text).codepoint);
-    try testing.expect(ring.next() == null);
+    try testing.expectEqual(@as(u21, 'a'), (next(&ring).?.text).codepoint);
+    try testing.expectEqual(@as(u21, 'b'), (next(&ring).?.text).codepoint);
+    try testing.expectEqual(@as(u21, 'c'), (next(&ring).?.text).codepoint);
+    try testing.expect(next(&ring) == null);
     try testing.expectEqual(@as(usize, 0), ring.count());
 }
 
@@ -38,14 +43,14 @@ test "Ring: wraps around at capacity" {
     try testing.expectEqual(events.capacity, ring.count());
 
     var drained: usize = 0;
-    while (ring.next()) |event| : (drained += 1) {
+    while (next(&ring)) |event| : (drained += 1) {
         try testing.expectEqual(@as(u21, @intCast(drained)), event.text.codepoint);
     }
     try testing.expectEqual(events.capacity, drained);
 
     // Reuse after a full drain must not lose slots.
     ring.push(text('z'));
-    try testing.expectEqual(@as(u21, 'z'), ring.next().?.text.codepoint);
+    try testing.expectEqual(@as(u21, 'z'), next(&ring).?.text.codepoint);
 }
 
 test "Ring: a full ring drops the newest event and counts it" {
@@ -58,9 +63,9 @@ test "Ring: a full ring drops the newest event and counts it" {
     try testing.expectEqual(@as(u32, 0), ring.takeDropped());
 
     // The oldest events are still intact; the dropped one never got a slot.
-    try testing.expectEqual(@as(u21, 0), ring.next().?.text.codepoint);
+    try testing.expectEqual(@as(u21, 0), next(&ring).?.text.codepoint);
     var last: u21 = 0;
-    while (ring.next()) |event| last = event.text.codepoint;
+    while (next(&ring)) |event| last = event.text.codepoint;
     try testing.expectEqual(@as(u21, @intCast(events.capacity - 1)), last);
 }
 

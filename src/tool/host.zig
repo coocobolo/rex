@@ -9,7 +9,7 @@
 //! has an `empty` value, or the tool declares `init(Context) !State` and
 //! `deinit(*State)`.
 //!
-//! The loop sleeps in `glfwWaitEvents` and draws only when `update` reports
+//! The loop sleeps in the platform event wait and draws only when `update` reports
 //! a change, the framebuffer is resized or the scale changes, so an idle
 //! window causes no wakeups. A tool may declare `wait(*const State) ?f64`,
 //! the most seconds to sleep (null: until an event),
@@ -26,7 +26,9 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
-const c = @import("glfw");
+const Platform = @import("../platform/Platform.zig");
+const PlatformEvent = @import("../platform/Event.zig").Event;
+const window_config = @import("../config/window.zig");
 
 const dirs = @import("../dirs/root.zig");
 const font_files = @import("../config/font_files.zig");
@@ -37,10 +39,10 @@ const Config = @import("../config/Config.zig");
 const kit = @import("../kit/root.zig");
 const input_key = @import("../input/key.zig");
 const gl = @import("../renderer/gl.zig");
-const glfw_key = @import("../renderer/glfw_key.zig");
+
 const Atlas = @import("../renderer/Atlas.zig");
 const KitPainter = @import("../renderer/KitPainter.zig");
-const Window = @import("../renderer/Window.zig");
+const Window = @import("../platform/Window.zig");
 const KitFont = @import("../freetype/KitFont.zig");
 
 const Theme = kit.Theme;
@@ -184,6 +186,7 @@ fn Host(comptime Tool: type) type {
 
         io: std.Io,
         argv0: []const u8,
+        platform: Platform,
         window: Window,
         font: KitFont,
         painter: KitPainter,
@@ -254,16 +257,17 @@ fn Host(comptime Tool: type) type {
 
             const wayland = envmap.get("WAYLAND_DISPLAY") != null or
                 std.mem.eql(u8, envmap.get("XDG_SESSION_TYPE") orelse "", "wayland");
-            var window: Window = try .init(.{
+            var plat: Platform = try .init(Platform.choose(settings.platform, wayland));
+            errdefer plat.deinit();
+            var window = try plat.createWindow(.{
                 .width = window_width,
                 .height = window_height,
                 .title = Tool.title,
-                .platform = Window.choosePlatform(settings.platform, wayland),
             });
             errdefer window.deinit();
             window.setMinimumSize(window_min_width, window_min_height);
 
-            const scale = window.getWindowContentScale().width;
+            const scale = window.contentScale().width;
             const content_scale: f32 = if (scale > 0) scale else 1;
 
             var font = try openFont(gpa, io, argv0, content_scale);
@@ -283,6 +287,7 @@ fn Host(comptime Tool: type) type {
             self.* = .{
                 .io = io,
                 .argv0 = argv0,
+                .platform = plat,
                 .window = window,
                 .font = font,
                 .painter = painter,
@@ -308,7 +313,7 @@ fn Host(comptime Tool: type) type {
                 .state_dir = self.directories.state,
                 .config_path = self.user_config_path,
                 .home_dir = self.home,
-                .wake_loop = Window.glfwPostEmptyEvent,
+                .wake_loop = Platform.postWakeup,
                 .clipboard = .{
                     .ctx = &self.window,
                     .getFn = clipboardGet,
@@ -321,15 +326,7 @@ fn Host(comptime Tool: type) type {
                 },
             }) else .empty;
 
-            self.window.setWindowUserPointer(self);
-            self.window.setFramebufferSizeCallback(onResize);
-            self.window.setWindowContentScaleCallback(onScale);
-            self.window.setCursorPosCallback(onCursor);
-            self.window.setCursorEnterCallback(onEnter);
-            self.window.setMouseButtonCallback(onMouse);
-            self.window.setKeyCallback(onKey);
-            self.window.setCharCallback(onChar);
-            self.window.setScrollCallback(onScroll);
+            self.window.setContext(self);
             return self;
         }
 
@@ -343,13 +340,14 @@ fn Host(comptime Tool: type) type {
             self.font.deinit();
             self.atlas.deinit();
             self.window.deinit();
+            self.platform.deinit();
             self.lock.unlock(self.io);
             self.lock.close(self.io);
             gpa.destroy(self);
         }
 
         fn loop(self: *Self) void {
-            while (!self.window.windowShouldClose()) {
+            while (!self.window.shouldClose()) {
                 if (self.redraw) {
                     self.sendSize();
                     self.redraw = false;
@@ -364,7 +362,8 @@ fn Host(comptime Tool: type) type {
                     if (self.redraw) continue;
                 }
                 const timeout: ?f64 = if (@hasDecl(Tool, "wait")) Tool.wait(&self.state) else null;
-                if (timeout) |seconds| Window.glfwWaitEventsTimeout(seconds) else Window.glfwWaitEvents();
+                self.platform.waitEvents(if (timeout) |seconds| seconds * 1000.0 else null);
+                self.drainEvents();
                 if (@hasDecl(Tool, "wake") and Tool.wake(&self.state)) self.redraw = true;
             }
         }
@@ -375,7 +374,7 @@ fn Host(comptime Tool: type) type {
         }
 
         fn drawFrame(self: *Self) void {
-            const fb = self.window.frameBufferSize(f32);
+            const fb = self.window.framebufferSize(f32);
             const scale = self.content_scale;
             const theme = self.activeTheme();
 
@@ -412,7 +411,7 @@ fn Host(comptime Tool: type) type {
         /// Tells the tool when the window's logical size changed, so the
         /// frame about to be drawn already follows it.
         fn sendSize(self: *Self) void {
-            const fb = self.window.frameBufferSize(f32);
+            const fb = self.window.framebufferSize(f32);
             const width = fb.width / self.content_scale;
             const height = fb.height / self.content_scale;
             if (width == self.width and height == self.height) return;
@@ -477,78 +476,80 @@ fn Host(comptime Tool: type) type {
             }
         }
 
-        fn fromWindow(window: ?*c.GLFWwindow) *Self {
-            return @ptrCast(@alignCast(Window.glfwGetWindowUserPointer(window).?));
-        }
-
-        fn onResize(window: ?*c.GLFWwindow, _: c_int, _: c_int) callconv(.c) void {
-            fromWindow(window).redraw = true;
-        }
-
-        fn onScale(window: ?*c.GLFWwindow, xscale: f32, _: f32) callconv(.c) void {
-            const self = fromWindow(window);
-            const scale: f32 = if (xscale > 0) xscale else 1;
-            if (scale == self.content_scale) return;
-            self.content_scale = scale;
-            self.font.setScale(scale) catch |err| {
-                log.err("cannot size the UI font for scale {d:.2}: {t}", .{ scale, err });
+        fn drainEvents(self: *Self) void {
+            var event: PlatformEvent = undefined;
+            while (self.platform.nextEvent(&event)) switch (event) {
+                .key => |e| {
+                    if (e.action == .release) continue;
+                    self.send(.{ .key = .{ .key = e.key, .mods = e.mods } });
+                },
+                .text => |e| {
+                    if (!std.unicode.utf8ValidCodepoint(e.codepoint)) continue;
+                    self.send(.{ .char = e.codepoint });
+                },
+                .preedit => {},
+                .mouse_button => |e| {
+                    if (e.button != .left) continue;
+                    switch (e.action) {
+                        .press => {
+                            self.drag_id = self.over;
+                            self.send(.{ .pointer = .{ .id = self.over, .x = self.pointer_x, .y = self.pointer_y } });
+                            self.send(.{ .press = self.over });
+                        },
+                        .release => {
+                            self.drag_id = .none;
+                            self.send(.release);
+                        },
+                        .repeat => {},
+                    }
+                },
+                .cursor_pos => |e| {
+                    // Framebuffer pixels divided by the scale, as in the terminal.
+                    // Where window coordinates are not pixels, that is #18.
+                    self.pointer_x = @as(f32, @floatCast(e.x)) / self.content_scale;
+                    self.pointer_y = @as(f32, @floatCast(e.y)) / self.content_scale;
+                    self.pointerMoved();
+                },
+                .scroll => |e| {
+                    const dx = scrollDelta(e.dx);
+                    const dy = scrollDelta(e.dy);
+                    if (dx == 0 and dy == 0) continue;
+                    if (self.tree.scrollTargetAt(self.pointer_x, self.pointer_y, dx, dy)) |region| {
+                        self.send(.{ .scroll = .{
+                            .id = region.id,
+                            .dx = dx,
+                            .dy = dy,
+                            .max_x = region.max.x,
+                            .max_y = region.max.y,
+                        } });
+                    } else {
+                        // Occluded popups without their own `scrollRegion` still handle wheel via `id == .none`.
+                        self.send(.{ .scroll = .{ .id = .none, .dx = dx, .dy = dy } });
+                    }
+                },
+                .cursor_enter => |e| {
+                    if (e.entered) continue;
+                    self.pointer_x = -1;
+                    self.pointer_y = -1;
+                    self.pointerMoved();
+                },
+                .focus => {},
+                .framebuffer_size => self.redraw = true,
+                .content_scale => |e| {
+                    const scale: f32 = if (e.x > 0) e.x else 1;
+                    if (scale == self.content_scale) continue;
+                    self.content_scale = scale;
+                    self.font.setScale(scale) catch |err| {
+                        log.err("cannot size the UI font for scale {d:.2}: {t}", .{ scale, err });
+                    };
+                    self.atlas.invalidate();
+                    self.painter.clearGlyphs();
+                    self.redraw = true;
+                },
+                .close => self.window.setShouldClose(true),
             };
-            self.atlas.invalidate();
-            self.painter.clearGlyphs();
-            self.redraw = true;
-        }
-
-        fn onCursor(window: ?*c.GLFWwindow, x: f64, y: f64) callconv(.c) void {
-            const self = fromWindow(window);
-            // Framebuffer pixels divided by the scale, as in the terminal.
-            // Where window coordinates are not pixels, that is #18.
-            self.pointer_x = @as(f32, @floatCast(x)) / self.content_scale;
-            self.pointer_y = @as(f32, @floatCast(y)) / self.content_scale;
-            self.pointerMoved();
-        }
-
-        fn onEnter(window: ?*c.GLFWwindow, entered: c_int) callconv(.c) void {
-            if (entered != 0) return;
-            const self = fromWindow(window);
-            self.pointer_x = -1;
-            self.pointer_y = -1;
-            self.pointerMoved();
-        }
-
-        fn onMouse(window: ?*c.GLFWwindow, button: c_int, action: c_int, _: c_int) callconv(.c) void {
-            if (button != c.GLFW_MOUSE_BUTTON_LEFT) return;
-            const self = fromWindow(window);
-            switch (action) {
-                c.GLFW_PRESS => {
-                    self.drag_id = self.over;
-                    self.send(.{ .pointer = .{ .id = self.over, .x = self.pointer_x, .y = self.pointer_y } });
-                    self.send(.{ .press = self.over });
-                },
-                c.GLFW_RELEASE => {
-                    self.drag_id = .none;
-                    self.send(.release);
-                },
-                else => {},
-            }
-        }
-
-        fn onScroll(window: ?*c.GLFWwindow, x: f64, y: f64) callconv(.c) void {
-            const self = fromWindow(window);
-            const dx = scrollDelta(x);
-            const dy = scrollDelta(y);
-            if (dx == 0 and dy == 0) return;
-            if (self.tree.scrollTargetAt(self.pointer_x, self.pointer_y, dx, dy)) |region| {
-                self.send(.{ .scroll = .{
-                    .id = region.id,
-                    .dx = dx,
-                    .dy = dy,
-                    .max_x = region.max.x,
-                    .max_y = region.max.y,
-                } });
-            } else {
-                // Occluded popups without their own `scrollRegion` still handle wheel via `id == .none`.
-                self.send(.{ .scroll = .{ .id = .none, .dx = dx, .dy = dy } });
-            }
+            const dropped = self.platform.takeDropped();
+            if (dropped > 0) log.warn("dropped {d} platform events", .{dropped});
         }
 
         fn clipboardGet(ptr: *anyopaque) ?[:0]const u8 {
@@ -559,18 +560,6 @@ fn Host(comptime Tool: type) type {
         fn clipboardSet(ptr: *anyopaque, text: [:0]const u8) void {
             const win: *Window = @ptrCast(@alignCast(ptr));
             win.setClipboard(text);
-        }
-
-        fn onKey(window: ?*c.GLFWwindow, code: c_int, _: c_int, action: c_int, mods: c_int) callconv(.c) void {
-            if (action == c.GLFW_RELEASE) return;
-            const key = glfw_key.key(code) orelse return;
-            fromWindow(window).send(.{ .key = .{ .key = key, .mods = glfw_key.modifiers(mods) } });
-        }
-
-        fn onChar(window: ?*c.GLFWwindow, codepoint: c_uint) callconv(.c) void {
-            const cp = std.math.cast(u21, codepoint) orelse return;
-            if (!std.unicode.utf8ValidCodepoint(cp)) return;
-            fromWindow(window).send(.{ .char = cp });
         }
     };
 }
@@ -586,7 +575,7 @@ pub fn scrollDelta(y_offset: f64) f32 {
 /// `[window] platform`.
 const Settings = struct {
     theme: *const Theme,
-    platform: Window.Platform,
+    platform: window_config.Platform,
 
     fn of(config: *const Config) Settings {
         const background = config.resolvedTheme().background;

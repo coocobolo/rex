@@ -144,13 +144,15 @@ pub const Ring = struct {
         self.len += 1;
     }
 
-    /// The oldest event, or null when the ring is empty.
-    pub fn next(self: *Ring) ?Event {
-        if (self.len == 0) return null;
-        const event = self.events[self.read];
+    /// Copies the oldest event into `out` and advances the ring. `Event` is
+    /// 56 bytes, so the copy is explicit at the call site instead of hidden
+    /// in a returned value.
+    pub fn next(self: *Ring, out: *Event) bool {
+        if (self.len == 0) return false;
+        out.* = self.events[self.read];
         self.read = (self.read + 1) & (capacity - 1);
         self.len -= 1;
-        return event;
+        return true;
     }
 
     /// Returns the number dropped since the last drain and clears the counter.

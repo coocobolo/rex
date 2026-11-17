@@ -9,7 +9,7 @@ const gl = @import("../../renderer/gl.zig");
 const window_config = @import("../../config/window.zig");
 const events = @import("../Event.zig");
 const Window = @import("../Window.zig");
-const window_impl = @import("window.zig");
+const GlfwWindow = @import("GlfwWindow.zig");
 const callbacks = @import("callbacks.zig");
 const key_translate = @import("key.zig");
 
@@ -93,7 +93,7 @@ const State = struct {
     phase: Phase = .none,
     /// Events from all windows, drained once per event loop pass.
     event_ring: Ring = .{},
-    window_slots: [max_windows]window_impl.WindowImpl = undefined,
+    window_slots: [max_windows]GlfwWindow = undefined,
     window_used: [max_windows]bool = @splat(false),
     test_window: ?*c.GLFWwindow = null,
 };
@@ -226,13 +226,13 @@ pub fn pushEvent(event: Event) void {
 pub fn testKeyEvent(window: Window, k: @import("../../input/key.zig").Key) void {
     if (!builtin.is_test) @compileError("testKeyEvent is for tests only");
     const code = key_translate.toGlfw(k) orelse return;
-    const impl: *window_impl.WindowImpl = @ptrCast(@alignCast(window.impl));
+    const impl: *GlfwWindow = @ptrCast(@alignCast(window.impl));
     callbacks.keyCallback(impl.handle, code, 0, c.GLFW_PRESS, 0);
 }
 
-/// The oldest queued event, or null when the ring is empty.
-pub fn nextEvent() ?Event {
-    return state.event_ring.next();
+/// Copies the oldest queued event into `out`, returning false when empty.
+pub fn nextEvent(out: *Event) bool {
+    return state.event_ring.next(out);
 }
 
 /// The number of dropped events since the last call, then resets it.
@@ -243,7 +243,7 @@ pub fn takeDropped() u32 {
 /// Windows live in fixed slots so the opaque handle stays a stable pointer
 /// without allocating. Eight is well above the one-window-per-process design.
 /// Creates a window in a fixed slot and installs the event callbacks.
-pub fn createWindow(option: window_impl.InitOption) !Window {
+pub fn createWindow(option: GlfwWindow.InitOption) !Window {
     if (state.phase == .none) return error.PlatformNotInitialised;
     var slot: ?usize = null;
     for (state.window_used, 0..) |used, i| {
@@ -255,11 +255,8 @@ pub fn createWindow(option: window_impl.InitOption) !Window {
     const index = slot orelse return error.TooManyWindows;
     hintContext();
     const impl = &state.window_slots[index];
-    impl.* = try window_impl.WindowImpl.init(option, getProcAddress());
+    try impl.init(option, getProcAddress());
     state.window_used[index] = true;
-    // Callbacks read the impl from GLFW's user pointer, so it must point at
-    // the stable slot, not at the temporary inside WindowImpl.init.
-    c.glfwSetWindowUserPointer(impl.handle, @ptrCast(impl));
 
     _ = c.glfwSetKeyCallback(impl.handle, callbacks.keyCallback);
     _ = c.glfwSetCharCallback(impl.handle, callbacks.charCallback);
@@ -277,7 +274,7 @@ pub fn createWindow(option: window_impl.InitOption) !Window {
 
 /// Destroys the window and frees its slot.
 pub fn destroyWindow(window: Window) void {
-    const impl: *window_impl.WindowImpl = @ptrCast(@alignCast(window.impl));
+    const impl: *GlfwWindow = @ptrCast(@alignCast(window.impl));
     for (state.window_used, 0..) |used, i| {
         if (used and &state.window_slots[i] == impl) {
             state.window_used[i] = false;
@@ -288,7 +285,7 @@ pub fn destroyWindow(window: Window) void {
     impl.deinit();
 }
 
-fn implOf(window: Window) *window_impl.WindowImpl {
+fn implOf(window: Window) *GlfwWindow {
     return @ptrCast(@alignCast(window.impl));
 }
 

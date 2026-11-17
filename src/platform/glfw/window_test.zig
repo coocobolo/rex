@@ -2,7 +2,8 @@ const std = @import("std");
 const testing = std.testing;
 
 const backend = @import("backend.zig");
-const platform = @import("../root.zig");
+const Platform = @import("../Platform.zig");
+const Event = @import("../Event.zig").Event;
 
 test "window: create, read state and drain events on a display" {
     // testGlContext skips without a display and readies GLFW for the test.
@@ -13,7 +14,7 @@ test "window: create, read state and drain events on a display" {
     testing.log_level = .err;
     defer testing.log_level = old_level;
 
-    var p = try platform.Platform.init(platform.Platform.choose(.auto, false));
+    var p: Platform = try .init(Platform.choose(.auto, false));
     defer p.deinit();
 
     const window = try p.createWindow(.{ .width = 80, .height = 25, .title = "stage1-window-test" });
@@ -28,13 +29,14 @@ test "window: create, read state and drain events on a display" {
     // A real callback must resolve the window through GLFW's user pointer.
     // This catches a user pointer aimed at a temporary instead of the slot.
     backend.testKeyEvent(window, .a);
-    const event = p.nextEvent() orelse return error.EventNotDelivered;
+    var event: Event = undefined;
+    if (!p.nextEvent(&event)) return error.EventNotDelivered;
     const key_event = switch (event) {
         .key => |k| k,
         else => return error.UnexpectedEvent,
     };
     try testing.expectEqual(@as(@import("../../input/key.zig").Key, .a), key_event.key);
-    try testing.expectEqual(@as(std.meta.Tag(platform.Event.Event), .key), std.meta.activeTag(event));
+    try testing.expectEqual(@as(std.meta.Tag(Event), .key), std.meta.activeTag(event));
     try testing.expectEqual(@as(u32, 0), p.takeDropped());
 }
 
@@ -44,7 +46,7 @@ test "deinit: a GL test context survives platform shutdown" {
     testing.log_level = .err;
     defer testing.log_level = old_level;
 
-    var p = try platform.Platform.init(platform.Platform.choose(.auto, false));
+    var p: Platform = try .init(Platform.choose(.auto, false));
     p.deinit();
 
     // The platform did not own this GLFW instance, so the hidden test context
