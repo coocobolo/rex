@@ -17,8 +17,9 @@ const Id = Tree.Id;
 pub const inset = 3;
 /// Horizontal padding inside a tab face.
 pub const pad = 8;
-/// Vertical padding inside a horizontal tab face.
-pub const vertical_pad = 6;
+/// Vertical padding inside a horizontal tab face. The face is 26 tall and
+/// `sm_medium` has a 20 pixel line height, so three pixels on each side fit.
+pub const vertical_pad = 3;
 
 /// No tab: the pointer is elsewhere, or the focus is not on the list.
 pub const none: u8 = std.math.maxInt(u8);

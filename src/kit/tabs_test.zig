@@ -74,6 +74,20 @@ test "tabs: the track is 32 tall and each face sits in the 3 px inset" {
     try testing.expectEqual(track.rect.w, tabs.inset * 2 + width * 2 + (7 * byte_width + tabs.pad * 2));
 }
 
+test "tabs: a horizontal label keeps its line height with equal padding above and below" {
+    var fixture: Fixture = .{};
+    const tree = try show(&fixture, &Theme.dark, .{ .tabs = &labels, .current = 0 });
+    const f = face(&tree, 0).rect;
+    const l = label(&tree, 0).rect;
+    const pad: f32 = @floatFromInt(tabs.vertical_pad);
+
+    try testing.expectEqual(@as(u8, 20), text.Style.sm_medium.metrics().line_height);
+    try testing.expectEqual(@as(f32, 20), l.h);
+    try testing.expectEqual(pad, l.y - f.y);
+    try testing.expectEqual(pad, f.y + f.h - (l.y + l.h));
+    try testing.expectEqual(l.h + 2 * pad, f.h);
+}
+
 test "tabs: the current tab is raised, and hover only recolors the label" {
     var fixture: Fixture = .{};
     const dark = try show(&fixture, &Theme.dark, .{ .tabs = &labels, .current = 1, .hovered = 0 });
