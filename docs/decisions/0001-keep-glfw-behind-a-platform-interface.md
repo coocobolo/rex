@@ -1,6 +1,6 @@
 # 0001: Keep GLFW behind a Rex-owned platform interface, native Wayland by default
 
-- Status: accepted
+- Status: superseded by 0011
 - Date: 2026-11-07
 - Deciders: Kbgjtn (maintainer)
 - Tickets: to be linked once the issues exist (drafts 2-7 and 17)
