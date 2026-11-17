@@ -491,13 +491,25 @@ pub fn build(b: *std.Build) !void {
         .name = "check-imports",
         .root_module = import_check_module,
     });
-    const import_check_step = b.step("check-imports", "Check that the tool windows and the config import nothing of the terminal");
+    const no_glfw_exe = b.addExecutable(.{
+        .name = "no-glfw",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/imports/no_glfw.zig"),
+            .target = b.graph.host,
+            .optimize = .Debug,
+        }),
+    });
+    const import_check_step = b.step("check-imports", "Check import boundaries, including GLFW confinement to the platform backend");
     inline for (import_rules) |rule| {
         const run = b.addRunArtifact(import_check_exe);
         run.addFileArg(b.path(rule[0]));
         inline for (rule[1]) |dir| run.addDirectoryArg(b.path(dir));
         import_check_step.dependOn(&run.step);
     }
+    const no_glfw_run = b.addRunArtifact(no_glfw_exe);
+    no_glfw_run.addDirectoryArg(b.path("src"));
+    no_glfw_run.addDirectoryArg(b.path("src/platform/glfw"));
+    import_check_step.dependOn(&no_glfw_run.step);
     test_step.dependOn(import_check_step);
     test_step.dependOn(tests.run(tests.add("test-import-check", import_check_module, test_filters)));
     test_step.dependOn(theme_check_step);

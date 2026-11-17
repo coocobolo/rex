@@ -3,6 +3,7 @@
 
 test {
     _ = @import("choice_test.zig");
+    _ = @import("context_test.zig");
     _ = @import("key_test.zig");
     _ = @import("window_test.zig");
 }

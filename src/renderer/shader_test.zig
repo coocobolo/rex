@@ -4,7 +4,7 @@
 const std = @import("std");
 
 const Shader = @import("Shader.zig");
-const testGlContext = @import("Window.zig").testGlContext;
+const testGlContext = @import("../platform/root.zig").testGlContext;
 
 const pairs = [_][2][:0]const u8{
     .{ @embedFile("shaders/background.vert"), @embedFile("shaders/background.frag") },

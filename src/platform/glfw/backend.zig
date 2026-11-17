@@ -15,6 +15,9 @@ const key_translate = @import("key.zig");
 
 const log = std.log.scoped(.platform);
 
+/// The OpenGL core version the renderer targets. The shaders are GLSL 330.
+pub const gl_version: struct { major: c_int, minor: c_int } = .{ .major = 3, .minor = 3 };
+
 /// The event type delivered to the application.
 pub const Event = events.Event;
 /// The bounded event ring owned by this backend.

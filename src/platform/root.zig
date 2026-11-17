@@ -15,6 +15,10 @@ pub const System = backend.System;
 pub const Choice = backend.Choice;
 /// The standard cursor shapes a window can show.
 pub const PointerShape = Window.PointerShape;
+/// The GL version the renderer targets, shared with the GL tests.
+pub const gl_version = backend.gl_version;
+/// Readies the hidden GL context used by tests, skipping without a display.
+pub const testGlContext = backend.testGlContext;
 
 test {
     _ = @import("event_test.zig");

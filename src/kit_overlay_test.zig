@@ -6,7 +6,7 @@ const std = @import("std");
 const testing = std.testing;
 
 const Atlas = @import("renderer/Atlas.zig");
-const testGlContext = @import("renderer/Window.zig").testGlContext;
+const testGlContext = @import("platform/root.zig").testGlContext;
 const KitOverlay = @import("KitOverlay.zig");
 const alert = @import("kit/alert.zig");
 const alert_dialog = @import("kit/alert_dialog.zig");

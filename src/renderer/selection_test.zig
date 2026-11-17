@@ -7,7 +7,7 @@ const Background = @import("Background.zig");
 const Blur = @import("Blur.zig");
 const Selection = @import("Selection.zig");
 const gl = @import("gl.zig");
-const testGlContext = @import("Window.zig").testGlContext;
+const testGlContext = @import("../platform/root.zig").testGlContext;
 
 test "selection backdrop blur spreads offscreen scene color inside the pill" {
     try testGlContext();

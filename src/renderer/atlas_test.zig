@@ -3,13 +3,13 @@ const testing = std.testing;
 const alloc = std.testing.allocator;
 
 const Atlas = @import("Atlas.zig");
-const window = @import("Window.zig");
+const platform = @import("../platform/root.zig");
 const gl = @import("gl.zig");
 const ft = @import("../freetype/root.zig");
 
 const Rasterizer = ft.Rasterizer;
 
-const testGlContext = window.testGlContext;
+const testGlContext = platform.testGlContext;
 
 const test_font = @import("../freetype/test_fixtures.zig").test_font;
 
@@ -59,7 +59,7 @@ test "GL context: core profile at the required version" {
     gl.getIntegerv(gl.MAJOR_VERSION, &major);
     gl.getIntegerv(gl.MINOR_VERSION, &minor);
     gl.getIntegerv(gl.CONTEXT_PROFILE_MASK, &profile);
-    const want = window.gl_version;
+    const want = platform.gl_version;
     try testing.expect(major > want.major or (major == want.major and minor >= want.minor));
     try testing.expect(profile & gl.CONTEXT_CORE_PROFILE_BIT != 0);
 }
