@@ -3,7 +3,6 @@ zig-out
 zig-pkg
 
 # private notes
-.ideas/
 *.md
 !/CONTRIBUTING.md
 !scripts/README.md
