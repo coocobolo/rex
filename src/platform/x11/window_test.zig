@@ -74,3 +74,43 @@ test "X11 window: WM_DELETE_WINDOW produces a close event" {
     }
     try testing.expect(got_close);
 }
+
+test "X11 window: wheel buttons produce scroll events" {
+    var lib = xlib.load() catch return error.SkipZigTest;
+    defer lib.lib.close();
+    const display = lib.XOpenDisplay(null) orelse return error.SkipZigTest;
+    defer _ = lib.XCloseDisplay(display);
+
+    backend.state = .{};
+    defer backend.state = .{};
+    backend.state.x11 = lib;
+    backend.state.display = display;
+
+    const root = lib.XDefaultRootWindow(display);
+    const handle = lib.XCreateSimpleWindow(display, root, 0, 0, 32, 32, 0, 0, 0);
+    defer _ = lib.XDestroyWindow(display, handle);
+    backend.state.window_slots[0].handle = handle;
+    backend.state.window_used[0] = true;
+
+    const expected = [_]struct { button: u8, dy: f64 }{
+        .{ .button = 4, .dy = 1 },
+        .{ .button = 5, .dy = -1 },
+    };
+    for (expected) |wheel| {
+        var press: x.XEvent = std.mem.zeroes(x.XEvent);
+        press.type = x.ButtonPress;
+        press.xbutton.window = handle;
+        press.xbutton.button = wheel.button;
+        events.dispatch(&press);
+
+        var event: Event = undefined;
+        var found = false;
+        while (backend.nextEvent(&event)) {
+            if (std.meta.activeTag(event) != .scroll) continue;
+            try testing.expectEqual(wheel.dy, event.scroll.dy);
+            try testing.expectEqual(@as(f64, 0), event.scroll.dx);
+            found = true;
+        }
+        try testing.expect(found);
+    }
+}

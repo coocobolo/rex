@@ -68,6 +68,25 @@ pub fn dispatch(event: *x.XEvent) void {
         x.ButtonPress, x.ButtonRelease => {
             const e = event.xbutton;
             const window = findWindow(e.window) orelse return;
+            // Core X11 reports the wheel as button presses: 4/5 up/down and
+            // 6/7 left/right, one notch per press. GLFW uses the same units.
+            if (event.type == x.ButtonPress) {
+                const wheel: ?struct { dx: f64, dy: f64 } = switch (e.button) {
+                    4 => .{ .dx = 0, .dy = 1 },
+                    5 => .{ .dx = 0, .dy = -1 },
+                    6 => .{ .dx = -1, .dy = 0 },
+                    7 => .{ .dx = 1, .dy = 0 },
+                    else => null,
+                };
+                if (wheel) |delta| {
+                    backend.pushEvent(.{ .scroll = .{
+                        .window = window,
+                        .dx = delta.dx,
+                        .dy = delta.dy,
+                    } });
+                    return;
+                }
+            }
             const button: @import("../Event.zig").MouseButton = switch (e.button) {
                 1 => .left,
                 2 => .middle,
