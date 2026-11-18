@@ -20,7 +20,7 @@ test "EGL: a core OpenGL 3.3 context can be created on an X11 window" {
     _ = x11.XMapWindow(display, window);
     _ = x11.XSync(display, 0);
 
-    const edpy = egl_lib.eglGetPlatformDisplayEXT(e.EGL_PLATFORM_X11_EXT, display, null);
+    const edpy = egl_lib.getPlatformDisplay(e.EGL_PLATFORM_X11_EXT, display, null);
     try testing.expect(edpy != e.EGL_NO_DISPLAY);
     var major: e.EGLint = 0;
     var minor: e.EGLint = 0;

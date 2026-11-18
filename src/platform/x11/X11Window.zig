@@ -7,8 +7,14 @@ const X11Window = @This();
 
 const x = @import("x11");
 const e = @import("egl");
+const gl = @import("../../renderer/gl.zig");
 const backend = @import("backend.zig");
 const Window = @import("../Window.zig");
+
+/// Selection data must stay available until a requestor reads it. This matches
+/// TerminalOption.max_clipboard_bytes (1 MiB); the platform layer cannot import
+/// term without breaking the boundary check, so the limit is mirrored here.
+const selection_capacity = (1 << 20) + 1;
 
 pub const InitOption = struct {
     width: u16,
@@ -25,11 +31,11 @@ should_close: bool = false,
 focused: bool = false,
 pointer_visible: bool = true,
 pointer_shape: Window.PointerShape = .arrow,
-clipboard_text: [4096]u8 = undefined,
+clipboard_text: [selection_capacity]u8 = undefined,
 clipboard_len: usize = 0,
-primary_text: [4096]u8 = undefined,
+primary_text: [selection_capacity]u8 = undefined,
 primary_len: usize = 0,
-read_text: [4096]u8 = undefined,
+read_text: [selection_capacity]u8 = undefined,
 read_len: usize = 0,
 
 pub fn init(self: *X11Window, option: InitOption) !void {
@@ -81,6 +87,7 @@ pub fn init(self: *X11Window, option: InitOption) !void {
 
     if (egl_lib.eglMakeCurrent(backend.state.egl_display, surface, surface, context) == 0)
         return error.MakeCurrentFailed;
+    if (gl.gladLoadGLLoader(backend.getProcAddress()) == 0) return error.GladLoadFailed;
     if (backend.state.context == null) {
         backend.state.context = context;
         backend.state.test_surface = surface;

@@ -78,6 +78,7 @@ const State = struct {
     egl_config: e.EGLConfig = null,
     context: e.EGLContext = null,
     test_surface: e.EGLSurface = null,
+    test_context: e.EGLContext = null,
     window_slots: [max_windows]X11Window = undefined,
     window_used: [max_windows]bool = @splat(false),
     wakeup_read: posix.fd_t = -1,
@@ -117,7 +118,7 @@ pub fn init(choice: Choice) error{ WaylandUnavailable, XlibUnavailable, EglUnava
     };
     errdefer egl_lib.lib.close();
 
-    const edpy = egl_lib.eglGetPlatformDisplayEXT(e.EGL_PLATFORM_X11_EXT, display, null);
+    const edpy = egl_lib.getPlatformDisplay(e.EGL_PLATFORM_X11_EXT, display, null);
     if (edpy == e.EGL_NO_DISPLAY) return error.GlInitFailed;
     var major: e.EGLint = 0;
     var minor: e.EGLint = 0;
@@ -265,13 +266,38 @@ pub fn takeDropped() u32 {
 
 pub fn testGlContext() !void {
     if (!builtin.is_test) @compileError("testGlContext is for tests only");
-    return error.SkipZigTest;
+    if (state.test_context != null) {
+        _ = state.egl.?.eglMakeCurrent(state.egl_display, state.test_surface, state.test_surface, state.test_context);
+        return;
+    }
+    if (state.phase == .none) {
+        init(.{ .system = .x11, .forced = false }) catch return error.SkipZigTest;
+    }
+    const win = createWindow(.{ .width = 1, .height = 1, .title = "test" }) catch return error.SkipZigTest;
+    const impl: *X11Window = @ptrCast(@alignCast(win.impl));
+    state.test_surface = impl.surface;
+    state.test_context = impl.context;
+    if (gl.gladLoadGLLoader(getProcAddress()) == 0) return error.GladLoadFailed;
+    var profile: c_int = 0;
+    gl.getIntegerv(gl.CONTEXT_PROFILE_MASK, &profile);
+    if (profile & gl.CONTEXT_CORE_PROFILE_BIT == 0)
+        log.warn("got compatibility profile, not core", .{});
 }
 
 pub fn testKeyEvent(window: Window, k: @import("../../input/key.zig").Key) void {
     if (!builtin.is_test) @compileError("testKeyEvent is for tests only");
-    _ = window;
-    _ = k;
+    const impl: *X11Window = @ptrCast(@alignCast(window.impl));
+    const sym = @import("key.zig").toKeysym(k) orelse return;
+    const lib = &state.x11.?;
+    const code = lib.XKeysymToKeycode(state.display.?, sym);
+    if (code == 0) return;
+    var event: x.XEvent = undefined;
+    event.type = x.KeyPress;
+    event.xkey.window = impl.handle;
+    event.xkey.keycode = code;
+    event.xkey.state = 0;
+    event.xkey.same_screen = 1;
+    @import("events.zig").dispatch(&event);
 }
 
 pub fn createWindow(option: X11Window.InitOption) !Window {

@@ -31,7 +31,7 @@ pub fn answerRequest(event: *const x.XSelectionRequestEvent) void {
     var accepted = false;
     var property = event.property;
     if (event.target == backend.state.utf8_atom or event.target == x.XA_STRING) {
-        if (textFor(event.selection)) |slice| {
+        if (textFor(event.selection, event.owner)) |slice| {
             if (property == 0) property = event.target;
             _ = lib.XChangeProperty(display, event.requestor, property, event.target, 8, x.PropModeReplace, @ptrCast(slice.ptr), @intCast(slice.len));
             accepted = true;
@@ -88,12 +88,13 @@ pub fn read(selection: x.Atom, out: []u8) ?usize {
     return null;
 }
 
-fn textFor(selection: x.Atom) ?[:0]const u8 {
-    const slot = &backend.state.window_slots[0];
-    if (!backend.state.window_used[0]) return null;
-    if (selection == backend.state.clipboard_atom and slot.clipboard_len > 0)
-        return slot.clipboard_text[0..slot.clipboard_len :0];
-    if (selection == x.XA_PRIMARY and slot.primary_len > 0)
-        return slot.primary_text[0..slot.primary_len :0];
+fn textFor(selection: x.Atom, owner: x.Window) ?[:0]const u8 {
+    for (&backend.state.window_slots, 0..) |*slot, i| {
+        if (!backend.state.window_used[i] or slot.handle != owner) continue;
+        if (selection == backend.state.clipboard_atom and slot.clipboard_len > 0)
+            return slot.clipboard_text[0..slot.clipboard_len :0];
+        if (selection == x.XA_PRIMARY and slot.primary_len > 0)
+            return slot.primary_text[0..slot.primary_len :0];
+    }
     return null;
 }

@@ -13,7 +13,8 @@ pub const Egl = struct {
     lib: std.DynLib,
     eglTerminate: *const fn (dpy: e.EGLDisplay) callconv(.c) e.EGLBoolean,
     eglGetProcAddress: *const fn (procname: [*c]const u8) callconv(.c) e.__eglMustCastToProperFunctionPointerType,
-    eglGetPlatformDisplayEXT: *const fn (e.EGLenum, ?*anyopaque, [*c]const e.EGLint) callconv(.c) e.EGLDisplay,
+    /// EGL 1.5 core `eglGetPlatformDisplay`, or the EXT fallback on older EGL.
+    getPlatformDisplay: *const fn (e.EGLenum, ?*anyopaque, [*c]const e.EGLint) callconv(.c) e.EGLDisplay,
     eglInitialize: *const fn (dpy: e.EGLDisplay, major: [*c]e.EGLint, minor: [*c]e.EGLint) callconv(.c) e.EGLBoolean,
     eglChooseConfig: *const fn (dpy: e.EGLDisplay, attrib_list: [*c]const e.EGLint, configs: [*c]e.EGLConfig, config_size: e.EGLint, num_config: [*c]e.EGLint) callconv(.c) e.EGLBoolean,
     eglCreateWindowSurface: *const fn (dpy: e.EGLDisplay, config: e.EGLConfig, win: e.EGLNativeWindowType, attrib_list: [*c]const e.EGLint) callconv(.c) e.EGLSurface,
@@ -36,7 +37,7 @@ pub fn load() !Egl {
         .lib = lib,
         .eglTerminate = try sym(*const fn (dpy: e.EGLDisplay) callconv(.c) e.EGLBoolean, &lib, "eglTerminate"),
         .eglGetProcAddress = try sym(*const fn (procname: [*c]const u8) callconv(.c) e.__eglMustCastToProperFunctionPointerType, &lib, "eglGetProcAddress"),
-        .eglGetPlatformDisplayEXT = try sym(*const fn (e.EGLenum, ?*anyopaque, [*c]const e.EGLint) callconv(.c) e.EGLDisplay, &lib, "eglGetPlatformDisplayEXT"),
+        .getPlatformDisplay = try loadPlatformDisplay(&lib),
         .eglInitialize = try sym(*const fn (dpy: e.EGLDisplay, major: [*c]e.EGLint, minor: [*c]e.EGLint) callconv(.c) e.EGLBoolean, &lib, "eglInitialize"),
         .eglChooseConfig = try sym(*const fn (dpy: e.EGLDisplay, attrib_list: [*c]const e.EGLint, configs: [*c]e.EGLConfig, config_size: e.EGLint, num_config: [*c]e.EGLint) callconv(.c) e.EGLBoolean, &lib, "eglChooseConfig"),
         .eglCreateWindowSurface = try sym(*const fn (dpy: e.EGLDisplay, config: e.EGLConfig, win: e.EGLNativeWindowType, attrib_list: [*c]const e.EGLint) callconv(.c) e.EGLSurface, &lib, "eglCreateWindowSurface"),
@@ -54,4 +55,10 @@ pub fn load() !Egl {
 
 fn sym(comptime T: type, lib: *std.DynLib, name: [:0]const u8) !T {
     return lib.lookup(T, name) orelse error.SymbolNotFound;
+}
+
+fn loadPlatformDisplay(lib: *std.DynLib) !*const fn (e.EGLenum, ?*anyopaque, [*c]const e.EGLint) callconv(.c) e.EGLDisplay {
+    const T = *const fn (e.EGLenum, ?*anyopaque, [*c]const e.EGLint) callconv(.c) e.EGLDisplay;
+    if (lib.lookup(T, "eglGetPlatformDisplay")) |f| return f;
+    return lib.lookup(T, "eglGetPlatformDisplayEXT") orelse error.SymbolNotFound;
 }
