@@ -86,6 +86,8 @@ const State = struct {
     wm_protocols_atom: x.Atom = 0,
     clipboard_atom: x.Atom = 0,
     utf8_atom: x.Atom = 0,
+    targets_atom: x.Atom = 0,
+    reply_atom: x.Atom = 0,
 };
 
 pub var state: State = .{};
@@ -149,6 +151,8 @@ pub fn init(choice: Choice) error{ WaylandUnavailable, XlibUnavailable, EglUnava
     state.wm_protocols_atom = x11_lib.XInternAtom(display, "WM_PROTOCOLS", 0);
     state.clipboard_atom = x11_lib.XInternAtom(display, "CLIPBOARD", 0);
     state.utf8_atom = x11_lib.XInternAtom(display, "UTF8_STRING", 0);
+    state.targets_atom = x11_lib.XInternAtom(display, "TARGETS", 0);
+    state.reply_atom = x11_lib.XInternAtom(display, "REX_SELECTION", 0);
     state.phase = .ready;
     log.info("platform: x11", .{});
 }

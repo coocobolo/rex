@@ -24,30 +24,36 @@ pub fn pump() void {
     while (lib.XPending(display) > 0) {
         var event: x.XEvent = undefined;
         _ = lib.XNextEvent(display, &event);
-        switch (event.type) {
-            x.KeyPress, x.KeyRelease => {
-                const e = event.xkey;
-                const window = findWindow(e.window) orelse continue;
-                const action: @import("../Event.zig").Action = if (event.type == x.KeyPress) .press else .release;
-                const sym = lib.XKeycodeToKeysym(display, @intCast(e.keycode), 0);
-                if (key.fromKeysym(sym)) |k| {
-                    backend.pushEvent(.{ .key = .{
-                        .window = window,
-                        .key = k,
-                        .mods = key.modifiers(e.state),
-                        .action = action,
-                    } });
-                }
-                if (event.type == x.KeyPress) {
-                    var buf: [8]u8 = undefined;
-                    var keysym: x.KeySym = 0;
-                    const n = lib.XLookupString(@ptrCast(&event.xkey), &buf, buf.len, &keysym, null);
-                    if (n > 0) {
-                        // Decode as UTF-8 and emit one codepoint per event;
-                        // pushing raw bytes would split multibyte characters.
-                        var view = std.unicode.Utf8View.init(buf[0..@intCast(n)]) catch {
-                            continue;
-                        };
+        dispatch(&event);
+    }
+}
+
+/// Delivers one X event into the platform ring.
+pub fn dispatch(event: *x.XEvent) void {
+    const lib = &backend.state.x11.?;
+    const display = backend.state.display.?;
+    switch (event.type) {
+        x.KeyPress, x.KeyRelease => {
+            const e = event.xkey;
+            const window = findWindow(e.window) orelse return;
+            const action: @import("../Event.zig").Action = if (event.type == x.KeyPress) .press else .release;
+            const sym = lib.XKeycodeToKeysym(display, @intCast(e.keycode), 0);
+            if (key.fromKeysym(sym)) |k| {
+                backend.pushEvent(.{ .key = .{
+                    .window = window,
+                    .key = k,
+                    .mods = key.modifiers(e.state),
+                    .action = action,
+                } });
+            }
+            if (event.type == x.KeyPress) {
+                var buf: [8]u8 = undefined;
+                var keysym: x.KeySym = 0;
+                const n = lib.XLookupString(@ptrCast(&event.xkey), &buf, buf.len, &keysym, null);
+                if (n > 0) {
+                    // Decode as UTF-8 and emit one codepoint per event;
+                    // pushing raw bytes would split multibyte characters.
+                    if (std.unicode.Utf8View.init(buf[0..@intCast(n)])) |view| {
                         var it = view.iterator();
                         while (it.nextCodepoint()) |cp| {
                             backend.pushEvent(.{ .text = .{
@@ -55,67 +61,68 @@ pub fn pump() void {
                                 .codepoint = cp,
                             } });
                         }
-                    }
+                    } else |_| {}
                 }
-            },
-            x.ButtonPress, x.ButtonRelease => {
-                const e = event.xbutton;
-                const window = findWindow(e.window) orelse continue;
-                const button: @import("../Event.zig").MouseButton = switch (e.button) {
-                    1 => .left,
-                    2 => .middle,
-                    3 => .right,
-                    else => continue,
-                };
-                backend.pushEvent(.{ .mouse_button = .{
-                    .window = window,
-                    .button = button,
-                    .action = if (event.type == x.ButtonPress) .press else .release,
-                    .mods = key.modifiers(e.state),
-                } });
-            },
-            x.MotionNotify => {
-                const e = event.xmotion;
-                const window = findWindow(e.window) orelse continue;
-                backend.pushEvent(.{ .cursor_pos = .{
-                    .window = window,
-                    .x = @floatFromInt(e.x),
-                    .y = @floatFromInt(e.y),
-                } });
-            },
-            x.EnterNotify, x.LeaveNotify => {
-                const e = event.xcrossing;
-                const window = findWindow(e.window) orelse continue;
-                backend.pushEvent(.{ .cursor_enter = .{
-                    .window = window,
-                    .entered = event.type == x.EnterNotify,
-                } });
-            },
-            x.FocusIn, x.FocusOut => {
-                const e = event.xfocus;
-                const window = findWindow(e.window) orelse continue;
-                backend.pushEvent(.{ .focus = .{
-                    .window = window,
-                    .focused = event.type == x.FocusIn,
-                } });
-            },
-            x.ConfigureNotify => {
-                const e = event.xconfigure;
-                const window = findWindow(e.window) orelse continue;
-                backend.pushEvent(.{ .framebuffer_size = .{
-                    .window = window,
-                    .width = @intCast(e.width),
-                    .height = @intCast(e.height),
-                } });
-            },
-            x.ClientMessage => {
-                const e = event.xclient;
-                const window = findWindow(e.window) orelse continue;
-                if (e.message_type == backend.state.wm_delete_atom and
-                    e.data.l[0] == @as(c_long, @intCast(backend.state.wm_delete_atom)))
-                    backend.pushEvent(.{ .close = .{ .window = window } });
-            },
-            else => {},
-        }
+            }
+        },
+        x.ButtonPress, x.ButtonRelease => {
+            const e = event.xbutton;
+            const window = findWindow(e.window) orelse return;
+            const button: @import("../Event.zig").MouseButton = switch (e.button) {
+                1 => .left,
+                2 => .middle,
+                3 => .right,
+                else => return,
+            };
+            backend.pushEvent(.{ .mouse_button = .{
+                .window = window,
+                .button = button,
+                .action = if (event.type == x.ButtonPress) .press else .release,
+                .mods = key.modifiers(e.state),
+            } });
+        },
+        x.MotionNotify => {
+            const e = event.xmotion;
+            const window = findWindow(e.window) orelse return;
+            backend.pushEvent(.{ .cursor_pos = .{
+                .window = window,
+                .x = @floatFromInt(e.x),
+                .y = @floatFromInt(e.y),
+            } });
+        },
+        x.EnterNotify, x.LeaveNotify => {
+            const e = event.xcrossing;
+            const window = findWindow(e.window) orelse return;
+            backend.pushEvent(.{ .cursor_enter = .{
+                .window = window,
+                .entered = event.type == x.EnterNotify,
+            } });
+        },
+        x.FocusIn, x.FocusOut => {
+            const e = event.xfocus;
+            const window = findWindow(e.window) orelse return;
+            backend.pushEvent(.{ .focus = .{
+                .window = window,
+                .focused = event.type == x.FocusIn,
+            } });
+        },
+        x.ConfigureNotify => {
+            const e = event.xconfigure;
+            const window = findWindow(e.window) orelse return;
+            backend.pushEvent(.{ .framebuffer_size = .{
+                .window = window,
+                .width = @intCast(e.width),
+                .height = @intCast(e.height),
+            } });
+        },
+        x.ClientMessage => {
+            const e = event.xclient;
+            const window = findWindow(e.window) orelse return;
+            if (e.message_type == backend.state.wm_delete_atom and
+                e.data.l[0] == @as(c_long, @intCast(backend.state.wm_delete_atom)))
+                backend.pushEvent(.{ .close = .{ .window = window } });
+        },
+        x.SelectionRequest => @import("selection.zig").answerRequest(&event.xselectionrequest),
+        else => {},
     }
 }

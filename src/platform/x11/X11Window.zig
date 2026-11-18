@@ -27,6 +27,10 @@ pointer_visible: bool = true,
 pointer_shape: Window.PointerShape = .arrow,
 clipboard_text: [4096]u8 = undefined,
 clipboard_len: usize = 0,
+primary_text: [4096]u8 = undefined,
+primary_len: usize = 0,
+read_text: [4096]u8 = undefined,
+read_len: usize = 0,
 
 pub fn init(self: *X11Window, option: InitOption) !void {
     const lib = &backend.state.x11.?;
@@ -173,6 +177,7 @@ pub fn setClipboard(self: *X11Window, text: [:0]const u8) void {
     @memcpy(self.clipboard_text[0..len], text[0..len]);
     self.clipboard_text[len] = 0;
     self.clipboard_len = len;
+    _ = backend.state.x11.?.XSetSelectionOwner(backend.state.display.?, backend.state.clipboard_atom, self.handle, x.CurrentTime);
 }
 
 /// The local clipboard copy. The slice is borrowed from this window and is
@@ -183,11 +188,20 @@ pub fn getClipboard(self: *const X11Window) ?[:0]const u8 {
 }
 
 pub fn getPrimarySelection(self: *const X11Window) ?[:0]const u8 {
-    return self.getClipboard();
+    if (self.primary_len == 0) return null;
+    return self.primary_text[0..self.primary_len :0];
 }
 
 pub fn setPrimarySelection(self: *X11Window, text: [:0]const u8) bool {
-    self.setClipboard(text);
+    if (text.len >= self.primary_text.len) {
+        self.primary_len = 0;
+        return false;
+    }
+    const len = text.len;
+    @memcpy(self.primary_text[0..len], text[0..len]);
+    self.primary_text[len] = 0;
+    self.primary_len = len;
+    _ = backend.state.x11.?.XSetSelectionOwner(backend.state.display.?, x.XA_PRIMARY, self.handle, x.CurrentTime);
     return true;
 }
 
