@@ -10,7 +10,7 @@ const Window = @import("../Window.zig");
 const key = @import("key.zig");
 
 fn findWindow(handle: x.Window) ?Window {
-    for (backend.state.window_slots, 0..) |*slot, i| {
+    for (&backend.state.window_slots, 0..) |*slot, i| {
         if (backend.state.window_used[i] and slot.handle == handle)
             return .{ .impl = @ptrCast(slot) };
     }
@@ -43,10 +43,16 @@ pub fn pump() void {
                     var keysym: x.KeySym = 0;
                     const n = lib.XLookupString(@ptrCast(&event.xkey), &buf, buf.len, &keysym, null);
                     if (n > 0) {
-                        for (buf[0..@intCast(n)]) |byte| {
+                        // Decode as UTF-8 and emit one codepoint per event;
+                        // pushing raw bytes would split multibyte characters.
+                        var view = std.unicode.Utf8View.init(buf[0..@intCast(n)]) catch {
+                            continue;
+                        };
+                        var it = view.iterator();
+                        while (it.nextCodepoint()) |cp| {
                             backend.pushEvent(.{ .text = .{
                                 .window = window,
-                                .codepoint = byte,
+                                .codepoint = cp,
                             } });
                         }
                     }
@@ -103,10 +109,11 @@ pub fn pump() void {
                 } });
             },
             x.ClientMessage => {
-                // WM_DELETE_WINDOW arrives as a ClientMessage; treat it as close.
                 const e = event.xclient;
                 const window = findWindow(e.window) orelse continue;
-                backend.pushEvent(.{ .close = .{ .window = window } });
+                if (e.message_type == backend.state.wm_delete_atom and
+                    e.data.l[0] == @as(c_long, @intCast(backend.state.wm_delete_atom)))
+                    backend.pushEvent(.{ .close = .{ .window = window } });
             },
             else => {},
         }

@@ -45,6 +45,7 @@ pub const Xlib = struct {
     XDefineCursor: *const fn (?*x.Display, x.Window, x.Cursor) callconv(.c) c_int,
     XFreeCursor: *const fn (?*x.Display, x.Cursor) callconv(.c) c_int,
     XGetErrorText: *const fn (?*x.Display, c_int, [*c]u8, c_int) callconv(.c) c_int,
+    XConnectionNumber: *const fn (?*x.Display) callconv(.c) c_int,
 };
 
 /// Loads libX11.so.6 and resolves every entry point the backend uses.
@@ -87,6 +88,7 @@ pub fn load() !Xlib {
         .XDefineCursor = try sym(*const fn (?*x.Display, x.Window, x.Cursor) callconv(.c) c_int, &lib, "XDefineCursor"),
         .XFreeCursor = try sym(*const fn (?*x.Display, x.Cursor) callconv(.c) c_int, &lib, "XFreeCursor"),
         .XGetErrorText = try sym(*const fn (?*x.Display, c_int, [*c]u8, c_int) callconv(.c) c_int, &lib, "XGetErrorText"),
+        .XConnectionNumber = try sym(*const fn (?*x.Display) callconv(.c) c_int, &lib, "XConnectionNumber"),
     };
 }
 

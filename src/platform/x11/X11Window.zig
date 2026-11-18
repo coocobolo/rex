@@ -50,6 +50,8 @@ pub fn init(self: *X11Window, option: InitOption) !void {
     _ = lib.XSelectInput(display, handle, x.StructureNotifyMask | x.KeyPressMask | x.KeyReleaseMask |
         x.ButtonPressMask | x.ButtonReleaseMask | x.PointerMotionMask | x.EnterWindowMask |
         x.LeaveWindowMask | x.FocusChangeMask);
+    const protocols = [_]x.Atom{backend.state.wm_delete_atom};
+    _ = lib.XChangeProperty(display, handle, backend.state.wm_protocols_atom, x.XA_ATOM, 32, x.PropModeReplace, @ptrCast(&protocols), 1);
     _ = lib.XMapWindow(display, handle);
     _ = lib.XSync(display, 0);
 
@@ -128,8 +130,16 @@ pub fn framebufferSize(self: *const X11Window, comptime T: type) @import("../../
         &depth,
     );
     return .{
-        .width = @intCast(width),
-        .height = @intCast(height),
+        .width = convert(T, width),
+        .height = convert(T, height),
+    };
+}
+
+fn convert(comptime T: type, value: c_uint) T {
+    return switch (@typeInfo(T)) {
+        .int => @intCast(value),
+        .float => @floatFromInt(value),
+        else => @compileError("Dimension only supports int or float"),
     };
 }
 
@@ -152,13 +162,21 @@ pub fn setPointerVisible(self: *X11Window, visible: bool) void {
     self.pointer_visible = visible;
 }
 
+/// Sets the local clipboard copy. An oversized string is dropped whole,
+/// never truncated, matching the host input policy.
 pub fn setClipboard(self: *X11Window, text: [:0]const u8) void {
-    const len = @min(text.len, self.clipboard_text.len - 1);
+    if (text.len >= self.clipboard_text.len) {
+        self.clipboard_len = 0;
+        return;
+    }
+    const len = text.len;
     @memcpy(self.clipboard_text[0..len], text[0..len]);
     self.clipboard_text[len] = 0;
     self.clipboard_len = len;
 }
 
+/// The local clipboard copy. The slice is borrowed from this window and is
+/// valid until the next setClipboard call or window destruction.
 pub fn getClipboard(self: *const X11Window) ?[:0]const u8 {
     if (self.clipboard_len == 0) return null;
     return self.clipboard_text[0..self.clipboard_len :0];

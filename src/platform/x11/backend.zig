@@ -13,8 +13,12 @@ const events = @import("../Event.zig");
 const Window = @import("../Window.zig");
 const xlib = @import("xlib.zig");
 const egl = @import("egl.zig");
+const X11Window = @import("X11Window.zig");
+const pipe = @import("../../termio/pipe.zig");
 
 const log = std.log.scoped(.platform);
+const posix = std.posix;
+const system = posix.system;
 
 /// The OpenGL core version the renderer targets. The shaders are GLSL 330.
 pub const gl_version: struct { major: c_int, minor: c_int } = .{ .major = 3, .minor = 3 };
@@ -74,8 +78,14 @@ const State = struct {
     egl_config: e.EGLConfig = null,
     context: e.EGLContext = null,
     test_surface: e.EGLSurface = null,
-    window_slots: [max_windows]@import("X11Window.zig").X11Window = undefined,
+    window_slots: [max_windows]X11Window = undefined,
     window_used: [max_windows]bool = @splat(false),
+    wakeup_read: posix.fd_t = -1,
+    wakeup_write: posix.fd_t = -1,
+    wm_delete_atom: x.Atom = 0,
+    wm_protocols_atom: x.Atom = 0,
+    clipboard_atom: x.Atom = 0,
+    utf8_atom: x.Atom = 0,
 };
 
 pub var state: State = .{};
@@ -125,11 +135,20 @@ pub fn init(choice: Choice) error{ WaylandUnavailable, XlibUnavailable, EglUnava
     if (egl_lib.eglChooseConfig(edpy, &cfg_attr, &config, 1, &count) == 0 or count == 0)
         return error.GlInitFailed;
 
+    var wakeup_fds: [2]posix.fd_t = undefined;
+    pipe.open(&wakeup_fds, .{ .CLOEXEC = true, .NONBLOCK = true }) catch return error.GlInitFailed;
+
     state.x11 = x11_lib;
     state.egl = egl_lib;
     state.display = display;
     state.egl_display = edpy;
     state.egl_config = config;
+    state.wakeup_read = wakeup_fds[0];
+    state.wakeup_write = wakeup_fds[1];
+    state.wm_delete_atom = x11_lib.XInternAtom(display, "WM_DELETE_WINDOW", 0);
+    state.wm_protocols_atom = x11_lib.XInternAtom(display, "WM_PROTOCOLS", 0);
+    state.clipboard_atom = x11_lib.XInternAtom(display, "CLIPBOARD", 0);
+    state.utf8_atom = x11_lib.XInternAtom(display, "UTF8_STRING", 0);
     state.phase = .ready;
     log.info("platform: x11", .{});
 }
@@ -137,22 +156,25 @@ pub fn init(choice: Choice) error{ WaylandUnavailable, XlibUnavailable, EglUnava
 /// Releases EGL and Xlib. Windows must be destroyed before this call.
 pub fn deinit() void {
     if (state.phase != .ready) return;
-    if (state.egl) |lib| {
+    if (state.egl != null) {
+        const lib = &state.egl.?;
         if (state.context != null) _ = lib.eglDestroyContext(state.egl_display, state.context);
         _ = lib.eglTerminate(state.egl_display);
         lib.lib.close();
     }
-    if (state.x11) |lib| {
+    if (state.x11 != null) {
+        const lib = &state.x11.?;
         if (state.display) |display| _ = lib.XCloseDisplay(display);
         lib.lib.close();
     }
+    if (state.wakeup_read >= 0) _ = system.close(state.wakeup_read);
+    if (state.wakeup_write >= 0) _ = system.close(state.wakeup_write);
     state = .{};
 }
 
 /// GLAD resolves GL symbols through EGL at runtime.
 fn gladLoader(name: [*c]const u8) callconv(.c) ?*anyopaque {
-    const lib = &state.egl.?;
-    const proc = lib.eglGetProcAddress(name);
+    const proc = state.egl.?.eglGetProcAddress(name);
     if (proc == null) return null;
     const p: *const anyopaque = @ptrCast(proc);
     return @constCast(p);
@@ -162,14 +184,20 @@ pub fn getProcAddress() gl.GLADloadproc {
     return &gladLoader;
 }
 
-/// Platform-global wakeup from the pty worker or config watcher. XNextEvent
-/// is woken by sending a ClientMessage to every window; implemented later.
-pub fn postWakeup() void {}
+/// Platform-global wakeup from the pty worker or config watcher. Writes one
+/// byte to a nonblocking pipe that `waitEvents` polls.
+pub fn postWakeup() void {
+    if (state.wakeup_write < 0) return;
+    const b: [1]u8 = .{1};
+    _ = system.write(state.wakeup_write, &b, 1);
+}
 
 pub fn pollEvents() void {
     if (state.phase == .ready) @import("events.zig").pump();
 }
 
+/// Blocks in poll() on the X11 connection and the wakeup pipe, so an idle
+/// window does not spin. Pending X events are translated into the ring.
 pub fn waitEvents(timeout_ms: ?f64) void {
     if (state.phase != .ready) return;
     const lib = &state.x11.?;
@@ -178,34 +206,45 @@ pub fn waitEvents(timeout_ms: ?f64) void {
         @import("events.zig").pump();
         return;
     }
-    // A short poll loop avoids needing a second wakeup fd inside Xlib.
-    const deadline = std.time.nanoTimestamp() + @as(i128, @intFromFloat((timeout_ms orelse 1000.0) * std.time.ns_per_ms));
-    while (std.time.nanoTimestamp() < deadline) {
-        if (lib.XPending(display) > 0) {
-            @import("events.zig").pump();
-            return;
+    const x_fd = lib.XConnectionNumber(display);
+    var fds = [_]system.pollfd{
+        .{ .fd = x_fd, .events = system.POLL.IN, .revents = 0 },
+        .{ .fd = state.wakeup_read, .events = system.POLL.IN, .revents = 0 },
+    };
+    const ms: c_int = @intFromFloat(@max(0, @min(timeout_ms orelse 1000.0, 60000.0)));
+    _ = system.poll(&fds, fds.len, ms);
+    if (fds[1].revents & system.POLL.IN != 0) {
+        var buf: [64]u8 = undefined;
+        while (true) {
+            const n = system.read(state.wakeup_read, &buf, buf.len);
+            if (n <= 0) break;
         }
-        std.Thread.sleep(1 * std.time.ns_per_ms);
     }
+    if (fds[0].revents & system.POLL.IN != 0 or lib.XPending(display) > 0)
+        @import("events.zig").pump();
 }
 
+/// Monotonic clock in seconds. Zig 0.16 has no `std.time.nanoTimestamp`.
 pub fn now() f64 {
-    return @as(f64, @floatFromInt(std.time.nanoTimestamp())) / std.time.ns_per_s;
+    var ts: std.os.linux.timespec = undefined;
+    _ = std.os.linux.clock_gettime(std.os.linux.CLOCK.MONOTONIC, &ts);
+    return @as(f64, @floatFromInt(ts.sec)) + @as(f64, @floatFromInt(ts.nsec)) / std.time.ns_per_s;
 }
 
+/// Placeholder until XRandR is wired. It only seeds the frame latch.
 pub fn primaryRefreshHz() ?u32 {
     return 60;
 }
 
 pub fn isKeyDown(window: Window, k: @import("../../input/key.zig").Key) bool {
+    _ = window;
     const sym = @import("key.zig").toKeysym(k) orelse return false;
     const lib = &state.x11.?;
     const code = lib.XKeysymToKeycode(state.display.?, sym);
     if (code == 0) return false;
     var map: [32]u8 = undefined;
     _ = lib.XQueryKeymap(state.display.?, &map);
-    const byte = map[code / 8];
-    return (byte & (@as(u8, 1) << @intCast(code % 8))) != 0;
+    return (map[code / 8] & (@as(u8, 1) << @intCast(code % 8))) != 0;
 }
 
 pub fn pushEvent(event: Event) void {
@@ -231,7 +270,7 @@ pub fn testKeyEvent(window: Window, k: @import("../../input/key.zig").Key) void 
     _ = k;
 }
 
-pub fn createWindow(option: @import("X11Window.zig").InitOption) !Window {
+pub fn createWindow(option: X11Window.InitOption) !Window {
     if (state.phase != .ready) return error.PlatformNotInitialised;
     var slot: ?usize = null;
     for (state.window_used, 0..) |used, i| {
@@ -248,7 +287,7 @@ pub fn createWindow(option: @import("X11Window.zig").InitOption) !Window {
 }
 
 pub fn destroyWindow(window: Window) void {
-    const impl: *@import("X11Window.zig").X11Window = @ptrCast(@alignCast(window.impl));
+    const impl: *X11Window = @ptrCast(@alignCast(window.impl));
     for (state.window_used, 0..) |used, i| {
         if (used and &state.window_slots[i] == impl) {
             state.window_used[i] = false;
@@ -258,16 +297,16 @@ pub fn destroyWindow(window: Window) void {
     impl.deinit();
 }
 
-fn implOf(window: Window) *@import("X11Window.zig").X11Window {
+fn implOf(window: Window) *X11Window {
     return @ptrCast(@alignCast(window.impl));
 }
 
 pub fn windowSetContext(window: Window, ptr: ?*anyopaque) void {
-    implOf(window).context = ptr;
+    implOf(window).context_ptr = ptr;
 }
 
 pub fn windowGetContext(window: Window) ?*anyopaque {
-    return implOf(window).context;
+    return implOf(window).context_ptr;
 }
 
 pub fn windowSetTitle(window: Window, title: [:0]const u8) void {

@@ -6,9 +6,12 @@ const std = @import("std");
 const testing = std.testing;
 
 const backend = @import("backend.zig");
+const selected = @import("build_options").platform_backend;
+const selected_glfw = std.mem.eql(u8, selected, "glfw");
 const gl = @import("../../renderer/gl.zig");
 
 test "testGlContext: leaves a current OpenGL 3.3 context with GLAD loaded" {
+    if (!selected_glfw) return;
     try backend.testGlContext();
 
     var major: c_int = 0;
@@ -24,6 +27,7 @@ test "testGlContext: leaves a current OpenGL 3.3 context with GLAD loaded" {
 }
 
 test "testGlContext: a second call keeps the context and a draw round trip works" {
+    if (!selected_glfw) return;
     try backend.testGlContext();
 
     var original: [4]f32 = undefined;

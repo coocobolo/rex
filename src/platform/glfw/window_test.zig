@@ -2,10 +2,13 @@ const std = @import("std");
 const testing = std.testing;
 
 const backend = @import("backend.zig");
+const selected = @import("build_options").platform_backend;
+const selected_glfw = std.mem.eql(u8, selected, "glfw");
 const Platform = @import("../Platform.zig");
 const Event = @import("../Event.zig").Event;
 
 test "window: create, read state and drain events on a display" {
+    if (!selected_glfw) return;
     // testGlContext skips without a display and readies GLFW for the test.
     try backend.testGlContext();
 
@@ -41,6 +44,7 @@ test "window: create, read state and drain events on a display" {
 }
 
 test "deinit: a GL test context survives platform shutdown" {
+    if (!selected_glfw) return;
     try backend.testGlContext();
     const old_level = testing.log_level;
     testing.log_level = .err;

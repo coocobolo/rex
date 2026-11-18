@@ -98,7 +98,7 @@ pub fn toKeysym(k: Key) ?x.KeySym {
         .page_down => x.XK_Next,
         .home => x.XK_Home,
         .end => x.XK_End,
-        .f1...f12 => @intCast(x.XK_F1 + @as(c_int, @intFromEnum(k) - @intFromEnum(Key.f1))),
+        .f1, .f2, .f3, .f4, .f5, .f6, .f7, .f8, .f9, .f10, .f11, .f12 => @intCast(x.XK_F1 + @as(c_int, @intFromEnum(k) - @intFromEnum(Key.f1))),
         .space => x.XK_space,
         .minus => x.XK_minus,
         .equal => x.XK_equal,
@@ -125,8 +125,8 @@ pub fn toKeysym(k: Key) ?x.KeySym {
         .right_alt => x.XK_Alt_R,
         .left_super => x.XK_Super_L,
         .right_super => x.XK_Super_R,
-        .a...z => @intCast('a' + @as(c_int, @intFromEnum(k) - @intFromEnum(Key.a))),
-        .num_0...num_9 => @intCast('0' + @as(c_int, @intFromEnum(k) - @intFromEnum(Key.num_0))),
-        .kp_0...kp_9 => @intCast(x.XK_KP_0 + @as(c_int, @intFromEnum(k) - @intFromEnum(Key.kp_0))),
+        .a, .b, .c, .d, .e, .f, .g, .h, .i, .j, .k, .l, .m, .n, .o, .p, .q, .r, .s, .t, .u, .v, .w, .x, .y, .z => @intCast('a' + @as(c_int, @intFromEnum(k) - @intFromEnum(Key.a))),
+        .num_0, .num_1, .num_2, .num_3, .num_4, .num_5, .num_6, .num_7, .num_8, .num_9 => @intCast('0' + @as(c_int, @intFromEnum(k) - @intFromEnum(Key.num_0))),
+        .kp_0, .kp_1, .kp_2, .kp_3, .kp_4, .kp_5, .kp_6, .kp_7, .kp_8, .kp_9 => @intCast(x.XK_KP_0 + @as(c_int, @intFromEnum(k) - @intFromEnum(Key.kp_0))),
     };
 }
