@@ -161,17 +161,18 @@ pub fn init(choice: Choice) error{ WaylandUnavailable, XlibUnavailable, EglUnava
 /// Releases EGL and Xlib. Windows must be destroyed before this call.
 pub fn deinit() void {
     if (state.phase != .ready) return;
-    if (state.egl != null) {
-        const lib = &state.egl.?;
+    // Keep both libraries mapped until every native call is done. libEGL can
+    // hold the last reference to libX11 through its GLX/DRI driver, so closing
+    // it first may unmap Xlib before XCloseDisplay jumps into it.
+    if (state.egl) |lib| {
         if (state.context != null) _ = lib.eglDestroyContext(state.egl_display, state.context);
         _ = lib.eglTerminate(state.egl_display);
-        lib.lib.close();
     }
-    if (state.x11 != null) {
-        const lib = &state.x11.?;
+    if (state.x11) |lib| {
         if (state.display) |display| _ = lib.XCloseDisplay(display);
-        lib.lib.close();
     }
+    if (state.egl) |*lib| lib.lib.close();
+    if (state.x11) |*lib| lib.lib.close();
     if (state.wakeup_read >= 0) _ = system.close(state.wakeup_read);
     if (state.wakeup_write >= 0) _ = system.close(state.wakeup_write);
     state = .{};
