@@ -178,6 +178,7 @@ pub fn requestAttention(self: *const X11Window) void {
 }
 
 pub fn ringBell(self: *const X11Window, volume: f32) void {
+    _ = self;
     const fraction = if (std.math.isFinite(volume)) std.math.clamp(volume, 0, 1) else 0;
     const percent: c_int = @intFromFloat(@round(fraction * 100));
     _ = backend.state.x11.?.XBell(backend.state.display.?, percent);

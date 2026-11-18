@@ -166,10 +166,27 @@ pub fn getProcAddress() gl.GLADloadproc {
 /// is woken by sending a ClientMessage to every window; implemented later.
 pub fn postWakeup() void {}
 
-pub fn pollEvents() void {}
+pub fn pollEvents() void {
+    if (state.phase == .ready) @import("events.zig").pump();
+}
 
 pub fn waitEvents(timeout_ms: ?f64) void {
-    _ = timeout_ms;
+    if (state.phase != .ready) return;
+    const lib = &state.x11.?;
+    const display = state.display.?;
+    if (lib.XPending(display) > 0) {
+        @import("events.zig").pump();
+        return;
+    }
+    // A short poll loop avoids needing a second wakeup fd inside Xlib.
+    const deadline = std.time.nanoTimestamp() + @as(i128, @intFromFloat((timeout_ms orelse 1000.0) * std.time.ns_per_ms));
+    while (std.time.nanoTimestamp() < deadline) {
+        if (lib.XPending(display) > 0) {
+            @import("events.zig").pump();
+            return;
+        }
+        std.Thread.sleep(1 * std.time.ns_per_ms);
+    }
 }
 
 pub fn now() f64 {
@@ -181,9 +198,14 @@ pub fn primaryRefreshHz() ?u32 {
 }
 
 pub fn isKeyDown(window: Window, k: @import("../../input/key.zig").Key) bool {
-    _ = window;
-    _ = k;
-    return false;
+    const sym = @import("key.zig").toKeysym(k) orelse return false;
+    const lib = &state.x11.?;
+    const code = lib.XKeysymToKeycode(state.display.?, sym);
+    if (code == 0) return false;
+    var map: [32]u8 = undefined;
+    _ = lib.XQueryKeymap(state.display.?, &map);
+    const byte = map[code / 8];
+    return (byte & (@as(u8, 1) << @intCast(code % 8))) != 0;
 }
 
 pub fn pushEvent(event: Event) void {

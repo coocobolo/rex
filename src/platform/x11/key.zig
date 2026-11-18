@@ -1,0 +1,132 @@
+//! Translates X11 key events into Rex's GLFW-free key types. Key positions
+//! follow the US layout, matching `input.Key`.
+
+const x = @import("x11");
+const Key = @import("../../input/key.zig").Key;
+const Modifiers = @import("../../input/key.zig").Modifiers;
+
+/// The modifier bits held in an X11 key event state word.
+pub fn modifiers(state: c_uint) Modifiers {
+    return .{
+        .shift = (state & x.ShiftMask) != 0,
+        .ctrl = (state & x.ControlMask) != 0,
+        .alt = (state & x.Mod1Mask) != 0,
+        .super = (state & x.Mod4Mask) != 0,
+    };
+}
+
+/// Maps a keysym to a Rex key by physical name. Text comes separately via
+/// XLookupString, so only named keys matter here.
+pub fn fromKeysym(sym: x.KeySym) ?Key {
+    return switch (sym) {
+        x.XK_Escape => .escape,
+        x.XK_Return => .enter,
+        x.XK_KP_Enter => .kp_enter,
+        x.XK_Tab => .tab,
+        x.XK_BackSpace => .backspace,
+        x.XK_Insert => .insert,
+        x.XK_Delete => .delete,
+        x.XK_Left => .left,
+        x.XK_Right => .right,
+        x.XK_Up => .up,
+        x.XK_Down => .down,
+        x.XK_Prior => .page_up,
+        x.XK_Next => .page_down,
+        x.XK_Home => .home,
+        x.XK_End => .end,
+        x.XK_F1 => .f1,
+        x.XK_F2 => .f2,
+        x.XK_F3 => .f3,
+        x.XK_F4 => .f4,
+        x.XK_F5 => .f5,
+        x.XK_F6 => .f6,
+        x.XK_F7 => .f7,
+        x.XK_F8 => .f8,
+        x.XK_F9 => .f9,
+        x.XK_F10 => .f10,
+        x.XK_F11 => .f11,
+        x.XK_F12 => .f12,
+        x.XK_space => .space,
+        x.XK_minus => .minus,
+        x.XK_equal => .equal,
+        x.XK_bracketleft => .left_bracket,
+        x.XK_bracketright => .right_bracket,
+        x.XK_backslash => .backslash,
+        x.XK_semicolon => .semicolon,
+        x.XK_apostrophe => .apostrophe,
+        x.XK_comma => .comma,
+        x.XK_period => .period,
+        x.XK_slash => .slash,
+        x.XK_grave => .grave_accent,
+        x.XK_KP_Add => .kp_add,
+        x.XK_KP_Subtract => .kp_subtract,
+        x.XK_KP_Multiply => .kp_multiply,
+        x.XK_KP_Divide => .kp_divide,
+        x.XK_KP_Decimal => .kp_decimal,
+        x.XK_KP_Equal => .kp_equal,
+        x.XK_Shift_L => .left_shift,
+        x.XK_Shift_R => .right_shift,
+        x.XK_Control_L => .left_control,
+        x.XK_Control_R => .right_control,
+        x.XK_Alt_L => .left_alt,
+        x.XK_Alt_R => .right_alt,
+        x.XK_Super_L => .left_super,
+        x.XK_Super_R => .right_super,
+        'a'...'z' => @enumFromInt(@intFromEnum(Key.a) + @as(u16, @intCast(sym - 'a'))),
+        'A'...'Z' => @enumFromInt(@intFromEnum(Key.a) + @as(u16, @intCast(sym - 'A'))),
+        '0'...'9' => @enumFromInt(@intFromEnum(Key.num_0) + @as(u16, @intCast(sym - '0'))),
+        x.XK_KP_0...x.XK_KP_9 => @enumFromInt(@intFromEnum(Key.kp_0) + @as(u16, @intCast(sym - x.XK_KP_0))),
+        else => null,
+    };
+}
+
+/// Reverse map for `isKeyDown`: the keysym of a Rex key on the US layout.
+pub fn toKeysym(k: Key) ?x.KeySym {
+    return switch (k) {
+        .escape => x.XK_Escape,
+        .enter => x.XK_Return,
+        .kp_enter => x.XK_KP_Enter,
+        .tab => x.XK_Tab,
+        .backspace => x.XK_BackSpace,
+        .insert => x.XK_Insert,
+        .delete => x.XK_Delete,
+        .left => x.XK_Left,
+        .right => x.XK_Right,
+        .up => x.XK_Up,
+        .down => x.XK_Down,
+        .page_up => x.XK_Prior,
+        .page_down => x.XK_Next,
+        .home => x.XK_Home,
+        .end => x.XK_End,
+        .f1...f12 => @intCast(x.XK_F1 + @as(c_int, @intFromEnum(k) - @intFromEnum(Key.f1))),
+        .space => x.XK_space,
+        .minus => x.XK_minus,
+        .equal => x.XK_equal,
+        .left_bracket => x.XK_bracketleft,
+        .right_bracket => x.XK_bracketright,
+        .backslash => x.XK_backslash,
+        .semicolon => x.XK_semicolon,
+        .apostrophe => x.XK_apostrophe,
+        .comma => x.XK_comma,
+        .period => x.XK_period,
+        .slash => x.XK_slash,
+        .grave_accent => x.XK_grave,
+        .kp_add => x.XK_KP_Add,
+        .kp_subtract => x.XK_KP_Subtract,
+        .kp_multiply => x.XK_KP_Multiply,
+        .kp_divide => x.XK_KP_Divide,
+        .kp_decimal => x.XK_KP_Decimal,
+        .kp_equal => x.XK_KP_Equal,
+        .left_shift => x.XK_Shift_L,
+        .right_shift => x.XK_Shift_R,
+        .left_control => x.XK_Control_L,
+        .right_control => x.XK_Control_R,
+        .left_alt => x.XK_Alt_L,
+        .right_alt => x.XK_Alt_R,
+        .left_super => x.XK_Super_L,
+        .right_super => x.XK_Super_R,
+        .a...z => @intCast('a' + @as(c_int, @intFromEnum(k) - @intFromEnum(Key.a))),
+        .num_0...num_9 => @intCast('0' + @as(c_int, @intFromEnum(k) - @intFromEnum(Key.num_0))),
+        .kp_0...kp_9 => @intCast(x.XK_KP_0 + @as(c_int, @intFromEnum(k) - @intFromEnum(Key.kp_0))),
+    };
+}
