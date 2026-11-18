@@ -180,16 +180,35 @@ pub fn setClipboard(self: *X11Window, text: [:0]const u8) void {
     _ = backend.state.x11.?.XSetSelectionOwner(backend.state.display.?, backend.state.clipboard_atom, self.handle, x.CurrentTime);
 }
 
-/// The local clipboard copy. The slice is borrowed from this window and is
-/// valid until the next setClipboard call or window destruction.
-pub fn getClipboard(self: *const X11Window) ?[:0]const u8 {
-    if (self.clipboard_len == 0) return null;
-    return self.clipboard_text[0..self.clipboard_len :0];
+/// The CLIPBOARD text. Returns our own buffer when this window owns the
+/// selection; otherwise converts the X11 selection into `read_text`. The
+/// borrowed slice is valid until the next selection call or window destruction.
+pub fn getClipboard(self: *X11Window) ?[:0]const u8 {
+    const lib = &backend.state.x11.?;
+    const owner = lib.XGetSelectionOwner(backend.state.display.?, backend.state.clipboard_atom);
+    if (owner == self.handle) {
+        if (self.clipboard_len == 0) return null;
+        return self.clipboard_text[0..self.clipboard_len :0];
+    }
+    const n = @import("selection.zig").read(backend.state.clipboard_atom, &self.read_text) orelse return null;
+    self.read_text[n] = 0;
+    self.read_len = n;
+    return self.read_text[0..self.read_len :0];
 }
 
-pub fn getPrimarySelection(self: *const X11Window) ?[:0]const u8 {
-    if (self.primary_len == 0) return null;
-    return self.primary_text[0..self.primary_len :0];
+/// PRIMARY selection, read through X11 unless this window owns it. The
+/// borrowed slice is valid until the next selection call.
+pub fn getPrimarySelection(self: *X11Window) ?[:0]const u8 {
+    const lib = &backend.state.x11.?;
+    const owner = lib.XGetSelectionOwner(backend.state.display.?, x.XA_PRIMARY);
+    if (owner == self.handle) {
+        if (self.primary_len == 0) return null;
+        return self.primary_text[0..self.primary_len :0];
+    }
+    const n = @import("selection.zig").read(x.XA_PRIMARY, &self.read_text) orelse return null;
+    self.read_text[n] = 0;
+    self.read_len = n;
+    return self.read_text[0..self.read_len :0];
 }
 
 pub fn setPrimarySelection(self: *X11Window, text: [:0]const u8) bool {

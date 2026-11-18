@@ -65,10 +65,7 @@ pub fn read(selection: x.Atom, out: []u8) ?usize {
 
     const deadline = nowMs() + 250;
     while (nowMs() < deadline) {
-        if (lib.XPending(display) == 0) {
-            std.Thread.sleep(1 * std.time.ns_per_ms);
-            continue;
-        }
+        if (lib.XPending(display) == 0) continue;
         var event: x.XEvent = undefined;
         _ = lib.XNextEvent(display, &event);
         if (event.type == x.SelectionNotify and event.xselection.requestor == window) {

@@ -3,4 +3,5 @@
 test {
     _ = @import("egl_test.zig");
     _ = @import("xlib_test.zig");
+    _ = @import("selection_test.zig");
 }
