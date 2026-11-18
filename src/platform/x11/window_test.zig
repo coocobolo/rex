@@ -8,6 +8,8 @@ const x = @import("x11");
 const xlib = @import("xlib.zig");
 const backend = @import("backend.zig");
 const X11Window = @import("X11Window.zig");
+const events = @import("events.zig");
+const Event = @import("../Event.zig").Event;
 
 test "X11 window: pointer shapes, visibility and urgency hint" {
     var lib = xlib.load() catch return error.SkipZigTest;
@@ -36,4 +38,39 @@ test "X11 window: pointer shapes, visibility and urgency hint" {
     const hints = lib.XGetWMHints(display, handle) orelse return error.NoWMHints;
     defer _ = lib.XFree(@ptrCast(hints));
     try testing.expect((hints[0].flags & x.XUrgencyHint) != 0);
+}
+
+test "X11 window: WM_DELETE_WINDOW produces a close event" {
+    var lib = xlib.load() catch return error.SkipZigTest;
+    defer lib.lib.close();
+    const display = lib.XOpenDisplay(null) orelse return error.SkipZigTest;
+    defer _ = lib.XCloseDisplay(display);
+
+    backend.state = .{};
+    defer backend.state = .{};
+    backend.state.x11 = lib;
+    backend.state.display = display;
+    backend.state.wm_delete_atom = lib.XInternAtom(display, "WM_DELETE_WINDOW", 0);
+    backend.state.wm_protocols_atom = lib.XInternAtom(display, "WM_PROTOCOLS", 0);
+
+    const root = lib.XDefaultRootWindow(display);
+    const handle = lib.XCreateSimpleWindow(display, root, 0, 0, 32, 32, 0, 0, 0);
+    defer _ = lib.XDestroyWindow(display, handle);
+    backend.state.window_slots[0].handle = handle;
+    backend.state.window_used[0] = true;
+
+    var message: x.XEvent = std.mem.zeroes(x.XEvent);
+    message.type = x.ClientMessage;
+    message.xclient.window = handle;
+    message.xclient.message_type = backend.state.wm_protocols_atom;
+    message.xclient.format = 32;
+    message.xclient.data.l[0] = @intCast(backend.state.wm_delete_atom);
+    events.dispatch(&message);
+
+    var got_close = false;
+    var event: Event = undefined;
+    while (backend.nextEvent(&event)) {
+        if (std.meta.activeTag(event) == .close) got_close = true;
+    }
+    try testing.expect(got_close);
 }

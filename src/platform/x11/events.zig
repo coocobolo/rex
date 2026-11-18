@@ -118,7 +118,9 @@ pub fn dispatch(event: *x.XEvent) void {
         x.ClientMessage => {
             const e = event.xclient;
             const window = findWindow(e.window) orelse return;
-            if (e.message_type == backend.state.wm_delete_atom and
+            // A WM sends WM_PROTOCOLS as the message type and names
+            // WM_DELETE_WINDOW in the first data word (ICCCM 4.2.8.1).
+            if (e.message_type == backend.state.wm_protocols_atom and
                 e.data.l[0] == @as(c_long, @intCast(backend.state.wm_delete_atom)))
                 backend.pushEvent(.{ .close = .{ .window = window } });
         },
