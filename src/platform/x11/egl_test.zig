@@ -6,7 +6,11 @@ const x = @import("x11");
 const xlib = @import("xlib.zig");
 const egl = @import("egl.zig");
 
+const selected = @import("build_options").platform_backend;
+const selected_x11 = std.mem.eql(u8, selected, "x11");
+
 test "EGL: a core OpenGL 3.3 context can be created on an X11 window" {
+    if (!selected_x11) return;
     var x11 = xlib.load() catch return error.SkipZigTest;
     defer x11.lib.close();
     var egl_lib = egl.load() catch return error.SkipZigTest;

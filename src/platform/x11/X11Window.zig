@@ -31,6 +31,8 @@ should_close: bool = false,
 focused: bool = false,
 pointer_visible: bool = true,
 pointer_shape: Window.PointerShape = .arrow,
+cursors: [3]x.Cursor = @splat(0),
+hidden_cursor: x.Cursor = 0,
 clipboard_text: [selection_capacity]u8 = undefined,
 clipboard_len: usize = 0,
 primary_text: [selection_capacity]u8 = undefined,
@@ -99,6 +101,11 @@ pub fn init(self: *X11Window, option: InitOption) !void {
 pub fn deinit(self: *X11Window) void {
     const lib = &backend.state.x11.?;
     const egl_lib = &backend.state.egl.?;
+    const display = backend.state.display.?;
+    for (self.cursors) |cursor| {
+        if (cursor != 0) _ = lib.XFreeCursor(display, cursor);
+    }
+    if (self.hidden_cursor != 0) _ = lib.XFreeCursor(display, self.hidden_cursor);
     if (backend.state.context != self.context) _ = egl_lib.eglDestroyContext(backend.state.egl_display, self.context);
     _ = egl_lib.eglDestroySurface(backend.state.egl_display, self.surface);
     _ = lib.XDestroyWindow(backend.state.display.?, self.handle);
@@ -166,11 +173,48 @@ pub fn setMinimumSize(self: *X11Window, width: c_int, height: c_int) void {
 }
 
 pub fn setPointerShape(self: *X11Window, shape: Window.PointerShape) void {
+    if (shape == self.pointer_shape) return;
+    const lib = &backend.state.x11.?;
+    const display = backend.state.display.?;
+    if (self.pointer_visible) _ = lib.XDefineCursor(display, self.handle, self.shapeCursor(shape));
     self.pointer_shape = shape;
+    _ = lib.XFlush(display);
+}
+
+fn shapeCursor(self: *X11Window, shape: Window.PointerShape) x.Cursor {
+    const index = @intFromEnum(shape);
+    if (self.cursors[index] == 0) {
+        const font_shape: c_uint = switch (shape) {
+            .arrow => x.XC_arrow,
+            .hand => x.XC_hand2,
+            .text => x.XC_xterm,
+        };
+        self.cursors[index] = backend.state.x11.?.XCreateFontCursor(backend.state.display.?, font_shape);
+    }
+    return self.cursors[index];
 }
 
 pub fn setPointerVisible(self: *X11Window, visible: bool) void {
+    if (visible == self.pointer_visible) return;
+    const lib = &backend.state.x11.?;
+    const display = backend.state.display.?;
+    if (visible) {
+        _ = lib.XDefineCursor(display, self.handle, self.shapeCursor(self.pointer_shape));
+    } else {
+        if (self.hidden_cursor == 0) {
+            const blank: [1]u8 = .{0};
+            const bitmap = lib.XCreateBitmapFromData(display, self.handle, &blank, 1, 1);
+            if (bitmap != 0) {
+                var fg: x.XColor = .{};
+                var bg: x.XColor = .{};
+                self.hidden_cursor = lib.XCreatePixmapCursor(display, bitmap, bitmap, &fg, &bg, 0, 0);
+                _ = lib.XFreePixmap(display, bitmap);
+            }
+        }
+        if (self.hidden_cursor != 0) _ = lib.XDefineCursor(display, self.handle, self.hidden_cursor);
+    }
     self.pointer_visible = visible;
+    _ = lib.XFlush(display);
 }
 
 /// Sets the local clipboard copy. An oversized string is dropped whole,
@@ -232,7 +276,18 @@ pub fn setPrimarySelection(self: *X11Window, text: [:0]const u8) bool {
 }
 
 pub fn requestAttention(self: *const X11Window) void {
-    _ = self;
+    const lib = &backend.state.x11.?;
+    const display = backend.state.display.?;
+    if (lib.XGetWMHints(display, self.handle)) |hints| {
+        hints.*.flags |= x.XUrgencyHint;
+        _ = lib.XSetWMHints(display, self.handle, hints);
+        _ = lib.XFree(@ptrCast(hints));
+    } else {
+        var hints: x.XWMHints = .{};
+        hints.flags = x.XUrgencyHint;
+        _ = lib.XSetWMHints(display, self.handle, &hints);
+    }
+    _ = lib.XFlush(display);
 }
 
 pub fn ringBell(self: *const X11Window, volume: f32) void {

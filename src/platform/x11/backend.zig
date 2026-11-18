@@ -286,18 +286,17 @@ pub fn testGlContext() !void {
 
 pub fn testKeyEvent(window: Window, k: @import("../../input/key.zig").Key) void {
     if (!builtin.is_test) @compileError("testKeyEvent is for tests only");
-    const impl: *X11Window = @ptrCast(@alignCast(window.impl));
+    // A real XKeyEvent cannot be safely synthesized (XLookupString needs the
+    // full event state Xlib fills in on XNextEvent), so inject the translated
+    // key straight into the ring, mirroring GLFW's callback-based helper.
     const sym = @import("key.zig").toKeysym(k) orelse return;
-    const lib = &state.x11.?;
-    const code = lib.XKeysymToKeycode(state.display.?, sym);
-    if (code == 0) return;
-    var event: x.XEvent = undefined;
-    event.type = x.KeyPress;
-    event.xkey.window = impl.handle;
-    event.xkey.keycode = code;
-    event.xkey.state = 0;
-    event.xkey.same_screen = 1;
-    @import("events.zig").dispatch(&event);
+    if (@import("key.zig").fromKeysym(sym) == null) return;
+    pushEvent(.{ .key = .{
+        .window = window,
+        .key = k,
+        .mods = .{},
+        .action = .press,
+    } });
 }
 
 pub fn createWindow(option: X11Window.InitOption) !Window {
