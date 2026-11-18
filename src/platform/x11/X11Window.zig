@@ -59,6 +59,7 @@ pub fn init(self: *X11Window, option: InitOption) !void {
     errdefer _ = lib.XDestroyWindow(display, handle);
 
     _ = lib.XStoreName(display, handle, @ptrCast(option.title.ptr));
+    setWindowProperties(lib, display, handle, option.title);
     _ = lib.XSelectInput(display, handle, x.StructureNotifyMask | x.KeyPressMask | x.KeyReleaseMask |
         x.ButtonPressMask | x.ButtonReleaseMask | x.PointerMotionMask | x.EnterWindowMask |
         x.LeaveWindowMask | x.FocusChangeMask);
@@ -98,6 +99,16 @@ pub fn init(self: *X11Window, option: InitOption) !void {
     self.* = .{ .handle = handle, .surface = surface, .context = context };
 }
 
+/// Standard properties GLFW sets on X11: tooling locates a window by
+/// _NET_WM_PID, and window managers use WM_CLASS and the EWMH title.
+fn setWindowProperties(lib: *const @import("xlib.zig").Xlib, display: *x.Display, handle: x.Window, title: [:0]const u8) void {
+    const pid: c_long = @intCast(std.os.linux.getpid());
+    _ = lib.XChangeProperty(display, handle, lib.XInternAtom(display, "_NET_WM_PID", 0), x.XA_CARDINAL, 32, x.PropModeReplace, @ptrCast(&pid), 1);
+    const class = "rex\x00Rex\x00";
+    _ = lib.XChangeProperty(display, handle, lib.XInternAtom(display, "WM_CLASS", 0), x.XA_STRING, 8, x.PropModeReplace, class.ptr, class.len);
+    _ = lib.XChangeProperty(display, handle, lib.XInternAtom(display, "_NET_WM_NAME", 0), backend.state.utf8_atom, 8, x.PropModeReplace, @ptrCast(title.ptr), @intCast(title.len));
+}
+
 pub fn deinit(self: *X11Window) void {
     const lib = &backend.state.x11.?;
     const egl_lib = &backend.state.egl.?;
@@ -121,7 +132,10 @@ pub fn getContext(self: *const X11Window) ?*anyopaque {
 }
 
 pub fn setTitle(self: *X11Window, title: [:0]const u8) void {
-    _ = backend.state.x11.?.XStoreName(backend.state.display.?, self.handle, @ptrCast(title.ptr));
+    const lib = &backend.state.x11.?;
+    const display = backend.state.display.?;
+    _ = lib.XStoreName(display, self.handle, @ptrCast(title.ptr));
+    _ = lib.XChangeProperty(display, self.handle, lib.XInternAtom(display, "_NET_WM_NAME", 0), backend.state.utf8_atom, 8, x.PropModeReplace, @ptrCast(title.ptr), @intCast(title.len));
 }
 
 pub fn swapBuffers(self: *const X11Window) void {
