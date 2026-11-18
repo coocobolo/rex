@@ -1,0 +1,52 @@
+//! EGL entry points loaded at runtime. The translated `egl` module
+//! supplies exact C signatures; this file resolves symbols by name only,
+//! so the binary links no EGL library.
+
+const std = @import("std");
+const e = @import("egl");
+
+/// Runtime EGL library. Every pointer is looked up once in `load`.
+pub const Egl = struct {
+    lib: std.DynLib,
+    eglGetProcAddress: *const fn (procname: [*c]const u8) callconv(.c) e.__eglMustCastToProperFunctionPointerType,
+    eglGetPlatformDisplayEXT: *const fn (e.EGLenum, ?*anyopaque, [*c]const e.EGLint) callconv(.c) e.EGLDisplay,
+    eglInitialize: *const fn (dpy: e.EGLDisplay, major: [*c]e.EGLint, minor: [*c]e.EGLint) callconv(.c) e.EGLBoolean,
+    eglChooseConfig: *const fn (dpy: e.EGLDisplay, attrib_list: [*c]const e.EGLint, configs: [*c]e.EGLConfig, config_size: e.EGLint, num_config: [*c]e.EGLint) callconv(.c) e.EGLBoolean,
+    eglCreateWindowSurface: *const fn (dpy: e.EGLDisplay, config: e.EGLConfig, win: e.EGLNativeWindowType, attrib_list: [*c]const e.EGLint) callconv(.c) e.EGLSurface,
+    eglCreateContext: *const fn (dpy: e.EGLDisplay, config: e.EGLConfig, share_context: e.EGLContext, attrib_list: [*c]const e.EGLint) callconv(.c) e.EGLContext,
+    eglMakeCurrent: *const fn (dpy: e.EGLDisplay, draw: e.EGLSurface, read: e.EGLSurface, ctx: e.EGLContext) callconv(.c) e.EGLBoolean,
+    eglSwapBuffers: *const fn (dpy: e.EGLDisplay, surface: e.EGLSurface) callconv(.c) e.EGLBoolean,
+    eglBindAPI: *const fn (api: e.EGLenum) callconv(.c) e.EGLBoolean,
+    eglQueryString: *const fn (dpy: e.EGLDisplay, name: e.EGLint) callconv(.c) [*c]const u8,
+    eglGetConfigAttrib: *const fn (dpy: e.EGLDisplay, config: e.EGLConfig, attribute: e.EGLint, value: [*c]e.EGLint) callconv(.c) e.EGLBoolean,
+    eglDestroySurface: *const fn (dpy: e.EGLDisplay, surface: e.EGLSurface) callconv(.c) e.EGLBoolean,
+    eglDestroyContext: *const fn (dpy: e.EGLDisplay, ctx: e.EGLContext) callconv(.c) e.EGLBoolean,
+    eglCreatePbufferSurface: *const fn (dpy: e.EGLDisplay, config: e.EGLConfig, attrib_list: [*c]const e.EGLint) callconv(.c) e.EGLSurface,
+};
+
+/// Loads libEGL.so.1 and resolves every entry point the backend uses.
+pub fn load() !Egl {
+    var lib = try std.DynLib.openZ("libEGL.so.1");
+    errdefer lib.close();
+    return .{
+        .lib = lib,
+        .eglGetProcAddress = try sym(*const fn (procname: [*c]const u8) callconv(.c) e.__eglMustCastToProperFunctionPointerType, &lib, "eglGetProcAddress"),
+        .eglGetPlatformDisplayEXT = try sym(*const fn (e.EGLenum, ?*anyopaque, [*c]const e.EGLint) callconv(.c) e.EGLDisplay, &lib, "eglGetPlatformDisplayEXT"),
+        .eglInitialize = try sym(*const fn (dpy: e.EGLDisplay, major: [*c]e.EGLint, minor: [*c]e.EGLint) callconv(.c) e.EGLBoolean, &lib, "eglInitialize"),
+        .eglChooseConfig = try sym(*const fn (dpy: e.EGLDisplay, attrib_list: [*c]const e.EGLint, configs: [*c]e.EGLConfig, config_size: e.EGLint, num_config: [*c]e.EGLint) callconv(.c) e.EGLBoolean, &lib, "eglChooseConfig"),
+        .eglCreateWindowSurface = try sym(*const fn (dpy: e.EGLDisplay, config: e.EGLConfig, win: e.EGLNativeWindowType, attrib_list: [*c]const e.EGLint) callconv(.c) e.EGLSurface, &lib, "eglCreateWindowSurface"),
+        .eglCreateContext = try sym(*const fn (dpy: e.EGLDisplay, config: e.EGLConfig, share_context: e.EGLContext, attrib_list: [*c]const e.EGLint) callconv(.c) e.EGLContext, &lib, "eglCreateContext"),
+        .eglMakeCurrent = try sym(*const fn (dpy: e.EGLDisplay, draw: e.EGLSurface, read: e.EGLSurface, ctx: e.EGLContext) callconv(.c) e.EGLBoolean, &lib, "eglMakeCurrent"),
+        .eglSwapBuffers = try sym(*const fn (dpy: e.EGLDisplay, surface: e.EGLSurface) callconv(.c) e.EGLBoolean, &lib, "eglSwapBuffers"),
+        .eglBindAPI = try sym(*const fn (api: e.EGLenum) callconv(.c) e.EGLBoolean, &lib, "eglBindAPI"),
+        .eglQueryString = try sym(*const fn (dpy: e.EGLDisplay, name: e.EGLint) callconv(.c) [*c]const u8, &lib, "eglQueryString"),
+        .eglGetConfigAttrib = try sym(*const fn (dpy: e.EGLDisplay, config: e.EGLConfig, attribute: e.EGLint, value: [*c]e.EGLint) callconv(.c) e.EGLBoolean, &lib, "eglGetConfigAttrib"),
+        .eglDestroySurface = try sym(*const fn (dpy: e.EGLDisplay, surface: e.EGLSurface) callconv(.c) e.EGLBoolean, &lib, "eglDestroySurface"),
+        .eglDestroyContext = try sym(*const fn (dpy: e.EGLDisplay, ctx: e.EGLContext) callconv(.c) e.EGLBoolean, &lib, "eglDestroyContext"),
+        .eglCreatePbufferSurface = try sym(*const fn (dpy: e.EGLDisplay, config: e.EGLConfig, attrib_list: [*c]const e.EGLint) callconv(.c) e.EGLSurface, &lib, "eglCreatePbufferSurface"),
+    };
+}
+
+fn sym(comptime T: type, lib: *std.DynLib, name: [:0]const u8) !T {
+    return lib.lookup(T, name) orelse error.SymbolNotFound;
+}
