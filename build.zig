@@ -10,8 +10,8 @@ pub fn build(b: *std.Build) !void {
     const platform_backend = b.option(
         []const u8,
         "platform_backend",
-        "Platform backend to compile in: x11 or glfw",
-    ) orelse "x11";
+        "Platform backend to compile in: glfw or x11",
+    ) orelse "glfw";
     if (!std.mem.eql(u8, platform_backend, "x11") and
         !std.mem.eql(u8, platform_backend, "glfw"))
         std.debug.panic("unknown platform_backend: {s}", .{platform_backend});
