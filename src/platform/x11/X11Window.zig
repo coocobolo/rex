@@ -207,7 +207,7 @@ pub fn setPointerVisible(self: *X11Window, visible: bool) void {
             if (bitmap != 0) {
                 var fg: x.XColor = .{};
                 var bg: x.XColor = .{};
-                self.hidden_cursor = lib.XCreatePixmapCursor(display, bitmap, bitmap, &fg, &bg, 0, 0);
+                self.hidden_cursor = lib.XCreatePixmapCursor(display, bitmap, 0, &fg, &bg, 0, 0);
                 _ = lib.XFreePixmap(display, bitmap);
             }
         }
