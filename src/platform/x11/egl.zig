@@ -5,9 +5,13 @@
 const std = @import("std");
 const e = @import("egl");
 
+/// The runtime library loaded by `load`.
+pub const soname = "libEGL.so.1";
+
 /// Runtime EGL library. Every pointer is looked up once in `load`.
 pub const Egl = struct {
     lib: std.DynLib,
+    eglTerminate: *const fn (dpy: e.EGLDisplay) callconv(.c) e.EGLBoolean,
     eglGetProcAddress: *const fn (procname: [*c]const u8) callconv(.c) e.__eglMustCastToProperFunctionPointerType,
     eglGetPlatformDisplayEXT: *const fn (e.EGLenum, ?*anyopaque, [*c]const e.EGLint) callconv(.c) e.EGLDisplay,
     eglInitialize: *const fn (dpy: e.EGLDisplay, major: [*c]e.EGLint, minor: [*c]e.EGLint) callconv(.c) e.EGLBoolean,
@@ -30,6 +34,7 @@ pub fn load() !Egl {
     errdefer lib.close();
     return .{
         .lib = lib,
+        .eglTerminate = try sym(*const fn (dpy: e.EGLDisplay) callconv(.c) e.EGLBoolean, &lib, "eglTerminate"),
         .eglGetProcAddress = try sym(*const fn (procname: [*c]const u8) callconv(.c) e.__eglMustCastToProperFunctionPointerType, &lib, "eglGetProcAddress"),
         .eglGetPlatformDisplayEXT = try sym(*const fn (e.EGLenum, ?*anyopaque, [*c]const e.EGLint) callconv(.c) e.EGLDisplay, &lib, "eglGetPlatformDisplayEXT"),
         .eglInitialize = try sym(*const fn (dpy: e.EGLDisplay, major: [*c]e.EGLint, minor: [*c]e.EGLint) callconv(.c) e.EGLBoolean, &lib, "eglInitialize"),

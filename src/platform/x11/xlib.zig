@@ -5,6 +5,9 @@
 const std = @import("std");
 const x = @import("x11");
 
+/// The runtime library loaded by `load`.
+pub const soname = "libX11.so.6";
+
 /// Runtime Xlib library. Every pointer is looked up once in `load`.
 pub const Xlib = struct {
     lib: std.DynLib,
