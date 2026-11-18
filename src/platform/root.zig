@@ -1,7 +1,7 @@
 //! Native-free platform interface. The selected backend is owned by this
 //! module; no backend type appears in the application's view of it.
 
-const backend = @import("glfw/backend.zig");
+const backend = @import("backend.zig").selected;
 
 /// The events the application receives from the backend.
 pub const Event = @import("Event.zig");

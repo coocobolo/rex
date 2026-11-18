@@ -7,6 +7,14 @@ pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
     const strip = b.option(bool, "strip", "Strip debug info and symbol tables") orelse false;
+    const platform_backend = b.option(
+        []const u8,
+        "platform_backend",
+        "Platform backend to compile in: x11 or glfw",
+    ) orelse "x11";
+    if (!std.mem.eql(u8, platform_backend, "x11") and
+        !std.mem.eql(u8, platform_backend, "glfw"))
+        std.debug.panic("unknown platform_backend: {s}", .{platform_backend});
 
     const glfw_dep = b.dependency("glfw", .{});
     const glfw_lib = b.addLibrary(.{
@@ -150,6 +158,7 @@ pub fn build(b: *std.Build) !void {
     ) orelse false;
     const build_options = b.addOptions();
     build_options.addOption(bool, "trace_latency", trace_latency);
+    build_options.addOption([]const u8, "platform_backend", platform_backend);
     mod.addImport("build_options", build_options.createModule());
 
     if (target.result.os.tag == .linux) {

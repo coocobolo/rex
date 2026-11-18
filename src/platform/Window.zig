@@ -5,7 +5,7 @@
 
 const Window = @This();
 
-const backend = @import("glfw/backend.zig");
+const backend = @import("backend.zig").selected;
 const Dimension = @import("../renderer/dimension.zig").Dimension;
 
 /// The pointer shapes a window can show.

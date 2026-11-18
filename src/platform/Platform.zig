@@ -4,7 +4,7 @@
 
 const Platform = @This();
 
-const backend = @import("glfw/backend.zig");
+const backend = @import("backend.zig").selected;
 const window_config = @import("../config/window.zig");
 const input_key = @import("../input/key.zig");
 const PlatformEvent = @import("Event.zig").Event;
