@@ -103,6 +103,24 @@ pub fn build(b: *std.Build) !void {
     glfw_c.addIncludePath(glfw_dep.path("include"));
     const glfw_mod = glfw_c.createModule();
 
+    // The X11 and EGL C APIs as modules. They supply types and constants only;
+    // the native X11 backend loads both libraries at runtime with DynLib, so
+    // the binary keeps no link time dependency on them.
+    const x11_c = b.addTranslateC(.{
+        .root_source_file = b.path("src/x11.h"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    const x11_mod = x11_c.createModule();
+    const egl_c = b.addTranslateC(.{
+        .root_source_file = b.path("src/egl.h"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    const egl_mod = egl_c.createModule();
+
     // Core library module
     // Only the rex module links native code; the fuzz module must not need it.
     const mod = b.addModule("rex", .{
@@ -113,6 +131,8 @@ pub fn build(b: *std.Build) !void {
         .link_libc = true,
         .imports = &.{
             .{ .name = "glfw", .module = glfw_mod },
+            .{ .name = "x11", .module = x11_mod },
+            .{ .name = "egl", .module = egl_mod },
         },
     });
     mod.addIncludePath(freetype_dep.path("include"));
