@@ -230,11 +230,10 @@ pub fn waitEvents(timeout_ms: ?f64) void {
         @import("events.zig").pump();
 }
 
-/// Monotonic clock in seconds. Zig 0.16 has no `std.time.nanoTimestamp`.
-pub fn now() f64 {
-    var ts: std.os.linux.timespec = undefined;
-    _ = std.os.linux.clock_gettime(std.os.linux.CLOCK.MONOTONIC, &ts);
-    return @as(f64, @floatFromInt(ts.sec)) + @as(f64, @floatFromInt(ts.nsec)) / std.time.ns_per_s;
+/// Monotonic clock in seconds, from the caller's Io.
+pub fn now(io: std.Io) f64 {
+    const ns = std.Io.Clock.Timestamp.now(io, .awake).raw.toNanoseconds();
+    return @as(f64, @floatFromInt(ns)) / std.time.ns_per_s;
 }
 
 /// Placeholder until XRandR is wired. It only seeds the frame latch.

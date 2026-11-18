@@ -102,7 +102,7 @@ pub fn init(self: *X11Window, option: InitOption) !void {
 /// Standard properties GLFW sets on X11: tooling locates a window by
 /// _NET_WM_PID, and window managers use WM_CLASS and the EWMH title.
 fn setWindowProperties(lib: *const @import("xlib.zig").Xlib, display: *x.Display, handle: x.Window, title: [:0]const u8) void {
-    const pid: c_long = @intCast(std.os.linux.getpid());
+    const pid: c_long = @intCast(std.c.getpid());
     _ = lib.XChangeProperty(display, handle, lib.XInternAtom(display, "_NET_WM_PID", 0), x.XA_CARDINAL, 32, x.PropModeReplace, @ptrCast(&pid), 1);
     const class = "rex\x00Rex\x00";
     _ = lib.XChangeProperty(display, handle, lib.XInternAtom(display, "WM_CLASS", 0), x.XA_STRING, 8, x.PropModeReplace, class.ptr, class.len);
@@ -181,9 +181,12 @@ pub fn contentScale(self: *const X11Window) @import("../../renderer/dimension.zi
 }
 
 pub fn setMinimumSize(self: *X11Window, width: c_int, height: c_int) void {
-    _ = self;
-    _ = width;
-    _ = height;
+    var hints: x.XSizeHints = .{};
+    hints.flags = x.PMinSize;
+    hints.min_width = width;
+    hints.min_height = height;
+    _ = backend.state.x11.?.XSetWMNormalHints(backend.state.display.?, self.handle, &hints);
+    _ = backend.state.x11.?.XFlush(backend.state.display.?);
 }
 
 pub fn setPointerShape(self: *X11Window, shape: Window.PointerShape) void {

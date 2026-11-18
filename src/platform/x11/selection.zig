@@ -8,11 +8,7 @@ const x = @import("x11");
 const backend = @import("backend.zig");
 const events = @import("events.zig");
 
-fn nowMs() i64 {
-    var ts: std.os.linux.timespec = undefined;
-    _ = std.os.linux.clock_gettime(std.os.linux.CLOCK.MONOTONIC, &ts);
-    return @as(i64, ts.sec) * 1000 + @divTrunc(ts.nsec, std.time.ns_per_ms);
-}
+const system = std.posix.system;
 
 /// Answers a SelectionRequest event for one of our windows.
 pub fn answerRequest(event: *const x.XSelectionRequestEvent) void {
@@ -30,11 +26,28 @@ pub fn answerRequest(event: *const x.XSelectionRequestEvent) void {
 
     var accepted = false;
     var property = event.property;
-    if (event.target == backend.state.utf8_atom or event.target == x.XA_STRING) {
+    if (event.target == backend.state.utf8_atom) {
         if (textFor(event.selection, event.owner)) |slice| {
             if (property == 0) property = event.target;
             _ = lib.XChangeProperty(display, event.requestor, property, event.target, 8, x.PropModeReplace, @ptrCast(slice.ptr), @intCast(slice.len));
             accepted = true;
+        }
+    } else if (event.target == x.XA_STRING) {
+        // ICCCM STRING is Latin-1, so only serve pure ASCII under that name;
+        // non-ASCII text stays available as UTF8_STRING.
+        if (textFor(event.selection, event.owner)) |slice| {
+            var ascii = true;
+            for (slice) |byte| {
+                if (byte >= 0x80) {
+                    ascii = false;
+                    break;
+                }
+            }
+            if (ascii) {
+                if (property == 0) property = event.target;
+                _ = lib.XChangeProperty(display, event.requestor, property, event.target, 8, x.PropModeReplace, @ptrCast(slice.ptr), @intCast(slice.len));
+                accepted = true;
+            }
         }
     } else if (event.target == backend.state.targets_atom) {
         const targets = [_]x.Atom{ backend.state.utf8_atom, x.XA_STRING };
@@ -63,9 +76,20 @@ pub fn read(selection: x.Atom, out: []u8) ?usize {
     _ = lib.XConvertSelection(display, selection, backend.state.utf8_atom, prop, window, x.CurrentTime);
     _ = lib.XFlush(display);
 
-    const deadline = nowMs() + 250;
-    while (nowMs() < deadline) {
-        if (lib.XPending(display) == 0) continue;
+    const x_fd = lib.XConnectionNumber(display);
+    // Bounded wait without a clock: 25 polls of 10 ms each. Only idle polls
+    // consume the budget, so a burst of unrelated events cannot starve the
+    // SelectionNotify we are waiting for.
+    var polls: usize = 0;
+    while (true) {
+        if (lib.XPending(display) == 0) {
+            if (polls >= 25) return null;
+            polls += 1;
+            // Wait for the X socket instead of spinning the core.
+            var fds = [_]system.pollfd{.{ .fd = x_fd, .events = system.POLL.IN, .revents = 0 }};
+            _ = system.poll(&fds, 1, 10);
+            continue;
+        }
         var event: x.XEvent = undefined;
         _ = lib.XNextEvent(display, &event);
         if (event.type == x.SelectionNotify and event.xselection.requestor == window) {
@@ -75,8 +99,11 @@ pub fn read(selection: x.Atom, out: []u8) ?usize {
             var nitems: c_ulong = 0;
             var bytes_after: c_ulong = 0;
             var data: [*c]u8 = null;
-            const rc = lib.XGetWindowProperty(display, window, prop, 0, 64 * 1024, 1, x.AnyPropertyType, &actual_type, &actual_format, &nitems, &bytes_after, &data);
-            if (rc != 0 or data == null) return null;
+            // long_length counts 32-bit quantities; ask for the whole caller
+            // buffer and refuse an oversized reply rather than truncate it.
+            const longs: c_long = @intCast(@divTrunc(out.len + 3, 4));
+            const rc = lib.XGetWindowProperty(display, window, prop, 0, longs, 1, x.AnyPropertyType, &actual_type, &actual_format, &nitems, &bytes_after, &data);
+            if (rc != 0 or data == null or bytes_after > 0 or actual_format != 8) return null;
             defer _ = lib.XFree(@ptrCast(data));
             const len: usize = @intCast(nitems);
             if (len > out.len) return null;

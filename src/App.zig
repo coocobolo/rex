@@ -3025,7 +3025,7 @@ fn vtModByte(mods: input.Modifiers) u8 {
 }
 
 fn detectMouseClickKind(self: *App, anchor: i32, col: u16, mods: input.Modifiers, scroll_gen: i64, scrollback_used: i64) rex.Selection.Kind {
-    const now_ms = self.platform.now() * 1000.0;
+    const now_ms = self.platform.now(self.io) * 1000.0;
 
     self.mouse_click_count = blk: {
         const prev_anchor = resolveAnchor(self.mouse_last_click_pos, scroll_gen, scrollback_used);

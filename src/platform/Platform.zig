@@ -4,6 +4,7 @@
 
 const Platform = @This();
 
+const std = @import("std");
 const backend = @import("backend.zig").selected;
 const window_config = @import("../config/window.zig");
 const input_key = @import("../input/key.zig");
@@ -58,9 +59,9 @@ pub fn postWakeup() void {
 }
 
 /// The monotonic clock in seconds.
-pub fn now(self: Platform) f64 {
+pub fn now(self: Platform, io: std.Io) f64 {
     _ = self;
-    return backend.now();
+    return backend.now(io);
 }
 
 /// The primary monitor refresh rate, or null when unknown.

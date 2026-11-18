@@ -186,9 +186,10 @@ pub fn waitEvents(timeout_ms: ?f64) void {
     }
 }
 
-/// The GLFW monotonic clock in seconds.
-pub fn now() f64 {
-    return c.glfwGetTime();
+/// Monotonic clock in seconds, from the caller's Io.
+pub fn now(io: std.Io) f64 {
+    const ns = std.Io.Clock.Timestamp.now(io, .awake).raw.toNanoseconds();
+    return @as(f64, @floatFromInt(ns)) / std.time.ns_per_s;
 }
 
 /// The primary monitor refresh rate, or null when GLFW does not know it.
