@@ -9,6 +9,11 @@ const Event = @import("../Event.zig").Event;
 const Window = @import("../Window.zig");
 const key = @import("key.zig");
 
+// X11 auto-repeat arrives as a synthetic KeyRelease immediately followed by a
+// KeyPress with the same keycode and timestamp (ICCCM "keyboard auto-repeat").
+var last_release_keycode: u8 = 0;
+var last_release_time: x.Time = 0;
+
 fn findWindow(handle: x.Window) ?Window {
     for (&backend.state.window_slots, 0..) |*slot, i| {
         if (backend.state.window_used[i] and slot.handle == handle)
@@ -36,7 +41,13 @@ pub fn dispatch(event: *x.XEvent) void {
         x.KeyPress, x.KeyRelease => {
             const e = event.xkey;
             const window = findWindow(e.window) orelse return;
-            const action: @import("../Event.zig").Action = if (event.type == x.KeyPress) .press else .release;
+            const action: @import("../Event.zig").Action = if (event.type == x.KeyPress)
+                (if (e.keycode == last_release_keycode and e.time == last_release_time) .repeat else .press)
+            else blk: {
+                last_release_keycode = @intCast(e.keycode);
+                last_release_time = e.time;
+                break :blk .release;
+            };
             const sym = lib.XKeycodeToKeysym(display, @intCast(e.keycode), 0);
             if (key.fromKeysym(sym)) |k| {
                 backend.pushEvent(.{ .key = .{
