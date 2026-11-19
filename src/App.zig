@@ -1571,6 +1571,11 @@ fn syncWellbeingKit(self: *App, new_alert_fired: bool) void {
     }
 
     const has_active_alert = wb.current_alert.kind != .none and wb.current_alert.remaining_s > 0;
+    self.ascii_state.syncFocusPhase(
+        wb.focus_state.phase,
+        wb.option.enabled and wb.focus_state.option.on_break.contains(.animation),
+        self.window_focused,
+    );
     if (!has_active_alert or wb.input_locked) {
         self.ascii_state.reminder_active = false;
         self.ascii_state.alert_total_s = 0;
@@ -1587,6 +1592,34 @@ fn syncWellbeingKit(self: *App, new_alert_fired: bool) void {
         }
         const hud_layout: kit_lock_screen.Layout = if (overlay_mode.showsAscii()) .hud else .card;
         if (overlay_mode == .ascii_reminder) {
+            if (self.ascii_state.break_overlay == .active) {
+                const is_long = wb.focus_state.phase == .long_break;
+                const title: []const u8 = if (is_long) "Long Rest Break" else "Short Rest Break";
+                const tone: kit_lock_screen.Tone = if (wb.isFocusPausedByAlert() or wb.focus_state.paused) .warning else .healthy;
+                const prompt_text = if (wb.current_alert.remaining_s > 0 and wb.current_alert.prompt.len > 0)
+                    wb.current_alert.prompt
+                else
+                    "Step away from the screen and recharge.";
+                const rem_s: u32 = @intCast((wb.focus_state.remaining_ms + 999) / 1000);
+                const break_ms = if (is_long) wb.focus_state.option.long_break_ms else wb.focus_state.option.short_break_ms;
+                const total_s: u32 = @intCast(@max(@as(u64, 1), break_ms / 1000));
+                const steps_total = wb.focus_state.option.tasks_before_long_break;
+                const steps_done = if (is_long) steps_total else wb.focus_state.tasks_in_cycle;
+                if (kit.syncLockScreen(.{
+                    .tone = tone,
+                    .layout = hud_layout,
+                    .action = .dismiss,
+                    .title = title,
+                    .subtitle = "",
+                    .prompt = prompt_text,
+                    .remaining_s = rem_s,
+                    .total_s = @max(total_s, rem_s),
+                    .steps_total = steps_total,
+                    .steps_done = steps_done,
+                    .scrim_alpha = 0,
+                })) self.needs_redraw = true;
+                return;
+            }
             self.ascii_state.reminder_active = true;
             const title: []const u8, const tone: kit_lock_screen.Tone, const default_total_s: u32 = switch (wb.current_alert.kind) {
                 .eyesight => .{ "Rest your eyes", .healthy, @intCast(@max(@as(u64, 1), wb.option.eyesight.duration_ms / 1000)) },
@@ -2722,6 +2755,11 @@ fn dismissWellbeingOverlay(self: *App) void {
         self.unlockLockScreen();
         return;
     }
+    if (self.ascii_state.break_overlay == .active) {
+        self.ascii_state.break_overlay = .dismissed;
+    }
+    self.ascii_state.reminder_active = false;
+    self.ascii_state.alert_total_s = 0;
     self.wellbeing_state.dismissAlert();
     self.syncWellbeingKit(false);
     self.maybeOpenClipboardDialog();
@@ -4631,6 +4669,15 @@ pub const AsciiOverlayState = struct {
     /// True once this window opened a non-locking reminder overlay while focused,
     /// keeping it visible if focus later moves to another window.
     reminder_active: bool = false,
+    /// Lifecycle of the non-locking focus-break animation overlay across one break phase.
+    break_overlay: BreakOverlay = .idle,
+    last_focus_phase: wellbeing.focus.Phase = .idle,
+
+    pub const BreakOverlay = enum(u8) {
+        idle,
+        active,
+        dismissed,
+    };
 
     pub const Mode = enum(u8) {
         none,
@@ -4647,11 +4694,29 @@ pub const AsciiOverlayState = struct {
         }
     };
 
+    /// Tracks transitions into and out of focus breaks when `on_break` includes
+    /// `animation` (without requiring `lock_input`).
+    pub fn syncFocusPhase(
+        self: *AsciiOverlayState,
+        phase: wellbeing.focus.Phase,
+        break_animation: bool,
+        window_focused: bool,
+    ) void {
+        const in_break = phase == .short_break or phase == .long_break;
+        if (!in_break or !break_animation) {
+            self.break_overlay = .idle;
+        } else if (phase != self.last_focus_phase or self.break_overlay == .idle) {
+            self.break_overlay = if (window_focused) .active else .dismissed;
+        }
+        self.last_focus_phase = phase;
+    }
+
     pub fn resolveMode(
         wellbeing_enabled: bool,
         input_locked: bool,
         lock_screen_enabled: bool,
         has_active_alert: bool,
+        break_overlay_active: bool,
         window_focused: bool,
         reminder_active: bool,
         ascii: @import("config/overlay.zig").WellbeingAscii,
@@ -4659,8 +4724,9 @@ pub const AsciiOverlayState = struct {
         if (input_locked and lock_screen_enabled) {
             return if (ascii.enabled) .ascii_lock else .card_lock;
         }
-        if (wellbeing_enabled and has_active_alert and ascii.enabled and ascii.trigger == .all and (window_focused or reminder_active)) {
-            return .ascii_reminder;
+        if (wellbeing_enabled and ascii.enabled and ascii.trigger == .all) {
+            if (break_overlay_active) return .ascii_reminder;
+            if (has_active_alert and (window_focused or reminder_active)) return .ascii_reminder;
         }
         return .none;
     }
@@ -4731,6 +4797,7 @@ fn wellbeingOverlayMode(self: *const App) AsciiOverlayState.Mode {
         wb.input_locked,
         wb.option.lock_screen.enabled,
         has_active_alert,
+        self.ascii_state.break_overlay == .active,
         self.window_focused,
         self.ascii_state.reminder_active,
         self.config.window.wellbeing_ascii,

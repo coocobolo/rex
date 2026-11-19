@@ -181,23 +181,53 @@ test "AsciiOverlayState: mode resolution honors enabled opt-out, trigger, and fo
 
     // Default (enabled = true, trigger = all): locking breaks show on every window;
     // non-locking reminders open only on the focused window and persist if focus leaves.
-    try testing.expectEqual(State.Mode.ascii_lock, State.resolveMode(true, true, true, false, false, false, default_ascii));
-    try testing.expectEqual(State.Mode.ascii_reminder, State.resolveMode(true, false, true, true, true, false, default_ascii));
-    try testing.expectEqual(State.Mode.none, State.resolveMode(true, false, true, true, false, false, default_ascii));
-    try testing.expectEqual(State.Mode.ascii_reminder, State.resolveMode(true, false, true, true, false, true, default_ascii));
-    try testing.expectEqual(State.Mode.none, State.resolveMode(true, false, true, false, true, false, default_ascii));
+    try testing.expectEqual(State.Mode.ascii_lock, State.resolveMode(true, true, true, false, false, false, false, default_ascii));
+    try testing.expectEqual(State.Mode.ascii_reminder, State.resolveMode(true, false, true, true, false, true, false, default_ascii));
+    try testing.expectEqual(State.Mode.none, State.resolveMode(true, false, true, true, false, false, false, default_ascii));
+    try testing.expectEqual(State.Mode.ascii_reminder, State.resolveMode(true, false, true, true, false, false, true, default_ascii));
+    try testing.expectEqual(State.Mode.ascii_reminder, State.resolveMode(true, false, true, false, true, false, false, default_ascii));
+    try testing.expectEqual(State.Mode.none, State.resolveMode(true, false, true, false, false, true, false, default_ascii));
 
     // Opt-out (enabled = false): locking falls back to centered card, reminders stay toasts.
     var opt_out = default_ascii;
     opt_out.enabled = false;
-    try testing.expectEqual(State.Mode.card_lock, State.resolveMode(true, true, true, false, false, false, opt_out));
-    try testing.expectEqual(State.Mode.none, State.resolveMode(true, false, true, true, true, false, opt_out));
+    try testing.expectEqual(State.Mode.card_lock, State.resolveMode(true, true, true, false, false, false, false, opt_out));
+    try testing.expectEqual(State.Mode.none, State.resolveMode(true, false, true, true, true, true, false, opt_out));
 
     // trigger = lock_only: locking shows ASCII, non-locking reminders stay toasts.
     var lock_only = default_ascii;
     lock_only.trigger = .lock_only;
-    try testing.expectEqual(State.Mode.ascii_lock, State.resolveMode(true, true, true, false, false, false, lock_only));
-    try testing.expectEqual(State.Mode.none, State.resolveMode(true, false, true, true, true, false, lock_only));
+    try testing.expectEqual(State.Mode.ascii_lock, State.resolveMode(true, true, true, false, false, false, false, lock_only));
+    try testing.expectEqual(State.Mode.none, State.resolveMode(true, false, true, true, true, true, false, lock_only));
+}
+
+test "AsciiOverlayState: focus break animation activates in focused window and stays dismissed until next break" {
+    const testing = std.testing;
+    var state: App.AsciiOverlayState = .{};
+
+    // Entering a short break while focused opens the break overlay.
+    state.syncFocusPhase(.task, true, true);
+    try testing.expectEqual(App.AsciiOverlayState.BreakOverlay.idle, state.break_overlay);
+    state.syncFocusPhase(.short_break, true, true);
+    try testing.expectEqual(App.AsciiOverlayState.BreakOverlay.active, state.break_overlay);
+
+    // Losing focus after opening keeps it active.
+    state.syncFocusPhase(.short_break, true, false);
+    try testing.expectEqual(App.AsciiOverlayState.BreakOverlay.active, state.break_overlay);
+
+    // Dismissing keeps it dismissed for the rest of the break.
+    state.break_overlay = .dismissed;
+    state.syncFocusPhase(.short_break, true, true);
+    try testing.expectEqual(App.AsciiOverlayState.BreakOverlay.dismissed, state.break_overlay);
+
+    // Returning to task and entering long_break re-arms it in the focused window only.
+    state.syncFocusPhase(.task, true, true);
+    try testing.expectEqual(App.AsciiOverlayState.BreakOverlay.idle, state.break_overlay);
+    state.syncFocusPhase(.long_break, true, false);
+    try testing.expectEqual(App.AsciiOverlayState.BreakOverlay.dismissed, state.break_overlay);
+    state.syncFocusPhase(.task, true, true);
+    state.syncFocusPhase(.long_break, true, true);
+    try testing.expectEqual(App.AsciiOverlayState.BreakOverlay.active, state.break_overlay);
 }
 
 test "AsciiOverlayState: frame pacing, minimized pause, and reduced motion freeze" {
