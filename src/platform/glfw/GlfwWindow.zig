@@ -188,8 +188,8 @@ pub fn focused(self: *const GlfwWindow) bool {
 }
 
 /// Sets the smallest size the user may resize to.
-pub fn setMinimumSize(self: *const GlfwWindow, width: c_int, height: c_int) void {
-    c.glfwSetWindowSizeLimits(self.handle, width, height, c.GLFW_DONT_CARE, c.GLFW_DONT_CARE);
+pub fn setMinimumSize(self: *const GlfwWindow, size: Window.MinimumSize) void {
+    c.glfwSetWindowSizeLimits(self.handle, @intCast(size.width), @intCast(size.height), c.GLFW_DONT_CARE, c.GLFW_DONT_CARE);
 }
 
 /// Shows the given standard cursor while the pointer is over the window.

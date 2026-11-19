@@ -265,7 +265,7 @@ fn Host(comptime Tool: type) type {
                 .title = Tool.title,
             });
             errdefer window.deinit();
-            window.setMinimumSize(window_min_width, window_min_height);
+            window.setMinimumSize(.{ .width = window_min_width, .height = window_min_height });
 
             const scale = window.contentScale().width;
             const content_scale: f32 = if (scale > 0) scale else 1;

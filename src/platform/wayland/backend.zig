@@ -622,8 +622,8 @@ pub fn windowFocused(window: Window) bool {
 }
 
 /// Sets the smallest size the user may resize to.
-pub fn windowSetMinimumSize(window: Window, width: c_int, height: c_int) void {
-    fromHandle(window).setMinimumSize(width, height);
+pub fn windowSetMinimumSize(window: Window, size: Window.MinimumSize) void {
+    fromHandle(window).setMinimumSize(size);
 }
 
 /// Shows the given standard cursor over the window.

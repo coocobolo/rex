@@ -20,7 +20,7 @@ pub const selection_capacity = (1 << 20) + 1;
 pub const mime_utf8: [:0]const u8 = "text/plain;charset=utf-8";
 pub const mime_plain: [:0]const u8 = "text/plain";
 
-const OfferMime = packed struct(u8) {
+pub const OfferMime = packed struct(u8) {
     utf8: bool = false,
     plain: bool = false,
     _: u6 = 0,

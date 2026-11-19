@@ -322,11 +322,11 @@ pub fn setDecorated(self: *WaylandWindow, decorated: bool) void {
 }
 
 /// Sets the minimum logical window size on the xdg_toplevel.
-pub fn setMinimumSize(self: *WaylandWindow, width: c_int, height: c_int) void {
+pub fn setMinimumSize(self: *WaylandWindow, size: Window.MinimumSize) void {
     const wl_lib = &backend.state.wl.?;
     const tl = self.xdg_toplevel orelse return;
-    const min_w: i32 = @max(width, 0);
-    const min_h: i32 = @max(height, 0);
+    const min_w: i32 = @intCast(size.width);
+    const min_h: i32 = @intCast(size.height);
     _ = wl_lib.wl_proxy_marshal_flags(
         tl,
         proto.xdg_toplevel.set_min_size,

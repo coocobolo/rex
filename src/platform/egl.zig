@@ -31,7 +31,7 @@ pub const Egl = struct {
 
 /// Loads libEGL.so.1 and resolves every entry point the backend uses.
 pub fn load() (std.DynLib.Error || error{SymbolNotFound})!Egl {
-    var lib = try std.DynLib.openZ("libEGL.so.1");
+    var lib = try std.DynLib.openZ(soname);
     errdefer lib.close();
     return .{
         .lib = lib,

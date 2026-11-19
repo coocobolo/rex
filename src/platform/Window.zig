@@ -17,6 +17,12 @@ pub const PointerShape = enum(u8) {
 
 impl: *anyopaque,
 
+/// The smallest size the user may resize a window to.
+pub const MinimumSize = struct {
+    width: u16,
+    height: u16,
+};
+
 /// The size, title, and decoration preference requested for a new window.
 pub const Options = struct {
     width: u16,
@@ -81,8 +87,8 @@ pub fn focused(self: Window) bool {
 }
 
 /// Sets the smallest size the user may resize to.
-pub fn setMinimumSize(self: Window, width: c_int, height: c_int) void {
-    backend.windowSetMinimumSize(self, width, height);
+pub fn setMinimumSize(self: Window, size: MinimumSize) void {
+    backend.windowSetMinimumSize(self, size);
 }
 
 /// Shows the given standard cursor while the pointer is over the window.

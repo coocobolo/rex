@@ -46,7 +46,7 @@ test "Wayland window lifecycle: create, title, size, wakeup, poll, destroy" {
     try testing.expectEqual(@as(?*anyopaque, &ctx_val), backend.windowGetContext(win));
 
     backend.windowSetTitle(win, "rex-wayland-renamed");
-    backend.windowSetMinimumSize(win, 100, 80);
+    backend.windowSetMinimumSize(win, .{ .width = 100, .height = 80 });
     try testing.expect(!backend.windowShouldClose(win));
     backend.windowSetShouldClose(win, true);
     try testing.expect(backend.windowShouldClose(win));

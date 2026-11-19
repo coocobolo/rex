@@ -9,6 +9,14 @@ const selection = @import("selection.zig");
 const selected = @import("build_options").platform_backend;
 const selected_wayland = std.mem.eql(u8, selected, "wayland");
 
+test "Wayland selection: the MIME flags pack into one byte" {
+    try testing.expectEqual(@as(usize, 1), @sizeOf(selection.OfferMime));
+    try testing.expectEqual(@as(usize, 1), @alignOf(selection.OfferMime));
+    try testing.expectEqual(@as(u8, 0), @as(u8, @bitCast(selection.OfferMime{})));
+    try testing.expectEqual(@as(u8, 1), @as(u8, @bitCast(selection.OfferMime{ .utf8 = true })));
+    try testing.expectEqual(@as(u8, 2), @as(u8, @bitCast(selection.OfferMime{ .plain = true })));
+}
+
 test "Wayland selection: MIME precedence prefers UTF-8 over plain text" {
     try testing.expectEqualStrings(selection.mime_utf8, selection.preferredMime(true, true).?);
     try testing.expectEqualStrings(selection.mime_utf8, selection.preferredMime(true, false).?);

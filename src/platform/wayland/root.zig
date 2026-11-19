@@ -5,6 +5,7 @@ test {
         _ = @import("loader_test.zig");
         _ = @import("egl_test.zig");
         _ = @import("layout_test.zig");
+        _ = @import("proto_test.zig");
         _ = @import("input_test.zig");
         _ = @import("ime_scale_test.zig");
         _ = @import("selection_test.zig");

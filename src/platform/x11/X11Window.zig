@@ -27,7 +27,7 @@ surface: e.EGLSurface = null,
 context: e.EGLContext = null,
 /// Application pointer set through the platform API.
 context_ptr: ?*anyopaque = null,
-cursors: [3]x.Cursor = @splat(0),
+cursors: [@typeInfo(Window.PointerShape).@"enum".fields.len]x.Cursor = @splat(0),
 hidden_cursor: x.Cursor = 0,
 should_close: bool = false,
 focused: bool = false,
@@ -201,11 +201,11 @@ pub fn contentScale(self: *const X11Window) Dimension(f32) {
 }
 
 /// Sets the smallest size the user may resize to.
-pub fn setMinimumSize(self: *X11Window, width: c_int, height: c_int) void {
+pub fn setMinimumSize(self: *X11Window, size: Window.MinimumSize) void {
     var hints: x.XSizeHints = .{};
     hints.flags = x.PMinSize;
-    hints.min_width = width;
-    hints.min_height = height;
+    hints.min_width = @intCast(size.width);
+    hints.min_height = @intCast(size.height);
     _ = backend.state.x11.?.XSetWMNormalHints(backend.state.display.?, self.handle, &hints);
     _ = backend.state.x11.?.XFlush(backend.state.display.?);
 }

@@ -56,7 +56,7 @@ pub const Xlib = struct {
 
 /// Loads libX11.so.6 and resolves every entry point the backend uses.
 pub fn load() (std.DynLib.Error || error{SymbolNotFound})!Xlib {
-    var lib = try std.DynLib.openZ("libX11.so.6");
+    var lib = try std.DynLib.openZ(soname);
     errdefer lib.close();
     return .{
         .lib = lib,
