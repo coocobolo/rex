@@ -10,7 +10,9 @@
 //!
 //! Parses the Unicode Character Database files needed for a POSIX
 //! wcwidth(3) compatible width table and emits a single sorted, packed
-//! range table as a standalone Zig source file.
+//! range table as a standalone Zig source file. The companion
+//! `gen-wcwidth-expected` derives an independent oracle from different UCD
+//! inputs; `wcwidth_test.zig` checks this table against it.
 //!
 //! Property classification (priority: control/zero from UnicodeData.txt
 //! overrides East Asian Width from EastAsianWidth.txt):
@@ -39,7 +41,6 @@ const ucd = @import("ucd.zig");
 const gen_name = "wcwidth-table";
 const usage_args = "<out.zig> <EastAsianWidth.txt> <UnicodeData.txt> <emoji-data.txt> [--malformed=reject|skip]";
 const mem = std.mem;
-const fmt = std.fmt;
 
 const Property = enum(u3) {
     narrow = 0,
@@ -47,6 +48,15 @@ const Property = enum(u3) {
     ambiguous = 2,
     zero = 3,
     control = 4,
+};
+
+/// Single definition of the u32 entry layout, used for packing and emitted
+/// into the generated table's comment.
+const encoding = struct {
+    const property_bits: u5 = @intCast(@typeInfo(@typeInfo(Property).@"enum".tag_type).int.bits);
+    const size_bits: u5 = 8;
+    const size_shift: u5 = property_bits;
+    const cp_shift: u5 = size_shift + size_bits;
 };
 
 const Working = enum {
@@ -151,41 +161,22 @@ fn applyEastAsianWidth(io: std.Io, gpa: mem.Allocator, dest: []Working, path: []
 
     var reader: std.Io.Reader = .fixed(content);
 
+    var fields: [ucd.max_fields][]const u8 = undefined;
     while (try reader.takeDelimiter('\n')) |raw_line| {
-        const line = stripComment(raw_line);
-        if (line.len == 0) continue;
-
-        const semi = mem.indexOfScalar(u8, line, ';') orelse continue;
-        const cp_field = mem.trim(u8, line[0..semi], " \t\r");
-        const eaw = mem.trim(u8, line[semi + 1 ..], " \t\r");
-
+        const l = (try ucd.parseLine(raw_line, policy, &fields)) orelse continue;
         const property: ?Working =
-            if (mem.eql(u8, eaw, "W") or mem.eql(u8, eaw, "F"))
+            if (mem.eql(u8, l.value, "W") or mem.eql(u8, l.value, "F"))
                 .wide
-            else if (mem.eql(u8, eaw, "A"))
+            else if (mem.eql(u8, l.value, "A"))
                 .ambiguous
             else
                 null; // Na/H/N; narrow is handled by applyUnicodeData.
         const prop = property orelse continue;
 
-        var start: u21 = undefined;
-        var end: u21 = undefined;
-        if (mem.indexOf(u8, cp_field, "..")) |dots| {
-            start = (try ucd.codePoint(try fmt.parseInt(u64, cp_field[0..dots], 16), policy)) orelse continue;
-            end = (try ucd.codePoint(try fmt.parseInt(u64, cp_field[dots + 2 ..], 16), policy)) orelse continue;
-        } else {
-            start = (try ucd.codePoint(try fmt.parseInt(u64, cp_field, 16), policy)) orelse continue;
-            end = start;
-        }
-        if (start > end) {
-            if (policy == .reject) return error.MalformedRange;
-            continue;
-        }
-
         // Promote only characters that currently have the default terminal
         // width of one cell. Never overwrite zero/control classifications.
-        var cp = start;
-        while (cp <= end) : (cp += 1) {
+        var cp = l.first;
+        while (cp <= l.last) : (cp += 1) {
             if (dest[cp] == .narrow) dest[cp] = prop;
         }
     }
@@ -195,9 +186,10 @@ fn applyEmojiData(io: std.Io, gpa: mem.Allocator, dest: []Working, path: []const
     const content = try ucd.readFile(io, gpa, gen_name, path);
     defer gpa.free(content);
 
+    var fields: [ucd.max_fields][]const u8 = undefined;
     var it = mem.splitScalar(u8, content, '\n');
     while (it.next()) |raw| {
-        const l = (try ucd.parseLine(raw, policy)) orelse continue;
+        const l = (try ucd.parseLine(raw, policy, &fields)) orelse continue;
         if (!mem.eql(u8, l.value, "Emoji_Presentation")) continue;
 
         // Regional Indicators (U+1F1E6..U+1F1FF) are Emoji_Presentation
@@ -217,39 +209,33 @@ fn applyUnicodeData(io: std.Io, gpa: mem.Allocator, dest: []Working, path: []con
     defer gpa.free(content);
 
     var reader: std.Io.Reader = .fixed(content);
+    var fields: [ucd.max_fields][]const u8 = undefined;
     var pending_first: ?u21 = null;
 
     while (try reader.takeDelimiter('\n')) |raw_line| {
-        const line = mem.trim(u8, raw_line, " \t\r");
-        if (line.len == 0) continue;
-
-        var fields: [3][]const u8 = undefined;
-        var it = mem.splitScalar(u8, line, ';');
-        fields[0] = it.next() orelse continue; // codepoint
-        fields[1] = it.next() orelse continue; // name
-        fields[2] = it.next() orelse continue; // general category
-
-        const cp = (try ucd.codePoint(try fmt.parseInt(u64, fields[0], 16), policy)) orelse continue;
-        const category = fields[2];
+        const l = (try ucd.parseLine(raw_line, policy, &fields)) orelse continue;
+        if (l.fields.len < 2) continue;
+        const name = l.fields[0];
+        const category = l.fields[1];
 
         // classify() returns .narrow explicitly for every other
         // assigned category (Lu, Ll, Lo, Nd, So, Zs, Sc, ...).
         // not null-falling-through-to-a-default.
         const prop = classify(category);
 
-        if (mem.endsWith(u8, fields[1], "First>")) {
-            pending_first = cp;
+        if (mem.endsWith(u8, name, "First>")) {
+            pending_first = l.first;
             continue;
         }
-        if (mem.endsWith(u8, fields[1], "Last>")) {
+        if (mem.endsWith(u8, name, "Last>")) {
             if (pending_first) |start| {
-                fillRange(dest, start, cp, prop);
+                fillRange(dest, start, l.first, prop);
                 pending_first = null;
             }
             continue;
         }
 
-        dest[cp] = prop;
+        dest[l.first] = prop;
     }
 }
 
@@ -268,11 +254,6 @@ fn applyDefaultDoubleRangeOverrides(dest: []Working) void {
             if (dest[cp] == .unclassified) dest[cp] = .wide;
         }
     }
-}
-
-fn stripComment(line: []const u8) []const u8 {
-    const hash = mem.indexOfScalar(u8, line, '#') orelse line.len;
-    return mem.trim(u8, line[0..hash], " \t\r");
 }
 
 fn classify(bytes: []const u8) Working {
@@ -351,27 +332,24 @@ fn writeOutput(w: *std.Io.Writer, entries: []const Entry) !void {
         \\//! glibc and musl may be used by tests as secondary compatibility oracles,
         \\//! but disagreement with either implementation is not by itself an error.
         \\
-        \\pub const Property = enum(u3) {
-        \\    narrow = 0,
-        \\    wide = 1,
-        \\    ambiguous = 2,
-        \\    zero = 3,
-        \\    control = 4,
-        \\};
-        \\
-        \\/// Packed range entry: bits [0,3) property, bits [3,11) size-1,
-        \\/// bits [11,32) lower-bound codepoint.
-        \\pub const entries = [_]u32{
-        \\
     );
+    try w.writeAll("\n");
+    try w.print("pub const Property = enum(u{d}) {{\n", .{encoding.property_bits});
+    inline for (@typeInfo(Property).@"enum".fields) |field| {
+        try w.print("    {s} = {d},\n", .{ field.name, field.value });
+    }
+    try w.writeAll("};\n\n");
+    try w.print("/// Packed range entry: bits [0,{d}) property, bits [{d},{d}) size-1,\n", .{ encoding.property_bits, encoding.size_shift, encoding.cp_shift });
+    try w.print("/// bits [{d},32) lower-bound codepoint.\n", .{encoding.cp_shift});
+    try w.writeAll("pub const entries = [_]u32{\n");
 
     for (entries) |e| {
         std.debug.assert(e.size >= 1);
         std.debug.assert(e.size <= 256);
         const packed_value: u32 =
             (@as(u32, @intFromEnum(e.property))) |
-            (@as(u32, e.size - 1) << 3) |
-            (@as(u32, e.codepoint) << 11);
+            (@as(u32, e.size - 1) << encoding.size_shift) |
+            (@as(u32, e.codepoint) << encoding.cp_shift);
         try w.print("    0x{X:0>8},\n", .{packed_value});
     }
 

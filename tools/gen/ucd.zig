@@ -8,8 +8,17 @@
 const std = @import("std");
 const mem = std.mem;
 
-/// One parsed UCD data line: `first..last ; value # comment`.
-pub const Line = struct { first: u21, last: u21, value: []const u8 };
+/// Maximum fields on a UCD data line (UnicodeData.txt has 15).
+pub const max_fields = 15;
+
+/// One parsed UCD data line: `first..last ; field0 ; field1 ... # comment`.
+/// `fields` borrows the caller's buffer; `value` is the first field.
+pub const Line = struct {
+    first: u21,
+    last: u21,
+    value: []const u8,
+    fields: []const []const u8,
+};
 
 /// How a generator treats a malformed UCD value. `reject` fails the build;
 /// `skip` drops the offending line and continues.
@@ -38,24 +47,42 @@ pub fn codePoint(raw: u64, policy: Malformed) !?u21 {
     return error.MalformedCodePoint;
 }
 
-/// Parses a UCD data line. Returns null for blank, comment-only and skipped
-/// malformed lines. `value` is the first field after the code points, trimmed.
-pub fn parseLine(raw: []const u8, policy: Malformed) !?Line {
+/// Parses a UCD data line into `first..last ; field0 ; field1 ... # comment`.
+/// `field_buf` holds the trimmed fields; the returned `Line.fields` borrows it.
+/// Returns null for blank, comment-only and skipped malformed lines; a
+/// reversed range is rejected or skipped according to `policy`.
+pub fn parseLine(raw: []const u8, policy: Malformed, field_buf: *[max_fields][]const u8) !?Line {
     const hash = mem.indexOfScalar(u8, raw, '#') orelse raw.len;
     const line = mem.trim(u8, raw[0..hash], " \t\r");
     if (line.len == 0) return null;
     const semi = mem.indexOfScalar(u8, line, ';') orelse return null;
     const cps = mem.trim(u8, line[0..semi], " \t");
-    const rest = line[semi + 1 ..];
-    const end = mem.indexOfScalar(u8, rest, ';') orelse rest.len;
-    const value = mem.trim(u8, rest[0..end], " \t");
-    if (mem.indexOf(u8, cps, "..")) |dots| return .{
-        .first = (try codePoint(try std.fmt.parseInt(u64, cps[0..dots], 16), policy)) orelse return null,
-        .last = (try codePoint(try std.fmt.parseInt(u64, cps[dots + 2 ..], 16), policy)) orelse return null,
-        .value = value,
-    };
-    const cp = (try codePoint(try std.fmt.parseInt(u64, cps, 16), policy)) orelse return null;
-    return .{ .first = cp, .last = cp, .value = value };
+
+    var rest = line[semi + 1 ..];
+    var count: usize = 0;
+    while (count < field_buf.len) {
+        const next = mem.indexOfScalar(u8, rest, ';');
+        field_buf[count] = mem.trim(u8, if (next) |i| rest[0..i] else rest, " \t");
+        count += 1;
+        if (next) |i| {
+            rest = rest[i + 1 ..];
+        } else break;
+    }
+
+    var first: u21 = undefined;
+    var last: u21 = undefined;
+    if (mem.indexOf(u8, cps, "..")) |dots| {
+        first = (try codePoint(try std.fmt.parseInt(u64, cps[0..dots], 16), policy)) orelse return null;
+        last = (try codePoint(try std.fmt.parseInt(u64, cps[dots + 2 ..], 16), policy)) orelse return null;
+    } else {
+        first = (try codePoint(try std.fmt.parseInt(u64, cps, 16), policy)) orelse return null;
+        last = first;
+    }
+    if (first > last) {
+        if (policy == .reject) return error.MalformedRange;
+        return null;
+    }
+    return .{ .first = first, .last = last, .value = field_buf[0], .fields = field_buf[0..count] };
 }
 
 /// Reads a whole input file and logs it as `<name>: read <path>`.
