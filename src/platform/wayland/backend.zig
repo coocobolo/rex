@@ -906,6 +906,14 @@ fn onActivationTokenDone(data: ?*anyopaque, token_proxy: ?*wl.Proxy, token: [*c]
     const activation = state.xdg_activation orelse return;
     if (token == null or data == null) return;
     const win: *WaylandWindow = @ptrCast(@alignCast(data.?));
+    var alive = false;
+    for (&state.window_slots, &state.window_used) |*slot, used| {
+        if (slot == win and used) {
+            alive = true;
+            break;
+        }
+    }
+    if (!alive) return;
     const surf = win.wl_surface orelse return;
     _ = wl_lib.wl_proxy_marshal_flags(
         activation,
