@@ -352,6 +352,9 @@ pub const Osc = struct {
             1 => term.setIconName(data), // OSC 1
             2 => term.setTitle(data), // OSC 2
 
+            // OSC 8 ; params ; URI ST — an empty URI resets the link.
+            8 => term.setHyperlink(data),
+
             // OSC 4 ; n ; spec [; n ; spec ...] ST
             4 => term.setPaletteColor(data),
             10 => term.setOrQueryColor(data, .fg),

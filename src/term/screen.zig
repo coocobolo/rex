@@ -18,6 +18,7 @@ const Set = @import("charset.zig").Set;
 const Mapping = @import("charset.zig").Mapping;
 
 const Style = @import("Style.zig");
+const UrlTable = @import("UrlTable.zig");
 const Option = @import("term.zig").Option;
 
 const wc = @import("../unicode/wcwidth.zig");
@@ -261,9 +262,11 @@ pub fn Screen(comptime option: Option) type {
 
         line_attrs: [ring_rows]LineAttr = std.mem.zeroes([ring_rows]LineAttr),
 
-        /// Colors of this screen's cells, the pen's `id` and `blank_id`
-        /// (ADR 0005). Owned; 288 KiB allocated by `init`.
+        /// Colors and OSC 8 links of this screen's cells (ADR 0005, ADR 0012).
+        /// Owned; 352 KiB of style tables allocated by `init`.
         styles: Style.Table,
+        /// URIs referenced by `styles[*].link`. Owned by `init`/`deinit`.
+        urls: UrlTable,
 
         // FIXME not a screen state
         // moved to terminal
@@ -337,6 +340,7 @@ pub fn Screen(comptime option: Option) type {
 
             return .{
                 .styles = styles,
+                .urls = UrlTable.init(gpa),
                 .row_map = row_map,
                 .cells = cells,
                 .scratch_cells = scratch_cells,
@@ -357,6 +361,7 @@ pub fn Screen(comptime option: Option) type {
             if (comptime is_scrollback_used) allocator.free(self.scratch_cells);
             allocator.free(self.row_map);
             self.styles.deinit(allocator);
+            self.urls.deinit();
             self.grapheme_table.deinit();
             self.grapheme_reverse.deinit();
             self.grapheme_arena.deinit();
@@ -676,6 +681,21 @@ pub fn Screen(comptime option: Option) type {
             return self.styles.nearest(style);
         }
 
+        /// The ID of an OSC 8 URI in this screen's table, or null when the
+        /// table is full. Sets the pen link and re-interns it into cells.
+        pub fn setHyperlink(self: *Self, uri: []const u8) void {
+            const id = self.urls.intern(uri) orelse return;
+            self.cursor.attr.colors.link = id;
+            self.internPen();
+        }
+
+        /// Clears the pen's OSC 8 link without touching the colors.
+        pub fn clearHyperlink(self: *Self) void {
+            if (self.cursor.attr.colors.link == 0) return;
+            self.cursor.attr.colors.link = 0;
+            self.internPen();
+        }
+
         /// Refreshes the pen's cached IDs from `cursor.attr.colors`. Call
         /// after every change to the colors (SGR, DECRC).
         pub fn internPen(self: *Self) void {
@@ -701,11 +721,21 @@ pub fn Screen(comptime option: Option) type {
         /// columns, 26 us for a 50x120 screen without history (ReleaseFast).
         fn sweepStyles(self: *Self) void {
             var in_use: Style.Table.InUse = .initEmpty();
+            var urls_in_use: UrlTable.InUse = .initEmpty();
             var rows = self.liveRows();
-            while (rows.next()) |cells| for (cells) |cell| in_use.set(cell.style);
+            while (rows.next()) |cells| for (cells) |cell| {
+                in_use.set(cell.style);
+                const link = self.styles.get(cell.style).link;
+                if (link != 0) urls_in_use.set(link);
+            };
             in_use.set(self.cursor.attr.id);
             in_use.set(self.cursor.attr.blank_id);
+            const pen_link = self.cursor.attr.colors.link;
+            if (pen_link != 0) urls_in_use.set(pen_link);
+            const saved_link = self.saved_cursor.colors.link;
+            if (saved_link != 0) urls_in_use.set(saved_link);
             _ = self.styles.sweep(&in_use);
+            self.urls.sweep(&urls_in_use);
         }
 
         /// Returns the interned code point sequence for synthetic `id`, or null if absent.
@@ -2946,6 +2976,7 @@ pub fn Screen(comptime option: Option) type {
             _ = self.grapheme_arena.reset(.retain_capacity);
 
             self.styles.reset();
+            self.urls.reset();
             self.internPen();
             self.cursor.wrap_pending = false;
 
@@ -2993,6 +3024,7 @@ pub fn Screen(comptime option: Option) type {
             self.scroll_offset = 0;
             // Every cell and the pen are default now.
             self.styles.reset();
+            self.urls.reset();
 
             _ = self.grapheme_arena.reset(.retain_capacity);
             self.grapheme_table.clearRetainingCapacity();

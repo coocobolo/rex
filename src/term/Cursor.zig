@@ -81,7 +81,7 @@ pub fn position(self: *const Cursor) struct { u16, u16 } {
 }
 
 comptime {
-    std.debug.assert(32 == @sizeOf(Cursor));
+    std.debug.assert(36 == @sizeOf(Cursor));
 }
 
 /// Saved cursor state for DECSC (`ESC 7`) and SCOSC (`CSI s`).
@@ -101,7 +101,7 @@ pub const Saved = struct {
 };
 
 comptime {
-    std.debug.assert(24 == @sizeOf(Saved));
+    std.debug.assert(28 == @sizeOf(Saved));
 }
 
 test "Cursor: position and style shape" {
@@ -109,7 +109,7 @@ test "Cursor: position and style shape" {
     const pos = c.position();
     try std.testing.expectEqual(5, pos[0]);
     try std.testing.expectEqual(12, pos[1]);
-    try std.testing.expectEqual(32, @sizeOf(Cursor));
+    try std.testing.expectEqual(36, @sizeOf(Cursor));
 
     try std.testing.expectEqual(Cursor.Style.Shape.block, Cursor.Style.blinking_block.shape());
     try std.testing.expectEqual(Cursor.Style.Blink.on, Cursor.Style.blinking_block.blink());
@@ -120,5 +120,5 @@ test "Cursor: position and style shape" {
     const saved = Saved{};
     try std.testing.expectEqual(0, saved.row);
     try std.testing.expectEqual(0, saved.col);
-    try std.testing.expectEqual(24, @sizeOf(Saved));
+    try std.testing.expectEqual(28, @sizeOf(Saved));
 }

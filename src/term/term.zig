@@ -1215,6 +1215,7 @@ pub fn Terminal(comptime option: Option) type {
             self.cursor_color = null;
             self.selection_foreground = null;
             self.selection_background = null;
+            self.clearHyperlink();
             self.palette.reset();
 
             self.alternate.hardReset();
@@ -1806,6 +1807,32 @@ pub fn Terminal(comptime option: Option) type {
             }
 
             self.alternate.setActive(r, c);
+        }
+
+        /// Applies an OSC 8 payload (`params;URI`). An empty URI, including
+        /// the `;;` reset form, clears the link. Oversized URIs are dropped
+        /// whole, never truncated. The link lives on the active screen's pen.
+        pub fn setHyperlink(self: *Self, data: []const u8) void {
+            const uri = if (std.mem.indexOfScalar(u8, data, ';')) |sep|
+                data[sep + 1 ..]
+            else
+                data;
+            if (uri.len == 0) {
+                self.clearHyperlink();
+                return;
+            }
+            self.active().setHyperlink(uri);
+        }
+
+        /// Clears the current OSC 8 link (explicit reset or RIS).
+        pub fn clearHyperlink(self: *Self) void {
+            self.active().clearHyperlink();
+        }
+
+        /// The current OSC 8 URI, or null when no link is active.
+        pub fn hyperlink(self: *Self) ?[]const u8 {
+            const screen = self.active();
+            return screen.urls.get(screen.cursor.attr.colors.link);
         }
 
         /// Sets the title (OSC 0 and 2), cut to `max_title_len` bytes on

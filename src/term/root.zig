@@ -38,6 +38,7 @@ test {
     _ = @import("charset_test.zig");
     _ = @import("Style.zig");
     _ = @import("style_test.zig");
+    _ = @import("UrlTable_test.zig");
     _ = @import("cell.zig");
     _ = @import("Frame.zig");
     std.testing.refAllDecls(@This());

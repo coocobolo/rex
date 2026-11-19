@@ -76,7 +76,7 @@ pub const Attr = struct {
 };
 
 comptime {
-    std.debug.assert(20 == @sizeOf(Attr));
+    std.debug.assert(24 == @sizeOf(Attr));
 }
 
 pub const Kind = enum(u3) {
@@ -193,7 +193,7 @@ test "Attr: defaults and size" {
     try std.testing.expect(a.colors.isDefault());
     try std.testing.expectEqual(Style.Table.default_id, a.id);
     try std.testing.expectEqual(Style.Table.default_id, a.blank_id);
-    try std.testing.expectEqual(20, @sizeOf(Attr));
+    try std.testing.expectEqual(24, @sizeOf(Attr));
 }
 
 test "Kind: column spans and predicates" {

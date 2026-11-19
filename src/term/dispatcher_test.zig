@@ -4611,6 +4611,67 @@ test "osc 52: a query is a read request; a write too big is dropped" {
     try testing.expectEqual(@as(u32, 1), t.clipboard.dropped);
 }
 
+test "osc 8: sets and resets the current URI, by BEL and ST" {
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
+
+    for ([_][]const u8{
+        "\x1b]8;;https://example.com\x07",
+        "\x1b]8;;https://example.com\x1b\\",
+    }) |seq| {
+        for (0..2) |split| {
+            if (split == 0) t.feed(seq) else for (seq) |b| t.feed(&.{b});
+            try testing.expectEqualStrings("https://example.com", t.hyperlink().?);
+        }
+    }
+
+    // Params are accepted but do not change the URI; the URI may contain ';'.
+    t.feed("\x1b]8;id=one;https://example.org/a;?b=1\x07");
+    try testing.expectEqualStrings("https://example.org/a;?b=1", t.hyperlink().?);
+
+    // Both reset forms clear it.
+    t.feed("\x1b]8;;\x07");
+    try testing.expect(t.hyperlink() == null);
+    t.feed("\x1b]8;;https://example.com\x07\x1b]8;\x07");
+    try testing.expect(t.hyperlink() == null);
+}
+
+test "osc 8: link travels with cells and survives SGR 0 and newline" {
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
+
+    t.feed("\x1b]8;;https://example.com\x07A");
+    const screen = t.active();
+    const style = screen.styles.get(screen.row(0)[0].style);
+    try testing.expect(style.link != 0);
+    try testing.expectEqualStrings("https://example.com", screen.urls.get(style.link).?);
+
+    // SGR 0 and a newline do not clear the link (xterm semantics, ADR 0012).
+    t.feed("\x1b[0m\n");
+    try testing.expectEqualStrings("https://example.com", t.hyperlink().?);
+
+    // Erased cells use the background-only style, which has no link.
+    t.feed("\x1b[2K");
+    for (t.active().row(1)) |cell| {
+        if (cell.kind == .empty) {
+            try testing.expectEqual(@as(u16, 0), t.active().styles.get(cell.style).link);
+        }
+    }
+}
+
+test "osc 8: oversized URI is dropped whole and RIS clears the link" {
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
+
+    t.feed("\x1b]8;;" ++ "u" ** 1200 ++ "\x07");
+    try testing.expect(t.hyperlink() == null);
+
+    t.feed("\x1b]8;;https://example.com\x07");
+    try testing.expect(t.hyperlink() != null);
+    t.feed("\x1bc");
+    try testing.expect(t.hyperlink() == null);
+}
+
 test "osc 52: other OSCs still collect, before and after" {
     var t = try Term.init(alloc);
     defer t.deinit(alloc);

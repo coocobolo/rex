@@ -1,21 +1,26 @@
-//! The colors of a cell: foreground, background and underline (SGR 58),
-//! interned per screen in a `Table` (ADR 0005). Attribute flags stay in
-//! the cell.
+//! The colors and OSC 8 link of a cell, interned per screen in a `Table`
+//! (ADR 0005, ADR 0012). Attribute flags stay in the cell.
 //!
 //! Each color is stored as a `Key`, the same encoding `Palette` uses, so a
-//! style is 12 bytes with no padding and can be hashed and compared as
+//! style is 16 bytes with no padding and can be hashed and compared as
 //! bytes. Indexed colors stay indexed and resolve through the palette when
 //! drawn, so OSC 4 and theme changes still apply.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Color = @import("../color/color.zig").Color;
+const UrlTable = @import("UrlTable.zig");
 
 pub const Style = @This();
 
 fg: Key = default_key,
 bg: Key = default_key,
 underline: Key = default_key,
+/// OSC 8 link ID into the screen's `UrlTable`; 0 means no link.
+link: UrlTable.Id = 0,
+/// Explicit padding keeps the 16-byte entry free of indeterminate bytes:
+/// `slotOf` hashes `asBytes(&Style)` (ADR 0005).
+_pad: u16 = 0,
 
 /// An encoded `Color`: bits 24-31 are the kind (0 default, 1 indexed,
 /// 2 RGB); below them the index, or the RGB value as 0xRRGGBB.
@@ -28,7 +33,7 @@ pub const default: Style = .{};
 pub const Id = u16;
 
 comptime {
-    std.debug.assert(@sizeOf(Style) == 12);
+    std.debug.assert(@sizeOf(Style) == 16);
     std.debug.assert(@alignOf(Style) == 4);
 }
 
@@ -37,12 +42,13 @@ pub fn init(fg: Color, bg: Color, underline: Color) Style {
     return .{ .fg = encode(fg), .bg = encode(bg), .underline = encode(underline) };
 }
 
-/// True when all three color keys match `other`.
+/// True when all three color keys and the link match `other`.
 pub fn eql(self: Style, other: Style) bool {
-    return self.fg == other.fg and self.bg == other.bg and self.underline == other.underline;
+    return self.fg == other.fg and self.bg == other.bg and
+        self.underline == other.underline and self.link == other.link;
 }
 
-/// True when all three colors use their terminal defaults.
+/// True when all colors use their defaults and there is no link.
 pub fn isDefault(self: Style) bool {
     return self.eql(default);
 }
@@ -69,6 +75,9 @@ pub fn decode(key: Key) Color {
 /// Squared RGB distance summed over the three colors. Two non-RGB keys
 /// are 0 apart when equal and as far apart as possible otherwise.
 fn distance(a: Style, b: Style) u64 {
+    // Prefer a candidate with the same link: `nearest` is a fallback for a
+    // full table, and changing a link changes what a click would open.
+    if (a.link != b.link) return 3 * 255 * 255 + 1;
     return keyDistance(a.fg, b.fg) + keyDistance(a.bg, b.bg) + keyDistance(a.underline, b.underline);
 }
 
@@ -98,8 +107,9 @@ fn keyDistance(a: Key, b: Key) u64 {
 /// `sweepDue`); if nothing can be freed, `nearest` gives a new style the
 /// closest live one, so text already drawn never changes color.
 ///
-/// Memory: `entries` 192 KiB, `index` 64 KiB, `free` 32 KiB, owned by the
-/// table and freed by `deinit`.
+/// Memory: `entries` 256 KiB, `index` 64 KiB, `free` 32 KiB, owned by the
+/// table and freed by `deinit`. ADR 0005 estimated 192 KiB for the old
+/// 12-byte entry; the link field makes each entry 16 bytes.
 pub const Table = struct {
     /// Styles per screen, ID 0 (the default style) included. ADR 0005.
     pub const capacity = 16384;
