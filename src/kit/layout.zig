@@ -510,8 +510,12 @@ fn scrollRange(tree: *Tree, nodes: []Node, range: Range) void {
             .x = @max(0, contentExtent(nodes, index, .horizontal, true) - box_node.rect.w),
             .y = @max(0, contentExtent(nodes, index, .vertical, true) - box_node.rect.h),
         };
-        const moved_x = if (std.math.isNan(region.offset.x)) 0 else std.math.clamp(region.offset.x, 0, region.max.x);
+        var moved_x = if (std.math.isNan(region.offset.x)) 0 else std.math.clamp(region.offset.x, 0, region.max.x);
         const moved_y = if (std.math.isNan(region.offset.y)) 0 else std.math.clamp(region.offset.y, 0, region.max.y);
+        if (region.id == .none and region.max.x > 0 and tree.scroll_follow != Tree.none and tree.scroll_follow > index and tree.scroll_follow < box_node.end) {
+            const target = nodes[tree.scroll_follow].rect;
+            moved_x = Tree.Scroll.ensureVisibleAxis(moved_x, region.max.x, box_node.rect.x, box_node.rect.w, target.x, target.w, 8);
+        }
         if (moved_x > 0 or moved_y > 0) {
             for (nodes[index + 1 .. box_node.end]) |*child| {
                 child.rect.x -= moved_x;

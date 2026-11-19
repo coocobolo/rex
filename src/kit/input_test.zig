@@ -134,3 +134,53 @@ test "input view: node budget, layout, focus, selection, and invalid/disabled st
     try std.testing.expectEqual(kit.Tree.PointerShape.arrow, tree.nodes[disabled_ring_idx].box.pointer);
     try std.testing.expectEqual(@as(u8, 0), tree.nodes[disabled_ring_idx].box.border.a);
 }
+
+test "input view: long focused text scrolls horizontally to keep caret visible" {
+    const theme = Theme.dark;
+    const long_path = "/home/user/.config/rex/ascii/orbital-crystal-animation.txt";
+    var nodes: [64]Node = undefined;
+    var lines: [64]Line = undefined;
+
+    // Caret at end: text shifts left so the caret lands inside the clip box.
+    {
+        var tree = Tree.init(&nodes, &lines);
+        const root = try tree.open(.{ .width = .{ .fixed = 220 }, .height = .{ .fixed = 60 } });
+        try input.view(&tree, &theme, .{
+            .id = Id.of("path-end"),
+            .value = long_path,
+            .cursor = long_path.len,
+            .anchor = long_path.len,
+            .focused = true,
+            .width = .{ .fixed = 200 },
+        });
+        tree.close(root);
+        try tree.layout(measurer, 220, 60);
+
+        const caret = tree.nodes[tree.scroll_follow].rect;
+        const clip = tree.nodes[tree.nodes[tree.scroll_follow].parent].rect;
+        try std.testing.expect(caret.x >= clip.x);
+        try std.testing.expect(caret.x + caret.w <= clip.x + clip.w + 0.5);
+        const before_text = tree.nodes[tree.scroll_follow - 1].rect;
+        try std.testing.expect(before_text.x < clip.x);
+    }
+
+    // Caret at start (Home): scroll returns to 0 so the start of the path is visible.
+    {
+        var tree = Tree.init(&nodes, &lines);
+        const root = try tree.open(.{ .width = .{ .fixed = 220 }, .height = .{ .fixed = 60 } });
+        try input.view(&tree, &theme, .{
+            .id = Id.of("path-home"),
+            .value = long_path,
+            .cursor = 0,
+            .anchor = 0,
+            .focused = true,
+            .width = .{ .fixed = 200 },
+        });
+        tree.close(root);
+        try tree.layout(measurer, 220, 60);
+
+        const caret = tree.nodes[tree.scroll_follow].rect;
+        const clip = tree.nodes[tree.nodes[tree.scroll_follow].parent].rect;
+        try std.testing.expectApproxEqAbs(clip.x, caret.x, 0.5);
+    }
+}

@@ -303,56 +303,63 @@ pub fn view(tree: *Tree, theme: *const Theme, options: Options) Tree.Error!void 
     });
 
     const text_color = theme.foreground.fade(presence);
+    var caret_index: Tree.Index = Tree.none;
     if (options.value.len == 0) {
-        if (active) try emitCaret(tree, theme);
+        if (active) caret_index = try emitCaret(tree, theme);
         if (options.placeholder.len > 0) {
             _ = try tree.text(options.placeholder, .{
                 .color = theme.muted_foreground.fade(presence),
+                .wrap = .none,
             });
         }
     } else if (!active) {
-        _ = try tree.text(options.value, .{ .color = text_color });
+        _ = try tree.text(options.value, .{ .color = text_color, .wrap = .none });
     } else {
         const cursor = @min(options.cursor, options.value.len);
         const anchor = @min(options.anchor, options.value.len);
         if (anchor == cursor) {
             if (cursor > 0) {
-                _ = try tree.text(options.value[0..cursor], .{ .color = text_color });
+                _ = try tree.text(options.value[0..cursor], .{ .color = text_color, .wrap = .none });
             }
-            try emitCaret(tree, theme);
+            caret_index = try emitCaret(tree, theme);
             if (cursor < options.value.len) {
-                _ = try tree.text(options.value[cursor..], .{ .color = text_color });
+                _ = try tree.text(options.value[cursor..], .{ .color = text_color, .wrap = .none });
             }
         } else {
             const start = @min(anchor, cursor);
             const end = @max(anchor, cursor);
             if (start > 0) {
-                _ = try tree.text(options.value[0..start], .{ .color = text_color });
+                _ = try tree.text(options.value[0..start], .{ .color = text_color, .wrap = .none });
             }
-            if (cursor == start) try emitCaret(tree, theme);
+            if (cursor == start) caret_index = try emitCaret(tree, theme);
             const sel_box = try tree.open(.{
                 .fill = theme.primary.fade(0.25),
                 .radius = 2,
             });
-            _ = try tree.text(options.value[start..end], .{ .color = text_color });
+            _ = try tree.text(options.value[start..end], .{ .color = text_color, .wrap = .none });
             tree.close(sel_box);
-            if (cursor == end) try emitCaret(tree, theme);
+            if (cursor == end) caret_index = try emitCaret(tree, theme);
             if (end < options.value.len) {
-                _ = try tree.text(options.value[end..], .{ .color = text_color });
+                _ = try tree.text(options.value[end..], .{ .color = text_color, .wrap = .none });
             }
         }
     }
 
     tree.close(clip);
+    if (active and caret_index != Tree.none) {
+        try tree.scrollRegion(clip, .{});
+        tree.scrollFollow(caret_index);
+    }
     tree.close(face);
     tree.close(ring);
 }
 
-fn emitCaret(tree: *Tree, theme: *const Theme) Tree.Error!void {
+fn emitCaret(tree: *Tree, theme: *const Theme) Tree.Error!Tree.Index {
     const caret = try tree.open(.{
         .width = .{ .fixed = caret_width },
         .height = .{ .fixed = caret_height },
         .fill = theme.foreground,
     });
     tree.close(caret);
+    return caret;
 }

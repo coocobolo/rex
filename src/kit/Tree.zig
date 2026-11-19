@@ -491,6 +491,9 @@ len: Index = 0,
 current: Index = none,
 anchor_len: u8 = 0,
 scroll_len: u8 = 0,
+/// Descendant node (such as an active text input caret) kept horizontally
+/// visible inside its enclosing `id == .none` scroll region during `layout`.
+scroll_follow: Index = none,
 lines: Lines,
 anchors: [anchor_max]Anchor = undefined,
 /// Registered scroll regions (`scrollRegion`), kept sorted by ascending `node`.
@@ -509,6 +512,7 @@ pub fn reset(self: *Tree) void {
     self.current = none;
     self.anchor_len = 0;
     self.scroll_len = 0;
+    self.scroll_follow = none;
     self.lines.len = 0;
 }
 
@@ -546,6 +550,13 @@ pub fn scrollThumb(self: *Tree, index: Index, thumb: Index) void {
     unreachable;
 }
 
+/// Marks `index` (such as an active input caret) to be kept horizontally
+/// visible inside its enclosing anonymous scroll region during `layout`.
+pub fn scrollFollow(self: *Tree, index: Index) void {
+    assert(index < self.len);
+    self.scroll_follow = index;
+}
+
 /// Laid-out scroll bounds for the region with `id`, or zeros if not registered.
 pub fn scrollMax(self: *const Tree, id: Id) Scroll.Max {
     for (self.scrolls[0..self.scroll_len]) |region| {
@@ -578,6 +589,7 @@ pub fn scrollTargetAt(self: *const Tree, x: f32, y: f32, dx: f32, dy: f32) ?Scro
     while (i > 0) {
         i -= 1;
         const region = self.scrolls[i];
+        if (region.id == .none) continue;
         const region_node = &self.nodes[region.node];
         if (!region_node.rect.contains(x, y)) continue;
         if (self.clippedAt(region.node, x, y)) continue;
