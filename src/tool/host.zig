@@ -212,6 +212,12 @@ fn Host(comptime Tool: type) type {
         over: Id = .none,
         /// Node captured on left mouse press until release, for drag gestures.
         drag_id: Id = .none,
+        /// Scroll region whose overlay scrollbar is hovered, or `.none`.
+        hovered_scrollbar: Id = .none,
+        /// Active scrollbar thumb drag or track-click gesture.
+        scrollbar_drag: ScrollbarDrag = .idle,
+        /// Per-region auto-hide hold/fade timers for overlay scrollbars.
+        scrollbar_visibility: ScrollbarVisibility = .{},
         /// The size last told to the tool, in logical pixels.
         width: f32 = 0,
         height: f32 = 0,
@@ -357,13 +363,24 @@ fn Host(comptime Tool: type) type {
                         self.started_ms = null;
                     }
                     // The frame may have moved a node under a pointer that
-                    // stood still.
-                    self.pointerMoved();
+                    // stood still. Skip during an active scrollbar drag: the
+                    // pointer has not moved and `build` already synced or
+                    // cancelled the drag.
+                    if (self.scrollbar_drag == .idle) self.pointerMoved();
                     if (self.redraw) continue;
                 }
-                const timeout: ?f64 = if (@hasDecl(Tool, "wait")) Tool.wait(&self.state) else null;
-                self.platform.waitEvents(if (timeout) |seconds| seconds * 1000.0 else null);
+                const tool_ms: ?f64 = if (@hasDecl(Tool, "wait"))
+                    if (Tool.wait(&self.state)) |seconds| seconds * 1000.0 else null
+                else
+                    null;
+                const scroll_ms = self.scrollbar_visibility.nextWaitMs(awakeMs(self.io));
+                const wait_ms: ?f64 = if (tool_ms) |t|
+                    if (scroll_ms) |s| @min(t, s) else t
+                else
+                    scroll_ms;
+                self.platform.waitEvents(wait_ms);
                 self.drainEvents();
+                if (self.scrollbar_visibility.tick(awakeMs(self.io))) self.redraw = true;
                 if (@hasDecl(Tool, "wake") and Tool.wake(&self.state)) self.redraw = true;
             }
         }
@@ -405,6 +422,10 @@ fn Host(comptime Tool: type) type {
             try Tool.view(&self.state, &self.tree, theme);
             try self.tree.layout(self.font.measurer(), width, height);
             if (@hasDecl(Tool, "place")) Tool.place(&self.state, &self.tree);
+            const now_ms = awakeMs(self.io);
+            self.scrollbar_drag.sync(&self.tree);
+            self.scrollbar_visibility.sync(&self.tree, self.hovered_scrollbar, self.scrollbar_drag.activeId(), now_ms);
+            applyScrollbarHighlight(&self.tree, theme, &self.scrollbar_visibility, self.hovered_scrollbar, self.scrollbar_drag.activeId(), now_ms);
             try self.painter.paint(&self.tree, &self.font, &self.atlas);
         }
 
@@ -424,9 +445,41 @@ fn Host(comptime Tool: type) type {
             if (Tool.update(&self.state, event)) self.redraw = true;
         }
 
+        fn setHoveredScrollbar(self: *Self, id: Id) void {
+            if (self.hovered_scrollbar == id) return;
+            const prev = self.hovered_scrollbar;
+            self.hovered_scrollbar = id;
+            if (prev != .none and prev != self.scrollbar_drag.activeId()) {
+                self.scrollbar_visibility.unpin(prev, awakeMs(self.io));
+            }
+            if (id != .none) self.scrollbar_visibility.pin(id);
+            self.redraw = true;
+        }
+
         /// Tells the tool when the node under the pointer changed, and
         /// shows the shape that node asks for.
         fn pointerMoved(self: *Self) void {
+            if (self.scrollbar_drag == .dragging) {
+                self.window.setPointerShape(.hand);
+                if (self.scrollbar_drag.moveTo(self.pointer_x, self.pointer_y)) |scroll_event| {
+                    self.send(scroll_event);
+                }
+                return;
+            }
+            if (self.drag_id == .none and self.pointer_x >= 0) {
+                if (self.tree.scrollbarAt(self.pointer_x, self.pointer_y)) |hit| {
+                    if (hit.region.id != .none) {
+                        self.window.setPointerShape(.hand);
+                        self.setHoveredScrollbar(hit.region.id);
+                        if (self.over != .none) {
+                            self.over = .none;
+                            self.send(.{ .pointer = .{ .id = .none, .x = self.pointer_x, .y = self.pointer_y } });
+                        }
+                        return;
+                    }
+                }
+            }
+            self.setHoveredScrollbar(.none);
             const node = if (self.pointer_x < 0) null else self.tree.hit(self.pointer_x, self.pointer_y);
             const id = if (node) |n| n.box.id else .none;
             self.window.setPointerShape(if (node) |n| switch (n.box.pointer) {
@@ -492,11 +545,40 @@ fn Host(comptime Tool: type) type {
                     if (e.button != .left) continue;
                     switch (e.action) {
                         .press => {
+                            if (self.pointer_x >= 0) {
+                                if (self.tree.scrollbarAt(self.pointer_x, self.pointer_y)) |hit| {
+                                    if (hit.region.id != .none) {
+                                        self.drag_id = .none;
+                                        self.hovered_scrollbar = hit.region.id;
+                                        self.scrollbar_visibility.pin(hit.region.id);
+                                        self.window.setPointerShape(.hand);
+                                        if (self.over != .none) {
+                                            self.over = .none;
+                                            self.send(.{ .pointer = .{ .id = .none, .x = self.pointer_x, .y = self.pointer_y } });
+                                        }
+                                        if (self.scrollbar_drag.begin(hit, self.pointer_x, self.pointer_y)) |scroll_event| {
+                                            self.send(scroll_event);
+                                        }
+                                        self.redraw = true;
+                                        continue;
+                                    }
+                                }
+                            }
                             self.drag_id = self.over;
                             self.send(.{ .pointer = .{ .id = self.over, .x = self.pointer_x, .y = self.pointer_y } });
                             self.send(.{ .press = self.over });
                         },
                         .release => {
+                            if (self.scrollbar_drag == .dragging) {
+                                const released_id = self.scrollbar_drag.activeId();
+                                self.scrollbar_drag = .idle;
+                                self.redraw = true;
+                                self.pointerMoved();
+                                if (self.hovered_scrollbar != released_id) {
+                                    self.scrollbar_visibility.unpin(released_id, awakeMs(self.io));
+                                }
+                                continue;
+                            }
                             self.drag_id = .none;
                             self.send(.release);
                         },
@@ -515,6 +597,7 @@ fn Host(comptime Tool: type) type {
                     const dy = scrollDelta(e.dy);
                     if (dx == 0 and dy == 0) continue;
                     if (self.tree.scrollTargetAt(self.pointer_x, self.pointer_y, dx, dy)) |region| {
+                        if (self.scrollbar_visibility.reveal(region.id, awakeMs(self.io))) self.redraw = true;
                         self.send(.{ .scroll = .{
                             .id = region.id,
                             .dx = dx,
@@ -529,12 +612,16 @@ fn Host(comptime Tool: type) type {
                 },
                 .cursor_enter => |e| {
                     if (e.entered) continue;
+                    if (self.scrollbar_drag == .dragging or self.drag_id != .none) continue;
                     self.pointer_x = -1;
                     self.pointer_y = -1;
                     self.pointerMoved();
                 },
                 .focus => {},
-                .framebuffer_size => self.redraw = true,
+                .framebuffer_size => {
+                    self.scrollbar_visibility.revealAll(awakeMs(self.io));
+                    self.redraw = true;
+                },
                 .content_scale => |e| {
                     const scale: f32 = if (e.x > 0) e.x else 1;
                     if (scale == self.content_scale) continue;
@@ -568,6 +655,401 @@ fn Host(comptime Tool: type) type {
 /// turns down. A touchpad sends fractions of a notch.
 pub fn scrollDelta(y_offset: f64) f32 {
     return @floatCast(-y_offset * scroll_step);
+}
+
+/// Active scrollbar thumb drag or track-click jump gesture tracked by `Host`.
+pub const ScrollbarDrag = union(enum) {
+    idle,
+    dragging: Drag,
+
+    pub const Drag = struct {
+        id: Id,
+        track_start: f32,
+        travel: f32,
+        grab_offset: f32,
+        max_x: f32,
+        max_y: f32,
+        current_offset: f32,
+        axis: Tree.Axis,
+
+        fn maxForAxis(self: Drag) f32 {
+            return switch (self.axis) {
+                .column => self.max_y,
+                .row => self.max_x,
+            };
+        }
+
+        fn targetOffset(self: Drag, cursor: f32) f32 {
+            const max = self.maxForAxis();
+            if (!(self.travel > 0) or !(max > 0) or std.math.isNan(cursor)) return 0;
+            const thumb_pos = cursor - self.grab_offset;
+            const ratio = std.math.clamp((thumb_pos - self.track_start) / self.travel, 0, 1);
+            return ratio * max;
+        }
+    };
+
+    pub fn activeId(self: ScrollbarDrag) Id {
+        return switch (self) {
+            .idle => .none,
+            .dragging => |d| d.id,
+        };
+    }
+
+    /// Starts dragging `hit` at `(x, y)`. Clicking the thumb preserves the grab
+    /// offset and returns `null`; clicking the track centers the thumb under
+    /// the pointer and returns the immediate `.scroll` event.
+    pub fn begin(self: *ScrollbarDrag, hit: Tree.Scroll.ScrollbarHit, x: f32, y: f32) ?Event {
+        if (hit.region.id == .none) {
+            self.* = .idle;
+            return null;
+        }
+        const cursor = switch (hit.axis) {
+            .column => y,
+            .row => x,
+        };
+        const current_raw = switch (hit.axis) {
+            .column => hit.region.offset.y,
+            .row => hit.region.offset.x,
+        };
+        const max = switch (hit.axis) {
+            .column => hit.region.max.y,
+            .row => hit.region.max.x,
+        };
+        const current = if (std.math.isNan(current_raw)) 0 else std.math.clamp(current_raw, 0, @max(0, max));
+        const travel = @max(0, hit.track_len - hit.thumb_len);
+        const grab_offset = switch (hit.part) {
+            .thumb => cursor - hit.thumb_start,
+            .track => hit.thumb_len / 2,
+        };
+        self.* = .{ .dragging = .{
+            .id = hit.region.id,
+            .track_start = hit.track_start,
+            .travel = travel,
+            .grab_offset = grab_offset,
+            .max_x = hit.region.max.x,
+            .max_y = hit.region.max.y,
+            .current_offset = current,
+            .axis = hit.axis,
+        } };
+        return switch (hit.part) {
+            .thumb => null,
+            .track => self.moveTo(x, y),
+        };
+    }
+
+    /// Updates the drag to pointer `(x, y)` and returns the incremental `.scroll`
+    /// delta since the previous target, or `null` when idle or unchanged.
+    pub fn moveTo(self: *ScrollbarDrag, x: f32, y: f32) ?Event {
+        return switch (self.*) {
+            .idle => null,
+            .dragging => |*drag| {
+                const cursor = switch (drag.axis) {
+                    .column => y,
+                    .row => x,
+                };
+                const next = drag.targetOffset(cursor);
+                const max = drag.maxForAxis();
+                const delta = next - drag.current_offset;
+                if (delta == 0) return null;
+                if (next != 0 and next != max and @abs(delta) < 1e-3) return null;
+                drag.current_offset = next;
+                return .{ .scroll = .{
+                    .id = drag.id,
+                    .dx = if (drag.axis == .row) delta else 0,
+                    .dy = if (drag.axis == .column) delta else 0,
+                    .max_x = drag.max_x,
+                    .max_y = drag.max_y,
+                } };
+            },
+        };
+    }
+
+    /// Refreshes track geometry from the newly laid-out `tree`, or resets to
+    /// `.idle` if the dragged scroll region disappeared or stopped overflowing.
+    pub fn sync(self: *ScrollbarDrag, tree: *const Tree) void {
+        const drag = switch (self.*) {
+            .idle => return,
+            .dragging => |*d| d,
+        };
+        for (tree.scrolls[0..tree.scroll_len]) |region| {
+            if (region.id != drag.id) continue;
+            if (region.thumb == Tree.none) {
+                self.* = .idle;
+                return;
+            }
+            const thumb_rect = tree.nodes[region.thumb].rect;
+            if (thumb_rect.w <= 0 or thumb_rect.h <= 0) {
+                self.* = .idle;
+                return;
+            }
+            const viewport = tree.nodes[region.node].rect;
+            switch (drag.axis) {
+                .column => {
+                    if (!(region.max.y > 0)) {
+                        self.* = .idle;
+                        return;
+                    }
+                    const track_len = viewport.h - Tree.Scroll.thumb_track_pad * 2;
+                    drag.track_start = viewport.y + Tree.Scroll.thumb_track_pad;
+                    drag.travel = @max(0, track_len - thumb_rect.h);
+                    drag.max_x = region.max.x;
+                    drag.max_y = region.max.y;
+                    drag.current_offset = if (std.math.isNan(region.offset.y)) 0 else std.math.clamp(region.offset.y, 0, region.max.y);
+                },
+                .row => {
+                    if (!(region.max.x > 0)) {
+                        self.* = .idle;
+                        return;
+                    }
+                    const track_len = viewport.w - Tree.Scroll.thumb_track_pad * 2;
+                    drag.track_start = viewport.x + Tree.Scroll.thumb_track_pad;
+                    drag.travel = @max(0, track_len - thumb_rect.w);
+                    drag.max_x = region.max.x;
+                    drag.max_y = region.max.y;
+                    drag.current_offset = if (std.math.isNan(region.offset.x)) 0 else std.math.clamp(region.offset.x, 0, region.max.x);
+                },
+            }
+            return;
+        }
+        self.* = .idle;
+    }
+};
+
+/// Auto-hide timer state for overlay scrollbars in `Host`.
+///
+/// Tracks up to `Tree.Scroll.max` overflowing regions without heap allocation:
+/// newly overflowing, scrolled, or resized regions stay visible for `hold_ms`,
+/// fade to transparent over `fade_ms`, and then stop waking the event loop.
+/// Hovered or dragged regions stay `.pinned` until interaction ends.
+pub const ScrollbarVisibility = struct {
+    pub const hold_ms: i64 = 1000;
+    pub const fade_ms: i64 = 200;
+    pub const fade_frame_ms: f64 = 16.0;
+
+    pub const Phase = union(enum) {
+        /// Kept visible while hovered or dragged.
+        pinned,
+        /// Visible after activity; starts fading once `now_ms >= until_ms`.
+        holding: i64,
+        /// Fading linearly to transparent over `fade_ms` from `start_ms`.
+        fading: i64,
+        /// Fully transparent; `Tree.scrollbarAt` still hits the grab strip.
+        hidden,
+    };
+
+    pub const Entry = struct {
+        phase: Phase,
+        id: Id,
+    };
+
+    entries: [Tree.Scroll.max]Entry = undefined,
+    len: u8 = 0,
+
+    fn find(self: *ScrollbarVisibility, id: Id) ?*Entry {
+        for (self.entries[0..self.len]) |*entry| {
+            if (entry.id == id) return entry;
+        }
+        return null;
+    }
+
+    fn findConst(self: *const ScrollbarVisibility, id: Id) ?Entry {
+        for (self.entries[0..self.len]) |entry| {
+            if (entry.id == id) return entry;
+        }
+        return null;
+    }
+
+    /// Reconciles tracked regions against the newly laid-out `tree`.
+    /// Newly overflowing regions start `.holding`; hovered/dragged regions are
+    /// `.pinned`; regions that stop overflowing or vanish are dropped.
+    pub fn sync(self: *ScrollbarVisibility, tree: *const Tree, hovered_id: Id, dragged_id: Id, now_ms: i64) void {
+        var next: [Tree.Scroll.max]Entry = undefined;
+        var next_len: u8 = 0;
+
+        for (tree.scrolls[0..tree.scroll_len]) |region| {
+            if (region.id == .none or region.thumb == Tree.none) continue;
+            const thumb = tree.nodes[region.thumb].rect;
+            if (thumb.w <= 0 or thumb.h <= 0) continue;
+
+            const active = region.id == hovered_id or region.id == dragged_id;
+            const phase: Phase = if (active)
+                .pinned
+            else if (self.findConst(region.id)) |prev| switch (prev.phase) {
+                .pinned => .{ .holding = now_ms + hold_ms },
+                .holding => |until_ms| if (now_ms >= until_ms)
+                    .{ .fading = now_ms }
+                else
+                    .{ .holding = until_ms },
+                .fading => |start_ms| if (now_ms >= start_ms + fade_ms)
+                    .hidden
+                else
+                    .{ .fading = start_ms },
+                .hidden => .hidden,
+            } else .{ .holding = now_ms + hold_ms };
+
+            next[next_len] = .{ .id = region.id, .phase = phase };
+            next_len += 1;
+        }
+
+        self.entries = next;
+        self.len = next_len;
+    }
+
+    /// Marks `id` as hovered/dragged so it stays visible until unpinned.
+    pub fn pin(self: *ScrollbarVisibility, id: Id) void {
+        if (id == .none) return;
+        if (self.find(id)) |entry| {
+            entry.phase = .pinned;
+        } else if (self.len < Tree.Scroll.max) {
+            self.entries[self.len] = .{ .id = id, .phase = .pinned };
+            self.len += 1;
+        }
+    }
+
+    /// Starts the hold timer for `id` if it was `.pinned`.
+    pub fn unpin(self: *ScrollbarVisibility, id: Id, now_ms: i64) void {
+        if (id == .none) return;
+        if (self.find(id)) |entry| {
+            if (entry.phase == .pinned) entry.phase = .{ .holding = now_ms + hold_ms };
+        }
+    }
+
+    /// Reveals `id` after scroll activity; returns true if the thumb was
+    /// hidden or fading and needs a redraw even if scroll offset clamped.
+    pub fn reveal(self: *ScrollbarVisibility, id: Id, now_ms: i64) bool {
+        if (id == .none) return false;
+        if (self.find(id)) |entry| {
+            switch (entry.phase) {
+                .pinned => return false,
+                .holding => {
+                    entry.phase = .{ .holding = now_ms + hold_ms };
+                    return false;
+                },
+                .fading, .hidden => {
+                    entry.phase = .{ .holding = now_ms + hold_ms };
+                    return true;
+                },
+            }
+        }
+        if (self.len < Tree.Scroll.max) {
+            self.entries[self.len] = .{ .id = id, .phase = .{ .holding = now_ms + hold_ms } };
+            self.len += 1;
+            return true;
+        }
+        return false;
+    }
+
+    /// Resets every non-pinned tracked scrollbar to `.holding` (e.g. on resize).
+    pub fn revealAll(self: *ScrollbarVisibility, now_ms: i64) void {
+        for (self.entries[0..self.len]) |*entry| {
+            if (entry.phase != .pinned) {
+                entry.phase = .{ .holding = now_ms + hold_ms };
+            }
+        }
+    }
+
+    /// Advances hold and fade timers to `now_ms`; returns true if a frame must
+    /// be drawn (fade started, fade stepped, or fade reached `.hidden`).
+    pub fn tick(self: *ScrollbarVisibility, now_ms: i64) bool {
+        var changed = false;
+        for (self.entries[0..self.len]) |*entry| {
+            switch (entry.phase) {
+                .pinned, .hidden => {},
+                .holding => |until_ms| {
+                    if (now_ms >= until_ms) {
+                        entry.phase = .{ .fading = now_ms };
+                        changed = true;
+                    }
+                },
+                .fading => |start_ms| {
+                    if (now_ms >= start_ms + fade_ms) {
+                        entry.phase = .hidden;
+                    }
+                    changed = true;
+                },
+            }
+        }
+        return changed;
+    }
+
+    /// Milliseconds until the next visibility transition or fade frame, or
+    /// `null` when every scrollbar is `.hidden` or `.pinned` (zero idle wakeups).
+    pub fn nextWaitMs(self: *const ScrollbarVisibility, now_ms: i64) ?f64 {
+        var best: ?f64 = null;
+        for (self.entries[0..self.len]) |entry| {
+            const wait: f64 = switch (entry.phase) {
+                .pinned, .hidden => continue,
+                .holding => |until_ms| @floatFromInt(@max(0, until_ms - now_ms)),
+                .fading => |start_ms| blk: {
+                    const rem = start_ms + fade_ms - now_ms;
+                    if (rem <= 0) break :blk 0;
+                    break :blk @min(fade_frame_ms, @as(f64, @floatFromInt(rem)));
+                },
+            };
+            best = if (best) |b| @min(b, wait) else wait;
+        }
+        return best;
+    }
+
+    /// Effective opacity for region `id` at `now_ms`.
+    pub fn opacityOf(self: *const ScrollbarVisibility, id: Id, hovered_id: Id, dragged_id: Id, now_ms: i64) f32 {
+        if (id == .none) return 0;
+        if (id == dragged_id) return kit.scroll_area.thumb_drag_opacity;
+        if (id == hovered_id) return kit.scroll_area.thumb_hover_opacity;
+        const entry = self.findConst(id) orelse return 0;
+        return switch (entry.phase) {
+            .pinned, .holding => kit.scroll_area.thumb_opacity,
+            .fading => |start_ms| blk: {
+                const elapsed = now_ms - start_ms;
+                if (elapsed <= 0) break :blk kit.scroll_area.thumb_opacity;
+                if (elapsed >= fade_ms) break :blk 0;
+                const remaining = 1.0 - @as(f32, @floatFromInt(elapsed)) / @as(f32, @floatFromInt(fade_ms));
+                break :blk kit.scroll_area.thumb_opacity * remaining;
+            },
+            .hidden => 0,
+        };
+    }
+};
+
+/// Applies auto-hide opacity and active hover/drag widening to every laid-out
+/// scrollbar thumb on `tree` before painting.
+pub fn applyScrollbarHighlight(
+    tree: *Tree,
+    theme: *const Theme,
+    visibility: *const ScrollbarVisibility,
+    hovered_id: Id,
+    dragged_id: Id,
+    now_ms: i64,
+) void {
+    for (tree.scrolls[0..tree.scroll_len]) |region| {
+        if (region.id == .none or region.thumb == Tree.none) continue;
+        const thumb = &tree.nodes[region.thumb];
+        if (thumb.rect.w <= 0 or thumb.rect.h <= 0) continue;
+
+        const active = region.id == dragged_id or region.id == hovered_id;
+        const opacity = visibility.opacityOf(region.id, hovered_id, dragged_id, now_ms);
+        if (opacity <= 0) {
+            thumb.box.fill = .transparent;
+            continue;
+        }
+        if (active) {
+            const viewport = tree.nodes[region.node].rect;
+            const vertical = region.max.y > 0 and
+                viewport.w > Tree.Scroll.thumb_thickness + Tree.Scroll.thumb_inset * 2 and
+                viewport.h > Tree.Scroll.thumb_track_pad * 2;
+            if (vertical) {
+                const right = thumb.rect.x + thumb.rect.w;
+                thumb.rect.w = kit.scroll_area.thumb_active_thickness;
+                thumb.rect.x = right - thumb.rect.w;
+            } else {
+                const bottom = thumb.rect.y + thumb.rect.h;
+                thumb.rect.h = kit.scroll_area.thumb_active_thickness;
+                thumb.rect.y = bottom - thumb.rect.h;
+            }
+            thumb.box.radius = kit.scroll_area.thumb_active_radius;
+        }
+        thumb.box.fill = theme.muted_foreground.fade(opacity);
+    }
 }
 
 /// What the host itself takes from the config: the theme from `[ui]
