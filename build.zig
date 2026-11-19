@@ -536,21 +536,28 @@ pub fn build(b: *std.Build) !void {
         .{ "src/config/root.zig", .{ "src/term", "src/driver", "src/renderer", "src/termio", "src/freetype", "src/builtin" } },
         .{ "src/builtin/wellbeing/root.zig", .{ "src/renderer", "src/kit", "src/freetype", "src/term", "src/driver", "src/termio" } },
     };
+    const imports_module = b.createModule(.{
+        .root_source_file = b.path("tools/imports/imports.zig"),
+        .target = b.graph.host,
+        .optimize = .Debug,
+    });
     const import_check_module = b.createModule(.{
         .root_source_file = b.path("tools/imports/check.zig"),
         .target = b.graph.host,
         .optimize = .Debug,
+        .imports = &.{.{ .name = "imports", .module = imports_module }},
     });
     const import_check_exe = b.addExecutable(.{
         .name = "check-imports",
         .root_module = import_check_module,
     });
-    const no_glfw_exe = b.addExecutable(.{
-        .name = "no-glfw",
+    const check_module_exe = b.addExecutable(.{
+        .name = "check-module-imports",
         .root_module = b.createModule(.{
-            .root_source_file = b.path("tools/imports/no_glfw.zig"),
+            .root_source_file = b.path("tools/imports/check_module.zig"),
             .target = b.graph.host,
             .optimize = .Debug,
+            .imports = &.{.{ .name = "imports", .module = imports_module }},
         }),
     });
     const import_check_step = b.step("check-imports", "Check import boundaries, including GLFW confinement to the platform backend");
@@ -560,12 +567,29 @@ pub fn build(b: *std.Build) !void {
         inline for (rule[1]) |dir| run.addDirectoryArg(b.path(dir));
         import_check_step.dependOn(&run.step);
     }
-    const no_glfw_run = b.addRunArtifact(no_glfw_exe);
-    no_glfw_run.addDirectoryArg(b.path("src"));
-    no_glfw_run.addDirectoryArg(b.path("src/platform/glfw"));
-    import_check_step.dependOn(&no_glfw_run.step);
+    // Module imports are not followed by the path checker above. Express each
+    // backend-confinement boundary as data: the module, its path fragment, the
+    // backend directory it belongs to, and the files allowed to reach it.
+    const module_rules = .{
+        .{
+            .module = "glfw",
+            .fragment = "glfw/",
+            .backend = "src/platform/glfw",
+            .allowed = .{ "src/platform/backend.zig", "src/root.zig" },
+        },
+    };
+    inline for (module_rules) |rule| {
+        const run = b.addRunArtifact(check_module_exe);
+        run.addDirectoryArg(b.path("src"));
+        run.addDirectoryArg(b.path(rule.backend));
+        run.addArg(rule.module);
+        run.addArg(rule.fragment);
+        inline for (rule.allowed) |file| run.addFileArg(b.path(file));
+        import_check_step.dependOn(&run.step);
+    }
     test_step.dependOn(import_check_step);
     test_step.dependOn(tests.run(tests.add("test-import-check", import_check_module, test_filters)));
+    test_step.dependOn(tests.run(tests.add("test-imports", imports_module, test_filters)));
     test_step.dependOn(theme_check_step);
     test_step.dependOn(tests.run(tests.add("test-theme-check", check_theme_module, test_filters)));
     test_step.dependOn(tests.run(tests.add("test-layout", layout_module, test_filters)));

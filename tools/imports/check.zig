@@ -10,6 +10,7 @@
 //! `"glfw"`) are not followed.
 
 const std = @import("std");
+const imports = @import("imports");
 
 pub fn main(init: std.process.Init) !void {
     const io = init.io;
@@ -42,7 +43,7 @@ pub fn main(init: std.process.Init) !void {
         }
         const source = try readFile(io, arena, path);
         const dir = std.fs.path.dirname(path) orelse ".";
-        var it: Imports = .{ .source = source };
+        var it: imports.Imports = .{ .source = source };
         while (it.next()) |target| {
             if (!std.mem.endsWith(u8, target, ".zig")) continue;
             const resolved = try std.fs.path.resolve(arena, &.{ dir, target });
@@ -75,27 +76,6 @@ fn reportChain(path: []const u8, parents: *const std.StringHashMapUnmanaged(?[]c
     }
 }
 
-/// The string literals of the `@import`s in `source` that are not in a
-/// line comment.
-const Imports = struct {
-    source: []const u8,
-    index: usize = 0,
-
-    const needle = "@import(\"";
-
-    fn next(self: *Imports) ?[]const u8 {
-        while (std.mem.indexOfPos(u8, self.source, self.index, needle)) |at| {
-            const start = at + needle.len;
-            const end = std.mem.indexOfScalarPos(u8, self.source, start, '"') orelse return null;
-            self.index = end + 1;
-            const line_start = if (std.mem.lastIndexOfScalar(u8, self.source[0..at], '\n')) |nl| nl + 1 else 0;
-            if (std.mem.indexOf(u8, self.source[line_start..at], "//") != null) continue;
-            return self.source[start..end];
-        }
-        return null;
-    }
-};
-
 fn readFile(io: std.Io, gpa: std.mem.Allocator, path: []const u8) ![]u8 {
     const file = try std.Io.Dir.openFile(.cwd(), io, path, .{ .mode = .read_only });
     defer file.close(io);
@@ -104,17 +84,4 @@ fn readFile(io: std.Io, gpa: std.mem.Allocator, path: []const u8) ![]u8 {
     const n = try file.readPositionalAll(io, buf, 0);
     if (n != len) return error.ShortRead;
     return buf;
-}
-
-test Imports {
-    var it: Imports = .{ .source =
-        \\const a = @import("a.zig");
-        \\// const b = @import("b.zig");
-        \\const std = @import("std");
-        \\    _ = @import("c.zig"); // @import("d.zig")
-    };
-    try std.testing.expectEqualStrings("a.zig", it.next().?);
-    try std.testing.expectEqualStrings("std", it.next().?);
-    try std.testing.expectEqualStrings("c.zig", it.next().?);
-    try std.testing.expectEqual(null, it.next());
 }
