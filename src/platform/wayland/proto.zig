@@ -181,3 +181,47 @@ pub const cursor_shape_device = struct {
     pub const shape_pointer: u32 = 4;
     pub const shape_text: u32 = 9;
 };
+
+pub const fractional_scale_manager = struct {
+    pub const destroy: u32 = 0;
+    pub const get_fractional_scale: u32 = 1;
+};
+
+pub const fractional_scale = struct {
+    pub const destroy: u32 = 0;
+
+    pub const Listener = extern struct {
+        preferred_scale: *const fn (?*anyopaque, ?*wl.Proxy, u32) callconv(.c) void,
+    };
+};
+
+pub const viewporter = struct {
+    pub const destroy: u32 = 0;
+    pub const get_viewport: u32 = 1;
+};
+
+pub const viewport = struct {
+    pub const destroy: u32 = 0;
+    pub const set_destination: u32 = 2;
+};
+
+pub const text_input_manager = struct {
+    pub const destroy: u32 = 0;
+    pub const get_text_input: u32 = 1;
+};
+
+pub const text_input = struct {
+    pub const destroy: u32 = 0;
+    pub const enable: u32 = 1;
+    pub const disable: u32 = 2;
+    pub const commit: u32 = 7;
+
+    pub const Listener = extern struct {
+        enter: *const fn (?*anyopaque, ?*wl.Proxy, ?*wl.Proxy) callconv(.c) void,
+        leave: *const fn (?*anyopaque, ?*wl.Proxy, ?*wl.Proxy) callconv(.c) void,
+        preedit_string: *const fn (?*anyopaque, ?*wl.Proxy, [*c]const u8, i32, i32) callconv(.c) void,
+        commit_string: *const fn (?*anyopaque, ?*wl.Proxy, [*c]const u8) callconv(.c) void,
+        delete_surrounding_text: *const fn (?*anyopaque, ?*wl.Proxy, u32, u32) callconv(.c) void,
+        done: *const fn (?*anyopaque, ?*wl.Proxy, u32) callconv(.c) void,
+    };
+};

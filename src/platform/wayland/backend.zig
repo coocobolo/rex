@@ -17,6 +17,7 @@ const events = @import("../Event.zig");
 const Window = @import("../Window.zig");
 const proto = @import("proto.zig");
 const seat = @import("seat.zig");
+const text_input = @import("text_input.zig");
 const WaylandWindow = @import("WaylandWindow.zig");
 const wl = @import("wl.zig");
 const wl_egl = @import("wl_egl.zig");
@@ -86,9 +87,13 @@ const State = struct {
     compositor: ?*wl.Proxy = null,
     xdg_wm_base: ?*wl.Proxy = null,
     xdg_decoration_manager: ?*wl.Proxy = null,
+    fractional_scale_manager: ?*wl.Proxy = null,
+    viewporter: ?*wl.Proxy = null,
+    text_input_manager: ?*wl.Proxy = null,
     cursor_shape_manager: ?*wl.Proxy = null,
     seat: ?*wl.Proxy = null,
     seat_state: seat.Seat = .{},
+    text_input_state: text_input.TextInput = .{},
     egl_display: e.EGLDisplay = null,
     egl_config: e.EGLConfig = null,
     context: e.EGLContext = null,
@@ -483,6 +488,7 @@ pub fn destroyWindow(window: Window) void {
     for (&state.window_slots, &state.window_used) |*slot, *used| {
         if (slot == ptr and used.*) {
             state.seat_state.onWindowDestroyed(slot);
+            state.text_input_state.onWindowDestroyed(slot);
             slot.deinit();
             used.* = false;
             return;
@@ -570,8 +576,21 @@ fn drainWakeup() void {
 }
 
 fn destroyGlobals() void {
+    state.text_input_state.deinit();
     state.seat_state.deinit();
     const wl_lib = if (state.wl) |*wlib| wlib else return;
+    if (state.text_input_manager) |p| {
+        _ = wl_lib.wl_proxy_marshal_flags(p, proto.text_input_manager.destroy, null, wl_lib.wl_proxy_get_version(p), proto.marshal_flag_destroy);
+        state.text_input_manager = null;
+    }
+    if (state.viewporter) |p| {
+        _ = wl_lib.wl_proxy_marshal_flags(p, proto.viewporter.destroy, null, wl_lib.wl_proxy_get_version(p), proto.marshal_flag_destroy);
+        state.viewporter = null;
+    }
+    if (state.fractional_scale_manager) |p| {
+        _ = wl_lib.wl_proxy_marshal_flags(p, proto.fractional_scale_manager.destroy, null, wl_lib.wl_proxy_get_version(p), proto.marshal_flag_destroy);
+        state.fractional_scale_manager = null;
+    }
     if (state.cursor_shape_manager) |p| {
         _ = wl_lib.wl_proxy_marshal_flags(p, proto.cursor_shape_manager.destroy, null, wl_lib.wl_proxy_get_version(p), proto.marshal_flag_destroy);
         state.cursor_shape_manager = null;
@@ -655,6 +674,48 @@ fn onRegistryGlobal(
             v,
             @as(?*anyopaque, null),
         );
+    } else if (std.mem.eql(u8, iface_name, "wp_fractional_scale_manager_v1") and state.fractional_scale_manager == null) {
+        const v: u32 = @min(version, 1);
+        state.fractional_scale_manager = wl_lib.wl_proxy_marshal_flags(
+            registry,
+            proto.registry.bind,
+            ifaces.fractional_scale_manager,
+            v,
+            0,
+            name,
+            ifaces.fractional_scale_manager.name,
+            v,
+            @as(?*anyopaque, null),
+        );
+    } else if (std.mem.eql(u8, iface_name, "wp_viewporter") and state.viewporter == null) {
+        const v: u32 = @min(version, 1);
+        state.viewporter = wl_lib.wl_proxy_marshal_flags(
+            registry,
+            proto.registry.bind,
+            ifaces.viewporter,
+            v,
+            0,
+            name,
+            ifaces.viewporter.name,
+            v,
+            @as(?*anyopaque, null),
+        );
+    } else if (std.mem.eql(u8, iface_name, "zwp_text_input_manager_v3") and state.text_input_manager == null) {
+        const v: u32 = @min(version, 1);
+        state.text_input_manager = wl_lib.wl_proxy_marshal_flags(
+            registry,
+            proto.registry.bind,
+            ifaces.text_input_manager,
+            v,
+            0,
+            name,
+            ifaces.text_input_manager.name,
+            v,
+            @as(?*anyopaque, null),
+        );
+        if (state.text_input_manager) |mgr| {
+            if (state.seat) |s| state.text_input_state.attach(mgr, s);
+        }
     } else if (std.mem.eql(u8, iface_name, "wp_cursor_shape_manager_v1") and state.cursor_shape_manager == null) {
         const v: u32 = @min(version, 1);
         state.cursor_shape_manager = wl_lib.wl_proxy_marshal_flags(
@@ -683,6 +744,7 @@ fn onRegistryGlobal(
         )) |wl_seat| {
             state.seat = wl_seat;
             state.seat_state.attach(wl_seat);
+            if (state.text_input_manager) |mgr| state.text_input_state.attach(mgr, wl_seat);
         }
     }
 }

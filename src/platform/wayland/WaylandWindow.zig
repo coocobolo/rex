@@ -19,6 +19,8 @@ wl_surface: ?*wl.Proxy = null,
 xdg_surface: ?*wl.Proxy = null,
 xdg_toplevel: ?*wl.Proxy = null,
 xdg_decoration: ?*wl.Proxy = null,
+fractional_scale: ?*wl.Proxy = null,
+viewport: ?*wl.Proxy = null,
 egl_window: ?*w.wl_egl_window = null,
 egl_surface: e.EGLSurface = null,
 context: e.EGLContext = null,
@@ -149,9 +151,45 @@ pub fn init(self: *WaylandWindow, option: InitOption) Error!void {
         self.xdg_decoration = null;
     };
 
+    if (backend.state.fractional_scale_manager) |fs_mgr| {
+        if (wl_lib.wl_proxy_marshal_flags(
+            fs_mgr,
+            proto.fractional_scale_manager.get_fractional_scale,
+            ifaces.fractional_scale,
+            wl_lib.wl_proxy_get_version(fs_mgr),
+            0,
+            @as(?*anyopaque, null),
+            surf,
+        )) |fs| {
+            self.fractional_scale = fs;
+            _ = wl_lib.wl_proxy_add_listener(fs, @ptrCast(@constCast(&fractional_scale_listener)), self);
+        }
+    }
+    errdefer if (self.fractional_scale) |fs| {
+        _ = wl_lib.wl_proxy_marshal_flags(fs, proto.fractional_scale.destroy, null, wl_lib.wl_proxy_get_version(fs), proto.marshal_flag_destroy);
+        self.fractional_scale = null;
+    };
+
+    if (backend.state.viewporter) |vp_mgr| {
+        self.viewport = wl_lib.wl_proxy_marshal_flags(
+            vp_mgr,
+            proto.viewporter.get_viewport,
+            ifaces.viewport,
+            wl_lib.wl_proxy_get_version(vp_mgr),
+            0,
+            @as(?*anyopaque, null),
+            surf,
+        );
+    }
+    errdefer if (self.viewport) |vp| {
+        _ = wl_lib.wl_proxy_marshal_flags(vp, proto.viewport.destroy, null, wl_lib.wl_proxy_get_version(vp), proto.marshal_flag_destroy);
+        self.viewport = null;
+    };
+
     // Commit empty surface so the compositor sends the initial configure.
     _ = wl_lib.wl_proxy_marshal_flags(surf, proto.surface.commit, null, wl_lib.wl_proxy_get_version(surf), 0);
     _ = wl_lib.wl_display_roundtrip(backend.state.display.?);
+    self.applyViewport();
 
     const fb_w: c_int = @intCast(self.pixelWidth());
     const fb_h: c_int = @intCast(self.pixelHeight());
@@ -218,6 +256,12 @@ pub fn deinit(self: *WaylandWindow) void {
         }
     }
     if (self.egl_window) |egl_win| wl_egl_lib.wl_egl_window_destroy(egl_win);
+    if (self.viewport) |vp| {
+        _ = wl_lib.wl_proxy_marshal_flags(vp, proto.viewport.destroy, null, wl_lib.wl_proxy_get_version(vp), proto.marshal_flag_destroy);
+    }
+    if (self.fractional_scale) |fs| {
+        _ = wl_lib.wl_proxy_marshal_flags(fs, proto.fractional_scale.destroy, null, wl_lib.wl_proxy_get_version(fs), proto.marshal_flag_destroy);
+    }
     if (self.xdg_decoration) |deco| {
         _ = wl_lib.wl_proxy_marshal_flags(deco, proto.xdg_toplevel_decoration.destroy, null, wl_lib.wl_proxy_get_version(deco), proto.marshal_flag_destroy);
     }
@@ -333,6 +377,7 @@ fn onXdgSurfaceConfigure(data: ?*anyopaque, xdg_surf: ?*wl.Proxy, serial: u32) c
     const new_w = self.pixelWidth();
     const new_h = self.pixelHeight();
     self.configured = true;
+    self.applyViewport();
 
     if (self.egl_window) |egl_win| {
         if (new_w != prev_w or new_h != prev_h) {
@@ -403,6 +448,62 @@ const xdg_toplevel_listener: proto.xdg_toplevel.Listener = .{
     .close = onXdgToplevelClose,
     .configure_bounds = onXdgToplevelConfigureBounds,
     .wm_capabilities = onXdgToplevelWmCapabilities,
+};
+
+/// Converts a `wp_fractional_scale_v1` value (in 1/120ths) to a scale factor.
+pub fn scaleFrom120(scale_120: u32) f32 {
+    if (scale_120 == 0) return 1.0;
+    return @as(f32, @floatFromInt(scale_120)) / 120.0;
+}
+
+fn applyViewport(self: *WaylandWindow) void {
+    const vp = self.viewport orelse return;
+    const wl_lib = if (backend.state.wl) |*wlib| wlib else return;
+    _ = wl_lib.wl_proxy_marshal_flags(
+        vp,
+        proto.viewport.set_destination,
+        null,
+        wl_lib.wl_proxy_get_version(vp),
+        0,
+        @as(i32, @intCast(self.logical_width)),
+        @as(i32, @intCast(self.logical_height)),
+    );
+}
+
+fn onFractionalScale(data: ?*anyopaque, _: ?*wl.Proxy, scale_120: u32) callconv(.c) void {
+    const self: *WaylandWindow = @ptrCast(@alignCast(data.?));
+    if (scale_120 == 0) return;
+    const new_scale = scaleFrom120(scale_120);
+    if (new_scale == self.scale) return;
+
+    const prev_w = self.pixelWidth();
+    const prev_h = self.pixelHeight();
+    self.scale = new_scale;
+    const new_w = self.pixelWidth();
+    const new_h = self.pixelHeight();
+
+    self.applyViewport();
+    if (self.egl_window) |egl_win| {
+        if (new_w != prev_w or new_h != prev_h) {
+            backend.state.wl_egl.?.wl_egl_window_resize(egl_win, @intCast(new_w), @intCast(new_h), 0, 0);
+        }
+    }
+    backend.pushEvent(.{ .content_scale = .{
+        .window = self.windowHandle(),
+        .x = new_scale,
+        .y = new_scale,
+    } });
+    if (new_w != prev_w or new_h != prev_h) {
+        backend.pushEvent(.{ .framebuffer_size = .{
+            .window = self.windowHandle(),
+            .width = new_w,
+            .height = new_h,
+        } });
+    }
+}
+
+const fractional_scale_listener: proto.fractional_scale.Listener = .{
+    .preferred_scale = onFractionalScale,
 };
 
 const xdg_decoration_listener: proto.xdg_toplevel_decoration.Listener = .{
