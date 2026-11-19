@@ -18,8 +18,10 @@ pub const Selection = @import("Selection.zig");
 pub const Dimension = @import("dimension.zig").Dimension;
 pub const DirtyFlags = @import("dirty.zig").DirtyFlags;
 pub const KitPainter = @import("KitPainter.zig");
+pub const AsciiOverlay = @import("AsciiOverlay.zig");
 
 test {
+    _ = @import("ascii_overlay_test.zig");
     _ = @import("atlas_test.zig");
     _ = @import("decoration_test.zig");
     _ = @import("frame_test.zig");
