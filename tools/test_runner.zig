@@ -1,12 +1,16 @@
 //! Zig 0.16.0's lib/compiler/test_runner.zig, taken from the ulid repo
-//! (first patched in the zip repo) with two fixes for fuzz mode
-//! (`zig build fuzz --fuzz -Dllvm`). Search for "PATCH".
-//! - The stock runner doesn't compile with -ffuzz: its fuzz error path
-//!   passes `@errorReturnTrace()` (a `*builtin.StackTrace`) to
-//!   `std.debug.writeStackTrace`, which takes a `*const debug.StackTrace`.
-//!   Now it calls `writeErrorReturnTrace`.
-//! - Fuzz inputs ran with `std.testing.io` already deinitialized, so a
-//!   target using it would hang. Now each input gets a fresh one.
+//! (first patched in the zip repo). Local changes are marked "PATCH":
+//! - Fuzz mode: writeErrorReturnTrace instead of writeStackTrace, and a fresh
+//!   std.testing.io per input (`zig build fuzz --fuzz -Dllvm`).
+//! - `--cache-dir=` now matches the form it slices, so a bare flag is rejected
+//!   instead of panicking.
+//! - run_test initializes testing.io only after the fallible handshake, so an
+//!   error cannot skip its cleanup.
+//! - stderr isTty falls back to false instead of `catch unreachable`.
+//! - Removed the unused `fatal` alias and merged the two identical backend
+//!   capability switches in mainSimple.
+//! Progress output in mainSimple is best-effort by design: the `catch {}`
+//! calls keep a closed stdout from failing an otherwise passing test.
 //!
 //! build.zig uses this for every test binary. Delete it, and the
 //! `test_runner` field in build.zig's `Tests`, once a Zig release fixes
@@ -16,7 +20,6 @@ const builtin = @import("builtin");
 
 const std = @import("std");
 const Io = std.Io;
-const fatal = std.process.fatal;
 const testing = std.testing;
 const assert = std.debug.assert;
 const panic = std.debug.panic;
@@ -68,7 +71,8 @@ pub fn main(init: std.process.Init.Minimal) void {
         } else if (std.mem.startsWith(u8, arg, "--seed=")) {
             testing.random_seed = std.fmt.parseUnsigned(u32, arg["--seed=".len..], 0) catch
                 @panic("unable to parse --seed command line argument");
-        } else if (std.mem.startsWith(u8, arg, "--cache-dir")) {
+        } else if (std.mem.startsWith(u8, arg, "--cache-dir=")) {
+            // PATCH: match the form that is sliced; a bare --cache-dir panicked.
             opt_cache_dir = arg["--cache-dir=".len..];
         } else {
             panic("unrecognized command line argument: {s}", .{arg});
@@ -137,18 +141,19 @@ fn mainServer(init: std.process.Init.Minimal) !void {
             .run_test => {
                 testing.environ = init.environ;
                 testing.allocator_instance = .{};
+                log_err_count = 0;
+                is_fuzz_test = false;
+                // PATCH: complete the fallible handshake before taking
+                // ownership of testing.io, so an error cannot skip its deinit.
+                const index = try server.receiveBody_u32();
+                const test_fn = builtin.test_functions[index];
+                // let the build server know we're starting the test now
+                try server.serveStringMessage(.test_started, &.{});
+
                 testing.io_instance = .init(testing.allocator, .{
                     .argv0 = .init(init.args),
                     .environ = init.environ,
                 });
-                log_err_count = 0;
-                const index = try server.receiveBody_u32();
-                const test_fn = builtin.test_functions[index];
-                is_fuzz_test = false;
-
-                // let the build server know we're starting the test now
-                try server.serveStringMessage(.test_started, &.{});
-
                 const TestResults = std.zig.Server.Message.TestResults;
                 const status: TestResults.Status = if (test_fn.func()) |v| s: {
                     v;
@@ -280,7 +285,8 @@ fn mainTerminal(init: std.process.Init.Minimal) void {
         .root_name = "Test",
         .estimated_total_items = test_fn_list.len,
     });
-    const have_tty = Io.File.stderr().isTty(runner_threaded_io) catch unreachable;
+    // PATCH: fall back to "no tty" instead of unreachable if the query fails.
+    const have_tty = Io.File.stderr().isTty(runner_threaded_io) catch false;
 
     var leaks: usize = 0;
     for (test_fn_list, 0..) |test_fn, i| {
@@ -374,16 +380,14 @@ pub fn log(
 /// work-in-progress backends can handle it.
 pub fn mainSimple() anyerror!void {
     @disableInstrumentation();
-    // is the backend capable of calling `Io.File.writeAll`?
-    const enable_write = switch (builtin.zig_backend) {
+    // PATCH: both capabilities had the same backend switch; compute it once.
+    // Is the backend capable of calling `Io.File.writeAll` / `Io.Writer.print`?
+    const can_write = switch (builtin.zig_backend) {
         .stage2_aarch64, .stage2_riscv64 => true,
         else => false,
     };
-    // is the backend capable of calling `Io.Writer.print`?
-    const enable_print = switch (builtin.zig_backend) {
-        .stage2_aarch64, .stage2_riscv64 => true,
-        else => false,
-    };
+    const enable_write = can_write;
+    const enable_print = can_write;
 
     testing.io_instance = .init(testing.allocator, .{});
 
