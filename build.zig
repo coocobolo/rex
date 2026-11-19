@@ -152,6 +152,9 @@ pub fn build(b: *std.Build) !void {
             .{ .name = "xkbcommon", .module = xkbcommon_mod },
         },
     });
+    if (target.result.os.tag == .linux and std.mem.eql(u8, platform_backend, "wayland")) {
+        mod.addCSourceFile(.{ .file = b.path("src/platform/wayland/proto_tables.c") });
+    }
     mod.addIncludePath(freetype_dep.path("include"));
     mod.linkLibrary(freetype_lib);
     // FreeType is built with FT_CONFIG_OPTION_USE_PNG, so its final
@@ -630,6 +633,41 @@ pub fn build(b: *std.Build) !void {
         step.dependOn(&update.step);
         gen_all.dependOn(&update.step);
     }
+
+    // Wayland protocol interface table generator (Linux host with wayland-protocols).
+    const wayland_xmls = [_][]const u8{
+        "/usr/share/wayland/wayland.xml",
+        "/usr/share/wayland-protocols/stable/xdg-shell/xdg-shell.xml",
+        "/usr/share/wayland-protocols/unstable/xdg-decoration/xdg-decoration-unstable-v1.xml",
+        "/usr/share/wayland-protocols/staging/fractional-scale/fractional-scale-v1.xml",
+        "/usr/share/wayland-protocols/stable/viewporter/viewporter.xml",
+        "/usr/share/wayland-protocols/unstable/text-input/text-input-unstable-v3.xml",
+        "/usr/share/wayland-protocols/unstable/primary-selection/primary-selection-unstable-v1.xml",
+        "/usr/share/wayland-protocols/staging/xdg-activation/xdg-activation-v1.xml",
+        "/usr/share/wayland-protocols/staging/xdg-system-bell/xdg-system-bell-v1.xml",
+        "/usr/share/wayland-protocols/staging/cursor-shape/cursor-shape-v1.xml",
+    };
+    const gen_wayland_exe = b.addExecutable(.{
+        .name = "gen-wayland",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/gen/wayland_proto.zig"),
+            .target = b.graph.host,
+            .optimize = .ReleaseFast,
+        }),
+    });
+    const run_gen_wayland = b.addRunArtifact(gen_wayland_exe);
+    run_gen_wayland.stdio = .inherit;
+    const proto_tables_out = run_gen_wayland.addOutputFileArg("proto_tables.c");
+    for (wayland_xmls) |xml_path| {
+        const scanner = b.addSystemCommand(&.{ "wayland-scanner", "private-code" });
+        scanner.addArg(xml_path);
+        const scanned = scanner.addOutputFileArg(b.fmt("{s}.c", .{std.fs.path.basename(xml_path)}));
+        run_gen_wayland.addFileArg(scanned);
+    }
+    const update_wayland = b.addUpdateSourceFiles();
+    update_wayland.addCopyFileToSource(proto_tables_out, "src/platform/wayland/proto_tables.c");
+    const gen_wayland_step = b.step("gen-wayland", "Regenerate src/platform/wayland/proto_tables.c");
+    gen_wayland_step.dependOn(&update_wayland.step);
 }
 
 /// The step that runs the benchmark binary: every suite when `suite` is

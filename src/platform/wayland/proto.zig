@@ -1,0 +1,114 @@
+//! Typed Zig view of the vendored Wayland protocol interface table
+//! (`proto_tables.c`) plus request opcodes and listener structs for the
+//! Wayland backend.
+
+const wl = @import("wl.zig");
+const w = @import("wayland");
+
+/// Flag passed to `wl_proxy_marshal_flags` for destructor requests.
+pub const marshal_flag_destroy: u32 = 1;
+
+/// Pointers to the static `wl_interface` structs generated in `proto_tables.c`.
+pub const Interfaces = extern struct {
+    xdg_wm_base: *const wl.Interface,
+    xdg_surface: *const wl.Interface,
+    xdg_toplevel: *const wl.Interface,
+    xdg_decoration_manager: *const wl.Interface,
+    xdg_toplevel_decoration: *const wl.Interface,
+    fractional_scale_manager: *const wl.Interface,
+    fractional_scale: *const wl.Interface,
+    viewporter: *const wl.Interface,
+    viewport: *const wl.Interface,
+    text_input_manager: *const wl.Interface,
+    text_input: *const wl.Interface,
+    primary_selection_manager: *const wl.Interface,
+    primary_selection_device: *const wl.Interface,
+    primary_selection_source: *const wl.Interface,
+    primary_selection_offer: *const wl.Interface,
+    xdg_activation: *const wl.Interface,
+    xdg_activation_token: *const wl.Interface,
+    xdg_system_bell: *const wl.Interface,
+    cursor_shape_manager: *const wl.Interface,
+    cursor_shape_device: *const wl.Interface,
+};
+
+extern fn rex_wayland_interfaces() *const Interfaces;
+
+/// Returns the static table of vendored Wayland protocol interfaces.
+pub fn interfaces() *const Interfaces {
+    return rex_wayland_interfaces();
+}
+
+pub const display = struct {
+    pub const get_registry: u32 = 1;
+};
+
+pub const registry = struct {
+    pub const bind: u32 = 0;
+
+    pub const Listener = extern struct {
+        global: *const fn (?*anyopaque, ?*wl.Proxy, u32, [*c]const u8, u32) callconv(.c) void,
+        global_remove: *const fn (?*anyopaque, ?*wl.Proxy, u32) callconv(.c) void,
+    };
+};
+
+pub const compositor = struct {
+    pub const create_surface: u32 = 0;
+};
+
+pub const surface = struct {
+    pub const destroy: u32 = 0;
+    pub const commit: u32 = 6;
+};
+
+pub const xdg_wm_base = struct {
+    pub const destroy: u32 = 0;
+    pub const get_xdg_surface: u32 = 2;
+    pub const pong: u32 = 3;
+
+    pub const Listener = extern struct {
+        ping: *const fn (?*anyopaque, ?*wl.Proxy, u32) callconv(.c) void,
+    };
+};
+
+pub const xdg_surface = struct {
+    pub const destroy: u32 = 0;
+    pub const get_toplevel: u32 = 1;
+    pub const ack_configure: u32 = 4;
+
+    pub const Listener = extern struct {
+        configure: *const fn (?*anyopaque, ?*wl.Proxy, u32) callconv(.c) void,
+    };
+};
+
+pub const xdg_toplevel = struct {
+    pub const destroy: u32 = 0;
+    pub const set_title: u32 = 2;
+    pub const set_app_id: u32 = 3;
+    pub const set_min_size: u32 = 8;
+
+    pub const state_activated: u32 = 4;
+
+    pub const Listener = extern struct {
+        configure: *const fn (?*anyopaque, ?*wl.Proxy, i32, i32, ?*w.wl_array) callconv(.c) void,
+        close: *const fn (?*anyopaque, ?*wl.Proxy) callconv(.c) void,
+        configure_bounds: *const fn (?*anyopaque, ?*wl.Proxy, i32, i32) callconv(.c) void,
+        wm_capabilities: *const fn (?*anyopaque, ?*wl.Proxy, ?*w.wl_array) callconv(.c) void,
+    };
+};
+
+pub const xdg_decoration_manager = struct {
+    pub const destroy: u32 = 0;
+    pub const get_toplevel_decoration: u32 = 1;
+};
+
+pub const xdg_toplevel_decoration = struct {
+    pub const destroy: u32 = 0;
+    pub const set_mode: u32 = 1;
+
+    pub const mode_server_side: u32 = 2;
+
+    pub const Listener = extern struct {
+        configure: *const fn (?*anyopaque, ?*wl.Proxy, u32) callconv(.c) void,
+    };
+};
