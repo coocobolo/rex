@@ -23,6 +23,8 @@ test "Wayland: libwayland-client, libwayland-egl, and libxkbcommon resolve at ru
 
     var xkb_lib = xkb.load() catch return error.SkipZigTest;
     defer xkb_lib.deinit();
+    try testing.expect(@intFromPtr(xkb_lib.xkb_keymap_key_get_syms_by_level) != 0);
+    try testing.expect(@intFromPtr(xkb_lib.xkb_state_key_get_layout) != 0);
     const ctx = xkb_lib.xkb_context_new(c_xkb.XKB_CONTEXT_NO_FLAGS) orelse return error.SkipZigTest;
     defer xkb_lib.xkb_context_unref(ctx);
 }

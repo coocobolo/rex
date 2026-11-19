@@ -309,12 +309,11 @@ pub fn pollEvents() void {
     const wl_lib = &state.wl.?;
     const dpy = state.display orelse return;
 
-    _ = wl_lib.wl_display_dispatch_pending(dpy);
-    _ = wl_lib.wl_display_flush(dpy);
-
     while (wl_lib.wl_display_prepare_read(dpy) != 0) {
         _ = wl_lib.wl_display_dispatch_pending(dpy);
     }
+    _ = wl_lib.wl_display_flush(dpy);
+
     var pfd = [1]posix.pollfd{.{
         .fd = wl_lib.wl_display_get_fd(dpy),
         .events = posix.POLL.IN,
@@ -328,7 +327,9 @@ pub fn pollEvents() void {
     } else {
         wl_lib.wl_display_cancel_read(dpy);
     }
-    state.seat_state.tickRepeat(seat.monotonicNs());
+    if (state.seat_state.repeat_active) {
+        state.seat_state.tickRepeat(seat.monotonicNs());
+    }
 }
 
 /// Waits for Wayland events or a wakeup signal, up to `timeout_ms`.
@@ -340,13 +341,21 @@ pub fn waitEvents(timeout_ms: ?f64) void {
     while (wl_lib.wl_display_prepare_read(dpy) != 0) {
         _ = wl_lib.wl_display_dispatch_pending(dpy);
     }
-    _ = wl_lib.wl_display_flush(dpy);
+    const flush_res = wl_lib.wl_display_flush(dpy);
+    const need_flush_out = flush_res < 0 and posix.errno(flush_res) == .AGAIN;
 
     var pfds = [2]posix.pollfd{
-        .{ .fd = wl_lib.wl_display_get_fd(dpy), .events = posix.POLL.IN, .revents = 0 },
+        .{
+            .fd = wl_lib.wl_display_get_fd(dpy),
+            .events = if (need_flush_out) posix.POLL.IN | posix.POLL.OUT else posix.POLL.IN,
+            .revents = 0,
+        },
         .{ .fd = state.wakeup_read, .events = posix.POLL.IN, .revents = 0 },
     };
-    const repeat_ms = state.seat_state.repeatTimeoutMs(seat.monotonicNs());
+    const repeat_ms: ?f64 = if (state.seat_state.repeat_active)
+        state.seat_state.repeatTimeoutMs(seat.monotonicNs())
+    else
+        null;
     const effective_ms: ?f64 = if (timeout_ms) |t|
         (if (repeat_ms) |r| @min(t, r) else t)
     else
@@ -365,11 +374,16 @@ pub fn waitEvents(timeout_ms: ?f64) void {
     } else {
         wl_lib.wl_display_cancel_read(dpy);
     }
+    if (need_flush_out and ready > 0 and (pfds[0].revents & posix.POLL.OUT) != 0) {
+        _ = wl_lib.wl_display_flush(dpy);
+    }
 
     if (ready > 0 and (pfds[1].revents & posix.POLL.IN) != 0) {
         drainWakeup();
     }
-    state.seat_state.tickRepeat(seat.monotonicNs());
+    if (state.seat_state.repeat_active) {
+        state.seat_state.tickRepeat(seat.monotonicNs());
+    }
 }
 
 /// Monotonic clock in seconds.

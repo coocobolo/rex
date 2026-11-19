@@ -7,6 +7,7 @@ const std = @import("std");
 const pipe = @import("../../termio/pipe.zig");
 const backend = @import("backend.zig");
 const proto = @import("proto.zig");
+const seat = @import("seat.zig");
 const wl = @import("wl.zig");
 
 const posix = std.posix;
@@ -240,10 +241,18 @@ pub const Selection = struct {
         var total: usize = 0;
         const max_bytes = selection_capacity - 1;
         var pfd = [1]posix.pollfd{.{ .fd = read_fd, .events = posix.POLL.IN, .revents = 0 }};
+        const deadline_ns = seat.monotonicNs() + 500 * std.time.ns_per_ms;
 
         while (total < max_bytes) {
-            const ready = system.poll(&pfd, 1, 500);
-            if (ready <= 0) break;
+            const rem_ns = deadline_ns - seat.monotonicNs();
+            if (rem_ns <= 0) break;
+            const rem_ms: i32 = @intCast(@max(@divTrunc(rem_ns, std.time.ns_per_ms), 1));
+            const ready = system.poll(&pfd, 1, rem_ms);
+            if (ready < 0) {
+                if (posix.errno(ready) == .INTR) continue;
+                break;
+            }
+            if (ready == 0) break;
             if ((pfd[0].revents & posix.POLL.IN) != 0) {
                 const n = system.read(read_fd, self.read_buf[total..max_bytes].ptr, max_bytes - total);
                 if (n > 0) {
@@ -281,6 +290,7 @@ pub fn preferredMime(has_utf8: bool, has_plain: bool) ?[:0]const u8 {
 fn writeAllAndClose(fd: i32, data: []const u8) void {
     defer _ = system.close(fd);
     var written: usize = 0;
+    const deadline_ns = seat.monotonicNs() + 500 * std.time.ns_per_ms;
     while (written < data.len) {
         const n = system.write(fd, data[written..].ptr, data.len - written);
         if (n > 0) {
@@ -289,6 +299,16 @@ fn writeAllAndClose(fd: i32, data: []const u8) void {
         }
         const err = posix.errno(n);
         if (err == .INTR) continue;
+        if (err == .AGAIN) {
+            const rem_ns = deadline_ns - seat.monotonicNs();
+            if (rem_ns <= 0) break;
+            const rem_ms: i32 = @intCast(@max(@divTrunc(rem_ns, std.time.ns_per_ms), 1));
+            var pfd = [1]posix.pollfd{.{ .fd = fd, .events = posix.POLL.OUT, .revents = 0 }};
+            const ready = system.poll(&pfd, 1, rem_ms);
+            if (ready > 0 and (pfd[0].revents & posix.POLL.OUT) != 0) continue;
+            if (ready < 0 and posix.errno(ready) == .INTR) continue;
+            break;
+        }
         break;
     }
 }

@@ -285,9 +285,10 @@ fn onKeyboardKeymap(data: ?*anyopaque, _: ?*wl.Proxy, format: u32, fd: i32, size
     const ctx = self.xkb_ctx orelse return;
 
     const map_ptr = linux.mmap(null, size, .{ .READ = true }, .{ .TYPE = .PRIVATE }, fd, 0);
-    if (@as(isize, @bitCast(map_ptr)) < 0) return;
+    if (linux.errno(map_ptr) != .SUCCESS) return;
     const mapped: [*]align(std.heap.page_size_min) const u8 = @ptrFromInt(map_ptr);
     defer _ = linux.munmap(mapped, size);
+    if (mapped[size - 1] != 0) return;
 
     const keymap = xkb_lib.xkb_keymap_new_from_string(
         ctx,
@@ -343,10 +344,19 @@ fn onKeyboardKey(
     const xkb_st = self.xkb_state orelse return;
 
     const xkb_code: c_xkb.xkb_keycode_t = evdev_key +% 8;
-    const sym = xkb_lib.xkb_state_key_get_one_sym(xkb_st, xkb_code);
+    const base_sym: c_xkb.xkb_keysym_t = blk: {
+        if (self.xkb_keymap) |km| {
+            const layout = xkb_lib.xkb_state_key_get_layout(xkb_st, xkb_code);
+            var syms: [*c]const c_xkb.xkb_keysym_t = null;
+            if (xkb_lib.xkb_keymap_key_get_syms_by_level(km, xkb_code, layout, 0, &syms) > 0 and syms != null) {
+                break :blk syms[0];
+            }
+        }
+        break :blk xkb_lib.xkb_state_key_get_one_sym(xkb_st, xkb_code);
+    };
     const pressed = key_state == proto.keyboard.key_state_pressed;
 
-    const mapped_key = key.fromKeysym(sym);
+    const mapped_key = key.fromKeysym(base_sym);
     if (mapped_key) |k| {
         const idx: usize = @intFromEnum(k);
         if (idx < key_bitset_len) {
