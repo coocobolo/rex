@@ -1,11 +1,9 @@
-//! Charts for the dashboard. Each view takes the numbers and a mark: a
-//! progress is a bar or a ring, a share a strip or a donut, days are bars.
-//! A line, an area or a radar is another mark on the same numbers, added
-//! when the kit can draw it.
+//! Charts for the dashboard and focus widget: progress marks (`bar`, `ring`,
+//! `border` stadium pill, and `half_rings` concentric corner arcs), part shares
+//! (`bar` strip or `donut`), and daily column bars.
 //!
 //! Lengths are `fraction`s of the parent, so a chart takes the size its
-//! parent gives it. The caller chooses the colors. The limit line uses
-//! `border`.
+//! parent gives it. The caller chooses the colors; the limit line uses `border`.
 
 const std = @import("std");
 
@@ -23,6 +21,15 @@ pub const strip_gap = 2;
 /// centerline of 112 with a stroke of 6.
 pub const ring_radius: f32 = 115;
 pub const ring_thickness: f32 = 6;
+/// Default stadium pill size and border stroke for `.border` focus progress.
+pub const border_pill_width: f32 = 280;
+pub const border_pill_height: f32 = 140;
+pub const border_pill_thickness: u8 = 6;
+/// Starting angle (`5π/4`, bottom-left) and clockwise span (`π`, semicircle to top-right)
+/// for bottom-right corner `half_rings` gauges.
+pub const half_ring_start: f32 = 5.0 * std.math.pi / 4.0;
+pub const half_ring_sweep: f32 = std.math.pi;
+pub const half_rings_count = 3;
 /// Outer radius and thickness of the program donut. The HTML draws a
 /// centerline of 54 with a stroke of 16.
 pub const donut_radius: f32 = 62;
@@ -30,12 +37,66 @@ pub const donut_thickness: f32 = 16;
 /// Gap between donut slices, along the centerline, in logical pixels.
 pub const donut_gap: f32 = 2;
 
-/// How one fraction is drawn.
-pub const ProgressMark = enum { bar, ring };
+/// How one focus progress value or cycle state is drawn.
+pub const ProgressMark = enum(u8) { bar, ring, border, half_rings };
+/// Focus timer phase mapped onto the three concentric `half_rings` arcs.
+pub const FocusPhase = enum(u8) { idle, task, short_break, long_break };
 /// How named parts are drawn.
 pub const ShareMark = enum { bar, donut };
 /// How one value per day is drawn.
 pub const DayMark = enum { bar };
+
+/// Stadium-rounded border pill configuration for `openBorderPill`.
+pub const BorderOptions = struct {
+    width: Tree.Size = .fill,
+    height: Tree.Size = .{ .fixed = border_pill_height },
+    /// Height in logical pixels used to derive the stadium `height / 2` corner radius when `radius` is null.
+    pill_height: f32 = border_pill_height,
+    border_width: u8 = border_pill_thickness,
+    radius: ?u8 = null,
+    fill: Color = .transparent,
+    track: Color,
+    active: Color,
+    fraction: f32,
+    id: Id = .none,
+    pointer: Tree.PointerShape = .arrow,
+};
+
+/// Three concentric `.round`-cap arc fractions for the `half_rings` focus mark:
+/// outer task progress (`theme.info`), middle cycle progress (`theme.success`),
+/// and inner break progress (`theme.warning`).
+pub const HalfRings = struct {
+    task: f32 = 0,
+    cycle: f32 = 0,
+    break_phase: f32 = 0,
+
+    /// Concentric ring geometry and track opacity for `halfRings` and `halfRingsArcs`.
+    pub const Options = struct {
+        outer_radius: f32 = 58,
+        thickness: f32 = 6,
+        gap: f32 = 5,
+        track_alpha: u8 = 24,
+    };
+
+    /// Maps the current focus timer phase, phase fraction, and cycle counts onto the three concentric arcs.
+    pub fn fromCycle(
+        phase: FocusPhase,
+        fraction: f32,
+        tasks_in_cycle: u8,
+        tasks_before_long_break: u8,
+    ) HalfRings {
+        const clamped = clamp01(fraction);
+        const cycle_frac = if (tasks_before_long_break == 0)
+            0
+        else
+            clamp01(@as(f32, @floatFromInt(tasks_in_cycle)) / @as(f32, @floatFromInt(tasks_before_long_break)));
+        return switch (phase) {
+            .idle => .{ .task = 0, .cycle = cycle_frac, .break_phase = 0 },
+            .task => .{ .task = clamped, .cycle = cycle_frac, .break_phase = 0 },
+            .short_break, .long_break => .{ .task = 1.0, .cycle = cycle_frac, .break_phase = clamped },
+        };
+    }
+};
 
 pub const Part = struct {
     /// On the row, so a tooltip can anchor to it later.
@@ -62,6 +123,101 @@ pub const Day = struct {
 pub const progress_nodes = 2;
 /// The square, the track arc and the filled arc.
 pub const ring_nodes = 3;
+/// The stadium pill track box and its overlaid `border_sweep` node.
+pub const border_nodes = 2;
+/// Three concentric track + active arc pairs emitted by `halfRingsArcs`.
+pub const half_rings_arc_nodes = half_rings_count * 2;
+/// The enclosing square box plus `half_rings_arc_nodes`.
+pub const half_rings_nodes = 1 + half_rings_arc_nodes;
+
+/// Stadium-pill corner radius (`ceil(height / 2)` clamped to `u8`) for a pill of `height` logical pixels.
+pub fn pillRadius(height: f32) u8 {
+    if (!std.math.isFinite(height) or height <= 0) return 0;
+    return @intFromFloat(@min(255.0, @ceil(height * 0.5)));
+}
+
+/// Converts a `0..1` progress fraction into a `Tree.borderSweep` u16 parameter (`0` when empty, `1..65535` when active).
+pub fn borderSweepValue(fraction: f32) u16 {
+    const clamped = clamp01(fraction);
+    if (clamped <= 0) return 0;
+    return @max(1, @as(u16, @intFromFloat(@round(clamped * 65535.0))));
+}
+
+/// Opens a stadium-rounded pill box with a muted border track and an immediate overlaid
+/// `Tree.borderSweep` child. The caller may append centered text or controls before closing the returned box.
+pub fn openBorderPill(tree: *Tree, options: BorderOptions) Tree.Error!Tree.Index {
+    const radius = options.radius orelse pillRadius(options.pill_height);
+    const pill = try tree.open(.{
+        .id = options.id,
+        .width = options.width,
+        .height = options.height,
+        .fill = options.fill,
+        .border = options.track,
+        .border_width = options.border_width,
+        .radius = radius,
+        .pointer = options.pointer,
+    });
+    const sweep = borderSweepValue(options.fraction);
+    _ = try tree.borderSweep(if (sweep > 0) sweep else 1, .{
+        .overlay = true,
+        .width = .fill,
+        .height = .fill,
+        .border = if (sweep > 0) options.active else .transparent,
+        .border_width = options.border_width,
+        .radius = radius,
+    });
+    return pill;
+}
+
+/// Appends the three concentric `.round`-cap track and active half-ring arc pairs as
+/// `.overlay = true` children of the currently open anchor box.
+pub fn halfRingsArcs(
+    tree: *Tree,
+    theme: *const Theme,
+    rings: HalfRings,
+    options: HalfRings.Options,
+) Tree.Error!void {
+    const step = options.thickness + options.gap;
+    const specs = [half_rings_count]struct { radius: f32, fraction: f32, color: Color }{
+        .{ .radius = options.outer_radius, .fraction = rings.task, .color = theme.info },
+        .{ .radius = @max(1, options.outer_radius - step), .fraction = rings.cycle, .color = theme.success },
+        .{ .radius = @max(1, options.outer_radius - step * 2), .fraction = rings.break_phase, .color = theme.warning },
+    };
+    for (specs) |spec| {
+        try segment(tree, .{
+            .radius = spec.radius,
+            .thickness = options.thickness,
+            .start = half_ring_start,
+            .sweep = half_ring_sweep,
+            .fill = spec.color.alpha(options.track_alpha),
+            .caps = .round,
+        }, .none);
+        try segment(tree, .{
+            .radius = spec.radius,
+            .thickness = options.thickness,
+            .start = half_ring_start,
+            .sweep = clamp01(spec.fraction) * half_ring_sweep,
+            .fill = spec.color,
+            .caps = .round,
+        }, .none);
+    }
+}
+
+/// Draws a standalone square box containing the three concentric `half_rings` gauges.
+pub fn halfRings(
+    tree: *Tree,
+    theme: *const Theme,
+    rings: HalfRings,
+    options: HalfRings.Options,
+) Tree.Error!void {
+    const side = options.outer_radius * 2;
+    const square = try tree.open(.{
+        .width = .{ .fixed = side },
+        .height = .{ .fixed = side },
+    });
+    try halfRingsArcs(tree, theme, rings, options);
+    tree.close(square);
+}
 
 /// The strip, then each part's slot and segment.
 pub fn shareNodes(count: usize) usize {
@@ -85,12 +241,21 @@ pub fn donutNodes(count: usize) usize {
 }
 
 /// A track and the fraction of it that `fraction` fills. Values outside
-/// 0..1 are clamped. `bar_height` is the bar's thickness; a ring keeps its
-/// own.
+/// 0..1 are clamped. `bar_height` is the bar's thickness; `ring`, `border`,
+/// and `half_rings` use their own geometry.
 pub fn progress(tree: *Tree, theme: *const Theme, mark: ProgressMark, fraction: f32, fill: Color, bar_height: f32) Tree.Error!void {
     switch (mark) {
         .bar => try fractionBar(tree, theme.muted, fill, fraction, bar_height),
         .ring => try ringChart(tree, theme, fraction, fill),
+        .border => {
+            const pill = try openBorderPill(tree, .{
+                .track = theme.muted,
+                .active = fill,
+                .fraction = fraction,
+            });
+            tree.close(pill);
+        },
+        .half_rings => try halfRings(tree, theme, .{ .task = fraction }, .{}),
     }
 }
 
@@ -278,6 +443,7 @@ fn segment(tree: *Tree, arc: Tree.Arc, id: Tree.Id) Tree.Error!void {
 }
 
 fn clamp01(value: f32) f32 {
+    if (!std.math.isFinite(value)) return 0;
     return @min(1, @max(0, value));
 }
 

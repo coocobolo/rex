@@ -37,6 +37,7 @@ const field = @import("../kit/field.zig");
 const scroll_area = @import("../kit/scroll_area.zig");
 const button_group = @import("../kit/button_group.zig");
 const input_group = @import("../kit/input_group.zig");
+const chart = @import("../kit/chart.zig");
 
 const inter: KitFont.Files = .{
     .regular = "assets/fonts/Inter-Regular.ttf",
@@ -1235,4 +1236,101 @@ test "KitPainter: nested rounded clip and thin-border rounded clip preserve oute
     // Case 2: bordered box sits at y = [100..160]. Top border at (50, 101) stays primary, interior at (50, 110) is destructive.
     try testing.expectEqual(rgb(theme.primary), frame.at(50, 101));
     try testing.expectEqual(rgb(theme.destructive), frame.at(50, 110));
+}
+
+test "KitPainter: chart border pill sweep and half_rings corner clip" {
+    try testGlContext();
+    const theme = &Theme.dark;
+    var atlas = try Atlas.init(testing.allocator, .{ .width = 512, .height = 512 });
+    defer atlas.deinit();
+    var font = try KitFont.init(inter, .{});
+    defer font.deinit();
+    var painter = try KitPainter.init();
+    defer painter.deinit();
+
+    var nodes: [32]Tree.Node = undefined;
+    var lines: [16]text.Line = undefined;
+    var tree: Tree = .init(&nodes, &lines);
+    const root = try tree.open(.{ .width = .fill, .height = .fill, .padding = .all(20), .gap = 20 });
+
+    // 1. Stadium border pill at (20, 20), 200x100 (radius 50), 50% clockwise sweep.
+    const pill = try chart.openBorderPill(&tree, .{
+        .width = .{ .fixed = 200 },
+        .height = .{ .fixed = 100 },
+        .pill_height = 100,
+        .border_width = 6,
+        .track = theme.muted,
+        .active = theme.info,
+        .fraction = 0.5,
+    });
+    const inside = try tree.open(.{ .overlay = true, .width = .fill, .height = .fill, .main = .center, .cross = .center });
+    _ = try tree.text("25:00", .{ .color = theme.foreground, .style = .xl_semibold, .figures = .tabular });
+    tree.close(inside);
+    tree.close(pill);
+
+    // 2. Clipped card at (20, 140), 200x120 (radius 16) with bottom-right anchored half_rings.
+    const clipped_card = try tree.open(.{
+        .width = .{ .fixed = 200 },
+        .height = .{ .fixed = 120 },
+        .overflow = .clip,
+        .fill = theme.popover,
+        .radius = 16,
+    });
+    const corner = try tree.open(.{
+        .overlay = true,
+        .width = .fill,
+        .height = .fill,
+        .main = .end,
+        .cross = .end,
+        .padding = .{ .right = 10, .bottom = 10 },
+    });
+    const anchor = try tree.open(.{
+        .width = .{ .fixed = 36 },
+        .height = .{ .fixed = 36 },
+        .main = .center,
+        .cross = .center,
+    });
+    try chart.halfRingsArcs(&tree, theme, chart.HalfRings.fromCycle(.short_break, 0.5, 2, 4), .{
+        .outer_radius = 58,
+        .thickness = 6,
+        .gap = 5,
+    });
+    _ = try tree.leaf(.{
+        .width = .{ .fixed = 36 },
+        .height = .{ .fixed = 36 },
+        .fill = theme.secondary,
+        .radius = 18,
+    });
+    tree.close(anchor);
+    tree.close(corner);
+    tree.close(clipped_card);
+    tree.close(root);
+
+    try tree.layout(font.measurer(), 260, 290);
+    var frame = try drawToFrame(&painter, &font, &atlas, &tree, 260, 290, 1, terminal_dark);
+    defer frame.deinit();
+
+    // Stadium pill: outside top-left rounded corner (22, 22) stays terminal_dark;
+    // right semicircle apex at (217, 70) is swept by theme.info;
+    // left semicircle apex at (23, 70) is unswept track (theme.muted).
+    try testing.expectEqual(rgb(terminal_dark), frame.at(22, 22));
+    try testing.expectEqual(rgb(theme.info), frame.at(217, 70));
+    try testing.expectEqual(rgb(theme.muted), frame.at(23, 70));
+
+    // Clipped half_rings card at x=[20..220], y=[140..260]:
+    // Anchor center is at (220 - 10 - 18, 260 - 10 - 18) = (192, 232).
+    // Outer ring (radius 58, thickness 6 -> r in [52..58]) directly left of center at (192 - 55, 232) = (137, 232)
+    // is at 270 deg (within [225..45] deg sweep) and renders theme.info.
+    try testing.expectEqual(rgb(theme.info), frame.at(137, 232));
+    // Middle ring (radius 47, thickness 6 -> r in [41..47], 50% sweep -> [225..315] deg)
+    // directly left of center at (192 - 44, 232) = (148, 232) renders theme.success.
+    try testing.expectEqual(rgb(theme.success), frame.at(148, 232));
+    // Inner ring (radius 36, thickness 6 -> r in [30..36], 50% sweep -> [225..315] deg)
+    // directly left of center at (192 - 33, 232) = (159, 232) renders theme.warning.
+    try testing.expectEqual(rgb(theme.warning), frame.at(159, 232));
+    // Pixels outside the card's bottom and right edges (where the 58px radius rings would extend without clip)
+    // stay terminal_dark.
+    try testing.expectEqual(rgb(terminal_dark), frame.at(225, 232));
+    try testing.expectEqual(rgb(terminal_dark), frame.at(192, 265));
+    try testing.expectEqual(rgb(terminal_dark), frame.at(218, 258));
 }
