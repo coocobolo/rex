@@ -3,10 +3,12 @@
 //! and validating through `config.Loaded.load`.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 
 const kit = @import("../kit/root.zig");
 const host = @import("host.zig");
+const FileWatch = @import("FileWatch.zig");
 const Config = @import("../config/Config.zig");
 const overlay = @import("../config/overlay.zig");
 const Loaded = @import("../config/Loaded.zig");
@@ -40,6 +42,8 @@ const tooltip = kit.tooltip;
 const Theme = kit.Theme;
 const Tree = kit.Tree;
 const Id = kit.Tree.Id;
+
+const log = std.log.scoped(.tool);
 
 pub const name = "settings";
 pub const title = "Rex Settings";
@@ -956,6 +960,8 @@ pub const State = struct {
     preview_last_ms: ?i64 = null,
     preview_glide_ms: u32 = 0,
     stepper_hold: StepperHold = .idle,
+    /// Linux only; watches `config_path` for changes saved by another process.
+    config_watch: ?*FileWatch = null,
 
     pub fn activeConfig(self: *const State) *const Config {
         if (self.loaded) |*l| return &l.config;
@@ -984,10 +990,15 @@ pub fn init(context: host.Context) !State {
     errdefer deinit(&state);
     try syncInputs(&state);
     syncPreviewOptions(&state);
+    state.config_watch = startConfigWatch(state.gpa, state.config_path, context.wake_loop);
     return state;
 }
 
 pub fn deinit(state: *State) void {
+    if (state.config_watch) |watch| {
+        watch.destroy(state.gpa);
+        state.config_watch = null;
+    }
     for (&state.inputs) |*inp| inp.deinit(state.gpa);
     for (&state.list_items) |*list| {
         for (list.items) |item| state.gpa.free(item);
@@ -1140,13 +1151,17 @@ fn syncInputs(state: *State) Allocator.Error!void {
                 }
                 if (!state.dirty[i]) {
                     const text = readInputValue(idx, cfg, &buf);
-                    try state.inputs[i].setText(state.gpa, text);
+                    if (!std.mem.eql(u8, state.inputs[i].text(), text)) {
+                        try state.inputs[i].setText(state.gpa, text);
+                    }
                 }
             },
             .duration => if (!state.dirty[i]) {
                 const parsed = splitDurationMs(durationMs(idx, cfg), &buf);
                 state.duration_units[i] = parsed.unit;
-                try state.inputs[i].setText(state.gpa, parsed.text);
+                if (!std.mem.eql(u8, state.inputs[i].text(), parsed.text)) {
+                    try state.inputs[i].setText(state.gpa, parsed.text);
+                }
             },
             .slider => {
                 if (state.dragging_slider != idx) {
@@ -1324,9 +1339,71 @@ pub fn wait(state: *const State) ?f64 {
 }
 
 pub fn wake(state: *State) bool {
-    var changed = wakePreview(state);
+    var changed = reloadExternalConfig(state);
+    if (wakePreview(state)) changed = true;
     if (wakeStepperHold(state)) changed = true;
     return changed;
+}
+
+fn startConfigWatch(gpa: Allocator, config_path: []const u8, wake_loop: *const fn () void) ?*FileWatch {
+    if (comptime builtin.os.tag != .linux) return null;
+    if (config_path.len == 0) return null;
+    const dir = std.fs.path.dirname(config_path) orelse ".";
+    const base = std.fs.path.basename(config_path);
+    if (base.len == 0) return null;
+    return FileWatch.create(gpa, dir, base, wake_loop) catch |err| {
+        if (err == error.FileNotFound) {
+            log.debug("not watching {s} for config changes ({t})", .{ dir, err });
+        } else {
+            log.warn("not watching {s} for config changes ({t})", .{ dir, err });
+        }
+        return null;
+    };
+}
+
+fn userLayerBytes(loaded: *const Loaded) ?[]const u8 {
+    if (loaded.layers.len < 2) return null;
+    return switch (loaded.layers[1].state) {
+        .loaded => |*file| file.source,
+        else => null,
+    };
+}
+
+fn reloadExternalConfig(state: *State) bool {
+    const watch = state.config_watch orelse return false;
+    if (!watch.takeChanged()) return false;
+    if (state.config_path.len == 0) return false;
+
+    var reloaded = Loaded.load(
+        state.gpa,
+        state.io,
+        &config_defaults.default,
+        if (state.home_dir.len > 0) state.home_dir else null,
+        &.{ .file(config_paths.system), .file(state.config_path) },
+    ) catch |err| {
+        log.warn("cannot reload config: {t}", .{err});
+        return false;
+    };
+    if (reloaded.firstError() != null) {
+        reloaded.deinit(state.gpa);
+        return false;
+    }
+    if (state.loaded) |*current| {
+        const prev = userLayerBytes(current);
+        const next = userLayerBytes(&reloaded);
+        if (prev != null and next != null and std.mem.eql(u8, prev.?, next.?)) {
+            reloaded.deinit(state.gpa);
+            return false;
+        }
+    }
+
+    if (state.loaded) |*old| old.deinit(state.gpa);
+    state.loaded = reloaded;
+    syncInputs(state) catch |err| {
+        log.warn("cannot sync settings inputs after reload: {t}", .{err});
+    };
+    syncPreviewOptions(state);
+    return true;
 }
 
 fn wakePreview(state: *State) bool {

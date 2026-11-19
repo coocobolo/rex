@@ -9,6 +9,11 @@ const builtin = @import("builtin");
 
 const host = @import("host.zig");
 const FileWatch = @import("FileWatch.zig");
+const config_defaults = @import("../config/default.zig");
+const config_paths = @import("../config/paths.zig");
+const config_writer = @import("../config/writer.zig");
+const keys = @import("../config/keys.zig");
+const Loaded = @import("../config/Loaded.zig");
 const kit = @import("../kit/root.zig");
 const wellbeing = @import("../builtin/wellbeing/root.zig");
 const DashboardOption = @FieldType(@import("../config/wellbeing.zig").Wellbeing, "dashboard");
@@ -211,8 +216,12 @@ pub const State = struct {
     gpa: std.mem.Allocator,
     /// Borrowed from the host (`host.Context.state_dir`).
     state_dir: []const u8,
+    /// Borrowed from the host (`host.Context.config_path`). Empty in tests without a config file.
+    config_path: []const u8 = "",
+    /// Borrowed from the host (`host.Context.home_dir`).
+    home_dir: []const u8 = "",
     wb: wellbeing.Wellbeing,
-    /// Read at start, like `[ui] color_scheme`.
+    /// Initialized from `[wellbeing.dashboard]` and kept in sync with `config_path`.
     charts: DashboardOption,
     page: Page = .today,
     hover: Over = .none,
@@ -253,6 +262,8 @@ pub const State = struct {
     today_key: TodayKey = .{},
     /// Linux only; null elsewhere or when the watch could not start.
     watch: ?*FileWatch = null,
+    /// Linux only; watches `config_path` for UI scheme and chart changes.
+    config_watch: ?*FileWatch = null,
 
     pub fn clock(self: *const State) []const u8 {
         return self.shown.time_buf[0..self.shown.time_len];
@@ -419,13 +430,15 @@ pub fn currentTheme(state: *const State) *const Theme {
     };
 }
 
-/// Joins the shared state and, on Linux, watches the state file.
+/// Joins the shared state and, on Linux, watches the state and config files.
 pub fn init(context: host.Context) !State {
     const background = context.config.resolvedTheme().background;
     var state: State = .{
         .io = context.io,
         .gpa = context.gpa,
         .state_dir = context.state_dir,
+        .config_path = context.config_path,
+        .home_dir = context.home_dir,
         .wb = wellbeing.Wellbeing.init(context.config.wellbeing),
         .charts = context.config.wellbeing.dashboard,
         .scheme = context.config.ui.color_scheme,
@@ -433,7 +446,10 @@ pub fn init(context: host.Context) !State {
         .tool_launcher = context.tool_launcher,
     };
     // Off, the window says so and leaves the state file alone.
-    if (!state.wb.option.enabled) return state;
+    if (!state.wb.option.enabled) {
+        state.config_watch = startConfigWatch(state.gpa, state.config_path, context.wake_loop);
+        return state;
+    }
     try state.wb.open(state.io, state.state_dir, wallMs(state.io));
     errdefer state.wb.close(state.io);
     refresh(&state);
@@ -444,10 +460,15 @@ pub fn init(context: host.Context) !State {
             break :blk null;
         };
     }
+    state.config_watch = startConfigWatch(state.gpa, state.config_path, context.wake_loop);
     return state;
 }
 
 pub fn deinit(state: *State) void {
+    if (state.config_watch) |watch| {
+        watch.destroy(state.gpa);
+        state.config_watch = null;
+    }
     if (state.watch) |watch| {
         watch.destroy(state.gpa);
         state.watch = null;
@@ -457,6 +478,22 @@ pub fn deinit(state: *State) void {
         log.err("cannot save wellbeing state: {t}", .{err});
     };
     state.wb.close(state.io);
+}
+
+fn startConfigWatch(gpa: std.mem.Allocator, config_path: []const u8, wake_loop: *const fn () void) ?*FileWatch {
+    if (comptime builtin.os.tag != .linux) return null;
+    if (config_path.len == 0) return null;
+    const dir = std.fs.path.dirname(config_path) orelse ".";
+    const base = std.fs.path.basename(config_path);
+    if (base.len == 0) return null;
+    return FileWatch.create(gpa, dir, base, wake_loop) catch |err| {
+        if (err == error.FileNotFound) {
+            log.debug("not watching {s} for config changes ({t})", .{ dir, err });
+        } else {
+            log.warn("not watching {s} for config changes ({t})", .{ dir, err });
+        }
+        return null;
+    };
 }
 
 pub fn wait(state: *const State) ?f64 {
@@ -484,10 +521,13 @@ pub fn waitAt(state: *const State, now_ms: i64) ?f64 {
     return 1;
 }
 
-/// Picks up another process's save. True when the timer or the shown time
-/// changed. A wake from the watch reads the file at once; any other wake
-/// (input, the timeout) polls, at most once a second.
+/// Picks up another process's save to the state or config file. True when
+/// the timer, shown time, theme, or chart options changed. A wake from the
+/// state watch reads the file at once; any other wake (input, the timeout)
+/// polls, at most once a second.
 pub fn wake(state: *State) bool {
+    const config_changed = reloadConfig(state);
+    if (!state.wb.option.enabled) return config_changed;
     const timer_before = state.wb.timer();
     const shown_before = state.shown;
     const today_before = state.today_revision;
@@ -497,8 +537,46 @@ pub fn wake(state: *State) bool {
         log.err("cannot read wellbeing state: {t}", .{err});
     };
     refresh(state);
-    if (!std.meta.eql(timer_before, state.wb.timer())) return true;
+    if (config_changed or !std.meta.eql(timer_before, state.wb.timer())) return true;
     return !shownEql(&shown_before, &state.shown) or state.today_revision != today_before;
+}
+
+fn reloadConfig(state: *State) bool {
+    const watch = state.config_watch orelse return false;
+    if (!watch.takeChanged()) return false;
+    if (state.config_path.len == 0) return false;
+    var reloaded = Loaded.load(
+        state.gpa,
+        state.io,
+        &config_defaults.default,
+        if (state.home_dir.len > 0) state.home_dir else null,
+        &.{ .file(config_paths.system), .file(state.config_path) },
+    ) catch |err| {
+        log.warn("cannot reload config: {t}", .{err});
+        return false;
+    };
+    defer reloaded.deinit(state.gpa);
+    // Keep the running view when the file has syntax or read errors.
+    if (reloaded.firstError() != null) return false;
+
+    const background = reloaded.config.resolvedTheme().background;
+    const next_scheme = reloaded.config.ui.color_scheme;
+    const next_auto = ColorScheme.auto.variant(.{ background.r, background.g, background.b }).theme();
+    const next_charts = reloaded.config.wellbeing.dashboard;
+    const changed = state.scheme != next_scheme or
+        state.auto_theme != next_auto or
+        !std.meta.eql(state.charts, next_charts);
+    state.scheme = next_scheme;
+    state.auto_theme = next_auto;
+    state.charts = next_charts;
+    return changed;
+}
+
+fn saveConfigKey(state: *const State, section: keys.Section, key_name: []const u8, value: []const u8) void {
+    if (state.config_path.len == 0) return;
+    config_writer.writeKey(state.gpa, state.io, state.config_path, section, key_name, value) catch |err| {
+        log.warn("cannot save {s} to {s}: {t}", .{ key_name, state.config_path, err });
+    };
 }
 
 fn shownEql(a: *const Shown, b: *const Shown) bool {
@@ -607,15 +685,24 @@ fn act(state: *State, target: Over) bool {
             return false;
         },
         .timer_chart => |mark| {
-            state.charts.timer_chart = mark;
+            if (state.charts.timer_chart != mark) {
+                state.charts.timer_chart = mark;
+                saveConfigKey(state, .@"wellbeing.dashboard", "timer_chart", @tagName(mark));
+            }
             return false;
         },
         .program_chart => |mark| {
-            state.charts.program_chart = mark;
+            if (state.charts.program_chart != mark) {
+                state.charts.program_chart = mark;
+                saveConfigKey(state, .@"wellbeing.dashboard", "program_chart", @tagName(mark));
+            }
             return false;
         },
         .scheme => |scheme| {
-            state.scheme = scheme;
+            if (state.scheme != scheme) {
+                state.scheme = scheme;
+                saveConfigKey(state, .ui, "color_scheme", @tagName(scheme));
+            }
             return false;
         },
         .settings => {

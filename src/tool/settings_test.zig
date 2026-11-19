@@ -1,9 +1,11 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const testing = std.testing;
 
 const Rgb = @import("../color/Rgb.zig");
 const kit = @import("../kit/root.zig");
 const config_defaults = @import("../config/default.zig");
+const config_writer = @import("../config/writer.zig");
 const keys = @import("../config/keys.zig");
 const host = @import("host.zig");
 const settings = @import("settings.zig");
@@ -1158,4 +1160,66 @@ test "settings: on_inactive reveals only the sub-rows matching enabled effects" 
     try testing.expect(tree.find(bg_id) != null);
     try testing.expectEqual(null, tree.find(dim_id));
     try testing.expect(tree.find(blur_id) != null);
+}
+
+var ext_wakes: std.atomic.Value(u32) = .init(0);
+
+fn countExtWake() void {
+    _ = ext_wakes.fetchAdd(1, .release);
+}
+
+fn waitExtWake(min_count: u32) !void {
+    var tries: u32 = 0;
+    while (ext_wakes.load(.acquire) < min_count) : (tries += 1) {
+        if (tries == 200) return error.Timeout;
+        try std.Io.sleep(testing.io, .fromMilliseconds(10), .awake);
+    }
+}
+
+test "settings: external config edits sync on wake without clobbering dirty inputs" {
+    if (builtin.os.tag != .linux) return error.SkipZigTest;
+    const gpa = testing.allocator;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const dir_path = try std.fs.path.join(gpa, &.{ ".zig-cache", "tmp", &tmp.sub_path });
+    defer gpa.free(dir_path);
+    const cfg_path = try std.fs.path.join(gpa, &.{ dir_path, "config.toml" });
+    defer gpa.free(cfg_path);
+
+    ext_wakes.store(0, .release);
+    const cfg = config_defaults.default;
+    var state = try settings.init(.{
+        .gpa = gpa,
+        .io = testing.io,
+        .config = &cfg,
+        .state_dir = dir_path,
+        .config_path = cfg_path,
+        .home_dir = dir_path,
+        .wake_loop = countExtWake,
+    });
+    defer settings.deinit(&state);
+    try testing.expect(state.config_watch != null);
+
+    // Leave an uncommitted draft in a text field.
+    const title_idx = keyIndex(.window, "title");
+    try state.inputs[title_idx].setText(gpa, "draft title");
+    state.dirty[title_idx] = true;
+
+    // External tool (e.g. wellbeing gear menu) updates color_scheme and timer_chart.
+    try config_writer.writeKey(gpa, testing.io, cfg_path, .ui, "color_scheme", "light");
+    try waitExtWake(1);
+    const after_first = ext_wakes.load(.acquire);
+    try config_writer.writeKey(gpa, testing.io, cfg_path, .@"wellbeing.dashboard", "timer_chart", "ring");
+    try waitExtWake(after_first + 1);
+
+    try testing.expect(settings.wake(&state));
+    try testing.expectEqual(.light, state.activeConfig().ui.color_scheme);
+    try testing.expectEqual(&kit.Theme.light, settings.currentTheme(&state));
+    try testing.expectEqual(.ring, state.activeConfig().wellbeing.dashboard.timer_chart);
+    try testing.expectEqualStrings("draft title", state.inputs[title_idx].text());
+    try testing.expect(state.dirty[title_idx]);
+
+    // A second wake with no new file change is a quiet no-op.
+    try testing.expect(!settings.wake(&state));
 }

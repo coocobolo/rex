@@ -1,11 +1,14 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const testing = std.testing;
 
 const dashboard = @import("dashboard.zig");
 const focus = @import("../builtin/wellbeing/focus.zig");
 const kit = @import("../kit/root.zig");
 const Config = @import("../config/Config.zig");
+const Loaded = @import("../config/Loaded.zig");
 const config_defaults = @import("../config/default.zig");
+const config_writer = @import("../config/writer.zig");
 const WellbeingOption = @import("../config/wellbeing.zig").Wellbeing;
 
 const StateTmp = struct {
@@ -771,4 +774,111 @@ test "dashboard: focus timer clock uses the same style in bar and ring, and 960 
     try testing.expect(note_rect != null);
     try testing.expect(note_rect.?.y >= delta_rect.?.y + delta_rect.?.h);
     try testing.expectEqual(delta_rect.?.x, note_rect.?.x);
+}
+
+var config_wakes: std.atomic.Value(u32) = .init(0);
+
+fn countConfigWake() void {
+    _ = config_wakes.fetchAdd(1, .release);
+}
+
+fn waitConfigWake(min_count: u32) !void {
+    var tries: u32 = 0;
+    while (config_wakes.load(.acquire) < min_count) : (tries += 1) {
+        if (tries == 200) return error.Timeout;
+        try std.Io.sleep(testing.io, .fromMilliseconds(10), .awake);
+    }
+}
+
+test "dashboard: view choices persist to config.toml and live-sync on external edits" {
+    const gpa = testing.allocator;
+    var tmp: StateTmp = .init();
+    defer tmp.deinit();
+    const dir = try tmp.path();
+    const cfg_path = try std.fs.path.join(gpa, &.{ dir, "config.toml" });
+    defer gpa.free(cfg_path);
+
+    config_wakes.store(0, .release);
+    const config = configWith(dir);
+    var state = try dashboard.init(.{
+        .gpa = gpa,
+        .io = testing.io,
+        .config = &config,
+        .state_dir = dir,
+        .config_path = cfg_path,
+        .home_dir = dir,
+        .wake_loop = countConfigWake,
+    });
+    defer dashboard.deinit(&state);
+
+    // 1. Selecting scheme and chart styles in the view menu persists them to config.toml.
+    const gear = kit.Tree.Id.of("wellbeing.gear");
+    _ = dashboard.update(&state, .{ .pointer = .{ .id = gear } });
+    _ = dashboard.update(&state, .{ .press = gear });
+    try testing.expect(dashboard.update(&state, .release));
+
+    for ([_]kit.Tree.Id{
+        kit.Tree.Id.of("wellbeing.scheme").item(2), // light
+        kit.Tree.Id.of("wellbeing.timer_chart").item(1), // ring
+        kit.Tree.Id.of("wellbeing.program_chart").item(1), // donut
+    }) |id| {
+        const before_save = config_wakes.load(.acquire);
+        _ = dashboard.update(&state, .{ .pointer = .{ .id = id } });
+        _ = dashboard.update(&state, .{ .press = id });
+        try testing.expect(dashboard.update(&state, .release));
+        if (builtin.os.tag == .linux) try waitConfigWake(before_save + 1);
+    }
+
+    var saved = try Loaded.load(gpa, testing.io, &config_defaults.default, dir, &.{.file(cfg_path)});
+    defer saved.deinit(gpa);
+    try testing.expectEqual(.light, saved.config.ui.color_scheme);
+    try testing.expectEqual(.ring, saved.config.wellbeing.dashboard.timer_chart);
+    try testing.expectEqual(.donut, saved.config.wellbeing.dashboard.program_chart);
+
+    // 2. On Linux, external edits wake the dashboard and update scheme, auto theme, and charts.
+    if (builtin.os.tag != .linux) return;
+    try testing.expect(state.config_watch != null);
+
+    // Self-writes above already updated state, so waking now is a no-op.
+    try testing.expect(!dashboard.wake(&state));
+
+    // External save switches to auto with a light terminal background and bar charts.
+    const before_auto = config_wakes.load(.acquire);
+    try tmp.tmp.dir.writeFile(testing.io, .{
+        .sub_path = "config.toml",
+        .data =
+        \\[ui]
+        \\color_scheme = auto
+        \\
+        \\[colors]
+        \\background = #ffffff
+        \\
+        \\[wellbeing.dashboard]
+        \\timer_chart = bar
+        \\program_chart = bar
+        \\
+        ,
+    });
+    try waitConfigWake(before_auto + 1);
+    try testing.expect(dashboard.wake(&state));
+    try testing.expectEqual(.auto, state.scheme);
+    try testing.expectEqual(&kit.Theme.light, dashboard.currentTheme(&state));
+    try testing.expectEqual(.bar, state.charts.timer_chart);
+    try testing.expectEqual(.bar, state.charts.program_chart);
+
+    // Changing terminal background to dark flips `.auto` back to dark theme.
+    const before_dark = config_wakes.load(.acquire);
+    try config_writer.writeKey(gpa, testing.io, cfg_path, .colors, "background", "#101010");
+    try waitConfigWake(before_dark + 1);
+    try testing.expect(dashboard.wake(&state));
+    try testing.expectEqual(.auto, state.scheme);
+    try testing.expectEqual(&kit.Theme.dark, dashboard.currentTheme(&state));
+
+    // A broken config file leaves the running theme and charts untouched.
+    const before_bad = config_wakes.load(.acquire);
+    try tmp.tmp.dir.writeFile(testing.io, .{ .sub_path = "config.toml", .data = "[ui\ncolor_scheme = light\n" });
+    try waitConfigWake(before_bad + 1);
+    try testing.expect(!dashboard.wake(&state));
+    try testing.expectEqual(.auto, state.scheme);
+    try testing.expectEqual(&kit.Theme.dark, dashboard.currentTheme(&state));
 }
