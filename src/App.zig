@@ -1169,7 +1169,7 @@ fn renderFrame(self: *App) !bool {
                 .backdrop = backdrop,
                 .screen_w = fb_width,
                 .screen_h = fb_height,
-                .bottom_reserve_px = kit_lock_screen.hud_reserve * self.content_scale,
+                .bottom_reserve_px = 0,
             }) catch |err| {
                 log.err("cannot prepare ASCII overlay: {t}", .{err});
             };
