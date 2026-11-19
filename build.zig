@@ -313,10 +313,18 @@ pub fn build(b: *std.Build) !void {
     b.getInstallStep().dependOn(&check_run.step);
     b.step("check-fonts", "Check each font's copyright against its OFL file").dependOn(&check_run.step);
 
+    // The theme generator and checker share one schemes.conf parser so they
+    // cannot accept different files. Each gets the module at its own optimize.
+    const scheme_check_module = b.createModule(.{
+        .root_source_file = b.path("tools/scheme/parse.zig"),
+        .target = b.graph.host,
+        .optimize = .Debug,
+    });
     const check_theme_module = b.createModule(.{
         .root_source_file = b.path("tools/themes/check.zig"),
         .target = b.graph.host,
         .optimize = .Debug,
+        .imports = &.{.{ .name = "scheme", .module = scheme_check_module }},
     });
     const check_themes = b.addExecutable(.{
         .name = "check-theme-license",
@@ -602,12 +610,18 @@ pub fn build(b: *std.Build) !void {
             std.mem.replaceScalar(u8, &n, '-', '_');
             break :blk n;
         };
+        const scheme_gen_module = b.createModule(.{
+            .root_source_file = b.path("tools/scheme/parse.zig"),
+            .target = b.graph.host,
+            .optimize = .ReleaseFast,
+        });
         const gen_exe = b.addExecutable(.{
             .name = "gen-" ++ g[0],
             .root_module = b.createModule(.{
                 .root_source_file = b.path("tools/gen/" ++ exe_name ++ ".zig"),
                 .target = b.graph.host,
                 .optimize = .ReleaseFast,
+                .imports = &.{.{ .name = "scheme", .module = scheme_gen_module }},
             }),
         });
         const run_gen = b.addRunArtifact(gen_exe);

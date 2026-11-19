@@ -11,6 +11,7 @@
 
 const std = @import("std");
 const mem = std.mem;
+const parser = @import("scheme");
 
 const upstream_repo = "https://github.com/mbadolato/iTerm2-Color-Schemes";
 
@@ -19,18 +20,6 @@ pub const ManifestEntry = struct {
     variant: []const u8,
     upstream: []const u8,
     copyright: []const u8,
-};
-
-pub const SchemeMeta = struct {
-    slug: []const u8,
-    variant: []const u8,
-    upstream: []const u8,
-    license: []const u8,
-    copyright: []const u8,
-    source: []const u8,
-    ansi_mask: u16 = 0,
-    has_bg: bool = false,
-    has_fg: bool = false,
 };
 
 pub fn main(init: std.process.Init) !void {
@@ -81,7 +70,11 @@ pub const Inputs = struct {
 pub fn verifyAll(gpa: mem.Allocator, inputs: Inputs) !void {
     const revision = try parseRevision(inputs.revision);
     const manifest = try parseManifest(gpa, inputs.manifest);
-    const schemes = try parseSchemes(gpa, inputs.schemes, revision);
+    const parsed = try parser.parse(gpa, inputs.schemes);
+    if (parsed.upstream == null or parsed.commit == null) return error.MissingSchemesHeader;
+    if (!mem.eql(u8, parsed.upstream.?, upstream_repo)) return error.WrongUpstreamRepo;
+    if (!mem.eql(u8, parsed.commit.?, revision)) return error.RevisionMismatch;
+    const schemes = parsed.schemes;
 
     try verifyManifestParity(manifest, schemes);
     try verifyNotices(gpa, revision, schemes, inputs.notice, inputs.apache);
@@ -131,106 +124,12 @@ fn parseManifest(gpa: mem.Allocator, raw: []const u8) ![]const ManifestEntry {
     return list.items;
 }
 
-fn isAllowedLicense(lic: []const u8) bool {
-    return mem.eql(u8, lic, "MIT") or mem.eql(u8, lic, "Apache-2.0");
-}
-
-fn parseSchemes(gpa: mem.Allocator, raw: []const u8, expected_revision: []const u8) ![]const SchemeMeta {
-    var saw_upstream_header = false;
-    var saw_commit_header = false;
-    var list: std.ArrayListUnmanaged(SchemeMeta) = .empty;
-    var current: ?SchemeMeta = null;
-
-    var lines = mem.splitScalar(u8, raw, '\n');
-    while (lines.next()) |line_raw| {
-        const line = mem.trim(u8, line_raw, " \t\r");
-        if (line.len == 0) continue;
-        if (line[0] == '#') {
-            if (mem.startsWith(u8, line, "# Upstream:")) {
-                const val = mem.trim(u8, line["# Upstream:".len..], " \t");
-                if (!mem.eql(u8, val, upstream_repo)) return error.WrongUpstreamRepo;
-                saw_upstream_header = true;
-            } else if (mem.startsWith(u8, line, "# Commit:")) {
-                const val = mem.trim(u8, line["# Commit:".len..], " \t");
-                if (!mem.eql(u8, val, expected_revision)) return error.RevisionMismatch;
-                saw_commit_header = true;
-            }
-            continue;
-        }
-
-        if (line[0] == '[' and line[line.len - 1] == ']') {
-            if (current) |done| try appendValidatedScheme(gpa, &list, done);
-            const slug = mem.trim(u8, line[1 .. line.len - 1], " \t");
-            if (slug.len == 0) return error.InvalidSlug;
-            current = .{ .slug = slug, .variant = "", .upstream = "", .license = "", .copyright = "", .source = "" };
-            continue;
-        }
-
-        const scheme = &(current orelse return error.KeyOutsideSection);
-        const eq = mem.indexOfScalar(u8, line, '=') orelse return error.MissingEquals;
-        const key = mem.trim(u8, line[0..eq], " \t");
-        const val = mem.trim(u8, line[eq + 1 ..], " \t");
-
-        if (mem.eql(u8, key, "variant")) {
-            scheme.variant = val;
-        } else if (mem.eql(u8, key, "upstream")) {
-            scheme.upstream = val;
-        } else if (mem.eql(u8, key, "license")) {
-            scheme.license = val;
-        } else if (mem.eql(u8, key, "copyright")) {
-            scheme.copyright = val;
-        } else if (mem.eql(u8, key, "source")) {
-            scheme.source = val;
-        } else if (mem.eql(u8, key, "palette")) {
-            const inner_eq = mem.indexOfScalar(u8, val, '=') orelse return error.InvalidPaletteEntry;
-            const slot = std.fmt.parseInt(u8, mem.trim(u8, val[0..inner_eq], " \t"), 10) catch return error.InvalidPaletteEntry;
-            if (slot >= 16) return error.PaletteSlotOutOfRange;
-            try validateHexRgb(mem.trim(u8, val[inner_eq + 1 ..], " \t"));
-            scheme.ansi_mask |= (@as(u16, 1) << @intCast(slot));
-        } else if (mem.eql(u8, key, "background")) {
-            try validateHexRgb(val);
-            scheme.has_bg = true;
-        } else if (mem.eql(u8, key, "foreground")) {
-            try validateHexRgb(val);
-            scheme.has_fg = true;
-        } else if (mem.eql(u8, key, "cursor-color") or mem.eql(u8, key, "cursor-text") or mem.eql(u8, key, "selection-background") or mem.eql(u8, key, "selection-foreground")) {
-            try validateHexRgb(val);
-        } else {
-            return error.UnknownKey;
-        }
-    }
-
-    if (current) |done| try appendValidatedScheme(gpa, &list, done);
-    if (!saw_upstream_header or !saw_commit_header) return error.MissingSchemesHeader;
-    if (list.items.len == 0) return error.EmptySchemes;
-    return list.items;
-}
-
-fn validateHexRgb(text: []const u8) !void {
-    if (text.len != 7 or text[0] != '#') return error.InvalidHexColor;
-    _ = std.fmt.parseInt(u24, text[1..], 16) catch return error.InvalidHexColor;
-}
-
-fn appendValidatedScheme(gpa: mem.Allocator, list: *std.ArrayListUnmanaged(SchemeMeta), scheme: SchemeMeta) !void {
-    if (!mem.eql(u8, scheme.variant, "dark") and !mem.eql(u8, scheme.variant, "light")) {
-        return error.InvalidVariant;
-    }
-    if (scheme.upstream.len == 0) return error.MissingUpstreamTitle;
-    if (!isAllowedLicense(scheme.license)) return error.UnsupportedLicense;
-    if (scheme.copyright.len == 0) return error.MissingCopyright;
-    if (!mem.startsWith(u8, scheme.source, "https://")) return error.InvalidSourceUrl;
-    if (!scheme.has_bg or !scheme.has_fg) return error.MissingGroundColor;
-    if (scheme.ansi_mask != std.math.maxInt(u16)) return error.MissingAnsiSlot;
-    for (list.items) |prev| if (mem.eql(u8, prev.slug, scheme.slug)) return error.DuplicateSlug;
-    try list.append(gpa, scheme);
-}
-
-fn verifyManifestParity(manifest: []const ManifestEntry, schemes: []const SchemeMeta) !void {
+fn verifyManifestParity(manifest: []const ManifestEntry, schemes: []const parser.Scheme) !void {
     if (manifest.len != schemes.len) return error.ManifestCountMismatch;
     for (manifest, schemes) |m, s| {
         if (!mem.eql(u8, m.slug, s.slug) or
-            !mem.eql(u8, m.variant, s.variant) or
-            !mem.eql(u8, m.upstream, s.upstream) or
+            !mem.eql(u8, m.variant, @tagName(s.variant)) or
+            !mem.eql(u8, m.upstream, s.title) or
             !mem.eql(u8, m.copyright, s.copyright))
         {
             return error.ManifestSchemesMismatch;
@@ -241,7 +140,7 @@ fn verifyManifestParity(manifest: []const ManifestEntry, schemes: []const Scheme
 fn verifyNotices(
     gpa: mem.Allocator,
     revision: []const u8,
-    schemes: []const SchemeMeta,
+    schemes: []const parser.Scheme,
     notice: []const u8,
     apache: []const u8,
 ) !void {
@@ -285,13 +184,13 @@ fn verifyNotices(
         const expected = try std.fmt.allocPrint(
             gpa,
             "- {s} [{s}] - {s} ({s})",
-            .{ s.upstream, s.license, s.copyright, s.source },
+            .{ s.title, s.license, s.copyright, s.source },
         );
         if (!mem.eql(u8, row, expected)) return error.NoticeSchemeEntryMismatch;
     }
 }
 
-fn verifyPresets(gpa: mem.Allocator, schemes: []const SchemeMeta, presets: []const u8) !void {
+fn verifyPresets(gpa: mem.Allocator, schemes: []const parser.Scheme, presets: []const u8) !void {
     if (mem.indexOf(u8, presets, "// GENERATED by zig build gen-themes from tools/themes/schemes.conf. DO NOT EDIT.") == null) {
         return error.PresetsMissingSourceHeader;
     }
@@ -314,7 +213,7 @@ fn verifyPresets(gpa: mem.Allocator, schemes: []const SchemeMeta, presets: []con
         const expected = try std.fmt.allocPrint(
             gpa,
             ".{{ .slug = \"{s}\", .title = \"{s}\", .variant = .{s}, .theme = {s} }},",
-            .{ s.slug, s.upstream, s.variant, s.slug },
+            .{ s.slug, s.title, @tagName(s.variant), s.slug },
         );
         if (!mem.eql(u8, row, expected)) return error.PresetsEntryMismatch;
     }
