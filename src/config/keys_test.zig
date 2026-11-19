@@ -613,12 +613,18 @@ test "apply: [toast], [banner], [modal], and [alert_dialog] layout keys" {
     try applyText(&config, .toast, "margin", "12");
     try applyText(&config, .toast, "padding", "10");
     try applyText(&config, .toast, "gap", "8");
+    try applyText(&config, .toast, "peek", "16");
+    try applyText(&config, .toast, "scale_step", "0.08");
     try std.testing.expectEqual(.top_left, config.window.toast.position);
     try std.testing.expectEqual(.expanded, config.window.toast.layout);
     try std.testing.expectEqual(@as(f32, 400), config.window.toast.width);
     try std.testing.expectEqual(@as(u8, 12), config.window.toast.margin);
     try std.testing.expectEqual(@as(u8, 10), config.window.toast.padding);
     try std.testing.expectEqual(@as(u8, 8), config.window.toast.gap);
+    try std.testing.expectEqual(@as(u8, 16), config.window.toast.peek);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.08), config.window.toast.scale_step, 1e-6);
+    try std.testing.expectError(error.OutOfRange, applyText(&config, .toast, "peek", "33"));
+    try std.testing.expectError(error.OutOfRange, applyText(&config, .toast, "scale_step", "0.3"));
 
     try applyText(&config, .banner, "placement", "docked");
     try applyText(&config, .banner, "position", "bottom_center");

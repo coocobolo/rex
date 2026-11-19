@@ -842,13 +842,27 @@ test "settings: Overlays page groups toast, banner, modal, and alert dialog cont
     try testing.expect(alert_dialog_pos.? < default_focus_pos.?);
     try testing.expectEqual(@as(usize, 1), default_focus_count);
 
-    // Step toast width and toggle banner enabled through settings controls.
+    // Step toast width, peek, scale_step (0.01 step) and toggle banner enabled through settings controls.
     const width_idx = keyIndex(.toast, "width");
     const inc_id = Id.of("settings.inc").item(width_idx);
     _ = settings.update(&state, .{ .pointer = .{ .id = inc_id } });
     _ = settings.update(&state, .{ .press = inc_id });
     try testing.expect(settings.update(&state, .release));
     try testing.expectEqual(@as(u16, 357), state.activeConfig().window.toast.width);
+
+    const peek_idx = keyIndex(.toast, "peek");
+    const peek_inc = Id.of("settings.inc").item(peek_idx);
+    _ = settings.update(&state, .{ .pointer = .{ .id = peek_inc } });
+    _ = settings.update(&state, .{ .press = peek_inc });
+    try testing.expect(settings.update(&state, .release));
+    try testing.expectEqual(@as(u8, 13), state.activeConfig().window.toast.peek);
+
+    const scale_idx = keyIndex(.toast, "scale_step");
+    const scale_inc = Id.of("settings.inc").item(scale_idx);
+    _ = settings.update(&state, .{ .pointer = .{ .id = scale_inc } });
+    _ = settings.update(&state, .{ .press = scale_inc });
+    try testing.expect(settings.update(&state, .release));
+    try testing.expectApproxEqAbs(@as(f32, 0.06), state.activeConfig().window.toast.scale_step, 1e-6);
 
     const banner_enabled_idx = keyIndex(.banner, "enabled");
     const banner_switch_id = Id.of("settings.switch").item(banner_enabled_idx);

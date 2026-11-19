@@ -250,7 +250,9 @@ const key_meta_table = [_]KeyMetaEntry{
     .{ .section = .toast, .name = "width", .label = "Card Width", .description = "Width of toast notification cards in pixels." },
     .{ .section = .toast, .name = "margin", .label = "Edge Margin", .description = "Distance between the toast stack and window edges in pixels." },
     .{ .section = .toast, .name = "padding", .label = "Inner Padding", .description = "Space inside each toast card in pixels." },
-    .{ .section = .toast, .name = "gap", .label = "Stack Gap", .description = "Vertical spacing between stacked toast cards in pixels." },
+    .{ .section = .toast, .name = "gap", .label = "Stack Gap", .description = "Vertical spacing between expanded toast cards in pixels." },
+    .{ .section = .toast, .name = "peek", .label = "Stack Peek", .description = "Visible vertical strip of each card peeking behind the front toast in pixels (0–32)." },
+    .{ .section = .toast, .name = "scale_step", .label = "Stack Scale Step", .description = "Width shrink fraction per card behind the front toast when stacked (0.0–0.25)." },
 
     .{ .section = .banner, .name = "enabled", .label = "Enable Banners", .description = "Show persistent status banners inside the terminal." },
     .{ .section = .banner, .name = "placement", .label = "Placement", .description = "Display as a rounded floating card or a full-width docked bar." },
@@ -951,11 +953,13 @@ fn syncPreviewOptions(state: *State) void {
     }
     state.preview_toast.option = .{
         .width = win.toast.width,
+        .scale_step = win.toast.scale_step,
         .position = win.toast.position,
         .layout = win.toast.layout,
         .margin = win.toast.margin,
         .padding = win.toast.padding,
         .gap = win.toast.gap,
+        .peek = win.toast.peek,
     };
     state.preview_banner.option = .{
         .max_width = win.banner.max_width,
@@ -2154,7 +2158,9 @@ fn stepNumber(state: *State, idx: u16, delta: f64) void {
     const info = row_infos[idx];
     if (info.kind != .stepper) return;
     const base = stepperValue(idx, state.activeConfig()) orelse info.min;
-    const stepped = std.math.clamp(base + delta, info.min, info.max);
+    const unit: f64 = if (!info.stepper_is_int and info.max <= 1.0) 0.01 else 1.0;
+    const clamped = std.math.clamp(base + delta * unit, info.min, info.max);
+    const stepped = if (unit < 1.0) @round(clamped * 100.0) / 100.0 else clamped;
     var buf: [64]u8 = undefined;
     const token = if (info.stepper_is_int)
         formatSigned(@intFromFloat(@round(stepped)), &buf)

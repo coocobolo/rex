@@ -9,16 +9,18 @@ const std = @import("std");
 const ScreenAnchor = @import("../kit/Tree.zig").ScreenAnchor;
 const AlertPlacement = @import("../kit/alert.zig").Placement;
 const DialogPosition = @import("../kit/dialog.zig").Position;
-const ToastLayout = @import("../kit/toast.zig").Layout;
+const toast = @import("../kit/toast.zig");
 
 pub const Toast = struct {
-    width: f32 = 356,
+    width: f32 = toast.width,
+    scale_step: f32 = toast.scale_step,
     duration_ms: u32 = 5000,
     position: ScreenAnchor = .bottom_right,
-    layout: ToastLayout = .stacked,
-    margin: u8 = 24,
-    padding: u8 = 16,
-    gap: u8 = 14,
+    layout: toast.Layout = .stacked,
+    margin: u8 = toast.margin,
+    padding: u8 = toast.padding,
+    gap: u8 = toast.gap,
+    peek: u8 = toast.peek,
     enabled: bool = true,
 };
 

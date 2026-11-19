@@ -4431,11 +4431,13 @@ fn kitOverlayOptions(ui: Config.Ui, win: Config.Window) KitOverlay.Options {
         },
         .toast = .{
             .width = win.toast.width,
+            .scale_step = win.toast.scale_step,
             .position = win.toast.position,
             .layout = win.toast.layout,
             .margin = win.toast.margin,
             .padding = win.toast.padding,
             .gap = win.toast.gap,
+            .peek = win.toast.peek,
         },
         .dialog = .{
             .width = win.alert_dialog.width,
@@ -4554,6 +4556,8 @@ test "kitOverlayOptions: maps overlay config sections onto KitOverlay options" {
     win.toast.margin = 20;
     win.toast.padding = 12;
     win.toast.gap = 8;
+    win.toast.peek = 16;
+    win.toast.scale_step = 0.08;
     win.modal.position = .top_center;
     win.modal.margin = 28;
     win.modal.padding = 18;
@@ -4574,6 +4578,8 @@ test "kitOverlayOptions: maps overlay config sections onto KitOverlay options" {
     try testing.expectEqual(@as(u8, 20), opts.toast.margin);
     try testing.expectEqual(@as(u8, 12), opts.toast.padding);
     try testing.expectEqual(@as(u8, 8), opts.toast.gap);
+    try testing.expectEqual(@as(u8, 16), opts.toast.peek);
+    try testing.expectApproxEqAbs(@as(f32, 0.08), opts.toast.scale_step, 1e-6);
 
     try testing.expectEqual(@import("kit/dialog.zig").Position.top_center, opts.dialog.position);
     try testing.expectApproxEqAbs(@as(f32, 512), opts.dialog.width, 1e-6);

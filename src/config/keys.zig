@@ -266,6 +266,8 @@ const tail_rows = [_]Key{
     .{ .section = .toast, .name = "margin", .field = "window.toast.margin", .bounds = .{ .min = 0, .max = 128 } },
     .{ .section = .toast, .name = "padding", .field = "window.toast.padding", .bounds = .{ .min = 0, .max = 64 } },
     .{ .section = .toast, .name = "gap", .field = "window.toast.gap", .bounds = .{ .min = 0, .max = 64 } },
+    .{ .section = .toast, .name = "peek", .field = "window.toast.peek", .bounds = .{ .min = 0, .max = 32 } },
+    .{ .section = .toast, .name = "scale_step", .field = "window.toast.scale_step", .bounds = .{ .min = 0, .max = 0.25 } },
 
     .{ .section = .banner, .name = "enabled", .field = "window.banner.enabled" },
     .{ .section = .banner, .name = "placement", .field = "window.banner.placement" },
