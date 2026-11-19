@@ -498,11 +498,6 @@ fn distributeWrapped(nodes: []Node, index: usize, comptime dimension: Dimension,
     }
 }
 
-const thumb_thickness: f32 = 4;
-const thumb_inset: f32 = 2;
-const thumb_track_pad: f32 = 4;
-const thumb_min_len: f32 = 24;
-
 /// Shifts each scroll region's descendants left/up by its clamped offset,
 /// records the region's `max.{x,y}` extent beyond its box, and places its
 /// optional scrollbar thumb inside its viewport.
@@ -530,33 +525,37 @@ fn scrollRange(tree: *Tree, nodes: []Node, range: Range) void {
 }
 
 fn placeScrollThumb(thumb: *Node, viewport: Rect, moved_x: f32, moved_y: f32, max: Tree.Scroll.Max) void {
-    if (max.y > 0 and viewport.w > thumb_thickness + thumb_inset * 2 and viewport.h > thumb_track_pad * 2) {
-        const track_h = viewport.h - thumb_track_pad * 2;
+    const thickness = Tree.Scroll.thumb_thickness;
+    const inset = Tree.Scroll.thumb_inset;
+    const track_pad = Tree.Scroll.thumb_track_pad;
+    const min_len = Tree.Scroll.thumb_min_len;
+    if (max.y > 0 and viewport.w > thickness + inset * 2 and viewport.h > track_pad * 2) {
+        const track_h = viewport.h - track_pad * 2;
         const total_h = viewport.h + max.y;
-        const min_h = @min(thumb_min_len, track_h);
+        const min_h = @min(min_len, track_h);
         const thumb_h = @max(min_h, track_h * (viewport.h / total_h));
         const travel = @max(0, track_h - thumb_h);
         const ratio = std.math.clamp(moved_y / max.y, 0, 1);
         thumb.rect = .{
-            .x = viewport.x + viewport.w - thumb_thickness - thumb_inset,
-            .y = viewport.y + thumb_track_pad + travel * ratio,
-            .w = thumb_thickness,
+            .x = viewport.x + viewport.w - thickness - inset,
+            .y = viewport.y + track_pad + travel * ratio,
+            .w = thickness,
             .h = thumb_h,
         };
         return;
     }
-    if (max.x > 0 and viewport.h > thumb_thickness + thumb_inset * 2 and viewport.w > thumb_track_pad * 2) {
-        const track_w = viewport.w - thumb_track_pad * 2;
+    if (max.x > 0 and viewport.h > thickness + inset * 2 and viewport.w > track_pad * 2) {
+        const track_w = viewport.w - track_pad * 2;
         const total_w = viewport.w + max.x;
-        const min_w = @min(thumb_min_len, track_w);
+        const min_w = @min(min_len, track_w);
         const thumb_w = @max(min_w, track_w * (viewport.w / total_w));
         const travel = @max(0, track_w - thumb_w);
         const ratio = std.math.clamp(moved_x / max.x, 0, 1);
         thumb.rect = .{
-            .x = viewport.x + thumb_track_pad + travel * ratio,
-            .y = viewport.y + viewport.h - thumb_thickness - thumb_inset,
+            .x = viewport.x + track_pad + travel * ratio,
+            .y = viewport.y + viewport.h - thickness - inset,
             .w = thumb_w,
-            .h = thumb_thickness,
+            .h = thickness,
         };
         return;
     }

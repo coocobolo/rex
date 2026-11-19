@@ -380,6 +380,29 @@ pub const Scroll = struct {
     /// Maximum independent scrolling clipping boxes per `Tree`.
     pub const max = 8;
 
+    /// Overlay scrollbar thumb and hit-strip geometry in logical pixels.
+    pub const thumb_thickness: f32 = 4;
+    pub const thumb_inset: f32 = 2;
+    pub const thumb_track_pad: f32 = 4;
+    pub const thumb_min_len: f32 = 24;
+    /// Grab-strip thickness along the active scroll edge for pointer hit-testing.
+    pub const hit_thickness: f32 = 12;
+
+    /// Which part of a visible scrollbar the pointer hit.
+    pub const Part = enum(u8) { thumb, track };
+
+    /// Hit-test result for a visible overlay scrollbar at a pointer coordinate.
+    pub const ScrollbarHit = struct {
+        region: Region,
+        track_start: f32,
+        track_len: f32,
+        thumb_start: f32,
+        thumb_len: f32,
+        /// `.column` for a vertical scrollbar, `.row` for a horizontal scrollbar.
+        axis: Axis,
+        part: Part,
+    };
+
     /// Requested content shift in logical pixels (`x` left, `y` up).
     pub const Offset = struct {
         x: f32 = 0,
@@ -546,6 +569,73 @@ pub fn scrollTargetAt(self: *const Tree, x: f32, y: f32, dx: f32, dy: f32) ?Scro
         }
         if ((has_x and region.max.x > 0) or (has_y and region.max.y > 0)) {
             return region;
+        }
+    }
+    return null;
+}
+
+/// Topmost unoccluded visible overlay scrollbar whose edge grab strip contains `(x, y)`.
+pub fn scrollbarAt(self: *const Tree, x: f32, y: f32) ?Scroll.ScrollbarHit {
+    if (std.math.isNan(x) or std.math.isNan(y)) return null;
+    const top_hit = self.hitIndex(x, y, 0);
+    var i: usize = self.scroll_len;
+    while (i > 0) {
+        i -= 1;
+        const region = self.scrolls[i];
+        if (region.thumb == none) continue;
+        const region_node = &self.nodes[region.node];
+        const viewport = region_node.rect;
+        if (!viewport.contains(x, y)) continue;
+        if (self.clippedAt(region.node, x, y)) continue;
+        if (top_hit) |hit_index| {
+            if (hit_index >= region_node.end) continue;
+        }
+        const thumb_rect = self.nodes[region.thumb].rect;
+        if (thumb_rect.w <= 0 or thumb_rect.h <= 0) continue;
+
+        if (region.max.y > 0 and viewport.w > Scroll.thumb_thickness + Scroll.thumb_inset * 2 and viewport.h > Scroll.thumb_track_pad * 2) {
+            const strip_w = @min(Scroll.hit_thickness, viewport.w);
+            const track_start = viewport.y + Scroll.thumb_track_pad;
+            const track_len = viewport.h - Scroll.thumb_track_pad * 2;
+            const strip: Rect = .{
+                .x = viewport.x + viewport.w - strip_w,
+                .y = track_start,
+                .w = strip_w,
+                .h = track_len,
+            };
+            if (!strip.contains(x, y)) continue;
+            const on_thumb = y >= thumb_rect.y and y < thumb_rect.y + thumb_rect.h;
+            return .{
+                .region = region,
+                .axis = .column,
+                .part = if (on_thumb) .thumb else .track,
+                .track_start = track_start,
+                .track_len = track_len,
+                .thumb_start = thumb_rect.y,
+                .thumb_len = thumb_rect.h,
+            };
+        }
+        if (region.max.x > 0 and viewport.h > Scroll.thumb_thickness + Scroll.thumb_inset * 2 and viewport.w > Scroll.thumb_track_pad * 2) {
+            const strip_h = @min(Scroll.hit_thickness, viewport.h);
+            const track_start = viewport.x + Scroll.thumb_track_pad;
+            const track_len = viewport.w - Scroll.thumb_track_pad * 2;
+            const strip: Rect = .{
+                .x = track_start,
+                .y = viewport.y + viewport.h - strip_h,
+                .w = track_len,
+                .h = strip_h,
+            };
+            if (!strip.contains(x, y)) continue;
+            const on_thumb = x >= thumb_rect.x and x < thumb_rect.x + thumb_rect.w;
+            return .{
+                .region = region,
+                .axis = .row,
+                .part = if (on_thumb) .thumb else .track,
+                .track_start = track_start,
+                .track_len = track_len,
+                .thumb_start = thumb_rect.x,
+                .thumb_len = thumb_rect.w,
+            };
         }
     }
     return null;

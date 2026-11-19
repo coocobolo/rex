@@ -15,7 +15,11 @@ const Edges = Tree.Edges;
 pub const node_max = 2;
 
 pub const thumb_radius: u8 = 2;
+pub const thumb_active_radius: u8 = 3;
+pub const thumb_active_thickness: f32 = 6;
 pub const thumb_opacity: f32 = 0.35;
+pub const thumb_hover_opacity: f32 = 0.55;
+pub const thumb_drag_opacity: f32 = 0.75;
 
 pub const Options = struct {
     id: Id = .none,
