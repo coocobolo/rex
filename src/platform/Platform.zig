@@ -14,9 +14,34 @@ const Choice = backend.Choice;
 
 choice: Choice,
 
+const InitError = error{
+    PlatformUnsupported,
+    GlfwInitFailed,
+    WaylandUnavailable,
+    XlibUnavailable,
+    EglUnavailable,
+    XkbUnavailable,
+    GlInitFailed,
+    X11Unavailable,
+};
+
+const CreateWindowError = error{
+    PlatformNotInitialised,
+    TooManyWindows,
+    NotInitialized,
+    WindowCreatedFailed,
+    SurfaceFailed,
+    ToplevelFailed,
+    EglWindowFailed,
+    ContextFailed,
+    MakeCurrentFailed,
+    GladLoadFailed,
+    GlLoadFailed,
+};
+
 /// Initialises the backend for a choice the caller has already resolved.
 /// Session detection belongs to the caller; use choose for that decision.
-pub fn init(choice: Choice) !Platform {
+pub fn init(choice: Choice) InitError!Platform {
     try backend.init(choice);
     return .{ .choice = choice };
 }
@@ -33,7 +58,7 @@ pub fn choose(requested: window_config.Platform, wayland_session: bool) Choice {
 }
 
 /// Creates a window with the given size, title, and decoration preference.
-pub fn createWindow(_: *Platform, options: Window.Options) !Window {
+pub fn createWindow(_: *Platform, options: Window.Options) CreateWindowError!Window {
     return backend.createWindow(.{
         .width = options.width,
         .height = options.height,

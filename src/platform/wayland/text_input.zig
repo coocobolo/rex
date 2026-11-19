@@ -113,7 +113,10 @@ pub const TextInput = struct {
                         .codepoint = cp,
                     } });
                 }
-            } else |_| {}
+            } else |err| switch (err) {
+                // Invalid UTF-8: drop the whole string, never emit truncated bytes.
+                error.InvalidUtf8 => {},
+            }
         }
 
         if (self.has_pending_preedit) {

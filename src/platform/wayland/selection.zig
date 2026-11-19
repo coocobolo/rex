@@ -12,6 +12,7 @@ const wl = @import("wl.zig");
 
 const posix = std.posix;
 const system = posix.system;
+const log = std.log.scoped(.platform);
 
 /// Mirrors `TerminalOption.max_clipboard_bytes` (1 MiB) plus null terminator.
 pub const selection_capacity = (1 << 20) + 1;
@@ -221,7 +222,10 @@ pub const Selection = struct {
         const dpy = backend.state.display orelse return null;
 
         var fds: [2]posix.fd_t = undefined;
-        pipe.open(&fds, .{ .CLOEXEC = true, .NONBLOCK = true }) catch return null;
+        pipe.open(&fds, .{ .CLOEXEC = true, .NONBLOCK = true }) catch |err| {
+            log.err("cannot create a selection read pipe: {}", .{err});
+            return null;
+        };
         const read_fd = fds[0];
         const write_fd = fds[1];
         defer _ = system.close(read_fd);

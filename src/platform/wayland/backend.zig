@@ -167,7 +167,10 @@ pub fn init(choice: Choice) InitError!void {
     errdefer wl_lib.wl_display_disconnect(display);
 
     var wakeup_fds: [2]posix.fd_t = undefined;
-    pipe.open(&wakeup_fds, .{ .CLOEXEC = true, .NONBLOCK = true }) catch return error.WaylandUnavailable;
+    pipe.open(&wakeup_fds, .{ .CLOEXEC = true, .NONBLOCK = true }) catch |err| {
+        log.err("cannot create the wakeup pipe: {}", .{err});
+        return error.WaylandUnavailable;
+    };
     errdefer {
         _ = system.close(wakeup_fds[0]);
         _ = system.close(wakeup_fds[1]);
@@ -183,6 +186,8 @@ pub fn init(choice: Choice) InitError!void {
         .wakeup_read = wakeup_fds[0],
         .wakeup_write = wakeup_fds[1],
     };
+    // Failures below destroy protocol globals here; the defers above still
+    // own the libraries, display connection and wakeup fds, in that order.
     errdefer {
         destroyGlobals();
         state = .{};
@@ -242,7 +247,6 @@ pub fn init(choice: Choice) InitError!void {
     state.egl_config = config;
     state.context = ctx;
     state.phase = .ready;
-    errdefer comptime unreachable;
 }
 
 /// Releases all windows, EGL/GL state, Wayland objects and runtime libraries.

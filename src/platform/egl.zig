@@ -30,7 +30,7 @@ pub const Egl = struct {
 };
 
 /// Loads libEGL.so.1 and resolves every entry point the backend uses.
-pub fn load() !Egl {
+pub fn load() (std.DynLib.Error || error{SymbolNotFound})!Egl {
     var lib = try std.DynLib.openZ("libEGL.so.1");
     errdefer lib.close();
     return .{

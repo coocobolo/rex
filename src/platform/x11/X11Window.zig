@@ -30,7 +30,7 @@ focused: bool = false,
 pointer_visible: bool = true,
 pointer_shape: Window.PointerShape = .arrow,
 
-pub fn init(self: *X11Window, option: InitOption) !void {
+pub fn init(self: *X11Window, option: InitOption) error{ WindowCreatedFailed, SurfaceFailed, ContextFailed, MakeCurrentFailed, GladLoadFailed }!void {
     const lib = &backend.state.x11.?;
     const display = backend.state.display.?;
     const root = lib.XDefaultRootWindow(display);

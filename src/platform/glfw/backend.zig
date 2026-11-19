@@ -247,7 +247,7 @@ pub fn takeDropped() u32 {
 /// Windows live in fixed slots so the opaque handle stays a stable pointer
 /// without allocating. Eight is well above the one-window-per-process design.
 /// Creates a window in a fixed slot and installs the event callbacks.
-pub fn createWindow(option: GlfwWindow.InitOption) !Window {
+pub fn createWindow(option: GlfwWindow.InitOption) error{ PlatformNotInitialised, TooManyWindows, WindowCreatedFailed, GladLoadFailed }!Window {
     if (state.phase == .none) return error.PlatformNotInitialised;
     var slot: ?usize = null;
     for (state.window_used, 0..) |used, i| {

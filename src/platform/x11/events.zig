@@ -74,7 +74,10 @@ pub fn dispatch(event: *x.XEvent) void {
                                 .codepoint = cp,
                             } });
                         }
-                    } else |_| {}
+                    } else |err| switch (err) {
+                        // Invalid UTF-8: drop the whole string, never emit truncated bytes.
+                        error.InvalidUtf8 => {},
+                    }
                 }
             }
         },

@@ -164,7 +164,10 @@ pub fn init(choice: Choice) error{ WaylandUnavailable, XlibUnavailable, EglUnava
         return error.GlInitFailed;
 
     var wakeup_fds: [2]posix.fd_t = undefined;
-    pipe.open(&wakeup_fds, .{ .CLOEXEC = true, .NONBLOCK = true }) catch return error.GlInitFailed;
+    pipe.open(&wakeup_fds, .{ .CLOEXEC = true, .NONBLOCK = true }) catch |err| {
+        log.err("cannot create the wakeup pipe: {}", .{err});
+        return error.GlInitFailed;
+    };
 
     state.x11 = x11_lib;
     state.egl = egl_lib;
@@ -328,7 +331,7 @@ pub fn testKeyEvent(window: Window, k: @import("../../input/key.zig").Key) void 
     } });
 }
 
-pub fn createWindow(option: X11Window.InitOption) !Window {
+pub fn createWindow(option: X11Window.InitOption) error{ PlatformNotInitialised, TooManyWindows, WindowCreatedFailed, SurfaceFailed, ContextFailed, MakeCurrentFailed, GladLoadFailed }!Window {
     if (state.phase != .ready) return error.PlatformNotInitialised;
     var slot: ?usize = null;
     for (state.window_used, 0..) |used, i| {

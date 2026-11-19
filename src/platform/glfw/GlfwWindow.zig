@@ -75,7 +75,7 @@ pointer_shape: PointerShape = .arrow,
 
 /// Creates a window in place with a GL context and loads GLAD through the
 /// given loader. The window is destroyed on every failure path.
-pub fn init(self: *GlfwWindow, option: InitOption, loader: gl.GLADloadproc) !void {
+pub fn init(self: *GlfwWindow, option: InitOption, loader: gl.GLADloadproc) error{ WindowCreatedFailed, GladLoadFailed }!void {
     c.glfwWindowHint(c.GLFW_DECORATED, if (option.decorated) c.GLFW_TRUE else c.GLFW_FALSE);
     c.glfwWindowHint(c.GLFW_RESIZABLE, c.GLFW_TRUE);
     c.glfwWindowHint(c.GLFW_FOCUSED, c.GLFW_TRUE);
