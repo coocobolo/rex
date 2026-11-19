@@ -91,7 +91,32 @@ const State = struct {
     reply_atom: x.Atom = 0,
 };
 
+/// Mirrors `TerminalOption.max_clipboard_bytes` (1 MiB) plus null terminator.
+pub const selection_capacity = (1 << 20) + 1;
+
+/// Display-global CLIPBOARD/PRIMARY buffers kept in `.bss` separately from
+/// `state` so `window_slots` stay small and `state = .{}` never copies 3 MiB.
+pub const SelectionState = struct {
+    clipboard_owner: x.Window = 0,
+    primary_owner: x.Window = 0,
+    clipboard_len: usize = 0,
+    primary_len: usize = 0,
+    read_len: usize = 0,
+    clipboard_text: [selection_capacity]u8 = undefined,
+    primary_text: [selection_capacity]u8 = undefined,
+    read_text: [selection_capacity]u8 = undefined,
+
+    pub fn clear(self: *SelectionState) void {
+        self.clipboard_owner = 0;
+        self.primary_owner = 0;
+        self.clipboard_len = 0;
+        self.primary_len = 0;
+        self.read_len = 0;
+    }
+};
+
 pub var state: State = .{};
+pub var selection_state: SelectionState = .{};
 
 /// Initialises Xlib, EGL and a core GL context. A forced Wayland choice fails
 /// loudly rather than silently starting X11.
@@ -175,6 +200,7 @@ pub fn deinit() void {
     if (state.x11) |*lib| lib.lib.close();
     if (state.wakeup_read >= 0) _ = system.close(state.wakeup_read);
     if (state.wakeup_write >= 0) _ = system.close(state.wakeup_write);
+    selection_state.clear();
     state = .{};
 }
 
@@ -217,7 +243,10 @@ pub fn waitEvents(timeout_ms: ?f64) void {
         .{ .fd = x_fd, .events = system.POLL.IN, .revents = 0 },
         .{ .fd = state.wakeup_read, .events = system.POLL.IN, .revents = 0 },
     };
-    const ms: c_int = @intFromFloat(@max(0, @min(timeout_ms orelse 1000.0, 60000.0)));
+    const ms: c_int = if (timeout_ms) |t|
+        @intFromFloat(@max(0.0, @min(t, 60000.0)))
+    else
+        -1;
     _ = system.poll(&fds, fds.len, ms);
     if (fds[1].revents & system.POLL.IN != 0) {
         var buf: [64]u8 = undefined;

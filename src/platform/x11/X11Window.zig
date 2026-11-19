@@ -11,11 +11,6 @@ const gl = @import("../../renderer/gl.zig");
 const backend = @import("backend.zig");
 const Window = @import("../Window.zig");
 
-/// Selection data must stay available until a requestor reads it. This matches
-/// TerminalOption.max_clipboard_bytes (1 MiB); the platform layer cannot import
-/// term without breaking the boundary check, so the limit is mirrored here.
-const selection_capacity = (1 << 20) + 1;
-
 pub const InitOption = struct {
     width: u16,
     height: u16,
@@ -27,18 +22,12 @@ surface: e.EGLSurface = null,
 context: e.EGLContext = null,
 /// Application pointer set through the platform API.
 context_ptr: ?*anyopaque = null,
+cursors: [3]x.Cursor = @splat(0),
+hidden_cursor: x.Cursor = 0,
 should_close: bool = false,
 focused: bool = false,
 pointer_visible: bool = true,
 pointer_shape: Window.PointerShape = .arrow,
-cursors: [3]x.Cursor = @splat(0),
-hidden_cursor: x.Cursor = 0,
-clipboard_text: [selection_capacity]u8 = undefined,
-clipboard_len: usize = 0,
-primary_text: [selection_capacity]u8 = undefined,
-primary_len: usize = 0,
-read_text: [selection_capacity]u8 = undefined,
-read_len: usize = 0,
 
 pub fn init(self: *X11Window, option: InitOption) !void {
     const lib = &backend.state.x11.?;
@@ -237,14 +226,17 @@ pub fn setPointerVisible(self: *X11Window, visible: bool) void {
 /// Sets the local clipboard copy. An oversized string is dropped whole,
 /// never truncated, matching the host input policy.
 pub fn setClipboard(self: *X11Window, text: [:0]const u8) void {
-    if (text.len >= self.clipboard_text.len) {
-        self.clipboard_len = 0;
+    const sel = &backend.selection_state;
+    if (text.len >= sel.clipboard_text.len) {
+        sel.clipboard_len = 0;
+        sel.clipboard_owner = 0;
         return;
     }
     const len = text.len;
-    @memcpy(self.clipboard_text[0..len], text[0..len]);
-    self.clipboard_text[len] = 0;
-    self.clipboard_len = len;
+    @memcpy(sel.clipboard_text[0..len], text[0..len]);
+    sel.clipboard_text[len] = 0;
+    sel.clipboard_len = len;
+    sel.clipboard_owner = self.handle;
     _ = backend.state.x11.?.XSetSelectionOwner(backend.state.display.?, backend.state.clipboard_atom, self.handle, x.CurrentTime);
 }
 
@@ -253,41 +245,46 @@ pub fn setClipboard(self: *X11Window, text: [:0]const u8) void {
 /// borrowed slice is valid until the next selection call or window destruction.
 pub fn getClipboard(self: *X11Window) ?[:0]const u8 {
     const lib = &backend.state.x11.?;
+    const sel = &backend.selection_state;
     const owner = lib.XGetSelectionOwner(backend.state.display.?, backend.state.clipboard_atom);
-    if (owner == self.handle) {
-        if (self.clipboard_len == 0) return null;
-        return self.clipboard_text[0..self.clipboard_len :0];
+    if (owner == self.handle and sel.clipboard_owner == self.handle) {
+        if (sel.clipboard_len == 0) return null;
+        return sel.clipboard_text[0..sel.clipboard_len :0];
     }
-    const n = @import("selection.zig").read(backend.state.clipboard_atom, &self.read_text) orelse return null;
-    self.read_text[n] = 0;
-    self.read_len = n;
-    return self.read_text[0..self.read_len :0];
+    const n = @import("selection.zig").read(backend.state.clipboard_atom, sel.read_text[0 .. sel.read_text.len - 1]) orelse return null;
+    sel.read_text[n] = 0;
+    sel.read_len = n;
+    return sel.read_text[0..sel.read_len :0];
 }
 
 /// PRIMARY selection, read through X11 unless this window owns it. The
 /// borrowed slice is valid until the next selection call.
 pub fn getPrimarySelection(self: *X11Window) ?[:0]const u8 {
     const lib = &backend.state.x11.?;
+    const sel = &backend.selection_state;
     const owner = lib.XGetSelectionOwner(backend.state.display.?, x.XA_PRIMARY);
-    if (owner == self.handle) {
-        if (self.primary_len == 0) return null;
-        return self.primary_text[0..self.primary_len :0];
+    if (owner == self.handle and sel.primary_owner == self.handle) {
+        if (sel.primary_len == 0) return null;
+        return sel.primary_text[0..sel.primary_len :0];
     }
-    const n = @import("selection.zig").read(x.XA_PRIMARY, &self.read_text) orelse return null;
-    self.read_text[n] = 0;
-    self.read_len = n;
-    return self.read_text[0..self.read_len :0];
+    const n = @import("selection.zig").read(x.XA_PRIMARY, sel.read_text[0 .. sel.read_text.len - 1]) orelse return null;
+    sel.read_text[n] = 0;
+    sel.read_len = n;
+    return sel.read_text[0..sel.read_len :0];
 }
 
 pub fn setPrimarySelection(self: *X11Window, text: [:0]const u8) bool {
-    if (text.len >= self.primary_text.len) {
-        self.primary_len = 0;
+    const sel = &backend.selection_state;
+    if (text.len >= sel.primary_text.len) {
+        sel.primary_len = 0;
+        sel.primary_owner = 0;
         return false;
     }
     const len = text.len;
-    @memcpy(self.primary_text[0..len], text[0..len]);
-    self.primary_text[len] = 0;
-    self.primary_len = len;
+    @memcpy(sel.primary_text[0..len], text[0..len]);
+    sel.primary_text[len] = 0;
+    sel.primary_len = len;
+    sel.primary_owner = self.handle;
     _ = backend.state.x11.?.XSetSelectionOwner(backend.state.display.?, x.XA_PRIMARY, self.handle, x.CurrentTime);
     return true;
 }

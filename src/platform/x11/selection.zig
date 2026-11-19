@@ -103,8 +103,10 @@ pub fn read(selection: x.Atom, out: []u8) ?usize {
             // buffer and refuse an oversized reply rather than truncate it.
             const longs: c_long = @intCast(@divTrunc(out.len + 3, 4));
             const rc = lib.XGetWindowProperty(display, window, prop, 0, longs, 1, x.AnyPropertyType, &actual_type, &actual_format, &nitems, &bytes_after, &data);
+            defer if (data != null) {
+                _ = lib.XFree(@ptrCast(data));
+            };
             if (rc != 0 or data == null or bytes_after > 0 or actual_format != 8) return null;
-            defer _ = lib.XFree(@ptrCast(data));
             const len: usize = @intCast(nitems);
             if (len > out.len) return null;
             @memcpy(out[0..len], data[0..len]);
@@ -116,12 +118,10 @@ pub fn read(selection: x.Atom, out: []u8) ?usize {
 }
 
 fn textFor(selection: x.Atom, owner: x.Window) ?[:0]const u8 {
-    for (&backend.state.window_slots, 0..) |*slot, i| {
-        if (!backend.state.window_used[i] or slot.handle != owner) continue;
-        if (selection == backend.state.clipboard_atom and slot.clipboard_len > 0)
-            return slot.clipboard_text[0..slot.clipboard_len :0];
-        if (selection == x.XA_PRIMARY and slot.primary_len > 0)
-            return slot.primary_text[0..slot.primary_len :0];
-    }
+    const sel = &backend.selection_state;
+    if (selection == backend.state.clipboard_atom and sel.clipboard_owner == owner and sel.clipboard_len > 0)
+        return sel.clipboard_text[0..sel.clipboard_len :0];
+    if (selection == x.XA_PRIMARY and sel.primary_owner == owner and sel.primary_len > 0)
+        return sel.primary_text[0..sel.primary_len :0];
     return null;
 }

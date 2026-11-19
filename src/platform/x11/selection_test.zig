@@ -35,14 +35,14 @@ test "X11 selection: reading a selection we own returns its text" {
     _ = lib.XMapWindow(display, window);
     _ = lib.XSync(display, 0);
 
-    // The owner slot holds the text and the owning window's handle.
+    // The display-global selection state holds the text and owning window handle.
     const text = "shared text";
-    const slot = &backend.state.window_slots[0];
-    slot.handle = window;
-    @memcpy(slot.clipboard_text[0..text.len], text);
-    slot.clipboard_text[text.len] = 0;
-    slot.clipboard_len = text.len;
-    backend.state.window_used[0] = true;
+    const sel = &backend.selection_state;
+    defer sel.clear();
+    @memcpy(sel.clipboard_text[0..text.len], text);
+    sel.clipboard_text[text.len] = 0;
+    sel.clipboard_len = text.len;
+    sel.clipboard_owner = window;
     _ = lib.XSetSelectionOwner(display, backend.state.clipboard_atom, window, x.CurrentTime);
     _ = lib.XSetInputFocus(display, window, x.RevertToPointerRoot, x.CurrentTime);
     _ = lib.XSync(display, 0);

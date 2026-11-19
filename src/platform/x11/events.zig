@@ -48,25 +48,27 @@ pub fn dispatch(event: *x.XEvent) void {
                 last_release_time = e.time;
                 break :blk .release;
             };
+            const mods = key.modifiers(e.state);
             const sym = lib.XKeycodeToKeysym(display, @intCast(e.keycode), 0);
             if (key.fromKeysym(sym)) |k| {
                 backend.pushEvent(.{ .key = .{
                     .window = window,
                     .key = k,
-                    .mods = key.modifiers(e.state),
+                    .mods = mods,
                     .action = action,
                 } });
             }
-            if (event.type == x.KeyPress) {
+            if (event.type == x.KeyPress and !mods.ctrl and !mods.alt and !mods.super) {
                 var buf: [8]u8 = undefined;
                 var keysym: x.KeySym = 0;
                 const n = lib.XLookupString(@ptrCast(&event.xkey), &buf, buf.len, &keysym, null);
                 if (n > 0) {
-                    // Decode as UTF-8 and emit one codepoint per event;
+                    // Decode as UTF-8 and emit one printable codepoint per event;
                     // pushing raw bytes would split multibyte characters.
                     if (std.unicode.Utf8View.init(buf[0..@intCast(n)])) |view| {
                         var it = view.iterator();
                         while (it.nextCodepoint()) |cp| {
+                            if (cp < 0x20 or cp == 0x7f) continue;
                             backend.pushEvent(.{ .text = .{
                                 .window = window,
                                 .codepoint = cp,
