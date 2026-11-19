@@ -78,8 +78,7 @@ const Config = rex.config.Config;
 const Loaded = rex.config.Loaded;
 const diagnostics = rex.config.diagnostics;
 
-/// Half periods of SGR 5 blink and SGR 6 rapid blink, in ms.
-const blink_half_period_ms = 500;
+/// Half period of SGR 6 rapid blink, in ms.
 const rapid_blink_half_period_ms = 250;
 /// How long a synchronized update (DEC mode 2026) may hold frames back.
 const sync_output_timeout_ms = 150;
@@ -234,7 +233,7 @@ argv0: []const u8,
 
 /// Counts whole `period_ms` periods as time passes. A period of 0
 /// disables the timer: it never fires and sets no deadline.
-const PeriodicTimer = struct {
+pub const PeriodicTimer = struct {
     period_ms: u64,
     elapsed_ms: u64 = 0,
 
@@ -251,6 +250,16 @@ const PeriodicTimer = struct {
     pub fn remaining(self: *const PeriodicTimer) u64 {
         if (self.period_ms == 0) return std.math.maxInt(u64);
         return self.period_ms - self.elapsed_ms;
+    }
+
+    /// Updates `period_ms`, clamping `elapsed_ms` so `remaining` never underflows.
+    pub fn setPeriod(self: *PeriodicTimer, period_ms: u64) void {
+        self.period_ms = period_ms;
+        if (period_ms == 0) {
+            self.elapsed_ms = 0;
+        } else if (self.elapsed_ms >= period_ms) {
+            self.elapsed_ms %= period_ms;
+        }
     }
 };
 
@@ -680,7 +689,7 @@ pub fn init(
     var renderer: RendererType = try .init(.{
         .background = active_config.window.background,
         .font_metrics = rasterizer.metrics,
-        .cursor = .default,
+        .cursor = rendererCursorOption(active_config.cursor),
         .decoration = .{},
         .scrollbar = rendererScrollbarOption(active_config.scrollbar),
         .selection = rendererSelectionOption(active_config.selection),
@@ -777,7 +786,7 @@ pub fn init(
         .platform = app_platform,
         .frame_latch = .init(app_platform.primaryRefreshHz()),
         .background_color = normalizedRgba(resolved_theme.background, background_alpha),
-        .blink = .{ .period_ms = blink_half_period_ms },
+        .blink = .{ .period_ms = active_config.cursor.blink_interval_ms },
         .blink_rapid = .{ .period_ms = rapid_blink_half_period_ms },
         .dirs = dirs,
         .argv0 = argv0,
@@ -1844,6 +1853,8 @@ pub fn reloadConfig(self: *App) void {
     );
     self.renderer.setSelectionOption(rendererSelectionOption(self.config.selection));
     self.renderer.setScrollbarOption(rendererScrollbarOption(self.config.scrollbar));
+    self.renderer.setCursorOption(rendererCursorOption(self.config.cursor));
+    self.blink.setPeriod(self.config.cursor.blink_interval_ms);
     self.updateScrollbarHover();
     if (self.kit) |kit| {
         kit.configure(kitOverlayOptions(self.config.ui, self.config.window));
@@ -4283,6 +4294,18 @@ fn rendererSelectionOption(sel: Config.Selection) renderer_mod.Selection.Option 
     out.radius = sel.radius;
     out.blur_radius = sel.blur_radius;
     return out;
+}
+
+/// Maps `Config.Cursor` into the renderer's `Cursor.Option`.
+pub fn rendererCursorOption(cur: Config.Cursor) renderer_mod.Cursor.Option {
+    return .{
+        .radius = cur.radius,
+        .underline_frac = cur.underline_thickness,
+        .bar_frac = cur.beam_thickness,
+        .bar_offset_y = cur.underline_position,
+        .alpha = cur.opacity,
+        .hollow_border_width = cur.hollow_border_width,
+    };
 }
 
 /// Maps `Config.Scrollbar` into the renderer's `Scrollbar.Option`.

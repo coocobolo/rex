@@ -84,7 +84,7 @@ const page_titles = [_][]const u8{
 };
 
 const page_descriptions = [_][]const u8{
-    "Terminal color themes, light or dark interface, motion, and typography.",
+    "Terminal color themes, light or dark interface, motion, typography, and cursor.",
     "Window behavior, bell, scrolling, scrollbar, selection, clipboard, and shell.",
     "Toasts, banners, and modal dialogs.",
     "Wellbeing tracking, daily screen time limits, and dashboard charts.",
@@ -94,7 +94,7 @@ const page_descriptions = [_][]const u8{
 
 pub fn pageForSection(section: keys.Section) ?Page {
     return switch (section) {
-        .root, .colors, .font, .ui => .appearance,
+        .root, .colors, .font, .cursor, .ui => .appearance,
         .window, .bell, .scroll, .scrollbar, .selection, .clipboard, .shell => .window_shell,
         .toast, .banner, .modal, .@"modal.blur", .alert_dialog => .overlays,
         .wellbeing, .@"wellbeing.screen_time", .@"wellbeing.privacy", .@"wellbeing.dashboard" => .wellbeing,
@@ -116,6 +116,7 @@ const section_titles = std.EnumArray(keys.Section, []const u8).init(.{
     .root = "General",
     .colors = "Theme Overrides",
     .font = "Font",
+    .cursor = "Cursor",
     .window = "Window",
     .bell = "Bell",
     .toast = "Toast",
@@ -147,260 +148,155 @@ const KeyMeta = struct {
     description: []const u8,
 };
 
-fn keyMeta(comptime section: keys.Section, comptime key_name: []const u8) KeyMeta {
-    return switch (section) {
-        .root => if (std.mem.eql(u8, key_name, "theme")) .{
-            .label = "Color Theme",
-            .description = "Choose the color palette used inside the terminal.",
-        } else @compileError("unmapped root key: " ++ key_name),
+const KeyMetaEntry = struct {
+    section: keys.Section,
+    name: []const u8,
+    label: []const u8,
+    description: []const u8,
+};
 
-        .font => if (std.mem.eql(u8, key_name, "file")) .{
-            .label = "Regular Font",
-            .description = "Font file used for regular terminal text, or leave blank for the built-in font.",
-        } else if (std.mem.eql(u8, key_name, "bold_file")) .{
-            .label = "Bold Font",
-            .description = "Custom font file for bold text, or leave blank to thicken the regular font.",
-        } else if (std.mem.eql(u8, key_name, "italic_file")) .{
-            .label = "Italic Font",
-            .description = "Custom font file for italic text, or leave blank.",
-        } else if (std.mem.eql(u8, key_name, "bold_italic_file")) .{
-            .label = "Bold Italic Font",
-            .description = "Custom font file for bold italic text, or leave blank.",
-        } else if (std.mem.eql(u8, key_name, "emoji_file")) .{
-            .label = "Emoji Font",
-            .description = "Font file used for color emoji, or leave blank.",
-        } else if (std.mem.eql(u8, key_name, "fallback")) .{
-            .label = "Fallback Fonts",
-            .description = "Extra font files checked in order when a character is missing.",
-        } else if (std.mem.eql(u8, key_name, "size")) .{
-            .label = "Font Size",
-            .description = "Base text size in points for new terminal windows.",
-        } else if (std.mem.eql(u8, key_name, "size_step")) .{
-            .label = "Zoom Step",
-            .description = "How much the font size changes each time you zoom in or out.",
-        } else if (std.mem.eql(u8, key_name, "min_size")) .{
-            .label = "Minimum Font Size",
-            .description = "Smallest font size allowed when zooming out.",
-        } else if (std.mem.eql(u8, key_name, "max_size")) .{
-            .label = "Maximum Font Size",
-            .description = "Largest font size allowed when zooming in.",
-        } else if (std.mem.eql(u8, key_name, "weight")) .{
-            .label = "Regular Weight",
-            .description = "Thickness for regular text on variable fonts (1–1000).",
-        } else if (std.mem.eql(u8, key_name, "bold_weight")) .{
-            .label = "Bold Weight",
-            .description = "Thickness for bold text on variable fonts (1–1000).",
-        } else @compileError("unmapped font key: " ++ key_name),
+const key_meta_table = [_]KeyMetaEntry{
+    .{ .section = .root, .name = "theme", .label = "Color Theme", .description = "Choose the color palette used inside the terminal." },
 
-        .ui => if (std.mem.eql(u8, key_name, "motion")) .{
-            .label = "Animations",
-            .description = "Play smooth transitions in menus and overlays, or switch immediately.",
-        } else if (std.mem.eql(u8, key_name, "color_scheme")) .{
-            .label = "Interface Theme",
-            .description = "Light or dark look for settings, dialogs, and overlays, or match your terminal theme.",
-        } else @compileError("unmapped ui key: " ++ key_name),
+    .{ .section = .colors, .name = "background", .label = "Background", .description = "Override the terminal background color, or keep the theme default." },
+    .{ .section = .colors, .name = "foreground", .label = "Foreground", .description = "Override the default text color, or keep the theme default." },
+    .{ .section = .colors, .name = "selection_background", .label = "Selection Background", .description = "Override the highlight color behind selected text, or keep the theme default." },
+    .{ .section = .colors, .name = "selection_foreground", .label = "Selection Foreground", .description = "Override the color of selected text, or keep the theme default." },
+    .{ .section = .colors, .name = "accent", .label = "Accent", .description = "Override the cursor and accent color, or keep the theme default." },
 
-        .window => if (std.mem.eql(u8, key_name, "background_opacity")) .{
-            .label = "Background Opacity",
-            .description = "How solid the terminal background is, from 0.0 (see-through) to 1.0 (opaque).",
-        } else if (std.mem.eql(u8, key_name, "dim_text_opacity")) .{
-            .label = "Dim Text Opacity",
-            .description = "Brightness multiplier for dimmed terminal text (0.0–1.0).",
-        } else if (std.mem.eql(u8, key_name, "on_inactive")) .{
-            .label = "On Inactive Window",
-            .description = "Visual effects applied while the terminal window is unfocused.",
-        } else if (std.mem.eql(u8, key_name, "inactive_background_opacity")) .{
-            .label = "Inactive Background Opacity",
-            .description = "Window background opacity while unfocused when Opacity is enabled in On Inactive Window (0.0–1.0).",
-        } else if (std.mem.eql(u8, key_name, "inactive_dim_opacity")) .{
-            .label = "Inactive Dim Opacity",
-            .description = "How strongly terminal content fades toward the background when Dim is enabled in On Inactive Window (0.0–1.0).",
-        } else if (std.mem.eql(u8, key_name, "inactive_blur_radius")) .{
-            .label = "Inactive Blur Radius",
-            .description = "Blur strength in pixels while unfocused when Blur is enabled in On Inactive Window (1–64).",
-        } else if (std.mem.eql(u8, key_name, "mouse_auto_hide")) .{
-            .label = "Auto-hide Pointer",
-            .description = "Whether to hide the mouse pointer automatically when typing in the terminal.",
-        } else if (std.mem.eql(u8, key_name, "mouse_idle_timeout")) .{
-            .label = "Pointer Idle Timeout",
-            .description = "Hide the mouse pointer after a period of inactivity (or none).",
-        } else if (std.mem.eql(u8, key_name, "on_close")) .{
-            .label = "Close Behavior",
-            .description = "Whether to confirm before closing when child processes are active.",
-        } else if (std.mem.eql(u8, key_name, "platform")) .{
-            .label = "Window Platform",
-            .description = "Window system to use on Linux (Automatic, Wayland, or X11).",
-        } else if (std.mem.eql(u8, key_name, "width")) .{
-            .label = "Initial Width",
-            .description = "Default window width in logical pixels on startup.",
-        } else if (std.mem.eql(u8, key_name, "height")) .{
-            .label = "Initial Height",
-            .description = "Default window height in logical pixels on startup.",
-        } else if (std.mem.eql(u8, key_name, "title")) .{
-            .label = "Window Title",
-            .description = "Static window title, or auto to follow the running program.",
-        } else @compileError("unmapped window key: " ++ key_name),
+    .{ .section = .font, .name = "file", .label = "Regular Font", .description = "Font file used for regular terminal text, or leave blank for the built-in font." },
+    .{ .section = .font, .name = "bold_file", .label = "Bold Font", .description = "Custom font file for bold text, or leave blank to thicken the regular font." },
+    .{ .section = .font, .name = "italic_file", .label = "Italic Font", .description = "Custom font file for italic text, or leave blank." },
+    .{ .section = .font, .name = "bold_italic_file", .label = "Bold Italic Font", .description = "Custom font file for bold italic text, or leave blank." },
+    .{ .section = .font, .name = "emoji_file", .label = "Emoji Font", .description = "Font file used for color emoji, or leave blank." },
+    .{ .section = .font, .name = "fallback", .label = "Fallback Fonts", .description = "Extra font files checked in order when a character is missing." },
+    .{ .section = .font, .name = "size", .label = "Font Size", .description = "Base text size in points for new terminal windows." },
+    .{ .section = .font, .name = "size_step", .label = "Zoom Step", .description = "How much the font size changes each time you zoom in or out." },
+    .{ .section = .font, .name = "min_size", .label = "Minimum Font Size", .description = "Smallest font size allowed when zooming out." },
+    .{ .section = .font, .name = "max_size", .label = "Maximum Font Size", .description = "Largest font size allowed when zooming in." },
+    .{ .section = .font, .name = "weight", .label = "Regular Weight", .description = "Thickness for regular text on variable fonts (1–1000)." },
+    .{ .section = .font, .name = "bold_weight", .label = "Bold Weight", .description = "Thickness for bold text on variable fonts (1–1000)." },
 
-        .bell => if (std.mem.eql(u8, key_name, "enabled")) .{
-            .label = "Audible Bell",
-            .description = "Play a chime when a program triggers the terminal bell.",
-        } else if (std.mem.eql(u8, key_name, "volume")) .{
-            .label = "Bell Volume",
-            .description = "Playback volume for the terminal bell (0.0–1.0).",
-        } else @compileError("unmapped bell key: " ++ key_name),
+    .{ .section = .cursor, .name = "opacity", .label = "Opacity", .description = "Opacity of the terminal cursor (0.0–1.0)." },
+    .{ .section = .cursor, .name = "radius", .label = "Corner Radius", .description = "Roundness of cursor corners in pixels, clamped to half the cursor's smaller side." },
+    .{ .section = .cursor, .name = "underline_thickness", .label = "Underline Thickness", .description = "Height of the underline cursor as a fraction of cell height (0.0–1.0)." },
+    .{ .section = .cursor, .name = "underline_position", .label = "Underline Position", .description = "Bottom edge of the underline cursor down from the top of the cell (1.0 sits at the bottom)." },
+    .{ .section = .cursor, .name = "beam_thickness", .label = "Beam Thickness", .description = "Width of the vertical bar cursor as a fraction of cell width (0.0–1.0)." },
+    .{ .section = .cursor, .name = "hollow_border_width", .label = "Unfocused Border Width", .description = "Outline thickness in pixels when the window is unfocused (0 keeps the cursor filled)." },
+    .{ .section = .cursor, .name = "blink_interval", .label = "Blink Interval", .description = "Half-period for blinking cursors and blinking text (50ms–5s)." },
 
-        .scroll => if (std.mem.eql(u8, key_name, "step_lines")) .{
-            .label = "Keyboard Scroll Lines",
-            .description = "Lines scrolled per keyboard scroll-up or scroll-down action.",
-        } else if (std.mem.eql(u8, key_name, "wheel_lines")) .{
-            .label = "Wheel Scroll Lines",
-            .description = "Lines scrolled per mouse wheel notch.",
-        } else @compileError("unmapped scroll key: " ++ key_name),
+    .{ .section = .ui, .name = "motion", .label = "Animations", .description = "Play smooth transitions in menus and overlays, or switch immediately." },
+    .{ .section = .ui, .name = "color_scheme", .label = "Interface Theme", .description = "Light or dark look for settings, dialogs, and overlays, or match your terminal theme." },
 
-        .scrollbar => scrollbarMeta(key_name),
+    .{ .section = .window, .name = "background_opacity", .label = "Background Opacity", .description = "How solid the terminal background is, from 0.0 (see-through) to 1.0 (opaque)." },
+    .{ .section = .window, .name = "dim_text_opacity", .label = "Dim Text Opacity", .description = "Brightness multiplier for dimmed terminal text (0.0–1.0)." },
+    .{ .section = .window, .name = "on_inactive", .label = "On Inactive Window", .description = "Visual effects applied while the terminal window is unfocused." },
+    .{ .section = .window, .name = "inactive_background_opacity", .label = "Inactive Background Opacity", .description = "Window background opacity while unfocused when Opacity is enabled in On Inactive Window (0.0–1.0)." },
+    .{ .section = .window, .name = "inactive_dim_opacity", .label = "Inactive Dim Opacity", .description = "How strongly terminal content fades toward the background when Dim is enabled in On Inactive Window (0.0–1.0)." },
+    .{ .section = .window, .name = "inactive_blur_radius", .label = "Inactive Blur Radius", .description = "Blur strength in pixels while unfocused when Blur is enabled in On Inactive Window (1–64)." },
+    .{ .section = .window, .name = "mouse_auto_hide", .label = "Auto-hide Pointer", .description = "Whether to hide the mouse pointer automatically when typing in the terminal." },
+    .{ .section = .window, .name = "mouse_idle_timeout", .label = "Pointer Idle Timeout", .description = "Hide the mouse pointer after a period of inactivity (or none)." },
+    .{ .section = .window, .name = "on_close", .label = "Close Behavior", .description = "Whether to confirm before closing when child processes are active." },
+    .{ .section = .window, .name = "platform", .label = "Window Platform", .description = "Window system to use on Linux (Automatic, Wayland, or X11)." },
+    .{ .section = .window, .name = "width", .label = "Initial Width", .description = "Default window width in logical pixels on startup." },
+    .{ .section = .window, .name = "height", .label = "Initial Height", .description = "Default window height in logical pixels on startup." },
+    .{ .section = .window, .name = "title", .label = "Window Title", .description = "Static window title, or auto to follow the running program." },
 
-        .selection => if (std.mem.eql(u8, key_name, "extra_word_characters")) .{
-            .label = "Extra Word Characters",
-            .description = "Additional ASCII symbols treated as part of a word on double-click.",
-        } else if (std.mem.eql(u8, key_name, "opacity")) .{
-            .label = "Selection Opacity",
-            .description = "Fill opacity of the selection highlight (0.0–1.0).",
-        } else if (std.mem.eql(u8, key_name, "foreground_opacity")) .{
-            .label = "Foreground Opacity",
-            .description = "How strongly the selection text color tints selected characters (0 keeps text colors, 1 replaces them).",
-        } else if (std.mem.eql(u8, key_name, "border_color")) .{
-            .label = "Border Color",
-            .description = "Outline color drawn around selected text.",
-        } else if (std.mem.eql(u8, key_name, "border_opacity")) .{
-            .label = "Border Opacity",
-            .description = "Opacity of the selection outline (0.0–1.0).",
-        } else if (std.mem.eql(u8, key_name, "border_width")) .{
-            .label = "Border Width",
-            .description = "Outline thickness around selected text (0 hides the outline).",
-        } else if (std.mem.eql(u8, key_name, "border_style")) .{
-            .label = "Border Style",
-            .description = "Selection border appearance: unified perimeter, split rows, underline, or left bar.",
-        } else if (std.mem.eql(u8, key_name, "radius")) .{
-            .label = "Corner Radius",
-            .description = "Roundness of selection corners in pixels (0 keeps corners sharp).",
-        } else if (std.mem.eql(u8, key_name, "blur_radius")) .{
-            .label = "Blur Radius",
-            .description = "Frosted glass blur strength behind selected text (0 turns blur off).",
-        } else @compileError("unmapped selection key: " ++ key_name),
+    .{ .section = .bell, .name = "enabled", .label = "Audible Bell", .description = "Play a chime when a program triggers the terminal bell." },
+    .{ .section = .bell, .name = "volume", .label = "Bell Volume", .description = "Playback volume for the terminal bell (0.0–1.0)." },
 
-        .clipboard => if (std.mem.eql(u8, key_name, "osc52_write")) .{
-            .label = "Clipboard Write (OSC 52)",
-            .description = "Allow programs inside the terminal to copy text to your clipboard.",
-        } else if (std.mem.eql(u8, key_name, "osc52_read")) .{
-            .label = "Clipboard Read (OSC 52)",
-            .description = "Allow programs inside the terminal to read text from your clipboard.",
-        } else @compileError("unmapped clipboard key: " ++ key_name),
+    .{ .section = .scroll, .name = "step_lines", .label = "Keyboard Scroll Lines", .description = "Lines scrolled per keyboard scroll-up or scroll-down action." },
+    .{ .section = .scroll, .name = "wheel_lines", .label = "Wheel Scroll Lines", .description = "Lines scrolled per mouse wheel notch." },
 
-        .shell => if (std.mem.eql(u8, key_name, "program")) .{
-            .label = "Shell Program",
-            .description = "Path to your preferred shell executable, or Automatic for your default shell.",
-        } else if (std.mem.eql(u8, key_name, "argument")) .{
-            .label = "Shell Arguments",
-            .description = "Arguments passed to the shell on startup.",
-        } else if (std.mem.eql(u8, key_name, "working_directory")) .{
-            .label = "Working Directory",
-            .description = "Starting folder for new shells, or inherit from where Rex was launched.",
-        } else @compileError("unmapped shell key: " ++ key_name),
+    .{ .section = .scrollbar, .name = "width", .label = "Bar Width", .description = "Scrollbar thickness when idle in pixels (0 hides the bar)." },
+    .{ .section = .scrollbar, .name = "hover_width", .label = "Hover Width", .description = "Expanded scrollbar thickness when the pointer hovers over it." },
+    .{ .section = .scrollbar, .name = "gap", .label = "Edge Gap", .description = "Space between the scrollbar and the right window edge in pixels." },
+    .{ .section = .scrollbar, .name = "min_thumb_height", .label = "Minimum Thumb Height", .description = "Shortest height the draggable scrollbar thumb can shrink to in pixels." },
+    .{ .section = .scrollbar, .name = "radius", .label = "Corner Radius", .description = "Roundness of the scrollbar track and thumb corners in pixels." },
+    .{ .section = .scrollbar, .name = "auto_hide", .label = "Auto-hide at Bottom", .description = "Fade the scrollbar down when viewing the latest output." },
+    .{ .section = .scrollbar, .name = "auto_hide_opacity", .label = "Idle Opacity", .description = "Opacity of the faded scrollbar while at the bottom (0.0–1.0)." },
+    .{ .section = .scrollbar, .name = "track_color", .label = "Track Color", .description = "Background color of the scrollbar track." },
+    .{ .section = .scrollbar, .name = "track_opacity", .label = "Track Opacity", .description = "Opacity of the scrollbar track background (0.0–1.0)." },
+    .{ .section = .scrollbar, .name = "thumb_color", .label = "Thumb Color", .description = "Color of the draggable scrollbar thumb." },
+    .{ .section = .scrollbar, .name = "thumb_opacity", .label = "Thumb Opacity", .description = "Opacity of the scrollbar thumb (0.0–1.0)." },
+    .{ .section = .scrollbar, .name = "thumb_hover_color", .label = "Thumb Hover Color", .description = "Color of the scrollbar thumb while hovered." },
+    .{ .section = .scrollbar, .name = "thumb_hover_opacity", .label = "Thumb Hover Opacity", .description = "Opacity of the scrollbar thumb while hovered (0.0–1.0)." },
 
-        .toast, .banner, .modal, .alert_dialog => overlayMeta(section, key_name),
+    .{ .section = .selection, .name = "double_click_interval", .label = "Double-Click Interval", .description = "Maximum time between clicks to select a word or line (100ms–2s)." },
+    .{ .section = .selection, .name = "extra_word_characters", .label = "Extra Word Characters", .description = "Additional ASCII symbols treated as part of a word on double-click." },
+    .{ .section = .selection, .name = "opacity", .label = "Selection Opacity", .description = "Fill opacity of the selection highlight (0.0–1.0)." },
+    .{ .section = .selection, .name = "foreground_opacity", .label = "Foreground Opacity", .description = "How strongly the selection text color tints selected characters (0 keeps text colors, 1 replaces them)." },
+    .{ .section = .selection, .name = "border_color", .label = "Border Color", .description = "Outline color drawn around selected text." },
+    .{ .section = .selection, .name = "border_opacity", .label = "Border Opacity", .description = "Opacity of the selection outline (0.0–1.0)." },
+    .{ .section = .selection, .name = "border_width", .label = "Border Width", .description = "Outline thickness around selected text (0 hides the outline)." },
+    .{ .section = .selection, .name = "border_style", .label = "Border Style", .description = "Selection border appearance: unified perimeter, split rows, underline, or left bar." },
+    .{ .section = .selection, .name = "radius", .label = "Corner Radius", .description = "Roundness of selection corners in pixels (0 keeps corners sharp)." },
+    .{ .section = .selection, .name = "blur_radius", .label = "Blur Radius", .description = "Frosted glass blur strength behind selected text (0 turns blur off)." },
 
-        .@"modal.blur" => if (std.mem.eql(u8, key_name, "enabled")) .{
-            .label = "Backdrop Blur",
-            .description = "Blur the terminal grid behind modal dialogs.",
-        } else if (std.mem.eql(u8, key_name, "radius")) .{
-            .label = "Blur Radius",
-            .description = "Blur strength in pixels behind modal dialogs.",
-        } else @compileError("unmapped modal.blur key: " ++ key_name),
+    .{ .section = .clipboard, .name = "osc52_write", .label = "Clipboard Write (OSC 52)", .description = "Allow programs inside the terminal to copy text to your clipboard." },
+    .{ .section = .clipboard, .name = "osc52_read", .label = "Clipboard Read (OSC 52)", .description = "Allow programs inside the terminal to read text from your clipboard." },
 
-        .wellbeing => if (std.mem.eql(u8, key_name, "enabled")) .{
-            .label = "Enable Wellbeing",
-            .description = "Track screen time and enable focus timers, reminders, and wind-down.",
-        } else @compileError("unmapped wellbeing key: " ++ key_name),
+    .{ .section = .shell, .name = "program", .label = "Shell Program", .description = "Path to your preferred shell executable, or Automatic for your default shell." },
+    .{ .section = .shell, .name = "argument", .label = "Shell Arguments", .description = "Arguments passed to the shell on startup." },
+    .{ .section = .shell, .name = "working_directory", .label = "Working Directory", .description = "Starting folder for new shells, or inherit from where Rex was launched." },
 
-        .@"wellbeing.screen_time" => if (std.mem.eql(u8, key_name, "daily_limit")) .{
-            .label = "Daily Screen Limit",
-            .description = "Maximum daily terminal time before limit actions trigger (or none).",
-        } else if (std.mem.eql(u8, key_name, "idle_threshold")) .{
-            .label = "Idle Threshold",
-            .description = "Inactivity duration before screen time tracking pauses.",
-        } else if (std.mem.eql(u8, key_name, "on_limit")) .{
-            .label = "On Daily Limit",
-            .description = "Actions triggered when you reach your daily screen time limit.",
-        } else if (std.mem.eql(u8, key_name, "grayscale_transition")) .{
-            .label = "Grayscale Transition",
-            .description = "Duration over which the screen fades to grayscale on limit.",
-        } else @compileError("unmapped wellbeing.screen_time key: " ++ key_name),
+    .{ .section = .toast, .name = "enabled", .label = "Enable Toasts", .description = "Show brief pop-up notifications inside the terminal." },
+    .{ .section = .toast, .name = "duration", .label = "Display Duration", .description = "How long a toast remains visible before dismissing." },
+    .{ .section = .toast, .name = "position", .label = "Position", .description = "Corner or edge where toast notifications stack." },
+    .{ .section = .toast, .name = "width", .label = "Card Width", .description = "Width of toast notification cards in pixels." },
+    .{ .section = .toast, .name = "margin", .label = "Edge Margin", .description = "Distance between the toast stack and window edges in pixels." },
+    .{ .section = .toast, .name = "padding", .label = "Inner Padding", .description = "Space inside each toast card in pixels." },
+    .{ .section = .toast, .name = "gap", .label = "Stack Gap", .description = "Vertical spacing between stacked toast cards in pixels." },
 
-        .@"wellbeing.privacy" => if (std.mem.eql(u8, key_name, "track_foreground_apps")) .{
-            .label = "Track Foreground Apps",
-            .description = "Record which foreground programs you spend time in.",
-        } else @compileError("unmapped wellbeing.privacy key: " ++ key_name),
+    .{ .section = .banner, .name = "enabled", .label = "Enable Banners", .description = "Show persistent status banners inside the terminal." },
+    .{ .section = .banner, .name = "placement", .label = "Placement", .description = "Display as a rounded floating card or a full-width docked bar." },
+    .{ .section = .banner, .name = "position", .label = "Position", .description = "Window edge anchor where status banners appear." },
+    .{ .section = .banner, .name = "max_width", .label = "Maximum Width", .description = "Maximum width of floating banners in pixels." },
+    .{ .section = .banner, .name = "margin", .label = "Edge Margin", .description = "Distance between floating banners and window edges in pixels." },
+    .{ .section = .banner, .name = "padding", .label = "Inner Padding", .description = "Space inside each status banner in pixels." },
 
-        .@"wellbeing.dashboard" => if (std.mem.eql(u8, key_name, "timer_chart")) .{
-            .label = "Timer Chart Style",
-            .description = "Visualization style for the focus timer on the dashboard.",
-        } else if (std.mem.eql(u8, key_name, "program_chart")) .{
-            .label = "Program Chart Style",
-            .description = "Visualization style for per-program usage on the dashboard.",
-        } else @compileError("unmapped wellbeing.dashboard key: " ++ key_name),
+    .{ .section = .modal, .name = "backdrop_opacity", .label = "Backdrop Opacity", .description = "Dimming opacity of the backdrop behind modal dialogs (0.0–1.0)." },
+    .{ .section = .modal, .name = "on_outside_click", .label = "Outside Click", .description = "Whether clicking outside a modal dialog dismisses it." },
+    .{ .section = .modal, .name = "position", .label = "Position", .description = "Vertical placement of modal dialogs over the backdrop." },
+    .{ .section = .modal, .name = "margin", .label = "Edge Margin", .description = "Minimum distance between modal dialogs and window edges in pixels." },
+    .{ .section = .modal, .name = "padding", .label = "Inner Padding", .description = "Space inside modal dialog cards in pixels." },
+    .{ .section = .modal, .name = "gap", .label = "Section Gap", .description = "Vertical spacing between header, body, and buttons in pixels." },
 
-        .@"wellbeing.focus" => if (std.mem.eql(u8, key_name, "task")) .{
-            .label = "Focus Duration",
-            .description = "Length of a single focused work interval (e.g. 25m).",
-        } else if (std.mem.eql(u8, key_name, "short_break")) .{
-            .label = "Short Break",
-            .description = "Length of a short break between focus intervals (e.g. 5m).",
-        } else if (std.mem.eql(u8, key_name, "long_break")) .{
-            .label = "Long Break",
-            .description = "Length of a longer break after a full cycle (e.g. 15m).",
-        } else if (std.mem.eql(u8, key_name, "tasks_before_long_break")) .{
-            .label = "Intervals Before Long Break",
-            .description = "Number of focus intervals completed before taking a long break.",
-        } else if (std.mem.eql(u8, key_name, "timer")) .{
-            .label = "Timer Display",
-            .description = "Where the focus countdown is shown while active.",
-        } else if (std.mem.eql(u8, key_name, "on_phase_end")) .{
-            .label = "On Phase End",
-            .description = "Automatically advance to the next phase or wait for confirmation.",
-        } else if (std.mem.eql(u8, key_name, "during_task")) .{
-            .label = "During Focus",
-            .description = "UI indicators or behaviors active during a focus interval.",
-        } else if (std.mem.eql(u8, key_name, "on_break")) .{
-            .label = "On Break",
-            .description = "Actions triggered when a focus interval transitions into a break.",
-        } else if (std.mem.eql(u8, key_name, "on_alert")) .{
-            .label = "On Alert",
-            .description = "Notification cues played when a focus phase ends.",
-        } else @compileError("unmapped wellbeing.focus key: " ++ key_name),
+    .{ .section = .@"modal.blur", .name = "enabled", .label = "Backdrop Blur", .description = "Blur the terminal grid behind modal dialogs." },
+    .{ .section = .@"modal.blur", .name = "radius", .label = "Blur Radius", .description = "Blur strength in pixels behind modal dialogs." },
 
-        .@"wellbeing.winddown" => if (std.mem.eql(u8, key_name, "enabled")) .{
-            .label = "Evening Wind-down",
-            .description = "Shift terminal colors warmer during your scheduled wind-down hours.",
-        } else if (std.mem.eql(u8, key_name, "start")) .{
-            .label = "Start Time",
-            .description = "24-hour clock time when wind-down begins (HH:MM).",
-        } else if (std.mem.eql(u8, key_name, "end")) .{
-            .label = "End Time",
-            .description = "24-hour clock time when wind-down ends (HH:MM).",
-        } else if (std.mem.eql(u8, key_name, "warmth")) .{
-            .label = "Warmth Intensity",
-            .description = "Color temperature shift intensity from 0.0 to 1.0.",
-        } else if (std.mem.eql(u8, key_name, "during_window")) .{
-            .label = "During Wind-down",
-            .description = "Additional effects active during the wind-down schedule.",
-        } else @compileError("unmapped wellbeing.winddown key: " ++ key_name),
+    .{ .section = .alert_dialog, .name = "default_focus", .label = "Default Focus", .description = "Which button receives initial keyboard focus in confirmation alert dialogs." },
+    .{ .section = .alert_dialog, .name = "width", .label = "Dialog Width", .description = "Maximum width of confirmation alert dialogs in pixels." },
+    .{ .section = .alert_dialog, .name = "icon", .label = "Dialog Icon", .description = "Icon badge displayed above the title in confirmation alert dialogs." },
 
-        .@"wellbeing.eyesight" => reminderMeta("Eyesight", key_name),
-        .@"wellbeing.movement" => reminderMeta("Movement", key_name),
-        .colors => colorMeta(key_name),
-        else => @compileError("unmapped section in keyMeta: " ++ @tagName(section)),
-    };
-}
+    .{ .section = .wellbeing, .name = "enabled", .label = "Enable Wellbeing", .description = "Track screen time and enable focus timers, reminders, and wind-down." },
+
+    .{ .section = .@"wellbeing.screen_time", .name = "daily_limit", .label = "Daily Screen Limit", .description = "Maximum daily terminal time before limit actions trigger (or none)." },
+    .{ .section = .@"wellbeing.screen_time", .name = "idle_threshold", .label = "Idle Threshold", .description = "Inactivity duration before screen time tracking pauses." },
+    .{ .section = .@"wellbeing.screen_time", .name = "on_limit", .label = "On Daily Limit", .description = "Actions triggered when you reach your daily screen time limit." },
+    .{ .section = .@"wellbeing.screen_time", .name = "grayscale_transition", .label = "Grayscale Transition", .description = "Duration over which the screen fades to grayscale on limit." },
+
+    .{ .section = .@"wellbeing.privacy", .name = "track_foreground_apps", .label = "Track Foreground Apps", .description = "Record which foreground programs you spend time in." },
+
+    .{ .section = .@"wellbeing.dashboard", .name = "timer_chart", .label = "Timer Chart Style", .description = "Visualization style for the focus timer on the dashboard." },
+    .{ .section = .@"wellbeing.dashboard", .name = "program_chart", .label = "Program Chart Style", .description = "Visualization style for per-program usage on the dashboard." },
+
+    .{ .section = .@"wellbeing.focus", .name = "task", .label = "Focus Duration", .description = "Length of a single focused work interval (e.g. 25m)." },
+    .{ .section = .@"wellbeing.focus", .name = "short_break", .label = "Short Break", .description = "Length of a short break between focus intervals (e.g. 5m)." },
+    .{ .section = .@"wellbeing.focus", .name = "long_break", .label = "Long Break", .description = "Length of a longer break after a full cycle (e.g. 15m)." },
+    .{ .section = .@"wellbeing.focus", .name = "tasks_before_long_break", .label = "Intervals Before Long Break", .description = "Number of focus intervals completed before taking a long break." },
+    .{ .section = .@"wellbeing.focus", .name = "timer", .label = "Timer Display", .description = "Where the focus countdown is shown while active." },
+    .{ .section = .@"wellbeing.focus", .name = "on_phase_end", .label = "On Phase End", .description = "Automatically advance to the next phase or wait for confirmation." },
+    .{ .section = .@"wellbeing.focus", .name = "during_task", .label = "During Focus", .description = "UI indicators or behaviors active during a focus interval." },
+    .{ .section = .@"wellbeing.focus", .name = "on_break", .label = "On Break", .description = "Actions triggered when a focus interval transitions into a break." },
+    .{ .section = .@"wellbeing.focus", .name = "on_alert", .label = "On Alert", .description = "Notification cues played when a focus phase ends." },
+
+    .{ .section = .@"wellbeing.winddown", .name = "enabled", .label = "Evening Wind-down", .description = "Shift terminal colors warmer during your scheduled wind-down hours." },
+    .{ .section = .@"wellbeing.winddown", .name = "start", .label = "Start Time", .description = "24-hour clock time when wind-down begins (HH:MM)." },
+    .{ .section = .@"wellbeing.winddown", .name = "end", .label = "End Time", .description = "24-hour clock time when wind-down ends (HH:MM)." },
+    .{ .section = .@"wellbeing.winddown", .name = "warmth", .label = "Warmth Intensity", .description = "Color temperature shift intensity from 0.0 to 1.0." },
+    .{ .section = .@"wellbeing.winddown", .name = "during_window", .label = "During Wind-down", .description = "Additional effects active during the wind-down schedule." },
+};
 
 const ansi_color_names = [16][]const u8{
     "Black",
@@ -421,220 +317,72 @@ const ansi_color_names = [16][]const u8{
     "Bright White",
 };
 
-fn colorMeta(comptime key_name: []const u8) KeyMeta {
-    if (std.mem.eql(u8, key_name, "background")) return .{
-        .label = "Background",
-        .description = "Override the terminal background color, or keep the theme default.",
-    };
-    if (std.mem.eql(u8, key_name, "foreground")) return .{
-        .label = "Foreground",
-        .description = "Override the default text color, or keep the theme default.",
-    };
-    if (std.mem.eql(u8, key_name, "selection_background")) return .{
-        .label = "Selection Background",
-        .description = "Override the highlight color behind selected text, or keep the theme default.",
-    };
-    if (std.mem.eql(u8, key_name, "selection_foreground")) return .{
-        .label = "Selection Foreground",
-        .description = "Override the color of selected text, or keep the theme default.",
-    };
-    if (std.mem.eql(u8, key_name, "accent")) return .{
-        .label = "Accent",
-        .description = "Override the cursor and accent color, or keep the theme default.",
-    };
-    inline for (ansi_color_names, 0..) |color_name, i| {
-        if (std.mem.eql(u8, key_name, std.fmt.comptimePrint("color{d}", .{i}))) return .{
-            .label = std.fmt.comptimePrint("Color {d} · {s}", .{ i, color_name }),
-            .description = std.fmt.comptimePrint("Override ANSI color {d} ({s}), or keep the theme default.", .{ i, color_name }),
-        };
-    }
-    @compileError("unmapped colors key: " ++ key_name);
+fn parseAnsiColorIndex(comptime key_name: []const u8) ?usize {
+    if (!std.mem.startsWith(u8, key_name, "color")) return null;
+    const index = std.fmt.parseUnsigned(usize, key_name["color".len..], 10) catch return null;
+    return if (index < ansi_color_names.len) index else null;
 }
 
-fn scrollbarMeta(comptime key_name: []const u8) KeyMeta {
-    if (std.mem.eql(u8, key_name, "width")) return .{
-        .label = "Bar Width",
-        .description = "Scrollbar thickness when idle in pixels (0 hides the bar).",
-    };
-    if (std.mem.eql(u8, key_name, "hover_width")) return .{
-        .label = "Hover Width",
-        .description = "Expanded scrollbar thickness when the pointer hovers over it.",
-    };
-    if (std.mem.eql(u8, key_name, "gap")) return .{
-        .label = "Edge Gap",
-        .description = "Space between the scrollbar and the right window edge in pixels.",
-    };
-    if (std.mem.eql(u8, key_name, "min_thumb_height")) return .{
-        .label = "Minimum Thumb Height",
-        .description = "Shortest height the draggable scrollbar thumb can shrink to in pixels.",
-    };
-    if (std.mem.eql(u8, key_name, "radius")) return .{
-        .label = "Corner Radius",
-        .description = "Roundness of the scrollbar track and thumb corners in pixels.",
-    };
-    if (std.mem.eql(u8, key_name, "auto_hide")) return .{
-        .label = "Auto-hide at Bottom",
-        .description = "Fade the scrollbar down when viewing the latest output.",
-    };
-    if (std.mem.eql(u8, key_name, "auto_hide_opacity")) return .{
-        .label = "Idle Opacity",
-        .description = "Opacity of the faded scrollbar while at the bottom (0.0–1.0).",
-    };
-    if (std.mem.eql(u8, key_name, "track_color")) return .{
-        .label = "Track Color",
-        .description = "Background color of the scrollbar track.",
-    };
-    if (std.mem.eql(u8, key_name, "track_opacity")) return .{
-        .label = "Track Opacity",
-        .description = "Opacity of the scrollbar track background (0.0–1.0).",
-    };
-    if (std.mem.eql(u8, key_name, "thumb_color")) return .{
-        .label = "Thumb Color",
-        .description = "Color of the draggable scrollbar thumb.",
-    };
-    if (std.mem.eql(u8, key_name, "thumb_opacity")) return .{
-        .label = "Thumb Opacity",
-        .description = "Opacity of the scrollbar thumb (0.0–1.0).",
-    };
-    if (std.mem.eql(u8, key_name, "thumb_hover_color")) return .{
-        .label = "Thumb Hover Color",
-        .description = "Color of the scrollbar thumb while hovered.",
-    };
-    if (std.mem.eql(u8, key_name, "thumb_hover_opacity")) return .{
-        .label = "Thumb Hover Opacity",
-        .description = "Opacity of the scrollbar thumb while hovered (0.0–1.0).",
-    };
-    @compileError("unmapped scrollbar key: " ++ key_name);
-}
-
-fn overlayMeta(comptime section: keys.Section, comptime key_name: []const u8) KeyMeta {
-    if (std.mem.eql(u8, key_name, "enabled")) return .{
-        .label = if (section == .toast) "Enable Toasts" else "Enable Banners",
-        .description = if (section == .toast)
-            "Show brief pop-up notifications inside the terminal."
-        else
-            "Show persistent status banners inside the terminal.",
-    };
-    if (std.mem.eql(u8, key_name, "duration")) return .{
-        .label = "Display Duration",
-        .description = "How long a toast remains visible before dismissing.",
-    };
-    if (std.mem.eql(u8, key_name, "placement")) return .{
-        .label = "Placement",
-        .description = "Display as a rounded floating card or a full-width docked bar.",
-    };
-    if (std.mem.eql(u8, key_name, "position")) return switch (section) {
-        .toast => .{
-            .label = "Position",
-            .description = "Corner or edge where toast notifications stack.",
-        },
-        .banner => .{
-            .label = "Position",
-            .description = "Window edge anchor where status banners appear.",
-        },
-        .modal => .{
-            .label = "Position",
-            .description = "Vertical placement of modal dialogs over the backdrop.",
-        },
-        else => @compileError("unexpected position section: " ++ @tagName(section)),
-    };
-    if (std.mem.eql(u8, key_name, "width")) return switch (section) {
-        .toast => .{
-            .label = "Card Width",
-            .description = "Width of toast notification cards in pixels.",
-        },
-        .alert_dialog => .{
-            .label = "Dialog Width",
-            .description = "Maximum width of confirmation alert dialogs in pixels.",
-        },
-        else => @compileError("unexpected width section: " ++ @tagName(section)),
-    };
-    if (std.mem.eql(u8, key_name, "max_width")) return .{
-        .label = "Maximum Width",
-        .description = "Maximum width of floating banners in pixels.",
-    };
-    if (std.mem.eql(u8, key_name, "margin")) return switch (section) {
-        .toast => .{
-            .label = "Edge Margin",
-            .description = "Distance between the toast stack and window edges in pixels.",
-        },
-        .banner => .{
-            .label = "Edge Margin",
-            .description = "Distance between floating banners and window edges in pixels.",
-        },
-        .modal => .{
-            .label = "Edge Margin",
-            .description = "Minimum distance between modal dialogs and window edges in pixels.",
-        },
-        else => @compileError("unexpected margin section: " ++ @tagName(section)),
-    };
-    if (std.mem.eql(u8, key_name, "padding")) return switch (section) {
-        .toast => .{
-            .label = "Inner Padding",
-            .description = "Space inside each toast card in pixels.",
-        },
-        .banner => .{
-            .label = "Inner Padding",
-            .description = "Space inside each status banner in pixels.",
-        },
-        .modal => .{
-            .label = "Inner Padding",
-            .description = "Space inside modal dialog cards in pixels.",
-        },
-        else => @compileError("unexpected padding section: " ++ @tagName(section)),
-    };
-    if (std.mem.eql(u8, key_name, "gap")) return switch (section) {
-        .toast => .{
-            .label = "Stack Gap",
-            .description = "Vertical spacing between stacked toast cards in pixels.",
-        },
-        .modal => .{
-            .label = "Section Gap",
-            .description = "Vertical spacing between header, body, and buttons in pixels.",
-        },
-        else => @compileError("unexpected gap section: " ++ @tagName(section)),
-    };
-    if (std.mem.eql(u8, key_name, "backdrop_opacity")) return .{
-        .label = "Backdrop Opacity",
-        .description = "Dimming opacity of the backdrop behind modal dialogs (0.0–1.0).",
-    };
-    if (std.mem.eql(u8, key_name, "on_outside_click")) return .{
-        .label = "Outside Click",
-        .description = "Whether clicking outside a modal dialog dismisses it.",
-    };
-    if (std.mem.eql(u8, key_name, "default_focus")) return .{
-        .label = "Default Focus",
-        .description = "Which button receives initial keyboard focus in confirmation alert dialogs.",
-    };
-    if (std.mem.eql(u8, key_name, "icon")) return .{
-        .label = "Dialog Icon",
-        .description = "Icon badge displayed above the title in confirmation alert dialogs.",
-    };
-    @compileError("unmapped overlay key: " ++ @tagName(section) ++ "." ++ key_name);
-}
+const ReminderKey = enum { enabled, interval, duration, during_reminder, animation };
 
 fn reminderMeta(comptime kind: []const u8, comptime key_name: []const u8) KeyMeta {
-    if (std.mem.eql(u8, key_name, "enabled")) return .{
-        .label = "Enable " ++ kind ++ " Reminders",
-        .description = "Show periodic " ++ kind ++ " break reminders while active.",
+    const tag = std.meta.stringToEnum(ReminderKey, key_name) orelse
+        @compileError("unmapped reminder key: " ++ key_name);
+    return switch (tag) {
+        .enabled => .{
+            .label = "Enable " ++ kind ++ " Reminders",
+            .description = "Show periodic " ++ kind ++ " break reminders while active.",
+        },
+        .interval => .{
+            .label = "Reminder Interval",
+            .description = "How often the " ++ kind ++ " reminder triggers (e.g. 20m).",
+        },
+        .duration => .{
+            .label = "Break Duration",
+            .description = "How long the " ++ kind ++ " break lasts (e.g. 20s).",
+        },
+        .during_reminder => .{
+            .label = "During Reminder",
+            .description = "Effects and cues active while the reminder is displayed.",
+        },
+        .animation => .{
+            .label = "Reminder Animation",
+            .description = "Visual animation style for the reminder overlay.",
+        },
     };
-    if (std.mem.eql(u8, key_name, "interval")) return .{
-        .label = "Reminder Interval",
-        .description = "How often the " ++ kind ++ " reminder triggers (e.g. 20m).",
-    };
-    if (std.mem.eql(u8, key_name, "duration")) return .{
-        .label = "Break Duration",
-        .description = "How long the " ++ kind ++ " break lasts (e.g. 20s).",
-    };
-    if (std.mem.eql(u8, key_name, "during_reminder")) return .{
-        .label = "During Reminder",
-        .description = "Effects and cues active while the reminder is displayed.",
-    };
-    if (std.mem.eql(u8, key_name, "animation")) return .{
-        .label = "Reminder Animation",
-        .description = "Visual animation style for the reminder overlay.",
-    };
-    @compileError("unmapped reminder key: " ++ key_name);
+}
+
+fn keyMeta(comptime section: keys.Section, comptime key_name: []const u8) KeyMeta {
+    @setEvalBranchQuota(20000);
+    switch (section) {
+        .@"wellbeing.eyesight" => return reminderMeta("Eyesight", key_name),
+        .@"wellbeing.movement" => return reminderMeta("Movement", key_name),
+        .colors => if (parseAnsiColorIndex(key_name)) |i| return .{
+            .label = std.fmt.comptimePrint("Color {d} · {s}", .{ i, ansi_color_names[i] }),
+            .description = std.fmt.comptimePrint("Override ANSI color {d} ({s}), or keep the theme default.", .{ i, ansi_color_names[i] }),
+        },
+        else => {},
+    }
+    for (key_meta_table) |entry| {
+        if (entry.section == section and std.mem.eql(u8, entry.name, key_name)) {
+            return .{ .label = entry.label, .description = entry.description };
+        }
+    }
+    @compileError("unmapped key in key_meta_table: " ++ @tagName(section) ++ "." ++ key_name);
+}
+
+comptime {
+    @setEvalBranchQuota(50000);
+    for (key_meta_table, 0..) |entry, i| {
+        if (keys.lookup(entry.section, entry.name) == null) {
+            @compileError("stale entry in key_meta_table: " ++ @tagName(entry.section) ++ "." ++ entry.name);
+        }
+        for (key_meta_table[i + 1 ..]) |other| {
+            if (other.section == entry.section and std.mem.eql(u8, other.name, entry.name)) {
+                @compileError("duplicate entry in key_meta_table: " ++ @tagName(entry.section) ++ "." ++ entry.name);
+            }
+        }
+    }
 }
 
 fn inputPlaceholder(comptime key: keys.Key) []const u8 {
@@ -673,24 +421,15 @@ fn inputPlaceholder(comptime key: keys.Key) []const u8 {
     };
 }
 
+const token_label_overrides = std.StaticStringMap([]const u8).initComptime(.{
+    .{ "auto", "Automatic" },
+    .{ "allow_always", "Always allow" },
+    .{ "grayscale", "Grayscale screen" },
+    .{ "break_screen", "Show break screen" },
+});
+
 fn humanToken(comptime token: []const u8) []const u8 {
-    if (std.mem.eql(u8, token, "x11")) return "X11";
-    if (std.mem.eql(u8, token, "wayland")) return "Wayland";
-    if (std.mem.eql(u8, token, "auto")) return "Automatic";
-    if (std.mem.eql(u8, token, "none")) return "None";
-    if (std.mem.eql(u8, token, "inherit")) return "Inherit";
-    if (std.mem.eql(u8, token, "when_needed")) return "When needed";
-    if (std.mem.eql(u8, token, "allow_always")) return "Always allow";
-    if (std.mem.eql(u8, token, "grayscale")) return "Grayscale screen";
-    if (std.mem.eql(u8, token, "dim_background")) return "Dim background";
-    if (std.mem.eql(u8, token, "break_screen")) return "Show break screen";
-    if (std.mem.eql(u8, token, "lock_screen")) return "Lock screen";
-    if (std.mem.eql(u8, token, "top_left")) return "Top left";
-    if (std.mem.eql(u8, token, "top_center")) return "Top center";
-    if (std.mem.eql(u8, token, "top_right")) return "Top right";
-    if (std.mem.eql(u8, token, "bottom_left")) return "Bottom left";
-    if (std.mem.eql(u8, token, "bottom_center")) return "Bottom center";
-    if (std.mem.eql(u8, token, "bottom_right")) return "Bottom right";
+    if (token_label_overrides.get(token)) |label| return label;
 
     comptime {
         var out: [token.len]u8 = undefined;
@@ -1052,16 +791,11 @@ fn formatHexRgb(rgb: Rgb, buf: []u8) []const u8 {
 }
 
 fn resolvedColorSlot(comptime key_name: []const u8, theme: ThemePreset) Rgb {
-    if (comptime std.mem.eql(u8, key_name, "background")) return theme.background;
-    if (comptime std.mem.eql(u8, key_name, "foreground")) return theme.foreground;
-    if (comptime std.mem.eql(u8, key_name, "selection_background")) return theme.selection_background;
-    if (comptime std.mem.eql(u8, key_name, "selection_foreground")) return theme.selection_foreground;
-    if (comptime std.mem.eql(u8, key_name, "accent")) return theme.accent;
-    inline for (0..16) |n| {
-        if (comptime std.mem.eql(u8, key_name, std.fmt.comptimePrint("color{d}", .{n}))) {
-            return theme.ansi[n];
-        }
+    if (comptime @hasField(ThemePreset, key_name)) {
+        const value = @field(theme, key_name);
+        if (@TypeOf(value) == Rgb) return value;
     }
+    if (comptime parseAnsiColorIndex(key_name)) |n| return theme.ansi[n];
     @compileError("unmapped color slot: " ++ key_name);
 }
 
@@ -3173,11 +2907,14 @@ fn pctLabel(ratio: f32) []const u8 {
     return pct_labels[@min(pct, 100)];
 }
 
+const segment_icons = std.StaticStringMap(u21).initComptime(.{
+    .{ "auto", kit.icons.monitor },
+    .{ "dark", kit.icons.moon },
+    .{ "light", kit.icons.sun },
+});
+
 fn segmentIcon(token: []const u8) u21 {
-    if (std.mem.eql(u8, token, "auto")) return kit.icons.monitor;
-    if (std.mem.eql(u8, token, "dark")) return kit.icons.moon;
-    if (std.mem.eql(u8, token, "light")) return kit.icons.sun;
-    return kit.icons.none;
+    return segment_icons.get(token) orelse kit.icons.none;
 }
 
 fn toggleValue(idx: u16, cfg: *const Config) bool {

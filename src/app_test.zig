@@ -4,9 +4,12 @@
 const std = @import("std");
 
 const App = @import("App.zig");
+const Config = @import("config/Config.zig");
 const Window = @import("platform/Window.zig");
 const Blur = @import("renderer/root.zig").Blur;
+const Cursor = @import("renderer/Cursor.zig");
 
+const PeriodicTimer = App.PeriodicTimer;
 const PointerVisibility = App.PointerVisibility;
 const resolvePointerShape = App.resolvePointerShape;
 
@@ -85,4 +88,42 @@ test "resolvePointerShape: kit overlays, modals, scrollbar, and mouse reporting"
     try testing.expectEqual(Window.PointerShape.arrow, resolvePointerShape(null, false, false, true, false));
     try testing.expectEqual(Window.PointerShape.text, resolvePointerShape(null, false, false, true, true));
     try testing.expectEqual(Window.PointerShape.text, resolvePointerShape(null, false, false, false, false));
+}
+
+test "PeriodicTimer.setPeriod: shrinking period clamps elapsed_ms without underflow" {
+    const testing = std.testing;
+    var timer: PeriodicTimer = .{ .period_ms = 1000 };
+    try testing.expectEqual(@as(u64, 0), timer.tick(850));
+    try testing.expectEqual(@as(u64, 150), timer.remaining());
+
+    timer.setPeriod(200);
+    try testing.expectEqual(@as(u64, 50), timer.elapsed_ms);
+    try testing.expectEqual(@as(u64, 150), timer.remaining());
+
+    timer.setPeriod(0);
+    try testing.expectEqual(@as(u64, 0), timer.elapsed_ms);
+    try testing.expectEqual(std.math.maxInt(u64), timer.remaining());
+}
+
+test "rendererCursorOption: maps Config.Cursor onto renderer Cursor.Option" {
+    const testing = std.testing;
+    try testing.expectEqual(@as(usize, 28), @sizeOf(Config.Cursor));
+    try testing.expectEqual(Cursor.Option.default, App.rendererCursorOption(.default));
+
+    const custom: Config.Cursor = .{
+        .opacity = 0.75,
+        .radius = 2.5,
+        .underline_thickness = 0.25,
+        .underline_position = 0.9,
+        .beam_thickness = 0.2,
+        .hollow_border_width = 1.5,
+        .blink_interval_ms = 300,
+    };
+    const mapped = App.rendererCursorOption(custom);
+    try testing.expectApproxEqAbs(@as(f32, 0.75), mapped.alpha, 1e-6);
+    try testing.expectApproxEqAbs(@as(f32, 2.5), mapped.radius, 1e-6);
+    try testing.expectApproxEqAbs(@as(f32, 0.25), mapped.underline_frac, 1e-6);
+    try testing.expectApproxEqAbs(@as(f32, 0.9), mapped.bar_offset_y, 1e-6);
+    try testing.expectApproxEqAbs(@as(f32, 0.2), mapped.bar_frac, 1e-6);
+    try testing.expectApproxEqAbs(@as(f32, 1.5), mapped.hollow_border_width, 1e-6);
 }

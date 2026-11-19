@@ -693,3 +693,40 @@ test "apply: [window] inactive effects and mouse auto-hide keys" {
     try std.testing.expectError(error.OutOfRange, applyText(&config, .window, "mouse_idle_timeout", "0ms"));
     try std.testing.expectError(error.InvalidValue, applyText(&config, .window, "mouse_auto_hide", "always"));
 }
+
+test "apply: [cursor] keys and [selection] double_click_interval" {
+    var config = testConfig();
+    try applyText(&config, .cursor, "opacity", "0.8");
+    try applyText(&config, .cursor, "radius", "3.5");
+    try applyText(&config, .cursor, "underline_thickness", "0.25");
+    try applyText(&config, .cursor, "underline_position", "0.95");
+    try applyText(&config, .cursor, "beam_thickness", "0.2");
+    try applyText(&config, .cursor, "hollow_border_width", "2.0");
+    try applyText(&config, .cursor, "blink_interval", "350ms");
+    try applyText(&config, .selection, "double_click_interval", "750ms");
+
+    try std.testing.expectApproxEqAbs(@as(f32, 0.8), config.cursor.opacity, 1e-6);
+    try std.testing.expectApproxEqAbs(@as(f32, 3.5), config.cursor.radius, 1e-6);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.25), config.cursor.underline_thickness, 1e-6);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.95), config.cursor.underline_position, 1e-6);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.2), config.cursor.beam_thickness, 1e-6);
+    try std.testing.expectApproxEqAbs(@as(f32, 2.0), config.cursor.hollow_border_width, 1e-6);
+    try std.testing.expectEqual(@as(u32, 350), config.cursor.blink_interval_ms);
+    try std.testing.expectEqual(@as(u32, 750), config.selection.mouse_double_click_interval_ms);
+
+    try std.testing.expectError(error.OutOfRange, applyText(&config, .cursor, "opacity", "1.1"));
+    try std.testing.expectError(error.OutOfRange, applyText(&config, .cursor, "radius", "33"));
+    try std.testing.expectError(error.OutOfRange, applyText(&config, .cursor, "underline_thickness", "1.5"));
+    try std.testing.expectError(error.OutOfRange, applyText(&config, .cursor, "underline_position", "1.2"));
+    try std.testing.expectError(error.OutOfRange, applyText(&config, .cursor, "beam_thickness", "2.0"));
+    try std.testing.expectError(error.OutOfRange, applyText(&config, .cursor, "hollow_border_width", "17"));
+    try std.testing.expectError(error.OutOfRange, applyText(&config, .cursor, "blink_interval", "49ms"));
+    try std.testing.expectError(error.OutOfRange, applyText(&config, .cursor, "blink_interval", "6s"));
+    try std.testing.expectError(error.OutOfRange, applyText(&config, .selection, "double_click_interval", "50ms"));
+    try std.testing.expectError(error.OutOfRange, applyText(&config, .selection, "double_click_interval", "3s"));
+
+    try applyText(&config, .cursor, "blink_interval", "default");
+    try applyText(&config, .selection, "double_click_interval", "default");
+    try std.testing.expectEqual(@as(u32, 500), config.cursor.blink_interval_ms);
+    try std.testing.expectEqual(@as(u32, 500), config.selection.mouse_double_click_interval_ms);
+}

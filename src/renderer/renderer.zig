@@ -146,6 +146,12 @@ pub fn Renderer(comptime option: TerminalOption) type {
             self.blur.invalidate();
         }
 
+        pub fn setCursorOption(self: *Self, opt: Cursor.Option) void {
+            if (std.meta.eql(self.cursor.option, opt)) return;
+            self.cursor.option = opt;
+            self.blur.invalidate();
+        }
+
         /// Takes the cell size and baseline from the font, and resolves
         /// the decoration lines from the font and the decoration option.
         /// Called at init and whenever the font size changes.

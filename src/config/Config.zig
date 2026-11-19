@@ -25,6 +25,7 @@ shell: Shell = .{},
 ui: Ui = .{},
 theme: Theme,
 colors: Colors = .{},
+cursor: Cursor = .{},
 window: Window,
 scroll: struct {
     /// Lines moved by the scroll_up and scroll_down actions.
@@ -250,6 +251,26 @@ pub const Font = struct {
     /// Neutral values. An omitted `file` is filled at startup from the
     /// faces installed next to the executable (`builtin_font.zig`).
     pub const default: Font = .{ .faces = .default, .size = 14, .min_size = 6, .max_size = 196 };
+};
+
+/// How the terminal cursor renders and blinks (`[cursor]`).
+pub const Cursor = struct {
+    /// Cursor opacity, 0.0 to 1.0.
+    opacity: f32 = 1.0,
+    /// Corner radius in pixels, clamped to half the cursor's smaller side.
+    radius: f32 = 5.0,
+    /// Height of the underline cursor as a fraction of cell height.
+    underline_thickness: f32 = 0.16,
+    /// Bottom edge of the underline cursor as a fraction down from cell top.
+    underline_position: f32 = 1.0,
+    /// Width of the beam cursor as a fraction of cell width.
+    beam_thickness: f32 = 0.16,
+    /// Outline width in pixels when unfocused; 0 keeps the cursor filled.
+    hollow_border_width: f32 = 3.0,
+    /// Half-period of cursor and SGR 5 blink in milliseconds.
+    blink_interval_ms: u32 = 500,
+
+    pub const default: Cursor = .{};
 };
 
 /// The bell on BEL and on pomodoro phase changes: the X bell on X11, window

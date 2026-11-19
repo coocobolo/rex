@@ -27,6 +27,7 @@ pub const Section = enum {
     root,
     colors,
     font,
+    cursor,
     window,
     bell,
     toast,
@@ -228,6 +229,14 @@ const tail_rows = [_]Key{
     .{ .section = .font, .name = "weight", .field = "font.faces.regular_weight", .kind = .font_weight, .bounds = .{ .min = 1, .max = 1000 } },
     .{ .section = .font, .name = "bold_weight", .field = "font.faces.bold_weight", .kind = .font_weight, .bounds = .{ .min = 1, .max = 1000 } },
 
+    .{ .section = .cursor, .name = "opacity", .field = "cursor.opacity", .kind = .fraction },
+    .{ .section = .cursor, .name = "radius", .field = "cursor.radius", .bounds = .{ .min = 0, .max = 32 } },
+    .{ .section = .cursor, .name = "underline_thickness", .field = "cursor.underline_thickness", .kind = .fraction },
+    .{ .section = .cursor, .name = "underline_position", .field = "cursor.underline_position", .kind = .fraction },
+    .{ .section = .cursor, .name = "beam_thickness", .field = "cursor.beam_thickness", .kind = .fraction },
+    .{ .section = .cursor, .name = "hollow_border_width", .field = "cursor.hollow_border_width", .bounds = .{ .min = 0, .max = 16 } },
+    .{ .section = .cursor, .name = "blink_interval", .field = "cursor.blink_interval_ms", .kind = .duration, .bounds = .{ .min = 50, .max = 5000 } },
+
     .{ .section = .window, .name = "background_opacity", .field = "window.background.alpha", .kind = .fraction },
     .{ .section = .window, .name = "dim_text_opacity", .field = "window.dim_alpha", .kind = .fraction },
     .{ .section = .window, .name = "on_inactive", .field = "window.on_inactive", .kind = .set },
@@ -330,6 +339,7 @@ const tail_rows = [_]Key{
     .{ .section = .scrollbar, .name = "thumb_hover_color", .field = "scrollbar.thumb_hover_color", .kind = .color },
     .{ .section = .scrollbar, .name = "thumb_hover_opacity", .field = "scrollbar.thumb_hover_opacity", .kind = .fraction },
 
+    .{ .section = .selection, .name = "double_click_interval", .field = "selection.mouse_double_click_interval_ms", .kind = .duration, .bounds = .{ .min = 100, .max = 2000 } },
     .{ .section = .selection, .name = "extra_word_characters", .field = "selection.classifier.extra_word_chars", .kind = .word_characters },
     .{ .section = .selection, .name = "opacity", .field = "selection.opacity", .kind = .fraction },
     .{ .section = .selection, .name = "foreground_opacity", .field = "selection.foreground_opacity", .kind = .fraction },
@@ -408,7 +418,6 @@ pub const section_fields = [_]struct { Section, []const u8 }{
 /// list is also what could become configurable later.
 pub const internal = [_][]const u8{
     // Selection details.
-    "selection.mouse_double_click_interval_ms",
     "selection.classifier.join",
     "selection.classifier.non_ascii",
     "selection.classifier.control",
