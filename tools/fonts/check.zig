@@ -8,6 +8,7 @@
 //! `testdata/font`.
 
 const std = @import("std");
+const ttf = @import("font");
 
 pub fn main(init: std.process.Init) !void {
     const io = init.io;
@@ -92,7 +93,7 @@ fn copyright(io: std.Io, gpa: std.mem.Allocator, path: []const u8) ![]u8 {
 
     var header: [12]u8 = undefined;
     try readAt(io, file, &header, 0);
-    const tables = readInt(u16, header[4..6]);
+    const tables = ttf.readInt(u16, header[4..6]);
     const records = try gpa.alloc(u8, @as(usize, tables) * 16);
     try readAt(io, file, records, 12);
 
@@ -102,24 +103,24 @@ fn copyright(io: std.Io, gpa: std.mem.Allocator, path: []const u8) ![]u8 {
         const rec = records[i * 16 ..][0..16];
         if (!std.mem.eql(u8, rec[0..4], "name")) continue;
         name_at = .{
-            .offset = readInt(u32, rec[8..12]),
-            .len = readInt(u32, rec[12..16]),
+            .offset = ttf.readInt(u32, rec[8..12]),
+            .len = ttf.readInt(u32, rec[12..16]),
         };
     }
     const name = name_at orelse return error.NoNameTable;
     const blob = try gpa.alloc(u8, name.len);
     try readAt(io, file, blob, name.offset);
 
-    const count = readInt(u16, blob[2..4]);
-    const storage = readInt(u16, blob[4..6]);
+    const count = ttf.readInt(u16, blob[2..4]);
+    const storage = ttf.readInt(u16, blob[4..6]);
     var n: usize = 0;
     while (n < count) : (n += 1) {
         const rec = blob[6 + n * 12 ..][0..12];
-        const platform = readInt(u16, rec[0..2]);
-        const id = readInt(u16, rec[6..8]);
+        const platform = ttf.readInt(u16, rec[0..2]);
+        const id = ttf.readInt(u16, rec[6..8]);
         if (platform != 3 or id != 0) continue;
-        const length = readInt(u16, rec[8..10]);
-        const at = readInt(u16, rec[10..12]);
+        const length = ttf.readInt(u16, rec[8..10]);
+        const at = ttf.readInt(u16, rec[10..12]);
         const raw = blob[storage + at ..][0..length];
         return utf16Be(gpa, raw);
     }
@@ -131,14 +132,10 @@ fn utf16Be(gpa: std.mem.Allocator, raw: []const u8) ![]u8 {
     var out: std.ArrayList(u8) = .empty;
     var i: usize = 0;
     while (i < raw.len) : (i += 2) {
-        const cp = readInt(u16, raw[i..][0..2]);
+        const cp = ttf.readInt(u16, raw[i..][0..2]);
         var buf: [3]u8 = undefined;
         const n = std.unicode.utf8Encode(cp, &buf) catch return error.BadCopyright;
         try out.appendSlice(gpa, buf[0..n]);
     }
     return out.toOwnedSlice(gpa);
-}
-
-fn readInt(comptime T: type, bytes: *const [@divExact(@typeInfo(T).int.bits, 8)]u8) T {
-    return std.mem.readInt(T, bytes, .big);
 }

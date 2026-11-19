@@ -161,6 +161,11 @@ pub fn build(b: *std.Build) !void {
             .root_source_file = b.path("tools/fonts/subset.zig"),
             .target = b.graph.host,
             .optimize = .ReleaseFast,
+            .imports = &.{.{ .name = "font", .module = b.createModule(.{
+                .root_source_file = b.path("tools/font/parse.zig"),
+                .target = b.graph.host,
+                .optimize = .ReleaseFast,
+            }) }},
         }),
     });
     const subset_icons_run = b.addRunArtifact(subset_icons_exe);
@@ -287,6 +292,11 @@ pub fn build(b: *std.Build) !void {
             .root_source_file = b.path("tools/fonts/check.zig"),
             .target = b.graph.host,
             .optimize = .Debug,
+            .imports = &.{.{ .name = "font", .module = b.createModule(.{
+                .root_source_file = b.path("tools/font/parse.zig"),
+                .target = b.graph.host,
+                .optimize = .Debug,
+            }) }},
         }),
     });
     const check_run = b.addRunArtifact(check_font);
@@ -621,7 +631,14 @@ pub fn build(b: *std.Build) !void {
                 .root_source_file = b.path("tools/gen/" ++ exe_name ++ ".zig"),
                 .target = b.graph.host,
                 .optimize = .ReleaseFast,
-                .imports = &.{.{ .name = "scheme", .module = scheme_gen_module }},
+                .imports = &.{
+                    .{ .name = "scheme", .module = scheme_gen_module },
+                    .{ .name = "font", .module = b.createModule(.{
+                        .root_source_file = b.path("tools/font/parse.zig"),
+                        .target = b.graph.host,
+                        .optimize = .ReleaseFast,
+                    }) },
+                },
             }),
         });
         const run_gen = b.addRunArtifact(gen_exe);
