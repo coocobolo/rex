@@ -152,6 +152,11 @@ pub fn lockScreenTakesInput(self: *const KitOverlay) bool {
     return self.lock_screen.acceptsInput();
 }
 
+/// Returns which part of the lock/reminder overlay lies at logical `(x, y)`.
+pub fn lockScreenHit(self: *const KitOverlay, x: f32, y: f32) lock_mod.Hit {
+    return self.lock_screen.hit(self.tree.hitTest(x, y));
+}
+
 /// Whether a modal scrim (lock screen or alert dialog) currently covers the window.
 pub fn hasScrim(self: *const KitOverlay) bool {
     return self.lock_screen.isShown() or self.dialog.phase != .closed;

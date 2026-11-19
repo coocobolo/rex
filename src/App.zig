@@ -45,7 +45,10 @@ const Renderer = renderer_mod.Renderer;
 const Dimension = renderer_mod.Dimension;
 const FrameBuilder = renderer_mod.Frame.Builder;
 const kit_alert = @import("kit/alert.zig");
+const kit_ascii_canvas = @import("kit/AsciiCanvas.zig");
 const kit_lock_screen = @import("kit/lock_screen.zig");
+const kit_motion = @import("kit/motion.zig");
+const kit_theme = @import("kit/Theme.zig");
 const kit_toast = @import("kit/toast.zig");
 const kit_widget = @import("kit/wellbeing_widget.zig");
 
@@ -158,6 +161,12 @@ local_clock: wellbeing.localtime.Clock = .{},
 wellbeing_toast_serial: ?u32 = null,
 /// Null only if the bundled UI fonts could not be loaded on startup.
 kit: ?*KitOverlay = null,
+/// Lazily created instanced renderer for the fullscreen wellbeing ASCII overlay.
+ascii_overlay: ?*renderer_mod.AsciiOverlay = null,
+/// Pre-parsed UTF-8 frame animation loaded from `[wellbeing.ascii] file`, when set.
+ascii_frames: ?kit_ascii_canvas.Frames = null,
+/// Monotonic animation clock and redraw pacer for the fullscreen ASCII overlay.
+ascii_state: AsciiOverlayState = .{},
 /// Config or startup banner deferred while this window was unfocused.
 pending_banner: ?PendingAlert = null,
 
@@ -766,6 +775,8 @@ pub fn init(
 
     const kit = createKit(gpa, io, argv0, content_scale, active_config.font.faces.regular);
     errdefer if (kit) |k| k.destroy(gpa);
+    var ascii_frames = loadAsciiFrames(gpa, io, active_config.window.wellbeing_ascii.file);
+    errdefer if (ascii_frames) |*frames| frames.deinit(gpa);
     var initial_pending_banner: ?PendingAlert = null;
     if (kit) |k| {
         k.configure(kitOverlayOptions(active_config.ui, active_config.window));
@@ -813,6 +824,7 @@ pub fn init(
         .wellbeing_state = wellbeing_state,
         .wellbeing_watch = wellbeing_watch,
         .kit = kit,
+        .ascii_frames = ascii_frames,
         .pending_banner = initial_pending_banner,
         .frame_buffer_size = .empty,
         .clipboard_buf = clipboard_buf,
@@ -829,6 +841,10 @@ pub fn deinit(self: *App, gpa: std.mem.Allocator) void {
     gpa.free(self.config_path);
     gpa.free(self.home_dir);
 
+    if (self.ascii_frames) |*frames| frames.deinit(gpa);
+    self.ascii_frames = null;
+    if (self.ascii_overlay) |ao| ao.destroy(gpa);
+    self.ascii_overlay = null;
     if (self.kit) |kit| kit.destroy(gpa);
     self.renderer.deinit();
     self.frame_builder.deinit(gpa);
@@ -925,6 +941,16 @@ pub fn run(self: *App) !void {
         self.syncWellbeing(@intCast(now_real.raw.toSeconds()));
         if (wb_res.phase_changed or wb_res.alert != null) self.ringBell();
         self.syncWellbeingKit(wb_res.alert != null);
+        if (self.ascii_state.tick(
+            dt_clamped,
+            self.wellbeingOverlayMode().showsAscii(),
+            self.window_focused,
+            self.config.ui.motion,
+            self.config.window.wellbeing_ascii.fps,
+        )) {
+            self.renderer_dirty = true;
+            self.needs_redraw = true;
+        }
 
         var had_data = false;
         const driver_events = try self.driver.pollAndDrain();
@@ -1115,19 +1141,52 @@ fn renderFrame(self: *App) !bool {
         null,
     );
 
+    const fb_width: f32 = @floatFromInt(self.frame_buffer_size.width);
+    const fb_height: f32 = @floatFromInt(self.frame_buffer_size.height);
+    var background: [3]u8 = undefined;
+    for (&background, self.background_color[0..3]) |*out, channel| {
+        out.* = @intFromFloat(@round(std.math.clamp(channel, 0, 1) * 255));
+    }
+
+    const overlay_mode = self.wellbeingOverlayMode();
+    var ascii_ready = false;
+    if (overlay_mode.showsAscii()) {
+        if (self.ensureAsciiOverlay()) |ao| {
+            const theme = self.config.ui.color_scheme.variant(background).theme();
+            const accent = self.wellbeingAccent(theme);
+            const backdrop: kit_theme.Color = .{
+                .r = theme.background.r,
+                .g = theme.background.g,
+                .b = theme.background.b,
+                .a = 242,
+            };
+            ao.prepare(self.allocator, atlas, &self.rasterizer, .{
+                .source = self.asciiSource(),
+                .aspect = self.config.window.wellbeing_ascii.cell_aspect,
+                .time_s = self.ascii_state.timeSeconds(),
+                .progress = self.wellbeingProgress(),
+                .palette = kit_ascii_canvas.Palette.fromTheme(theme, accent),
+                .backdrop = backdrop,
+                .screen_w = fb_width,
+                .screen_h = fb_height,
+                .bottom_reserve_px = kit_lock_screen.hud_reserve * self.content_scale,
+            }) catch |err| {
+                log.err("cannot prepare ASCII overlay: {t}", .{err});
+            };
+            ascii_ready = true;
+            if (!self.ascii_state.drawn_last) frame.dirty.overlay = true;
+        }
+    } else if (self.ascii_state.drawn_last) {
+        frame.dirty.overlay = true;
+    }
+
     if (self.kit) |kit| {
         // The size `handleResize` last saw: asking the window is a
         // round trip to the X server on every frame.
-        const width: f32 = @floatFromInt(self.frame_buffer_size.width);
-        const height: f32 = @floatFromInt(self.frame_buffer_size.height);
-        var background: [3]u8 = undefined;
-        for (&background, self.background_color[0..3]) |*out, channel| {
-            out.* = @intFromFloat(@round(std.math.clamp(channel, 0, 1) * 255));
-        }
-        if (kit.buildFrame(atlas, width / self.content_scale, height / self.content_scale, background)) {
+        if (kit.buildFrame(atlas, fb_width / self.content_scale, fb_height / self.content_scale, background)) {
             frame.dirty.overlay = true;
         }
-        frame.overlay_has_modal = kit.hasScrim();
+        frame.overlay_has_modal = kit.hasScrim() and !ascii_ready;
     }
     const shift_held = self.platform.isKeyDown(self.window, .left_shift) or
         self.platform.isKeyDown(self.window, .right_shift);
@@ -1151,6 +1210,10 @@ fn renderFrame(self: *App) !bool {
         if (selection_state) |state| state.bg else null,
         .{ .blink_on = self.blink_on, .blink_rapid_on = self.blink_rapid_on },
     );
+    if (ascii_ready) {
+        if (self.ascii_overlay) |ao| ao.draw(atlas, dimension.width, dimension.height);
+    }
+    self.ascii_state.drawn_last = ascii_ready;
     if (self.kit) |kit| kit.draw(atlas, dimension.width, dimension.height);
 
     const swapped_seq = if (latency_trace.enabled) self.latency.?.frameDrawn(latency_trace.now(self.io)) else {};
@@ -1247,8 +1310,17 @@ fn waitForNextEvent(self: *App, had_data: bool) void {
     if (self.kit) |kit| {
         if (kit.wakeMs()) |wake| ms = @min(ms, wake);
     }
-    if (lock_active and alert.remaining_s > 0) ms = @min(ms, 1000);
-    if (animating) ms = @min(ms, 33);
+    const ascii_active = self.wellbeingOverlayMode().showsAscii();
+    if (self.ascii_state.wakeMs(
+        ascii_active,
+        self.window_focused,
+        self.config.ui.motion,
+        self.config.window.wellbeing_ascii.fps,
+    )) |ascii_wake| {
+        ms = @min(ms, ascii_wake);
+    }
+    if ((lock_active or ascii_active) and alert.remaining_s > 0) ms = @min(ms, 1000);
+    if (animating and !ascii_active) ms = @min(ms, 33);
     if (self.needs_redraw) ms = @min(ms, 8);
 
     self.platform.waitEvents(@as(f64, @floatFromInt(ms)));
@@ -1498,12 +1570,38 @@ fn syncWellbeingKit(self: *App, new_alert_fired: bool) void {
         }
     }
 
-    const locking = wb.input_locked and wb.option.lock_screen.enabled;
-    if (locking) {
+    const overlay_mode = self.wellbeingOverlayMode();
+    if (overlay_mode.showsLockSurface()) {
         if (self.wellbeing_toast_serial) |serial| {
             if (kit.dismissToast(serial)) self.needs_redraw = true;
             self.wellbeing_toast_serial = null;
         }
+        const hud_layout: kit_lock_screen.Layout = if (overlay_mode.showsAscii()) .hud else .card;
+        if (overlay_mode == .ascii_reminder) {
+            const title: []const u8, const tone: kit_lock_screen.Tone, const default_total_s: u32 = switch (wb.current_alert.kind) {
+                .eyesight => .{ "Rest your eyes", .healthy, @intCast(@max(@as(u64, 1), wb.option.eyesight.duration_ms / 1000)) },
+                .movement => .{ "Stretch and move", .healthy, @intCast(@max(@as(u64, 1), wb.option.movement.duration_ms / 1000)) },
+                .healthy_break => .{ "Time for a healthy break", .healthy, @max(@as(u32, 1), wb.current_alert.remaining_s) },
+                .screen_limit => .{ "Screen limit reached", .critical, @max(@as(u32, 1), wb.current_alert.remaining_s) },
+                .none => return,
+            };
+            const rem_s = wb.current_alert.remaining_s;
+            if (kit.syncLockScreen(.{
+                .tone = tone,
+                .layout = hud_layout,
+                .action = .dismiss,
+                .title = title,
+                .subtitle = "",
+                .prompt = wb.current_alert.prompt,
+                .remaining_s = rem_s,
+                .total_s = @max(default_total_s, rem_s),
+                .steps_total = 0,
+                .steps_done = 0,
+                .scrim_alpha = 0,
+            })) self.needs_redraw = true;
+            return;
+        }
+
         const in_break = wb.focus_state.phase == .short_break or wb.focus_state.phase == .long_break;
         const is_paused = wb.isFocusPausedByAlert() or !in_break or wb.focus_state.paused;
         const tone: kit_lock_screen.Tone = if (is_paused) .warning else .healthy;
@@ -1541,6 +1639,8 @@ fn syncWellbeingKit(self: *App, new_alert_fired: bool) void {
         const dim_byte: u8 = @intFromFloat(std.math.clamp(wb.option.lock_screen.dim_strength, 0.0, 1.0) * 255.0);
         if (kit.syncLockScreen(.{
             .tone = tone,
+            .layout = hud_layout,
+            .action = .unlock,
             .title = header_text,
             .subtitle = subtitle_text,
             .prompt = prompt_text,
@@ -1989,6 +2089,8 @@ pub fn reloadConfig(self: *App) void {
     }
 
     self.wellbeing_state.applyOption(self.config.wellbeing);
+    if (self.ascii_frames) |*frames| frames.deinit(self.allocator);
+    self.ascii_frames = loadAsciiFrames(self.allocator, self.io, self.config.window.wellbeing_ascii.file);
     if (self.kit) |kit| {
         if (widget_default_visible_changed) {
             if (self.config.window.wellbeing_widget.default_visible and self.wellbeing_state.option.enabled) {
@@ -2600,6 +2702,18 @@ fn unlockLockScreen(self: *App) void {
     self.needs_redraw = true;
 }
 
+fn dismissWellbeingOverlay(self: *App) void {
+    if (self.wellbeing_state.input_locked) {
+        self.unlockLockScreen();
+        return;
+    }
+    self.wellbeing_state.dismissAlert();
+    self.syncWellbeingKit(false);
+    self.maybeOpenClipboardDialog();
+    self.renderer_dirty = true;
+    self.needs_redraw = true;
+}
+
 /// Routes physical key events to active UI modals, overlays, and application keybindings.
 /// Returns true when the event was consumed by the UI layer, signaling the input callback
 /// to bypass terminal key encoding and suppress trailing text input callbacks.
@@ -2614,6 +2728,13 @@ fn routeKeyToUi(self: *App, maybe_key: ?rex.input.Key, mods: rex.input.Modifiers
     if (self.wellbeing_state.input_locked) {
         self.handleLockScreenKey(k, mods);
         return true;
+    }
+
+    if (self.kit) |kit| {
+        if (kit.lockScreenTakesInput()) {
+            if (!k.isModifier()) self.dismissWellbeingOverlay();
+            return true;
+        }
     }
 
     if (rex.input.matchBinding(self.config.keymap, k, mods)) |act| {
@@ -3249,19 +3370,27 @@ fn onMouseButton(self: *App, event: PlatformEvents.MouseButtonEvent) void {
 
     if (event.button == .left) {
         if (press) {
-            if (self.kit) |kit| switch (kit.press(self.mouse_x / self.content_scale, self.mouse_y / self.content_scale)) {
-                .outside => {},
-                .taken => return,
-                .changed => {
-                    self.needs_redraw = true;
+            if (self.kit) |kit| {
+                const lx = self.mouse_x / self.content_scale;
+                const ly = self.mouse_y / self.content_scale;
+                if (!self.wellbeing_state.input_locked and kit.lockScreenTakesInput() and kit.lockScreenHit(lx, ly) == .scrim) {
+                    self.dismissWellbeingOverlay();
                     return;
-                },
-                .scrim => {
-                    const outcome: alert_dialog.Event = if (self.config.window.modal.on_outside_click == .close) .dismiss else .blur;
-                    self.applyDialogOutcome(kit.dialogInput(outcome));
-                    return;
-                },
-            };
+                }
+                switch (kit.press(lx, ly)) {
+                    .outside => {},
+                    .taken => return,
+                    .changed => {
+                        self.needs_redraw = true;
+                        return;
+                    },
+                    .scrim => {
+                        const outcome: alert_dialog.Event = if (self.config.window.modal.on_outside_click == .close) .dismiss else .blur;
+                        self.applyDialogOutcome(kit.dialogInput(outcome));
+                        return;
+                    },
+                }
+            }
             if (modal_active) return;
             if (scrollback_used > 0 and self.handleScrollbarClick()) return;
         } else {
@@ -3273,7 +3402,7 @@ fn onMouseButton(self: *App, event: PlatformEvents.MouseButtonEvent) void {
                         .quiet => {},
                         .redraw => self.needs_redraw = true,
                         .dialog => |outcome| self.applyDialogOutcome(outcome),
-                        .lock_unlocked => self.unlockLockScreen(),
+                        .lock_unlocked => self.dismissWellbeingOverlay(),
                         .wellbeing_widget => |act| {
                             switch (act) {
                                 .toggle => {
@@ -4473,6 +4602,172 @@ fn alertDialogMedia(icon: @import("config/overlay.zig").AlertDialog.Icon) alert_
         .info => .info,
         .@"error" => .err,
         .none => .none,
+    };
+}
+
+/// Explicit pacing and mode state for the fullscreen wellbeing ASCII overlay.
+pub const AsciiOverlayState = struct {
+    time_ms: u64 = 0,
+    frame_accum_ms: u32 = 0,
+    drawn_last: bool = false,
+
+    pub const Mode = enum(u8) {
+        none,
+        card_lock,
+        ascii_lock,
+        ascii_reminder,
+
+        pub fn showsAscii(self: Mode) bool {
+            return self == .ascii_lock or self == .ascii_reminder;
+        }
+
+        pub fn showsLockSurface(self: Mode) bool {
+            return self != .none;
+        }
+    };
+
+    pub fn resolveMode(
+        wellbeing_enabled: bool,
+        input_locked: bool,
+        lock_screen_enabled: bool,
+        has_active_alert: bool,
+        ascii: @import("config/overlay.zig").WellbeingAscii,
+    ) Mode {
+        if (input_locked and lock_screen_enabled) {
+            return if (ascii.enabled) .ascii_lock else .card_lock;
+        }
+        if (wellbeing_enabled and has_active_alert and ascii.enabled and ascii.trigger == .all) {
+            return .ascii_reminder;
+        }
+        return .none;
+    }
+
+    pub fn frameIntervalMs(fps: u8) u32 {
+        return @divTrunc(1000, @as(u32, @max(@as(u8, 1), fps)));
+    }
+
+    /// Advances the overlay clock by `dt_ms` and returns whether a redraw is due.
+    pub fn tick(
+        self: *AsciiOverlayState,
+        dt_ms: u64,
+        active: bool,
+        focused: bool,
+        motion_mode: kit_motion.Mode,
+        fps: u8,
+    ) bool {
+        if (!active) {
+            self.time_ms = 0;
+            self.frame_accum_ms = 0;
+            return self.drawn_last;
+        }
+        if (motion_mode == .none) {
+            const changed = !self.drawn_last or self.time_ms != 0;
+            self.time_ms = 0;
+            self.frame_accum_ms = 0;
+            return changed;
+        }
+        if (!focused) {
+            self.frame_accum_ms = 0;
+            return !self.drawn_last;
+        }
+        const interval = frameIntervalMs(fps);
+        self.time_ms +|= dt_ms;
+        self.frame_accum_ms +|= @intCast(@min(dt_ms, std.math.maxInt(u32)));
+        if (!self.drawn_last or self.frame_accum_ms >= interval) {
+            self.frame_accum_ms %= interval;
+            return true;
+        }
+        return false;
+    }
+
+    /// Milliseconds until the next animation frame, or null when idle, paused,
+    /// or frozen by reduced motion.
+    pub fn wakeMs(
+        self: *const AsciiOverlayState,
+        active: bool,
+        focused: bool,
+        motion_mode: kit_motion.Mode,
+        fps: u8,
+    ) ?u64 {
+        if (!active or !focused or motion_mode == .none) return null;
+        const interval = frameIntervalMs(fps);
+        const rem = interval -| self.frame_accum_ms;
+        return @max(@as(u64, 1), rem);
+    }
+
+    pub fn timeSeconds(self: *const AsciiOverlayState) f32 {
+        return @as(f32, @floatFromInt(self.time_ms)) / 1000.0;
+    }
+};
+
+fn wellbeingOverlayMode(self: *const App) AsciiOverlayState.Mode {
+    const wb = &self.wellbeing_state;
+    const has_active_alert = wb.current_alert.kind != .none and wb.current_alert.remaining_s > 0;
+    return AsciiOverlayState.resolveMode(
+        wb.option.enabled,
+        wb.input_locked,
+        wb.option.lock_screen.enabled,
+        has_active_alert,
+        self.config.window.wellbeing_ascii,
+    );
+}
+
+fn ensureAsciiOverlay(self: *App) ?*renderer_mod.AsciiOverlay {
+    if (self.ascii_overlay) |ao| return ao;
+    const ao = renderer_mod.AsciiOverlay.create(self.allocator) catch |err| {
+        log.err("cannot create ASCII overlay renderer: {t}", .{err});
+        return null;
+    };
+    self.ascii_overlay = ao;
+    return ao;
+}
+
+fn asciiSource(self: *const App) kit_ascii_canvas.Source {
+    if (self.config.window.wellbeing_ascii.scene == .file) {
+        if (self.ascii_frames) |*frames| return .{ .frames = frames };
+        return .{ .procedural = .spin_3d };
+    }
+    return .{ .procedural = self.config.window.wellbeing_ascii.scene.toProcedural() orelse .spin_3d };
+}
+
+fn wellbeingAccent(self: *const App, theme: *const kit_theme) kit_theme.Color {
+    const wb = &self.wellbeing_state;
+    if (wb.current_alert.kind == .screen_limit) return theme.destructive;
+    if (wb.isFocusPausedByAlert()) return theme.warning;
+    return theme.success;
+}
+
+fn wellbeingProgress(self: *const App) f32 {
+    const wb = &self.wellbeing_state;
+    if (wb.focus_state.phase == .short_break or wb.focus_state.phase == .long_break) {
+        const total_ms: f32 = @floatFromInt(if (wb.focus_state.phase == .short_break)
+            wb.focus_state.option.short_break_ms
+        else
+            wb.focus_state.option.long_break_ms);
+        if (total_ms > 0) {
+            return std.math.clamp(1.0 - (@as(f32, @floatFromInt(wb.focus_state.remaining_ms)) / total_ms), 0.0, 1.0);
+        }
+    }
+    return 0.0;
+}
+
+fn loadAsciiFrames(gpa: std.mem.Allocator, io: std.Io, maybe_path: ?[*:0]const u8) ?kit_ascii_canvas.Frames {
+    const path_z = maybe_path orelse return null;
+    const path = std.mem.span(path_z);
+    if (path.len == 0) return null;
+    const bytes = std.Io.Dir.cwd().readFileAlloc(
+        io,
+        path,
+        gpa,
+        .limited(kit_ascii_canvas.Frames.max_file_bytes + 1),
+    ) catch |err| {
+        log.warn("cannot read ASCII animation file {s}: {t}; falling back to built-in scene", .{ path, err });
+        return null;
+    };
+    defer gpa.free(bytes);
+    return kit_ascii_canvas.Frames.parse(gpa, bytes) catch |err| {
+        log.warn("invalid ASCII animation file {s}: {t}; falling back to built-in scene", .{ path, err });
+        return null;
     };
 }
 

@@ -173,3 +173,55 @@ test "kitOverlayOptions: forwards [wellbeing.widget] options to KitOverlay" {
     try testing.expectEqual(.half_rings, opts.wellbeing_widget.progress_style);
     try testing.expect(!opts.wellbeing_widget.tooltip);
 }
+
+test "AsciiOverlayState: mode resolution honors enabled opt-out and trigger" {
+    const testing = std.testing;
+    const State = App.AsciiOverlayState;
+    const default_ascii = (Config.Window.default).wellbeing_ascii;
+
+    // Default (enabled = true, trigger = all): both locking breaks and reminders show ASCII.
+    try testing.expectEqual(State.Mode.ascii_lock, State.resolveMode(true, true, true, false, default_ascii));
+    try testing.expectEqual(State.Mode.ascii_reminder, State.resolveMode(true, false, true, true, default_ascii));
+    try testing.expectEqual(State.Mode.none, State.resolveMode(true, false, true, false, default_ascii));
+
+    // Opt-out (enabled = false): locking falls back to centered card, reminders stay toasts.
+    var opt_out = default_ascii;
+    opt_out.enabled = false;
+    try testing.expectEqual(State.Mode.card_lock, State.resolveMode(true, true, true, false, opt_out));
+    try testing.expectEqual(State.Mode.none, State.resolveMode(true, false, true, true, opt_out));
+
+    // trigger = lock_only: locking shows ASCII, non-locking reminders stay toasts.
+    var lock_only = default_ascii;
+    lock_only.trigger = .lock_only;
+    try testing.expectEqual(State.Mode.ascii_lock, State.resolveMode(true, true, true, false, lock_only));
+    try testing.expectEqual(State.Mode.none, State.resolveMode(true, false, true, true, lock_only));
+}
+
+test "AsciiOverlayState: frame pacing, unfocused pause, and reduced motion freeze" {
+    const testing = std.testing;
+    var state: App.AsciiOverlayState = .{};
+
+    // Inactive: no wakeups, no redraw.
+    try testing.expectEqual(@as(?u64, null), state.wakeMs(false, true, .full, 20));
+    try testing.expect(!state.tick(50, false, true, .full, 20));
+
+    // Active & focused at 20 fps (50 ms interval): first tick triggers redraw.
+    try testing.expect(state.tick(10, true, true, .full, 20));
+    state.drawn_last = true;
+    try testing.expectEqual(@as(?u64, 40), state.wakeMs(true, true, .full, 20));
+    try testing.expect(!state.tick(20, true, true, .full, 20));
+    try testing.expect(state.tick(20, true, true, .full, 20));
+
+    // Unfocused: pauses animation wakeups and redraws.
+    try testing.expectEqual(@as(?u64, null), state.wakeMs(true, false, .full, 20));
+    try testing.expect(!state.tick(100, true, false, .full, 20));
+
+    // Reduced motion (.none): resets clock to static frame 0 and asks for no wakeups.
+    try testing.expectEqual(@as(?u64, null), state.wakeMs(true, true, .none, 20));
+    try testing.expect(state.tick(100, true, true, .none, 20));
+    try testing.expectEqual(@as(u64, 0), state.time_ms);
+    try testing.expect(!state.tick(100, true, true, .none, 20));
+
+    // Deactivating after drawing requests one final redraw to clear the last frame.
+    try testing.expect(state.tick(16, false, true, .full, 20));
+}
