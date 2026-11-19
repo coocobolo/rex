@@ -127,3 +127,29 @@ test "rendererCursorOption: maps Config.Cursor onto renderer Cursor.Option" {
     try testing.expectApproxEqAbs(@as(f32, 0.2), mapped.bar_frac, 1e-6);
     try testing.expectApproxEqAbs(@as(f32, 1.5), mapped.hollow_border_width, 1e-6);
 }
+
+test "gridLayout and cellPosAt: inner padding scales, shrinks on tiny windows, and offsets hit-testing" {
+    const testing = std.testing;
+    try testing.expectEqual(@as(u16, 0), App.scaledPaddingPx(0, 1.5));
+    try testing.expectEqual(@as(u16, 15), App.scaledPaddingPx(12, 1.25));
+    try testing.expectEqual(@as(u16, 24), App.scaledPaddingPx(12, 2.0));
+
+    // Normal window: symmetric padding reduces available grid area and sets origin.
+    const normal = App.gridLayout(1000, 600, 10, 20, 20, 10, 220, 200);
+    try testing.expectEqual(@as(u16, 20), normal.origin_x);
+    try testing.expectEqual(@as(u16, 10), normal.origin_y);
+    try testing.expectEqual(@as(u16, 96), normal.cols);
+    try testing.expectEqual(@as(u16, 29), normal.rows);
+
+    // Tiny window: padding clamps so at least 1x1 cell still fits.
+    const tiny = App.gridLayout(30, 40, 10, 20, 100, 100, 220, 200);
+    try testing.expectEqual(@as(u16, 10), tiny.origin_x);
+    try testing.expectEqual(@as(u16, 10), tiny.origin_y);
+    try testing.expectEqual(@as(u16, 1), tiny.cols);
+    try testing.expectEqual(@as(u16, 1), tiny.rows);
+
+    // Hit-testing clamps clicks in the left/top margin to (0, 0) and offsets interior cells.
+    try testing.expectEqual(.{ @as(u16, 0), @as(u16, 0) }, App.cellPosAt(5, 3, 20, 10, 10, 20, 220, 200));
+    try testing.expectEqual(.{ @as(u16, 0), @as(u16, 0) }, App.cellPosAt(25, 15, 20, 10, 10, 20, 220, 200));
+    try testing.expectEqual(.{ @as(u16, 2), @as(u16, 3) }, App.cellPosAt(45, 75, 20, 10, 10, 20, 220, 200));
+}

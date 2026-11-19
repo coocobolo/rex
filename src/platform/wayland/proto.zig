@@ -106,6 +106,7 @@ pub const xdg_toplevel_decoration = struct {
     pub const destroy: u32 = 0;
     pub const set_mode: u32 = 1;
 
+    pub const mode_client_side: u32 = 1;
     pub const mode_server_side: u32 = 2;
 
     pub const Listener = extern struct {

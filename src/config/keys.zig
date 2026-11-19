@@ -250,6 +250,9 @@ const tail_rows = [_]Key{
     // The size the window opens with.
     .{ .section = .window, .name = "width", .field = "window.size.width", .bounds = at_least_one, .reload = .restart },
     .{ .section = .window, .name = "height", .field = "window.size.height", .bounds = at_least_one, .reload = .restart },
+    .{ .section = .window, .name = "decorations", .field = "window.decorations" },
+    .{ .section = .window, .name = "padding_x", .field = "window.padding_x", .bounds = .{ .min = 0, .max = 128 } },
+    .{ .section = .window, .name = "padding_y", .field = "window.padding_y", .bounds = .{ .min = 0, .max = 128 } },
     .{ .section = .window, .name = "title", .field = "window.title", .kind = .text, .null_keyword = .auto },
 
     .{ .section = .bell, .name = "enabled", .field = "window.bell.enabled" },

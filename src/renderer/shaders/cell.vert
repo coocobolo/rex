@@ -10,6 +10,7 @@ layout(location = 6) in uint  a_flags;
   
 uniform vec2  u_cell_size;
 uniform vec2  u_screen_size;
+uniform vec2  u_grid_origin;
 uniform vec2  u_atlas_size;
 uniform float u_ascender; // pixels from cell top to baseline
   
@@ -18,7 +19,7 @@ flat out vec4 v_fg;
 flat out uint v_flags;  
   
 void main() {  
-    vec2 cell_tl = vec2(a_cell) * u_cell_size;  
+    vec2 cell_tl = u_grid_origin + vec2(a_cell) * u_cell_size;  
   
     // bearing_x: pixels right of pen to left edge of bitmap  
     // bearing_y: pixels above baseline to top of bitmap (FreeType convention)  

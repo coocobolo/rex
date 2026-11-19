@@ -15,6 +15,7 @@ pub const InitOption = struct {
     width: u16,
     height: u16,
     title: [:0]const u8,
+    decorated: bool = true,
 };
 
 handle: x.Window,
@@ -54,6 +55,7 @@ pub fn init(self: *X11Window, option: InitOption) !void {
         x.LeaveWindowMask | x.FocusChangeMask);
     const protocols = [_]x.Atom{backend.state.wm_delete_atom};
     _ = lib.XChangeProperty(display, handle, backend.state.wm_protocols_atom, x.XA_ATOM, 32, x.PropModeReplace, @ptrCast(&protocols), 1);
+    if (!option.decorated) applyDecoratedHint(lib, display, handle, false);
     _ = lib.XMapWindow(display, handle);
     _ = lib.XSync(display, 0);
 
@@ -125,6 +127,23 @@ pub fn setTitle(self: *X11Window, title: [:0]const u8) void {
     const display = backend.state.display.?;
     _ = lib.XStoreName(display, self.handle, @ptrCast(title.ptr));
     _ = lib.XChangeProperty(display, self.handle, lib.XInternAtom(display, "_NET_WM_NAME", 0), backend.state.utf8_atom, 8, x.PropModeReplace, @ptrCast(title.ptr), @intCast(title.len));
+}
+
+/// Shows or hides window manager decorations via `_MOTIF_WM_HINTS`.
+pub fn setDecorated(self: *const X11Window, decorated: bool) void {
+    const lib = &backend.state.x11.?;
+    const display = backend.state.display.?;
+    applyDecoratedHint(lib, display, self.handle, decorated);
+    _ = lib.XFlush(display);
+}
+
+fn applyDecoratedHint(lib: *const @import("xlib.zig").Xlib, display: *x.Display, handle: x.Window, decorated: bool) void {
+    const atom = lib.XInternAtom(display, "_MOTIF_WM_HINTS", 0);
+    if (atom == 0) return;
+    // Xlib format 32 expects `c_ulong` elements per property item:
+    // flags = MWM_HINTS_DECORATIONS (1 << 1), decorations = 1 (all) or 0 (none).
+    const hints = [5]c_ulong{ 2, 0, if (decorated) 1 else 0, 0, 0 };
+    _ = lib.XChangeProperty(display, handle, atom, atom, 32, x.PropModeReplace, @ptrCast(&hints), hints.len);
 }
 
 pub fn swapBuffers(self: *const X11Window) void {

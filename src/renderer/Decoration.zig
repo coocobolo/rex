@@ -385,6 +385,7 @@ pub fn draw(
     dimension: struct {
         cell: Dimension(f32),
         frame: Dimension(f32),
+        origin: [2]f32 = .{ 0, 0 },
     },
     metrics: Metrics,
     /// Glyph coverage of this frame, or null to draw through ink.
@@ -396,6 +397,7 @@ pub fn draw(
     self.shader.use();
     self.shader.set2f("u_cell_size", dimension.cell.width, dimension.cell.height);
     self.shader.set2f("u_screen_size", dimension.frame.width, dimension.frame.height);
+    self.shader.set2f("u_grid_origin", dimension.origin[0], dimension.origin[1]);
     self.shader.set1f("u_alpha", std.math.clamp(self.option.alpha, 0.0, 1.0));
     self.shader.set1i("u_blink_on", @intFromBool(blink_on));
     self.shader.set1i("u_blink_rapid_on", @intFromBool(blink_rapid_on));

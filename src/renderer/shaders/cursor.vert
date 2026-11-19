@@ -5,6 +5,7 @@ layout(location = 0) in vec2 a_quad;
 uniform uvec2 u_cell_pos;       // (col, row) in grid units
 uniform vec2 u_cell_size;       // (cell_w, cell_h) in pixels
 uniform vec2 u_screen_size;     // framebuffer (w, h) in pixels
+uniform vec2 u_grid_origin;     // top-left of cell (0, 0) in pixels
 uniform int u_shape;            // 0=block, 1=underline, 2=beam
 uniform float u_underline_frac; // underline height, fraction of the cell height
 uniform float u_bar_frac;       // bar width, fraction of the cell width
@@ -18,7 +19,7 @@ const int SHAPE_UNDERLINE = 1;
 const int SHAPE_BEAM = 2;
 
 void main() {
-  vec2 cell_tl = vec2(u_cell_pos) * u_cell_size;
+  vec2 cell_tl = u_grid_origin + vec2(u_cell_pos) * u_cell_size;
 
   // Adjust quad size and offset based on cursor shape
   vec2 size = u_cell_size;

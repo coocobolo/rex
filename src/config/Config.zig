@@ -117,6 +117,12 @@ pub const Window = struct {
     /// On X11 the window grows by the display scale when it's created;
     /// on Wayland the compositor scales it.
     size: window_types.Size = .{ .width = 1920, .height = 1080 },
+    /// Window titlebar and border decorations.
+    decorations: window_types.Decorations = .full,
+    /// Horizontal inner padding around the terminal grid, in logical pixels.
+    padding_x: u16 = 0,
+    /// Vertical inner padding around the terminal grid, in logical pixels.
+    padding_y: u16 = 0,
     /// Window title; null (`auto`) shows the title programs set with OSC 0
     /// and 2, or `default_title` until they set one.
     title: ?[:0]const u8 = null,
@@ -151,6 +157,7 @@ pub const Window = struct {
         ask_if_running,
         close,
     };
+    pub const Decorations = window_types.Decorations;
     pub const InactiveEffect = window_types.InactiveEffect;
     pub const InactiveSet = window_types.InactiveSet;
     pub const MouseAutoHide = window_types.MouseAutoHide;

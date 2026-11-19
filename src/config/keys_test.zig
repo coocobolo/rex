@@ -420,6 +420,7 @@ const enum_names = [_]struct { []const u8, []const []const u8 }{
     .{ "window.on_inactive", &.{ "opacity", "dim", "blur" } },
     .{ "window.mouse_auto_hide", &.{ "never", "on_typing" } },
     .{ "window.on_close", &.{ "ask", "ask_if_running", "close" } },
+    .{ "window.decorations", &.{ "full", "none" } },
     .{ "ui.motion", &.{ "full", "none" } },
     .{ "ui.color_scheme", &.{ "auto", "dark", "light" } },
     .{ "clipboard.osc52_write", &.{ "allow", "deny", "ask" } },
@@ -729,4 +730,29 @@ test "apply: [cursor] keys and [selection] double_click_interval" {
     try applyText(&config, .selection, "double_click_interval", "default");
     try std.testing.expectEqual(@as(u32, 500), config.cursor.blink_interval_ms);
     try std.testing.expectEqual(@as(u32, 500), config.selection.mouse_double_click_interval_ms);
+}
+
+test "apply: [window] decorations and padding keys" {
+    var config = testConfig();
+    try std.testing.expectEqual(Config.Window.Decorations.full, config.window.decorations);
+    try std.testing.expectEqual(@as(u16, 0), config.window.padding_x);
+    try std.testing.expectEqual(@as(u16, 0), config.window.padding_y);
+
+    try applyText(&config, .window, "decorations", "none");
+    try applyText(&config, .window, "padding_x", "12");
+    try applyText(&config, .window, "padding_y", "8");
+    try std.testing.expectEqual(Config.Window.Decorations.none, config.window.decorations);
+    try std.testing.expectEqual(@as(u16, 12), config.window.padding_x);
+    try std.testing.expectEqual(@as(u16, 8), config.window.padding_y);
+
+    try std.testing.expectError(error.InvalidValue, applyText(&config, .window, "decorations", "transparent"));
+    try std.testing.expectError(error.OutOfRange, applyText(&config, .window, "padding_x", "129"));
+    try std.testing.expectError(error.OutOfRange, applyText(&config, .window, "padding_y", "200"));
+
+    try applyText(&config, .window, "decorations", "default");
+    try applyText(&config, .window, "padding_x", "default");
+    try applyText(&config, .window, "padding_y", "default");
+    try std.testing.expectEqual(Config.Window.Decorations.full, config.window.decorations);
+    try std.testing.expectEqual(@as(u16, 0), config.window.padding_x);
+    try std.testing.expectEqual(@as(u16, 0), config.window.padding_y);
 }

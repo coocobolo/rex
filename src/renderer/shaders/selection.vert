@@ -9,6 +9,7 @@ layout(location = 5) in uvec2 a_next; // (next_col, next_span)
 
 uniform vec2 u_cell_size;
 uniform vec2 u_screen_size;
+uniform vec2 u_grid_origin;
 uniform float u_border_width;
 uniform float u_radius;
 uniform uint u_border_style;
@@ -24,7 +25,7 @@ const uint BORDER_STYLE_UNIFIED = 1u;
 
 void main() {
   vec2 size = vec2(float(a_span) * u_cell_size.x, u_cell_size.y);
-  vec2 cell_tl = vec2(a_cell) * u_cell_size;
+  vec2 cell_tl = u_grid_origin + vec2(a_cell) * u_cell_size;
 
   float col_f = float(a_cell.x);
   float u = u_cell_size.x;

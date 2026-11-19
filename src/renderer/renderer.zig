@@ -56,6 +56,7 @@ pub fn Renderer(comptime option: TerminalOption) type {
 
         grayscale: f32 = 0.0,
         color_tint: [3]f32 = .{ 1.0, 1.0, 1.0 },
+        grid_origin: [2]f32 = .{ 0.0, 0.0 },
         modal_blur: bool = false,
         modal_blur_radius: u8 = 12,
         inactive_blur: bool = false,
@@ -150,6 +151,15 @@ pub fn Renderer(comptime option: TerminalOption) type {
             if (std.meta.eql(self.cursor.option, opt)) return;
             self.cursor.option = opt;
             self.blur.invalidate();
+        }
+
+        /// Sets the top-left pixel origin of cell `(0, 0)` within the framebuffer.
+        pub fn setGridOrigin(self: *Self, x: f32, y: f32) void {
+            const next = [2]f32{ x, y };
+            if (std.meta.eql(self.grid_origin, next)) return;
+            self.grid_origin = next;
+            self.blur.invalidate();
+            self.selection_blur.invalidate();
         }
 
         /// Takes the cell size and baseline from the font, and resolves
@@ -260,6 +270,7 @@ pub fn Renderer(comptime option: TerminalOption) type {
                 .blink_rapid_on = cursor_state.blink_rapid_on,
                 .cell = self.cell_dimension,
                 .frame = frame_dimension,
+                .origin = self.grid_origin,
                 .gray_len = frame.gray_instances.len,
                 .color_len = frame.color_instances.len,
                 .grayscale = self.grayscale,
@@ -297,6 +308,7 @@ pub fn Renderer(comptime option: TerminalOption) type {
                 .{
                     .cell = self.cell_dimension,
                     .frame = frame_dimension,
+                    .origin = self.grid_origin,
                 },
                 background_color[3],
                 self.grayscale,
@@ -311,6 +323,7 @@ pub fn Renderer(comptime option: TerminalOption) type {
                 .{
                     .cell = self.cell_dimension,
                     .frame = frame_dimension,
+                    .origin = self.grid_origin,
                 },
             );
 
@@ -327,6 +340,7 @@ pub fn Renderer(comptime option: TerminalOption) type {
                     .{
                         .cell = self.cell_dimension,
                         .frame = frame_dimension,
+                        .origin = self.grid_origin,
                     },
                 );
             }
@@ -433,6 +447,7 @@ pub fn Renderer(comptime option: TerminalOption) type {
                     .{
                         .cell = self.cell_dimension,
                         .frame = frame_dimension,
+                        .origin = self.grid_origin,
                     },
                     background_color[3],
                     self.grayscale,
@@ -480,6 +495,7 @@ pub fn Renderer(comptime option: TerminalOption) type {
                 .{
                     .cell = self.cell_dimension,
                     .frame = frame_dimension,
+                    .origin = self.grid_origin,
                 },
                 self.decoration_metrics,
                 ink_mask,

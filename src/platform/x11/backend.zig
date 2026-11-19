@@ -371,6 +371,10 @@ pub fn windowSetTitle(window: Window, title: [:0]const u8) void {
     implOf(window).setTitle(title);
 }
 
+pub fn windowSetDecorated(window: Window, decorated: bool) void {
+    implOf(window).setDecorated(decorated);
+}
+
 pub fn windowShouldClose(window: Window) bool {
     return implOf(window).should_close;
 }

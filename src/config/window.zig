@@ -7,6 +7,9 @@ const std = @import("std");
 /// The display server to start on (`[window] platform`).
 pub const Platform = enum { auto, wayland, x11 };
 
+/// Window titlebar and border decorations (`[window] decorations`).
+pub const Decorations = enum { full, none };
+
 /// A size in logical pixels.
 pub const Size = struct {
     width: u16,

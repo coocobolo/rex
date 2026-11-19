@@ -32,12 +32,13 @@ pub fn choose(requested: window_config.Platform, wayland_session: bool) Choice {
     return backend.choose(requested, wayland_session);
 }
 
-/// Creates a window with the given size and title.
+/// Creates a window with the given size, title, and decoration preference.
 pub fn createWindow(_: *Platform, options: Window.Options) !Window {
     return backend.createWindow(.{
         .width = options.width,
         .height = options.height,
         .title = options.title,
+        .decorated = options.decorated,
     });
 }
 

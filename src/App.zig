@@ -222,6 +222,8 @@ window_focused: bool = true,
 /// reported once and its end is reported too; null while syncs succeed.
 wellbeing_sync_error: ?wellbeing.Wellbeing.SyncError = null,
 frame_buffer_size: Dimension(u16),
+/// Top-left pixel origin of cell `(0, 0)` within the framebuffer (scaled inner padding).
+grid_origin: [2]f32 = .{ 0.0, 0.0 },
 /// Main-thread copy of an OSC 52 write, with room for the NUL GLFW needs.
 /// Owned; freed in `deinit`.
 clipboard_buf: *[terminal_option.max_clipboard_bytes + 1]u8,
@@ -657,6 +659,7 @@ pub fn init(
         .width = active_config.window.size.width,
         .height = active_config.window.size.height,
         .title = active_config.window.title orelse Config.Window.default_title,
+        .decorated = active_config.window.decorations == .full,
     });
     errdefer win.deinit();
 
@@ -1346,6 +1349,66 @@ fn ringBell(self: *App) void {
     self.window.ringBell(self.config.window.bell.volume);
 }
 
+pub const GridLayout = struct {
+    cols: u16,
+    rows: u16,
+    origin_x: u16,
+    origin_y: u16,
+};
+
+/// Converts logical padding pixels into physical framebuffer pixels at `content_scale`.
+pub fn scaledPaddingPx(logical_px: u16, content_scale: f32) u16 {
+    if (logical_px == 0) return 0;
+    const scale: f32 = if (content_scale > 0) content_scale else 1.0;
+    const scaled = @round(@as(f32, @floatFromInt(logical_px)) * scale);
+    return @intFromFloat(std.math.clamp(scaled, 0.0, @as(f32, @floatFromInt(std.math.maxInt(u16)))));
+}
+
+/// Computes terminal grid dimensions and top-left pixel origin after applying
+/// symmetric inner padding, shrinking padding when needed to keep at least one
+/// cell whenever the framebuffer is at least one cell wide/tall.
+pub fn gridLayout(
+    fb_w: u16,
+    fb_h: u16,
+    cell_w: u16,
+    cell_h: u16,
+    pad_x: u16,
+    pad_y: u16,
+    max_cols: u16,
+    max_rows: u16,
+) GridLayout {
+    if (cell_w == 0 or cell_h == 0) return .{ .cols = 0, .rows = 0, .origin_x = 0, .origin_y = 0 };
+    const eff_x = @min(pad_x, (fb_w -| cell_w) / 2);
+    const eff_y = @min(pad_y, (fb_h -| cell_h) / 2);
+    const inner_w = fb_w -| (eff_x *| 2);
+    const inner_h = fb_h -| (eff_y *| 2);
+    return .{
+        .cols = @min(inner_w / cell_w, max_cols),
+        .rows = @min(inner_h / cell_h, max_rows),
+        .origin_x = eff_x,
+        .origin_y = eff_y,
+    };
+}
+
+/// Maps physical framebuffer pointer coordinates onto a grid cell `(col, row)`
+/// relative to `(origin_x, origin_y)`.
+pub fn cellPosAt(
+    xpos: f32,
+    ypos: f32,
+    origin_x: f32,
+    origin_y: f32,
+    cell_w: u16,
+    cell_h: u16,
+    max_cols: u16,
+    max_rows: u16,
+) struct { u16, u16 } {
+    const local_x = @max(0.0, xpos - origin_x);
+    const local_y = @max(0.0, ypos - origin_y);
+    const col: u16 = @intCast(@min(@as(u32, @intFromFloat(local_x)) / cell_w, max_cols - 1));
+    const row: u16 = @intCast(@min(@as(u32, @intFromFloat(local_y)) / cell_h, max_rows - 1));
+    return .{ col, row };
+}
+
 pub fn handleResize(self: *App, dimension: Dimension(u16)) void {
     const frame_buffer_width = dimension.width;
     const frame_buffer_height = dimension.height;
@@ -1358,26 +1421,42 @@ pub fn handleResize(self: *App, dimension: Dimension(u16)) void {
     const cell_height = self.rasterizer.cell_height;
     if (cell_width == 0 or cell_height == 0) return;
 
-    const new_rows: u16 = @min(frame_buffer_height / cell_height, terminal_option.max_rows);
-    const new_cols: u16 = @min(frame_buffer_width / cell_width, terminal_option.max_cols);
+    const pad_x = scaledPaddingPx(self.config.window.padding_x, self.content_scale);
+    const pad_y = scaledPaddingPx(self.config.window.padding_y, self.content_scale);
+    const layout = gridLayout(
+        frame_buffer_width,
+        frame_buffer_height,
+        cell_width,
+        cell_height,
+        pad_x,
+        pad_y,
+        terminal_option.max_cols,
+        terminal_option.max_rows,
+    );
+    const new_cols = layout.cols;
+    const new_rows = layout.rows;
     if (new_rows == 0 or new_cols == 0) return;
+
+    self.grid_origin = .{ @floatFromInt(layout.origin_x), @floatFromInt(layout.origin_y) };
+    self.renderer.setGridOrigin(self.grid_origin[0], self.grid_origin[1]);
 
     self.driver.sendInput(.{
         .resize = .{
             .rows = new_rows,
             .cols = new_cols,
-            .pixel_width = frame_buffer_width,
-            .pixel_height = frame_buffer_height,
+            .pixel_width = frame_buffer_width -| layout.origin_x *| 2,
+            .pixel_height = frame_buffer_height -| layout.origin_y *| 2,
         },
     }) catch |err| {
         log.err("handleResize: driver sendInput failed: {}", .{err});
     };
 
-    log.debug("fb={}x{} cell={}x{} grid={}cols {}rows (unused: {}px right, {}px bottom)", .{
-        frame_buffer_width,                           frame_buffer_height,
-        cell_width,                                   cell_height,
-        new_cols,                                     new_rows,
-        frame_buffer_width -| new_cols *| cell_width, frame_buffer_height -| new_rows *| cell_height,
+    log.debug("fb={}x{} pad={}x{} cell={}x{} grid={}cols {}rows (unused: {}px right, {}px bottom)", .{
+        frame_buffer_width,                                                     frame_buffer_height,
+        layout.origin_x,                                                        layout.origin_y,
+        cell_width,                                                             cell_height,
+        new_cols,                                                               new_rows,
+        (frame_buffer_width -| layout.origin_x *| 2) -| new_cols *| cell_width, (frame_buffer_height -| layout.origin_y *| 2) -| new_rows *| cell_height,
     });
 
     gl.viewport(0, 0, @intCast(frame_buffer_width), @intCast(frame_buffer_height));
@@ -1832,6 +1911,9 @@ pub fn reloadConfig(self: *App) void {
     }
     const new_config = loaded.config;
     const faces_changed = !self.config.font.faces.eql(new_config.font.faces);
+    const decorations_changed = new_config.window.decorations != self.config.window.decorations;
+    const padding_changed = new_config.window.padding_x != self.config.window.padding_x or
+        new_config.window.padding_y != self.config.window.padding_y;
 
     if (new_config.window.platform != self.config.window.platform) {
         log.info("window.platform takes effect on the next start", .{});
@@ -1879,6 +1961,9 @@ pub fn reloadConfig(self: *App) void {
     self.tickPointerIdle(0);
     self.driver.setTheme(resolved_theme);
     self.updateWindowTitle();
+    if (decorations_changed) {
+        self.window.setDecorated(self.config.window.decorations == .full);
+    }
     self.frame_builder.last_generation = null;
     self.renderer_dirty = true;
 
@@ -1892,6 +1977,10 @@ pub fn reloadConfig(self: *App) void {
     }
     if (faces_changed and self.font_size == size_before and !self.rebuildFont(self.font_size, self.content_scale)) {
         self.showAlert(.err, "Config error", "the new font could not be loaded; the previous one stays");
+    }
+    if (padding_changed) {
+        self.frame_buffer_size = .empty;
+        self.handleResize(self.window.framebufferSize(u16));
     }
 
     self.wellbeing_state.applyOption(self.config.wellbeing);
@@ -2656,10 +2745,16 @@ fn onKey(self: *App, event: PlatformEvents.KeyEvent) void {
 }
 
 fn mouseCellPos(self: *App, xpos: f32, ypos: f32) struct { u16, u16 } {
-    const cw, const ch = .{ self.rasterizer.cell_width, self.rasterizer.cell_height };
-    const col: u16 = @intCast(@min(@as(u32, @intFromFloat(@max(0, xpos))) / cw, terminal_option.max_cols - 1));
-    const row: u16 = @intCast(@min(@as(u32, @intFromFloat(@max(0, ypos))) / ch, terminal_option.max_rows - 1));
-    return .{ col, row };
+    return cellPosAt(
+        xpos,
+        ypos,
+        self.grid_origin[0],
+        self.grid_origin[1],
+        self.rasterizer.cell_width,
+        self.rasterizer.cell_height,
+        terminal_option.max_cols,
+        terminal_option.max_rows,
+    );
 }
 
 /// Per-window OSC 52 permissions granted via "Always Allow".

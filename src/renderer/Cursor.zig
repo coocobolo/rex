@@ -198,6 +198,7 @@ pub fn draw(
     dimension: struct {
         cell: Dimension(f32),
         frame: Dimension(f32),
+        origin: [2]f32 = .{ 0, 0 },
     },
 ) void {
     const opt = self.option;
@@ -207,6 +208,7 @@ pub fn draw(
     self.shader.use();
     self.shader.set2f("u_cell_size", dimension.cell.width, dimension.cell.height);
     self.shader.set2f("u_screen_size", dimension.frame.width, dimension.frame.height);
+    self.shader.set2f("u_grid_origin", dimension.origin[0], dimension.origin[1]);
     self.shader.set2ui("u_cell_pos", state.col, state.row);
     self.shader.set4f(
         "u_cursor_color",
@@ -230,6 +232,7 @@ pub fn draw(
         cell_shader.use();
         cell_shader.set2f("u_cell_size", dimension.cell.width, dimension.cell.height);
         cell_shader.set2f("u_screen_size", dimension.frame.width, dimension.frame.height);
+        cell_shader.set2f("u_grid_origin", dimension.origin[0], dimension.origin[1]);
         cell_shader.set1i("u_is_color", if (metric.kind == .color) 1 else 0);
         gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, 1); // 1 instance from glyph_inst_vbo
     }

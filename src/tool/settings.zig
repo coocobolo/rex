@@ -200,6 +200,9 @@ const key_meta_table = [_]KeyMetaEntry{
     .{ .section = .window, .name = "platform", .label = "Window Platform", .description = "Window system to use on Linux (Automatic, Wayland, or X11)." },
     .{ .section = .window, .name = "width", .label = "Initial Width", .description = "Default window width in logical pixels on startup." },
     .{ .section = .window, .name = "height", .label = "Initial Height", .description = "Default window height in logical pixels on startup." },
+    .{ .section = .window, .name = "decorations", .label = "Window Decorations", .description = "Show standard window titlebar and borders (Full) or borderless (None)." },
+    .{ .section = .window, .name = "padding_x", .label = "Horizontal Padding", .description = "Inner horizontal space around the terminal grid in logical pixels (0–128)." },
+    .{ .section = .window, .name = "padding_y", .label = "Vertical Padding", .description = "Inner vertical space around the terminal grid in logical pixels (0–128)." },
     .{ .section = .window, .name = "title", .label = "Window Title", .description = "Static window title, or auto to follow the running program." },
 
     .{ .section = .bell, .name = "enabled", .label = "Audible Bell", .description = "Play a chime when a program triggers the terminal bell." },

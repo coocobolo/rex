@@ -579,6 +579,10 @@ pub fn windowSetTitle(window: Window, title: [:0]const u8) void {
     fromHandle(window).setTitle(title);
 }
 
+pub fn windowSetDecorated(window: Window, decorated: bool) void {
+    fromHandle(window).setDecorated(decorated);
+}
+
 pub fn windowShouldClose(window: Window) bool {
     return fromHandle(window).should_close;
 }

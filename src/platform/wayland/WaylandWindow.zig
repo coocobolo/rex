@@ -42,6 +42,7 @@ pub const InitOption = struct {
     width: u16,
     height: u16,
     title: [:0]const u8,
+    decorated: bool = true,
 };
 
 pub const Error = error{
@@ -136,13 +137,17 @@ pub fn init(self: *WaylandWindow, option: InitOption) Error!void {
         )) |deco| {
             self.xdg_decoration = deco;
             _ = wl_lib.wl_proxy_add_listener(deco, @ptrCast(@constCast(&xdg_decoration_listener)), self);
+            const mode = if (option.decorated)
+                proto.xdg_toplevel_decoration.mode_server_side
+            else
+                proto.xdg_toplevel_decoration.mode_client_side;
             _ = wl_lib.wl_proxy_marshal_flags(
                 deco,
                 proto.xdg_toplevel_decoration.set_mode,
                 null,
                 wl_lib.wl_proxy_get_version(deco),
                 0,
-                proto.xdg_toplevel_decoration.mode_server_side,
+                mode,
             );
         }
     }
@@ -290,6 +295,28 @@ pub fn setTitle(self: *WaylandWindow, title: [:0]const u8) void {
         0,
         title.ptr,
     );
+    if (backend.state.display) |dpy| _ = wl_lib.wl_display_flush(dpy);
+}
+
+/// Requests server-side decorations (`decorated == true`) or borderless client-side mode.
+pub fn setDecorated(self: *WaylandWindow, decorated: bool) void {
+    const wl_lib = &backend.state.wl.?;
+    const deco = self.xdg_decoration orelse return;
+    const mode = if (decorated)
+        proto.xdg_toplevel_decoration.mode_server_side
+    else
+        proto.xdg_toplevel_decoration.mode_client_side;
+    _ = wl_lib.wl_proxy_marshal_flags(
+        deco,
+        proto.xdg_toplevel_decoration.set_mode,
+        null,
+        wl_lib.wl_proxy_get_version(deco),
+        0,
+        mode,
+    );
+    if (self.wl_surface) |surf| {
+        _ = wl_lib.wl_proxy_marshal_flags(surf, proto.surface.commit, null, wl_lib.wl_proxy_get_version(surf), 0);
+    }
     if (backend.state.display) |dpy| _ = wl_lib.wl_display_flush(dpy);
 }
 

@@ -308,6 +308,11 @@ pub fn windowSetTitle(window: Window, title: [:0]const u8) void {
     implOf(window).setTitle(title);
 }
 
+/// Shows or hides the window's server-side titlebar and borders.
+pub fn windowSetDecorated(window: Window, decorated: bool) void {
+    implOf(window).setDecorated(decorated);
+}
+
 /// Whether the window system has asked the window to close.
 pub fn windowShouldClose(window: Window) bool {
     return implOf(window).shouldClose();

@@ -17,11 +17,12 @@ pub const PointerShape = enum(u8) {
 
 impl: *anyopaque,
 
-/// The size and title requested for a new window.
+/// The size, title, and decoration preference requested for a new window.
 pub const Options = struct {
     width: u16,
     height: u16,
     title: [:0]const u8,
+    decorated: bool = true,
 };
 
 /// Destroys the window and releases its backend slot.
@@ -42,6 +43,11 @@ pub fn getContext(self: Window) ?*anyopaque {
 /// Sets the title shown by the desktop.
 pub fn setTitle(self: Window, title: [:0]const u8) void {
     backend.windowSetTitle(self, title);
+}
+
+/// Shows or hides the window's server-side titlebar and borders where supported.
+pub fn setDecorated(self: Window, decorated: bool) void {
+    backend.windowSetDecorated(self, decorated);
 }
 
 /// Whether the window system has asked the window to close.

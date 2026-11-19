@@ -185,6 +185,7 @@ pub fn draw(
     dimension: struct {
         cell: Dimension(f32),
         frame: Dimension(f32),
+        origin: [2]f32 = .{ 0, 0 },
     },
 ) void {
     if (instances_len == 0) return;
@@ -192,6 +193,7 @@ pub fn draw(
     self.shader.use();
     self.shader.set2f("u_cell_size", dimension.cell.width, dimension.cell.height);
     self.shader.set2f("u_screen_size", dimension.frame.width, dimension.frame.height);
+    self.shader.set2f("u_grid_origin", dimension.origin[0], dimension.origin[1]);
 
     const color = color_override orelse .{
         @as(u8, @intFromFloat(self.option.fill_color[0] * 255)),

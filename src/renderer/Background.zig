@@ -72,6 +72,7 @@ pub fn draw(
     dimension: struct {
         cell: Dimension(f32),
         frame: Dimension(f32),
+        origin: [2]f32 = .{ 0, 0 },
     },
     background_alpha: ?f32,
     grayscale: f32,
@@ -81,6 +82,7 @@ pub fn draw(
     self.shader.use();
     self.shader.set2f("u_cell_size", dimension.cell.width, dimension.cell.height);
     self.shader.set2f("u_screen_size", dimension.frame.width, dimension.frame.height);
+    self.shader.set2f("u_grid_origin", dimension.origin[0], dimension.origin[1]);
     self.shader.set1f("u_bg_alpha", background_alpha orelse self.option.alpha);
     self.shader.set1f("u_grayscale", grayscale);
     self.shader.set3f("u_color_tint", color_tint[0], color_tint[1], color_tint[2]);

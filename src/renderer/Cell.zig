@@ -108,6 +108,7 @@ pub const DrawArgs = struct {
     blink_rapid_on: bool,
     cell: Dimension(f32),
     frame: Dimension(f32),
+    origin: [2]f32 = .{ 0, 0 },
     gray_len: usize,
     color_len: usize,
     grayscale: f32 = 0.0,
@@ -167,6 +168,7 @@ fn setup(self: *Cell, args: DrawArgs, mask: bool) void {
     args.atlas.bindTextures(gl.TEXTURE0, gl.TEXTURE1);
     self.shader.set2f("u_cell_size", args.cell.width, args.cell.height);
     self.shader.set2f("u_screen_size", args.frame.width, args.frame.height);
+    self.shader.set2f("u_grid_origin", args.origin[0], args.origin[1]);
     self.shader.set1f("u_ascender", args.ascender);
     self.shader.set1i("u_blink_on", @intFromBool(args.blink_on));
     self.shader.set1i("u_blink_rapid_on", @intFromBool(args.blink_rapid_on));

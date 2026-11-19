@@ -52,11 +52,12 @@ extern "c" fn glfwGetX11Display() ?*Xlib.Display;
 extern "c" fn glfwSetX11SelectionString(string: [*:0]const u8) void;
 extern "c" fn glfwGetX11SelectionString() ?[*:0]const u8;
 
-/// The size and title requested for a new window.
+/// The size, title, and decoration preference requested for a new window.
 pub const InitOption = struct {
     width: u16,
     height: u16,
     title: [:0]const u8,
+    decorated: bool = true,
 };
 
 /// A GLFW window and the state that belongs to it.
@@ -75,7 +76,7 @@ pointer_shape: PointerShape = .arrow,
 /// Creates a window in place with a GL context and loads GLAD through the
 /// given loader. The window is destroyed on every failure path.
 pub fn init(self: *GlfwWindow, option: InitOption, loader: gl.GLADloadproc) !void {
-    c.glfwWindowHint(c.GLFW_DECORATED, c.GLFW_TRUE);
+    c.glfwWindowHint(c.GLFW_DECORATED, if (option.decorated) c.GLFW_TRUE else c.GLFW_FALSE);
     c.glfwWindowHint(c.GLFW_RESIZABLE, c.GLFW_TRUE);
     c.glfwWindowHint(c.GLFW_FOCUSED, c.GLFW_TRUE);
     c.glfwWindowHint(c.GLFW_TRANSPARENT_FRAMEBUFFER, c.GLFW_TRUE);
@@ -147,6 +148,11 @@ pub fn shouldClose(self: *const GlfwWindow) bool {
 /// Marks the window to close on the next event loop pass.
 pub fn setShouldClose(self: *const GlfwWindow, set: bool) void {
     c.glfwSetWindowShouldClose(self.handle, if (set) c.GLFW_TRUE else c.GLFW_FALSE);
+}
+
+/// Shows or hides the window's server-side titlebar and borders.
+pub fn setDecorated(self: *const GlfwWindow, decorated: bool) void {
+    c.glfwSetWindowAttrib(self.handle, c.GLFW_DECORATED, if (decorated) c.GLFW_TRUE else c.GLFW_FALSE);
 }
 
 /// Presents the rendered frame.
