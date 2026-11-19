@@ -523,4 +523,17 @@ test "dialog: narrow viewport stacks full-width buttons inside the card" {
     try testing.expect(close_face.x + close_face.w <= card.x + card.w + 0.5);
     // Key cap is omitted below 220px so labels keep room to breathe.
     try testing.expectEqual(@as(?*const Tree.Node, null), textByBytes(&tree, "Esc"));
+
+    // At extreme narrow widths (e.g. 110px), buttons stay single-line and
+    // ellipsize cleanly inside their padded face without overflowing.
+    tree.reset();
+    const scrim_xs = (try alert_dialog.viewIn(&state, &tree, &Theme.dark, 110)).?;
+    try tree.layout(measurer, 110, 500);
+    const card_xs = tree.nodes[scrim_xs + 1].rect;
+    const close_xs_face = face(&tree, 1).rect;
+    const close_xs_label = textByBytes(&tree, "Close window").?;
+    const close_xs_line = tree.lines.buffer[close_xs_label.content.text.first_line];
+    try testing.expectEqual(@as(u16, 1), close_xs_label.content.text.line_count);
+    try testing.expect(close_xs_face.x + close_xs_face.w <= card_xs.x + card_xs.w + 0.5);
+    try testing.expect(close_xs_line.width <= close_xs_face.w - 2 * @as(f32, @floatFromInt(@import("button.zig").Size.xs.pad())) + 0.5);
 }

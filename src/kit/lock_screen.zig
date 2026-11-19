@@ -345,14 +345,15 @@ pub fn viewIn(state: *const State, tree: *Tree, theme: *const Theme, viewport_wi
 
 fn viewCard(state: *const State, tree: *Tree, theme: *const Theme, presence: f32, accent: Color, viewport_width: f32) Tree.Error!void {
     const narrow = viewport_width < 300;
+    const compact = viewport_width < 220;
     const frame = try dialog.open(tree, theme, .{
         .scrim_id = scrim_id,
         .card_id = card_id,
         .width = width,
         .presence = presence,
         .scrim_alpha = state.scrim_alpha,
-        .margin = if (narrow) 8 else dialog.margin,
-        .padding = if (narrow) 14 else dialog.padding,
+        .margin = if (compact) 4 else if (narrow) 8 else dialog.margin,
+        .padding = if (compact) 8 else if (narrow) 14 else dialog.padding,
     });
 
     // Header: title on left, cycle step pips on right.
@@ -406,9 +407,9 @@ fn viewCard(state: *const State, tree: *Tree, theme: *const Theme, presence: f32
     try button.view(tree, theme, .{
         .id = unlock_id,
         .label = state.presentation.action.label(),
-        .key_cap = if (viewport_width < 220) "" else state.presentation.action.keyCap(),
+        .key_cap = if (compact) "" else state.presentation.action.keyCap(),
         .variant = .outline,
-        .size = .sm,
+        .size = if (compact) .xs else .sm,
         .state = state.touch,
         .focused = state.focused,
         .fill_width = narrow,
@@ -423,8 +424,8 @@ fn viewHud(state: *const State, tree: *Tree, theme: *const Theme, presence: f32,
     const stacked = viewport_width < hud_stack_width;
     const narrow = viewport_width < 300;
     const compact = viewport_width < 240;
-    const scrim_pad_h: u8 = if (narrow) 10 else 20;
-    const card_pad_h: u8 = if (narrow) 12 else 16;
+    const scrim_pad_h: u8 = if (compact) 6 else if (narrow) 10 else 20;
+    const card_pad_h: u8 = if (compact) 8 else if (narrow) 12 else 16;
 
     const scrim = try tree.open(.{
         .id = scrim_id,
@@ -484,7 +485,7 @@ fn viewHud(state: *const State, tree: *Tree, theme: *const Theme, presence: f32,
         .label = state.presentation.action.label(),
         .key_cap = if (viewport_width < 220) "" else state.presentation.action.keyCap(),
         .variant = .outline,
-        .size = .sm,
+        .size = if (viewport_width < 220) .xs else .sm,
         .state = state.touch,
         .focused = state.focused,
         .fill_width = stacked,

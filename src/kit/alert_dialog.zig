@@ -373,8 +373,9 @@ pub fn viewIn(state: *const State, tree: *Tree, theme: *const Theme, viewport_wi
     if (state.phase == .closed) return null;
     const presence = state.phase.presence(state.motion);
     const narrow = viewport_width < narrow_width;
-    const card_margin: u8 = if (narrow) @min(state.option.margin, 8) else state.option.margin;
-    const card_padding: u8 = if (narrow) @min(state.option.padding, 14) else state.option.padding;
+    const compact = viewport_width < 220;
+    const card_margin: u8 = if (compact) @min(state.option.margin, 4) else if (narrow) @min(state.option.margin, 8) else state.option.margin;
+    const card_padding: u8 = if (compact) @min(state.option.padding, 8) else if (narrow) @min(state.option.padding, 14) else state.option.padding;
 
     const frame = try dialog.openScrimCard(tree, theme, .{
         .scrim_id = scrim_id,
@@ -412,22 +413,39 @@ pub fn viewIn(state: *const State, tree: *Tree, theme: *const Theme, viewport_wi
         _ = try tree.icon(.{ .codepoint = media, .color = media_fg.fade(presence), .size = media_icon });
         tree.close(box);
     }
-    try dialog.title(tree, theme, state.title(), presence);
-    if (state.body_len > 0) try dialog.description(tree, theme, state.body(), presence);
+    if (compact) {
+        _ = try tree.text(state.title(), .{
+            .color = theme.foreground.fade(presence),
+            .style = .sm_medium,
+            .width = .fill,
+        });
+        if (state.body_len > 0) {
+            _ = try tree.text(state.body(), .{
+                .color = theme.muted_foreground.fade(presence),
+                .style = .xs,
+                .width = .fill,
+            });
+        }
+    } else {
+        try dialog.title(tree, theme, state.title(), presence);
+        if (state.body_len > 0) try dialog.description(tree, theme, state.body(), presence);
+    }
     tree.close(header);
     tree.close(body_box);
     try dialog.separator(tree, theme, presence);
-    const footer_v: u8 = @max(12, @min(card_padding, state.option.gap));
+    const footer_v: u8 = if (compact) 8 else @max(12, @min(card_padding, state.option.gap));
     const footer = if (narrow)
         try dialog.footerStacked(tree, .symmetric(card_padding, footer_v))
     else
         try dialog.footerPadded(tree, .symmetric(card_padding, footer_v));
+    const btn_size: button.Size = if (compact) .xs else if (narrow) .sm else .default;
     for (state.buttons[0..state.count], 0..) |*action, index| {
         try button.view(tree, theme, .{
             .id = actionId(@intCast(index)),
             .label = action.label(),
-            .key_cap = if (viewport_width < 220) "" else action.keyCap(),
+            .key_cap = if (compact) "" else action.keyCap(),
             .variant = action.variant,
+            .size = btn_size,
             .state = if (state.hover != index) .normal else if (state.pressed == index) .pressed else .hovered,
             .focused = state.focus == index,
             .fill_width = narrow,

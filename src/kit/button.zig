@@ -221,7 +221,7 @@ pub fn view(tree: *Tree, theme: *const Theme, options: Options) Tree.Error!void 
     if (!square) _ = try tree.text(options.label, .{
         .color = colors.label.fade(presence),
         .style = if (options.size == .xs) .xs else .sm_medium,
-        .wrap = if (options.fill_width) .word else .none,
+        .wrap = if (options.fill_width) .ellipsis else .none,
     });
     if (options.key_cap.len > 0) try kbd.view(tree, theme, options.key_cap, presence);
     tree.close(face);

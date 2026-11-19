@@ -196,7 +196,7 @@ test "kbd: a group is its caps in a row" {
     try testing.expectEqual("Shift", tree.nodes[4].content.text.bytes);
 }
 
-test "button: fill width and wrapped label grow face height cleanly" {
+test "button: fill width ellipsizes overflowing label on one line" {
     var fixture: Fixture = .{};
     var tree = fixture.tree();
     try button.view(&tree, &Theme.dark, .{
@@ -208,8 +208,9 @@ test "button: fill width and wrapped label grow face height cleanly" {
 
     const face = tree.nodes[1].rect;
     const label = tree.nodes[2];
+    const line = tree.lines.buffer[label.content.text.first_line];
     try testing.expectEqual(@as(f32, 120 - 2 * Theme.ring_width), face.w);
-    try testing.expect(label.content.text.line_count > 1);
-    try testing.expect(face.h > Theme.control);
-    try testing.expect(face.h >= label.rect.h + 12);
+    try testing.expectEqual(@as(u16, 1), label.content.text.line_count);
+    try testing.expectEqual(@as(f32, Theme.control), face.h);
+    try testing.expect(line.width <= face.w - 2 * @as(f32, @floatFromInt(button.Size.default.pad())) + 0.5);
 }
