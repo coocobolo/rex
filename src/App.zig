@@ -944,7 +944,7 @@ pub fn run(self: *App) !void {
         if (self.ascii_state.tick(
             dt_clamped,
             self.wellbeingOverlayMode().showsAscii(),
-            self.window_focused,
+            self.frame_buffer_size.width > 0 and self.frame_buffer_size.height > 0,
             self.config.ui.motion,
             self.config.window.wellbeing_ascii.fps,
         )) {
@@ -1313,7 +1313,7 @@ fn waitForNextEvent(self: *App, had_data: bool) void {
     const ascii_active = self.wellbeingOverlayMode().showsAscii();
     if (self.ascii_state.wakeMs(
         ascii_active,
-        self.window_focused,
+        self.frame_buffer_size.width > 0 and self.frame_buffer_size.height > 0,
         self.config.ui.motion,
         self.config.window.wellbeing_ascii.fps,
     )) |ascii_wake| {
@@ -1570,6 +1570,15 @@ fn syncWellbeingKit(self: *App, new_alert_fired: bool) void {
         }
     }
 
+    const has_active_alert = wb.current_alert.kind != .none and wb.current_alert.remaining_s > 0;
+    if (!has_active_alert or wb.input_locked) {
+        self.ascii_state.reminder_active = false;
+        self.ascii_state.alert_total_s = 0;
+    } else if (new_alert_fired) {
+        self.ascii_state.reminder_active = self.window_focused;
+        self.ascii_state.alert_total_s = 0;
+    }
+
     const overlay_mode = self.wellbeingOverlayMode();
     if (overlay_mode.showsLockSurface()) {
         if (self.wellbeing_toast_serial) |serial| {
@@ -1578,14 +1587,18 @@ fn syncWellbeingKit(self: *App, new_alert_fired: bool) void {
         }
         const hud_layout: kit_lock_screen.Layout = if (overlay_mode.showsAscii()) .hud else .card;
         if (overlay_mode == .ascii_reminder) {
+            self.ascii_state.reminder_active = true;
             const title: []const u8, const tone: kit_lock_screen.Tone, const default_total_s: u32 = switch (wb.current_alert.kind) {
                 .eyesight => .{ "Rest your eyes", .healthy, @intCast(@max(@as(u64, 1), wb.option.eyesight.duration_ms / 1000)) },
                 .movement => .{ "Stretch and move", .healthy, @intCast(@max(@as(u64, 1), wb.option.movement.duration_ms / 1000)) },
-                .healthy_break => .{ "Time for a healthy break", .healthy, @max(@as(u32, 1), wb.current_alert.remaining_s) },
-                .screen_limit => .{ "Screen limit reached", .critical, @max(@as(u32, 1), wb.current_alert.remaining_s) },
+                .healthy_break => .{ "Time for a healthy break", .healthy, 30 },
+                .screen_limit => .{ "Screen limit reached", .critical, 20 },
                 .none => return,
             };
             const rem_s = wb.current_alert.remaining_s;
+            if (self.ascii_state.alert_total_s == 0 or rem_s > self.ascii_state.alert_total_s) {
+                self.ascii_state.alert_total_s = @max(default_total_s, rem_s);
+            }
             if (kit.syncLockScreen(.{
                 .tone = tone,
                 .layout = hud_layout,
@@ -1594,13 +1607,15 @@ fn syncWellbeingKit(self: *App, new_alert_fired: bool) void {
                 .subtitle = "",
                 .prompt = wb.current_alert.prompt,
                 .remaining_s = rem_s,
-                .total_s = @max(default_total_s, rem_s),
+                .total_s = self.ascii_state.alert_total_s,
                 .steps_total = 0,
                 .steps_done = 0,
                 .scrim_alpha = 0,
             })) self.needs_redraw = true;
             return;
         }
+        self.ascii_state.reminder_active = false;
+        self.ascii_state.alert_total_s = 0;
 
         const in_break = wb.focus_state.phase == .short_break or wb.focus_state.phase == .long_break;
         const is_paused = wb.isFocusPausedByAlert() or !in_break or wb.focus_state.paused;
@@ -4609,7 +4624,13 @@ fn alertDialogMedia(icon: @import("config/overlay.zig").AlertDialog.Icon) alert_
 pub const AsciiOverlayState = struct {
     time_ms: u64 = 0,
     frame_accum_ms: u32 = 0,
+    /// Latched initial duration for the active non-locking reminder so the HUD
+    /// progress bar advances smoothly as `remaining_s` counts down.
+    alert_total_s: u32 = 0,
     drawn_last: bool = false,
+    /// True once this window opened a non-locking reminder overlay while focused,
+    /// keeping it visible if focus later moves to another window.
+    reminder_active: bool = false,
 
     pub const Mode = enum(u8) {
         none,
@@ -4631,12 +4652,14 @@ pub const AsciiOverlayState = struct {
         input_locked: bool,
         lock_screen_enabled: bool,
         has_active_alert: bool,
+        window_focused: bool,
+        reminder_active: bool,
         ascii: @import("config/overlay.zig").WellbeingAscii,
     ) Mode {
         if (input_locked and lock_screen_enabled) {
             return if (ascii.enabled) .ascii_lock else .card_lock;
         }
-        if (wellbeing_enabled and has_active_alert and ascii.enabled and ascii.trigger == .all) {
+        if (wellbeing_enabled and has_active_alert and ascii.enabled and ascii.trigger == .all and (window_focused or reminder_active)) {
             return .ascii_reminder;
         }
         return .none;
@@ -4651,7 +4674,7 @@ pub const AsciiOverlayState = struct {
         self: *AsciiOverlayState,
         dt_ms: u64,
         active: bool,
-        focused: bool,
+        visible: bool,
         motion_mode: kit_motion.Mode,
         fps: u8,
     ) bool {
@@ -4666,9 +4689,9 @@ pub const AsciiOverlayState = struct {
             self.frame_accum_ms = 0;
             return changed;
         }
-        if (!focused) {
+        if (!visible) {
             self.frame_accum_ms = 0;
-            return !self.drawn_last;
+            return false;
         }
         const interval = frameIntervalMs(fps);
         self.time_ms +|= dt_ms;
@@ -4680,16 +4703,16 @@ pub const AsciiOverlayState = struct {
         return false;
     }
 
-    /// Milliseconds until the next animation frame, or null when idle, paused,
-    /// or frozen by reduced motion.
+    /// Milliseconds until the next animation frame, or null when idle,
+    /// minimized, or frozen by reduced motion.
     pub fn wakeMs(
         self: *const AsciiOverlayState,
         active: bool,
-        focused: bool,
+        visible: bool,
         motion_mode: kit_motion.Mode,
         fps: u8,
     ) ?u64 {
-        if (!active or !focused or motion_mode == .none) return null;
+        if (!active or !visible or motion_mode == .none) return null;
         const interval = frameIntervalMs(fps);
         const rem = interval -| self.frame_accum_ms;
         return @max(@as(u64, 1), rem);
@@ -4708,6 +4731,8 @@ fn wellbeingOverlayMode(self: *const App) AsciiOverlayState.Mode {
         wb.input_locked,
         wb.option.lock_screen.enabled,
         has_active_alert,
+        self.window_focused,
+        self.ascii_state.reminder_active,
         self.config.window.wellbeing_ascii,
     );
 }
@@ -4747,6 +4772,13 @@ fn wellbeingProgress(self: *const App) f32 {
         if (total_ms > 0) {
             return std.math.clamp(1.0 - (@as(f32, @floatFromInt(wb.focus_state.remaining_ms)) / total_ms), 0.0, 1.0);
         }
+    }
+    if (self.ascii_state.alert_total_s > 0 and wb.current_alert.remaining_s > 0) {
+        return std.math.clamp(
+            1.0 - (@as(f32, @floatFromInt(wb.current_alert.remaining_s)) / @as(f32, @floatFromInt(self.ascii_state.alert_total_s))),
+            0.0,
+            1.0,
+        );
     }
     return 0.0;
 }

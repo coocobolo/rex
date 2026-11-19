@@ -309,7 +309,7 @@ const key_meta_table = [_]KeyMetaEntry{
     .{ .section = .@"wellbeing.ascii", .name = "enabled", .label = "ASCII Overlay", .description = "Display a fullscreen ASCII animation behind a compact bottom HUD during wellbeing breaks and reminders." },
     .{ .section = .@"wellbeing.ascii", .name = "scene", .label = "Animation Scene", .description = "Built-in procedural animation (3D spin, Torus, Breathe, Wave) or external UTF-8 frame file." },
     .{ .section = .@"wellbeing.ascii", .name = "file", .label = "ASCII Frame File", .description = "Path to a frame-delimited UTF-8 ASCII art file used when Scene is set to File." },
-    .{ .section = .@"wellbeing.ascii", .name = "fps", .label = "Frame Rate", .description = "Playback cadence in frames per second (1–30); pauses while unfocused." },
+    .{ .section = .@"wellbeing.ascii", .name = "fps", .label = "Frame Rate", .description = "Playback cadence in frames per second (1–30); pauses when minimized." },
     .{ .section = .@"wellbeing.ascii", .name = "cell_aspect", .label = "Cell Aspect", .description = "Render cells as 1:1 squares or match the terminal's native monospace cell pitch." },
     .{ .section = .@"wellbeing.ascii", .name = "trigger", .label = "Overlay Trigger", .description = "Show the ASCII overlay on all wellbeing reminders or only when input is locked." },
 
