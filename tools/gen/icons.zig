@@ -221,6 +221,7 @@ fn parseCmap(gpa: mem.Allocator, cmap: []const u8, num_glyphs: u16) ![]u21 {
     switch (best_fmt) {
         12 => try readCmapFormat12(best_sub, gid_to_cp),
         4 => try readCmapFormat4(best_sub, gid_to_cp),
+        // best_fmt is only set when best_score > 0, which requires fmt 12 or 4.
         else => unreachable,
     }
     return gid_to_cp;

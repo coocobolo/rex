@@ -172,10 +172,10 @@ fn measureEntry(comptime path: []const u8, comptime T: type) Entry {
 }
 
 const Collector = struct {
-    const capacity = 2048;
-
     entries: [capacity]Entry = undefined,
     len: usize = 0,
+
+    const capacity = 2048;
 
     fn containsType(self: *const Collector, type_name: []const u8) bool {
         for (self.entries[0..self.len]) |entry| {

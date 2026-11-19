@@ -1,9 +1,9 @@
 //! Helpers shared by the table generators in tools/gen/.
 //!
-//! Every generator has the same shape: `<generator> <out.zig> <input>...`
-//! reads its inputs, writes one Zig source file starting with
-//! `writeHeader`, and logs what it read and wrote to stderr. build.zig
-//! runs it for `zig build gen-<name>` and copies the output into src/.
+//! Every generator reads `<out.zig> <input>...`, writes one Zig source file
+//! starting with `writeHeader`, and logs to stderr; UCD generators also take
+//! an optional trailing `--malformed=reject|skip` (default `reject`). build.zig
+//! runs each generator for `zig build gen-<name>` and copies the output into src/.
 
 const std = @import("std");
 const mem = std.mem;
@@ -11,9 +11,36 @@ const mem = std.mem;
 /// One parsed UCD data line: `first..last ; value # comment`.
 pub const Line = struct { first: u21, last: u21, value: []const u8 };
 
-/// Parses a UCD data line. Returns null for blank and comment-only lines.
-/// `value` is the first field after the code points, trimmed.
-pub fn parseLine(raw: []const u8) !?Line {
+/// How a generator treats a malformed UCD value. `reject` fails the build;
+/// `skip` drops the offending line and continues.
+pub const Malformed = enum { reject, skip };
+
+/// Parses `--malformed=<reject|skip>`; null means the argument is unknown.
+pub fn parseMalformed(arg: []const u8) ?Malformed {
+    if (mem.eql(u8, arg, "--malformed=reject")) return .reject;
+    if (mem.eql(u8, arg, "--malformed=skip")) return .skip;
+    return null;
+}
+
+/// Reads the optional trailing malformed argument, defaulting to `reject`.
+pub fn malformedFromArgs(args: *std.process.Args.Iterator, name: []const u8, args_doc: []const u8) Malformed {
+    const arg = args.next() orelse return .reject;
+    const policy = parseMalformed(arg) orelse usage(name, args_doc);
+    if (args.next() != null) usage(name, args_doc);
+    return policy;
+}
+
+/// Converts a parsed code point to u21 under `policy`. Null means skip the
+/// line; `reject` returns an error instead.
+pub fn codePoint(raw: u64, policy: Malformed) !?u21 {
+    if (std.math.cast(u21, raw)) |cp| return cp;
+    if (policy == .skip) return null;
+    return error.MalformedCodePoint;
+}
+
+/// Parses a UCD data line. Returns null for blank, comment-only and skipped
+/// malformed lines. `value` is the first field after the code points, trimmed.
+pub fn parseLine(raw: []const u8, policy: Malformed) !?Line {
     const hash = mem.indexOfScalar(u8, raw, '#') orelse raw.len;
     const line = mem.trim(u8, raw[0..hash], " \t\r");
     if (line.len == 0) return null;
@@ -23,11 +50,11 @@ pub fn parseLine(raw: []const u8) !?Line {
     const end = mem.indexOfScalar(u8, rest, ';') orelse rest.len;
     const value = mem.trim(u8, rest[0..end], " \t");
     if (mem.indexOf(u8, cps, "..")) |dots| return .{
-        .first = try std.fmt.parseInt(u21, cps[0..dots], 16),
-        .last = try std.fmt.parseInt(u21, cps[dots + 2 ..], 16),
+        .first = (try codePoint(try std.fmt.parseInt(u64, cps[0..dots], 16), policy)) orelse return null,
+        .last = (try codePoint(try std.fmt.parseInt(u64, cps[dots + 2 ..], 16), policy)) orelse return null,
         .value = value,
     };
-    const cp = try std.fmt.parseInt(u21, cps, 16);
+    const cp = (try codePoint(try std.fmt.parseInt(u64, cps, 16), policy)) orelse return null;
     return .{ .first = cp, .last = cp, .value = value };
 }
 

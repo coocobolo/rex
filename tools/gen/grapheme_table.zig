@@ -1,7 +1,7 @@
 //! `zig build gen-grapheme-table`: src/term/grapheme_table.zig from
 //! GraphemeBreakProperty.txt and emoji-data.txt.
 //!
-//! Usage: grapheme_table <out.zig> <GraphemeBreakProperty.txt> <emoji-data.txt>
+//! Usage: grapheme_table <out.zig> <GraphemeBreakProperty.txt> <emoji-data.txt> [--malformed=reject|skip]
 //!
 //! This generator uses data from the Unicode Character Database.
 //! See THIRD_PARTY_NOTICES/unicode.license.txt for the applicable Unicode license terms.
@@ -25,7 +25,7 @@ const std = @import("std");
 const ucd = @import("ucd.zig");
 
 const gen_name = "grapheme-table";
-const usage_args = "<out.zig> <GraphemeBreakProperty.txt> <emoji-data.txt>";
+const usage_args = "<out.zig> <GraphemeBreakProperty.txt> <emoji-data.txt> [--malformed=reject|skip]";
 
 /// Grapheme cluster break properties (Unicode TR29).
 /// Enum value must match the bit encoding in entries. DO NOT REORDER.
@@ -83,8 +83,9 @@ fn parseProperty(name: []const u8) ?Property {
 /// 000E..001F    ; Control # Cc  [18] <control-000E>..<control-001F>
 /// 007F..009F    ; Control # Cc  [33] <control-007F>..<control-009F>
 ///
-/// Unknown property names are silently skipped.
-pub fn parseFile(data: []const u8, gpa: std.mem.Allocator, ranges: *std.ArrayList(Range)) !usize {
+/// Unknown property names are silently skipped. Out-of-domain code points
+/// and reversed ranges follow `policy`.
+pub fn parseFile(data: []const u8, gpa: std.mem.Allocator, ranges: *std.ArrayList(Range), policy: ucd.Malformed) !usize {
     const before = ranges.items.len;
     var lines = std.mem.splitScalar(u8, data, '\n');
     while (lines.next()) |line| {
@@ -104,14 +105,17 @@ pub fn parseFile(data: []const u8, gpa: std.mem.Allocator, ranges: *std.ArrayLis
         var lo: u21 = undefined;
         var hi: u21 = undefined;
         if (std.mem.indexOf(u8, range_str, "..")) |dot| {
-            lo = std.math.cast(u21, try std.fmt.parseInt(u32, range_str[0..dot], 16)) orelse continue;
-            hi = std.math.cast(u21, try std.fmt.parseInt(u32, range_str[dot + 2 ..], 16)) orelse continue;
+            lo = (try ucd.codePoint(try std.fmt.parseInt(u64, range_str[0..dot], 16), policy)) orelse continue;
+            hi = (try ucd.codePoint(try std.fmt.parseInt(u64, range_str[dot + 2 ..], 16), policy)) orelse continue;
         } else {
-            lo = std.math.cast(u21, try std.fmt.parseInt(u32, range_str, 16)) orelse continue;
+            lo = (try ucd.codePoint(try std.fmt.parseInt(u64, range_str, 16), policy)) orelse continue;
             hi = lo;
         }
 
-        if (lo > hi) continue;
+        if (lo > hi) {
+            if (policy == .reject) return error.MalformedRange;
+            continue;
+        }
         try ranges.append(gpa, .{ .hi = hi, .lo = lo, .prop = prop });
     }
 
@@ -224,6 +228,7 @@ pub fn main(init: std.process.Init) !void {
     const out_path = args.next() orelse ucd.usage(gen_name, usage_args);
     var paths: [2][]const u8 = undefined;
     for (&paths) |*p| p.* = args.next() orelse ucd.usage(gen_name, usage_args);
+    const malformed = ucd.malformedFromArgs(&args, gen_name, usage_args);
 
     var ranges: std.ArrayList(Range) = try .initCapacity(gpa, 69);
     defer ranges.deinit(gpa);
@@ -231,7 +236,7 @@ pub fn main(init: std.process.Init) !void {
     for (paths) |path| {
         const data = try ucd.readFile(io, gpa, gen_name, path);
         defer gpa.free(data);
-        const added = try parseFile(data, gpa, &ranges);
+        const added = try parseFile(data, gpa, &ranges, malformed);
         ucd.log(gen_name, "{s}: {d} ranges (total {d})", .{ path, added, ranges.items.len });
     }
     if (ranges.items.len == 0) return error.NoRanges;

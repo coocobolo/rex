@@ -614,6 +614,12 @@ pub fn build(b: *std.Build) !void {
         run_gen.stdio = .inherit; // show the generator's read/write log
         const out = run_gen.addOutputFileArg(std.fs.path.basename(g[1]));
         inline for (g[2]) |input| run_gen.addFileArg(b.path(input));
+        // UCD generators take an explicit trailing policy so regeneration is
+        // reproducible; reject malformed ranges instead of silently dropping them.
+        const uses_ucd = comptime std.mem.eql(u8, g[0], "wcwidth-table") or
+            std.mem.eql(u8, g[0], "wcwidth-expected") or
+            std.mem.eql(u8, g[0], "grapheme-table");
+        if (uses_ucd) run_gen.addArg("--malformed=reject");
         const update = b.addUpdateSourceFiles();
         update.addCopyFileToSource(out, g[1]);
         const step = b.step("gen-" ++ g[0], "Regenerate " ++ g[1]);

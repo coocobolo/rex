@@ -10,7 +10,7 @@
 //! See THIRD_PARTY_NOTICES/unicode.license.txt for the license terms.
 //!
 //! Usage: wcwidth_expected <out.zig> <DerivedGeneralCategory.txt> <EastAsianWidth.txt>
-//!        <emoji-data.txt>
+//!        <emoji-data.txt> [--malformed=reject|skip]
 //!
 //! Rules, applied in order:
 //!   General_Category Cc, Cs, Cn            control
@@ -27,7 +27,7 @@ const mem = std.mem;
 const ucd = @import("ucd.zig");
 
 const gen_name = "wcwidth-expected";
-const usage_args = "<out.zig> <DerivedGeneralCategory.txt> <EastAsianWidth.txt> <emoji-data.txt>";
+const usage_args = "<out.zig> <DerivedGeneralCategory.txt> <EastAsianWidth.txt> <emoji-data.txt> [--malformed=reject|skip]";
 
 const Class = enum { control, zero, narrow, wide, ambiguous };
 
@@ -58,6 +58,7 @@ pub fn main(init: std.process.Init) !void {
     const gc_path = args.next() orelse ucd.usage(gen_name, usage_args);
     const eaw_path = args.next() orelse ucd.usage(gen_name, usage_args);
     const emoji_path = args.next() orelse ucd.usage(gen_name, usage_args);
+    const malformed = ucd.malformedFromArgs(&args, gen_name, usage_args);
 
     const class = try arena.alloc(Class, table_len);
     const unassigned = try arena.alloc(bool, table_len);
@@ -67,7 +68,7 @@ pub fn main(init: std.process.Init) !void {
     const gc = try ucd.readFile(io, arena, gen_name, gc_path);
     var it = mem.splitScalar(u8, gc, '\n');
     while (it.next()) |raw| {
-        const l = (try ucd.parseLine(raw)) orelse continue;
+        const l = (try ucd.parseLine(raw, malformed)) orelse continue;
         const c: Class = if (isAny(l.value, &.{ "Cc", "Cs", "Cn" }))
             .control
         else if (isAny(l.value, &.{ "Mn", "Me", "Cf" }))
@@ -81,7 +82,7 @@ pub fn main(init: std.process.Init) !void {
     const eaw = try ucd.readFile(io, arena, gen_name, eaw_path);
     it = mem.splitScalar(u8, eaw, '\n');
     while (it.next()) |raw| {
-        const l = (try ucd.parseLine(raw)) orelse continue;
+        const l = (try ucd.parseLine(raw, malformed)) orelse continue;
         const c: Class = if (isAny(l.value, &.{ "W", "F" }))
             .wide
         else if (mem.eql(u8, l.value, "A"))
@@ -102,7 +103,7 @@ pub fn main(init: std.process.Init) !void {
     const emoji = try ucd.readFile(io, arena, gen_name, emoji_path);
     it = mem.splitScalar(u8, emoji, '\n');
     while (it.next()) |raw| {
-        const l = (try ucd.parseLine(raw)) orelse continue;
+        const l = (try ucd.parseLine(raw, malformed)) orelse continue;
         if (!mem.eql(u8, l.value, "Emoji_Presentation")) continue;
         for (l.first..@as(usize, l.last) + 1) |cp| {
             if (class[cp] == .narrow) class[cp] = .wide;

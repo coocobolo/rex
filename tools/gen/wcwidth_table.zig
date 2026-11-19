@@ -6,7 +6,7 @@
 //!
 //! Unicode version: 17.0.0
 //!
-//! Usage: wcwidth_table <out.zig> <EastAsianWidth.txt> <UnicodeData.txt> <emoji-data.txt>
+//! Usage: wcwidth_table <out.zig> <EastAsianWidth.txt> <UnicodeData.txt> <emoji-data.txt> [--malformed=reject|skip]
 //!
 //! Parses the Unicode Character Database files needed for a POSIX
 //! wcwidth(3) compatible width table and emits a single sorted, packed
@@ -37,7 +37,7 @@ const std = @import("std");
 const ucd = @import("ucd.zig");
 
 const gen_name = "wcwidth-table";
-const usage_args = "<out.zig> <EastAsianWidth.txt> <UnicodeData.txt> <emoji-data.txt>";
+const usage_args = "<out.zig> <EastAsianWidth.txt> <UnicodeData.txt> <emoji-data.txt> [--malformed=reject|skip]";
 const mem = std.mem;
 const fmt = std.fmt;
 
@@ -91,7 +91,7 @@ const terminal_narrow_overrides = [_][2]u21{
 
 pub fn main(init: std.process.Init) !void {
     const io = init.io;
-    var arena = init.arena.allocator();
+    const arena = init.arena.allocator();
 
     var args_it = init.minimal.args.iterate();
     _ = args_it.skip(); // argv[0]
@@ -99,13 +99,14 @@ pub fn main(init: std.process.Init) !void {
     const eaw_path = args_it.next() orelse ucd.usage(gen_name, usage_args);
     const udata_path = args_it.next() orelse ucd.usage(gen_name, usage_args);
     const emoji_path = args_it.next() orelse ucd.usage(gen_name, usage_args);
+    const malformed = ucd.malformedFromArgs(&args_it, gen_name, usage_args);
 
     const working = try arena.alloc(Working, table_len);
     @memset(working, .unclassified);
 
-    try applyUnicodeData(io, arena, working, udata_path);
-    try applyEastAsianWidth(io, arena, working, eaw_path);
-    try applyEmojiData(io, arena, working, emoji_path);
+    try applyUnicodeData(io, arena, working, udata_path, malformed);
+    try applyEastAsianWidth(io, arena, working, eaw_path, malformed);
+    try applyEmojiData(io, arena, working, emoji_path, malformed);
 
     applyDefaultDoubleRangeOverrides(working);
     applyTerminalPolicyOverrides(working);
@@ -144,7 +145,7 @@ pub fn main(init: std.process.Init) !void {
     ucd.log(gen_name, "wrote {s}: {d} entries ({d} bytes)", .{ std.fs.path.basename(out_path), entries.len, entries.len * 4 });
 }
 
-fn applyEastAsianWidth(io: std.Io, gpa: mem.Allocator, dest: []Working, path: []const u8) !void {
+fn applyEastAsianWidth(io: std.Io, gpa: mem.Allocator, dest: []Working, path: []const u8, policy: ucd.Malformed) !void {
     const content = try ucd.readFile(io, gpa, gen_name, path);
     defer gpa.free(content);
 
@@ -170,11 +171,15 @@ fn applyEastAsianWidth(io: std.Io, gpa: mem.Allocator, dest: []Working, path: []
         var start: u21 = undefined;
         var end: u21 = undefined;
         if (mem.indexOf(u8, cp_field, "..")) |dots| {
-            start = try fmt.parseInt(u21, cp_field[0..dots], 16);
-            end = try fmt.parseInt(u21, cp_field[dots + 2 ..], 16);
+            start = (try ucd.codePoint(try fmt.parseInt(u64, cp_field[0..dots], 16), policy)) orelse continue;
+            end = (try ucd.codePoint(try fmt.parseInt(u64, cp_field[dots + 2 ..], 16), policy)) orelse continue;
         } else {
-            start = try fmt.parseInt(u21, cp_field, 16);
+            start = (try ucd.codePoint(try fmt.parseInt(u64, cp_field, 16), policy)) orelse continue;
             end = start;
+        }
+        if (start > end) {
+            if (policy == .reject) return error.MalformedRange;
+            continue;
         }
 
         // Promote only characters that currently have the default terminal
@@ -186,13 +191,13 @@ fn applyEastAsianWidth(io: std.Io, gpa: mem.Allocator, dest: []Working, path: []
     }
 }
 
-fn applyEmojiData(io: std.Io, gpa: mem.Allocator, dest: []Working, path: []const u8) !void {
+fn applyEmojiData(io: std.Io, gpa: mem.Allocator, dest: []Working, path: []const u8, policy: ucd.Malformed) !void {
     const content = try ucd.readFile(io, gpa, gen_name, path);
     defer gpa.free(content);
 
     var it = mem.splitScalar(u8, content, '\n');
     while (it.next()) |raw| {
-        const l = (try ucd.parseLine(raw)) orelse continue;
+        const l = (try ucd.parseLine(raw, policy)) orelse continue;
         if (!mem.eql(u8, l.value, "Emoji_Presentation")) continue;
 
         // Regional Indicators (U+1F1E6..U+1F1FF) are Emoji_Presentation
@@ -207,7 +212,7 @@ fn applyEmojiData(io: std.Io, gpa: mem.Allocator, dest: []Working, path: []const
     }
 }
 
-fn applyUnicodeData(io: std.Io, gpa: mem.Allocator, dest: []Working, path: []const u8) !void {
+fn applyUnicodeData(io: std.Io, gpa: mem.Allocator, dest: []Working, path: []const u8, policy: ucd.Malformed) !void {
     const content = try ucd.readFile(io, gpa, gen_name, path);
     defer gpa.free(content);
 
@@ -224,7 +229,7 @@ fn applyUnicodeData(io: std.Io, gpa: mem.Allocator, dest: []Working, path: []con
         fields[1] = it.next() orelse continue; // name
         fields[2] = it.next() orelse continue; // general category
 
-        const cp = try fmt.parseInt(u21, fields[0], 16);
+        const cp = (try ucd.codePoint(try fmt.parseInt(u64, fields[0], 16), policy)) orelse continue;
         const category = fields[2];
 
         // classify() returns .narrow explicitly for every other
@@ -361,7 +366,8 @@ fn writeOutput(w: *std.Io.Writer, entries: []const Entry) !void {
     );
 
     for (entries) |e| {
-        std.debug.assert(e.size >= 1 and e.size <= 256);
+        std.debug.assert(e.size >= 1);
+        std.debug.assert(e.size <= 256);
         const packed_value: u32 =
             (@as(u32, @intFromEnum(e.property))) |
             (@as(u32, e.size - 1) << 3) |
