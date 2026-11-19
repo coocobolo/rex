@@ -4435,6 +4435,7 @@ fn kitOverlayOptions(ui: Config.Ui, win: Config.Window) KitOverlay.Options {
         .toast = .{
             .width = win.toast.width,
             .position = overlayAnchor(win.toast.position),
+            .layout = win.toast.layout,
             .margin = win.toast.margin,
             .padding = win.toast.padding,
             .gap = win.toast.gap,
@@ -4566,6 +4567,7 @@ test "kitOverlayOptions: maps overlay config sections onto KitOverlay options" {
     win.banner.margin = 12;
     win.banner.padding = 18;
     win.toast.position = .top_center;
+    win.toast.layout = .expanded;
     win.toast.width = 410;
     win.toast.margin = 20;
     win.toast.padding = 12;
@@ -4585,6 +4587,7 @@ test "kitOverlayOptions: maps overlay config sections onto KitOverlay options" {
     try testing.expectEqual(@as(u8, 18), opts.banner.padding);
 
     try testing.expectEqual(kit_toast.Position.top_center, opts.toast.position);
+    try testing.expectEqual(kit_toast.Layout.expanded, opts.toast.layout);
     try testing.expectApproxEqAbs(@as(f32, 410), opts.toast.width, 1e-6);
     try testing.expectEqual(@as(u8, 20), opts.toast.margin);
     try testing.expectEqual(@as(u8, 12), opts.toast.padding);

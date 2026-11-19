@@ -68,7 +68,7 @@ test "toast: enters, stays for its duration, leaves and is gone" {
 }
 
 test "toast: the pointer over the stack holds the timers, not the motion" {
-    var state: State = .empty;
+    var state: State = .{ .option = .{ .layout = .expanded } };
     show(&state, "first");
     _ = push(&state, "second");
 
@@ -191,7 +191,7 @@ test "toast view: an empty stack writes nothing" {
 test "toast view: cards sit bottom right, the newest lowest, with hit targets" {
     var fixture: Fixture = .{};
     var tree = fixture.tree();
-    var state: State = .empty;
+    var state: State = .{ .option = .{ .layout = .expanded } };
     show(&state, "Copied 3 lines");
     _ = update(&state, .{ .push = .{ .title = "Saved", .description = "config written", .kind = .success, .duration_ms = 4000 } });
     _ = update(&state, .{ .tick = Theme.duration });
@@ -249,7 +249,7 @@ test "toast view: a toast fades and rises in" {
 test "toast view: the others glide to their new place when one leaves" {
     var fixture: Fixture = .{};
     var tree = fixture.tree();
-    var state: State = .empty;
+    var state: State = .{ .option = .{ .layout = .expanded } };
     show(&state, "older");
     show(&state, "newer");
     const older = state.entries[0].serial;
@@ -274,7 +274,7 @@ test "toast view: the others glide to their new place when one leaves" {
 test "toast: with motion off it appears, leaves and moves at once" {
     var fixture: Fixture = .{};
     var tree = fixture.tree();
-    var state: State = .{ .motion = .none };
+    var state: State = .{ .motion = .none, .option = .{ .layout = .expanded } };
     _ = push(&state, "older");
     const older = state.entries[0].serial;
 
@@ -314,7 +314,8 @@ test "sizes of the toast surface" {
     // 19 bytes of fields, 256 of text, 1 of padding.
     try testing.expectEqual(276, @sizeOf(toast.Entry));
     try testing.expectEqual(4, @alignOf(toast.Entry));
-    try testing.expectEqual(2224, @sizeOf(State));
+    try testing.expectEqual(16, @sizeOf(toast.Option));
+    try testing.expectEqual(2232, @sizeOf(State));
     try testing.expectEqual(132, @sizeOf(memory.Table));
 }
 
@@ -325,6 +326,7 @@ test "toast view: top_left option anchors at top left, uses custom geometry, and
         .option = .{
             .width = 280,
             .position = .top_left,
+            .layout = .expanded,
             .margin = 12,
             .padding = 8,
             .gap = 6,
@@ -372,4 +374,152 @@ test "toast view: shrinks to fit narrow windows inside margin" {
     try testing.expectEqual(@as(f32, toast.margin), card.x);
     try testing.expectEqual(@as(f32, 360 - 2 * toast.margin), card.w);
     try testing.expect(card.x + card.w <= 360 - toast.margin);
+}
+
+fn titleAlpha(tree: *const Tree, serial: u32) ?u8 {
+    for (tree.items(), 0..) |node, i| {
+        if (node.box.id != toast.cardId(serial)) continue;
+        for (tree.nodes[i + 1 .. node.end]) |desc| {
+            if (desc.content == .text) return desc.content.text.color.a;
+        }
+    }
+    return null;
+}
+
+test "toast view: default stacked layout layers behind cards with peek, shrink, and hidden content" {
+    var fixture: Fixture = .{};
+    var tree = fixture.tree();
+    var state: State = .empty;
+    try testing.expectEqual(toast.Layout.stacked, state.option.layout);
+
+    show(&state, "Oldest");
+    show(&state, "Middle");
+    _ = update(&state, .{ .push = .{ .title = "Front", .description = "Two lines tall", .kind = .success, .duration_ms = 4000 } });
+    _ = update(&state, .{ .tick = Theme.duration });
+    const oldest = state.entries[0].serial;
+    const middle = state.entries[1].serial;
+    const front = state.entries[2].serial;
+
+    try testing.expectEqual(.settled, try fixture.frame(&tree, &state, 16));
+
+    // Front toast sits bottom-right at full width and its natural 72 px height.
+    const r_front = cardRect(&tree, front).?;
+    const r_mid = cardRect(&tree, middle).?;
+    const r_old = cardRect(&tree, oldest).?;
+    try testing.expectEqual(Tree.Rect{ .x = 620, .y = 604, .w = 356, .h = 72 }, r_front);
+
+    // Depth 1: 95% width centered on front, front height, 12 px peek above front.
+    const w1 = 356.0 * 0.95;
+    try testing.expectApproxEqAbs(@as(f32, 620.0 + (356.0 - w1) / 2.0), r_mid.x, 1e-3);
+    try testing.expectApproxEqAbs(@as(f32, 604.0 - 12.0), r_mid.y, 1e-3);
+    try testing.expectApproxEqAbs(w1, r_mid.w, 1e-3);
+    try testing.expectApproxEqAbs(@as(f32, 72.0), r_mid.h, 1e-3);
+
+    // Depth 2: 90% width centered on front, front height, 24 px peek above front.
+    const w2 = 356.0 * 0.90;
+    try testing.expectApproxEqAbs(@as(f32, 620.0 + (356.0 - w2) / 2.0), r_old.x, 1e-3);
+    try testing.expectApproxEqAbs(@as(f32, 604.0 - 24.0), r_old.y, 1e-3);
+    try testing.expectApproxEqAbs(w2, r_old.w, 1e-3);
+    try testing.expectApproxEqAbs(@as(f32, 72.0), r_old.h, 1e-3);
+
+    // Front content is opaque; behind cards hide content and disable close buttons while collapsed.
+    try testing.expectEqual(@as(?u8, 255), titleAlpha(&tree, front));
+    try testing.expectEqual(@as(?u8, 0), titleAlpha(&tree, middle));
+    try testing.expectEqual(@as(?u8, 0), titleAlpha(&tree, oldest));
+    try testing.expect(tree.find(toast.closeId(front)) != null);
+    try testing.expectEqual(@as(?*const Tree.Node, null), tree.find(toast.closeId(middle)));
+    try testing.expectEqual(@as(?*const Tree.Node, null), tree.find(toast.closeId(oldest)));
+
+    // Bridge rect stays empty while collapsed, so pixels beside the narrower top rim are misses.
+    const bridge = tree.find(toast.stack_id).?;
+    try testing.expectEqual(@as(f32, 0), bridge.rect.w);
+    try testing.expectEqual(toast.Hit.none, state.hit(tree.hitTest(625, 584)));
+}
+
+test "toast view: stacked deck expands on hover, bridges gaps, and collapses on leave" {
+    var fixture: Fixture = .{};
+    var tree = fixture.tree();
+    var state: State = .empty;
+
+    show(&state, "Older");
+    _ = update(&state, .{ .push = .{ .title = "Front", .description = "Two lines", .kind = .info, .duration_ms = 4000 } });
+    _ = update(&state, .{ .tick = Theme.duration });
+    const older = state.entries[0].serial;
+    const front = state.entries[1].serial;
+
+    try testing.expectEqual(.settled, try fixture.frame(&tree, &state, 16));
+    try testing.expectApproxEqAbs(@as(f32, 592), cardRect(&tree, older).?.y, 1e-3);
+
+    // Hovering a stacked multi-toast deck requests a redraw and begins expanding.
+    try testing.expect(update(&state, .{ .pointer = .over }));
+    try testing.expect(!update(&state, .{ .pointer = .over }));
+    try testing.expectEqual(.moving, try fixture.frame(&tree, &state, 0));
+    try testing.expectEqual(.moving, try fixture.frame(&tree, &state, 40));
+    // Mid-expansion: behind card is wider than collapsed 95%, narrower than 100%, and partially faded in.
+    const mid_rect = cardRect(&tree, older).?;
+    try testing.expect(mid_rect.w > 356.0 * 0.95 and mid_rect.w < 356.0);
+    const mid_alpha = titleAlpha(&tree, older).?;
+    try testing.expect(mid_alpha > 0 and mid_alpha < 255);
+
+    // After enough frames, settles cleanly into full expanded list with gap = 14.
+    try testing.expectEqual(.settled, try fixture.frame(&tree, &state, 400));
+    try testing.expectEqual(Tree.Rect{ .x = 620, .y = 604, .w = 356, .h = 72 }, cardRect(&tree, front).?);
+    try testing.expectEqual(Tree.Rect{ .x = 620, .y = 538, .w = 356, .h = 52 }, cardRect(&tree, older).?);
+    try testing.expectEqual(@as(?u8, 255), titleAlpha(&tree, older));
+    try testing.expect(tree.find(toast.closeId(older)) != null);
+
+    // Crossing the 14 px gap between expanded cards hits `.stack` so hover does not flicker off.
+    try testing.expectEqual(toast.Hit.stack, state.hit(tree.hitTest(700, 597)));
+    try testing.expectEqual(toast.Hit{ .close = older }, state.hit(tree.hitTest(950, 564)));
+
+    // Leaving requests a redraw and collapses smoothly back into the deck.
+    try testing.expect(update(&state, .{ .pointer = .away }));
+    try testing.expectEqual(.moving, try fixture.frame(&tree, &state, 0));
+    try testing.expectEqual(.settled, try fixture.frame(&tree, &state, 400));
+    try testing.expectApproxEqAbs(@as(f32, 356.0 * 0.95), cardRect(&tree, older).?.w, 1e-3);
+    try testing.expectApproxEqAbs(@as(f32, 592), cardRect(&tree, older).?.y, 1e-3);
+    try testing.expectEqual(@as(?u8, 0), titleAlpha(&tree, older));
+    try testing.expectEqual(@as(f32, 0), tree.find(toast.stack_id).?.rect.w);
+}
+
+test "toast view: stacked top_left anchors front at top, peeks downward, and expands downward" {
+    var fixture: Fixture = .{};
+    var tree = fixture.tree();
+    var state: State = .{
+        .motion = .none,
+        .option = .{
+            .width = 280,
+            .position = .top_left,
+            .layout = .stacked,
+            .margin = 12,
+            .padding = 8,
+            .gap = 6,
+            .peek = 10,
+        },
+    };
+    show(&state, "Oldest");
+    _ = update(&state, .{ .push = .{ .title = "Front", .description = "Desc", .duration_ms = 4000 } });
+    _ = update(&state, .{ .tick = 1 });
+    const oldest = state.entries[0].serial;
+    const front = state.entries[1].serial;
+
+    // Collapsed: front sits at top margin; behind card peeks 10 px downward below it.
+    try testing.expectEqual(.settled, try fixture.frame(&tree, &state, 0));
+    const r_front = cardRect(&tree, front).?;
+    const r_old = cardRect(&tree, oldest).?;
+    try testing.expectEqual(@as(f32, 12), r_front.x);
+    try testing.expectEqual(@as(f32, 12), r_front.y);
+    try testing.expectEqual(@as(f32, 280), r_front.w);
+    try testing.expectApproxEqAbs(@as(f32, 22), r_old.y, 1e-3);
+    try testing.expectApproxEqAbs(r_front.h, r_old.h, 1e-3);
+    try testing.expectApproxEqAbs(@as(f32, 280.0 * 0.95), r_old.w, 1e-3);
+
+    // Motion off: hovering snaps immediately to expanded downward below front.
+    try testing.expect(update(&state, .{ .pointer = .over }));
+    try testing.expectEqual(.settled, try fixture.frame(&tree, &state, 0));
+    const exp_front = cardRect(&tree, front).?;
+    const exp_old = cardRect(&tree, oldest).?;
+    try testing.expectEqual(@as(f32, 12), exp_front.y);
+    try testing.expectEqual(exp_front.y + exp_front.h + 6, exp_old.y);
+    try testing.expectEqual(@as(f32, 280), exp_old.w);
 }

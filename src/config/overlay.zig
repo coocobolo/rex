@@ -1,9 +1,12 @@
 //! What the user sets for the toasts, banners and dialogs drawn over the
 //! terminal by the UI kit (`[toast]`, `[banner]`, `[modal]`, `[modal.blur]`
-//! and `[alert_dialog]`). Plain data that imports nothing but std, so anything
-//! that reads the config can import it without the UI code.
+//! and `[alert_dialog]`). Plain data free of native dependencies, so anything
+//! that reads the config (including fuzz targets and tool windows) can import
+//! it without the renderer or terminal.
 
 const std = @import("std");
+
+const ToastLayout = @import("../kit/toast.zig").Layout;
 
 /// Screen corner or edge anchor for floating and docked overlays.
 pub const Position = enum(u8) {
@@ -19,6 +22,7 @@ pub const Toast = struct {
     width: f32 = 356,
     duration_ms: u32 = 5000,
     position: Position = .bottom_right,
+    layout: ToastLayout = .stacked,
     margin: u8 = 24,
     padding: u8 = 16,
     gap: u8 = 14,

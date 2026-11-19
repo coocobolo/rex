@@ -399,25 +399,26 @@ test "KitOverlay: the dialog covers the toast stack" {
 test "KitOverlay: its size" {
     // Nearly all of it is two tables: the font's kerning pairs, and
     // the painter's 2048 instances of 64 bytes with its glyph position cache.
-    try testing.expectEqual(378184, @sizeOf(KitOverlay));
+    try testing.expectEqual(378296, @sizeOf(KitOverlay));
     try testing.expectEqual(161048, @sizeOf(@FieldType(KitOverlay, "painter")));
     try testing.expectEqual(190424, @sizeOf(@FieldType(KitOverlay, "font")));
-    try testing.expectEqual(9048, @sizeOf(@FieldType(KitOverlay, "nodes")));
+    try testing.expectEqual(9152, @sizeOf(@FieldType(KitOverlay, "nodes")));
 }
 
-test "KitOverlay: configure applies surface options and resets toast glide table on position change" {
+test "KitOverlay: configure applies surface options and resets toast glide table on position or layout change" {
     var fixture: Fixture = try .init(1);
     defer fixture.deinit();
     const kit = fixture.kit;
 
     kit.configure(.{
         .banner = .{ .placement = .docked, .position = .bottom_center, .margin = 10, .padding = 12, .max_width = 640 },
-        .toast = .{ .width = 300, .position = .bottom_right, .margin = 16, .padding = 14, .gap = 10 },
+        .toast = .{ .width = 300, .position = .bottom_right, .layout = .stacked, .margin = 16, .padding = 14, .gap = 10 },
         .dialog = .{ .width = 480, .position = .top_center, .margin = 20, .padding = 22, .gap = 14, .scrim_alpha = 90 },
     });
     try testing.expectEqual(alert.Placement.docked, kit.alert.option.placement);
     try testing.expectEqual(alert.Position.bottom_center, kit.alert.option.position);
     try testing.expectEqual(@as(f32, 300), kit.toasts.option.width);
+    try testing.expectEqual(toast.Layout.stacked, kit.toasts.option.layout);
     try testing.expectEqual(dialog.Position.top_center, kit.dialog.option.position);
     try testing.expectEqual(@as(?u8, 90), kit.dialog.option.scrim_alpha);
 
@@ -426,14 +427,21 @@ test "KitOverlay: configure applies surface options and resets toast glide table
     try testing.expect(fixture.frame());
     try testing.expect(kit.table.len > 0);
 
-    // Same toast position keeps glide memory intact; switching position clears it.
+    // Same toast position and layout keeps glide memory intact; switching either clears it.
     kit.configure(.{
-        .toast = .{ .width = 320, .position = .bottom_right },
+        .toast = .{ .width = 320, .position = .bottom_right, .layout = .stacked },
     });
     try testing.expect(kit.table.len > 0);
 
     kit.configure(.{
-        .toast = .{ .width = 320, .position = .top_left },
+        .toast = .{ .width = 320, .position = .bottom_right, .layout = .expanded },
+    });
+    try testing.expectEqual(@as(usize, 0), kit.table.len);
+
+    try testing.expect(fixture.frame());
+    try testing.expect(kit.table.len > 0);
+    kit.configure(.{
+        .toast = .{ .width = 320, .position = .top_left, .layout = .expanded },
     });
     try testing.expectEqual(@as(usize, 0), kit.table.len);
 }
@@ -686,4 +694,38 @@ test "KitOverlay: lock screen pauses toast lifetime and suppresses toast wakeups
     try testing.expect(kit.tick(1000));
     try testing.expect(kit.tick(Theme.duration));
     try testing.expectEqual(@as(u8, 0), kit.toasts.len);
+}
+
+test "KitOverlay: hovering a stacked toast deck triggers redraw, expands, and collapses on leave" {
+    var fixture: Fixture = try .init(1);
+    defer fixture.deinit();
+    const kit = fixture.kit;
+
+    const first = kit.pushTracked(.{ .title = "Older", .duration_ms = 60_000 });
+    const second = kit.pushTracked(.{ .title = "Front", .duration_ms = 60_000 });
+    _ = kit.tick(Theme.duration);
+    try testing.expect(fixture.frame());
+
+    const front_rect = kit.tree.find(toast.cardId(second.serial)).?.rect;
+    const older_collapsed = kit.tree.find(toast.cardId(first.serial)).?.rect;
+    try testing.expect(older_collapsed.w < front_rect.w);
+
+    // Hovering over the front card requests a redraw and begins smooth expansion.
+    try testing.expect(kit.pointerMoved(front_rect.x + 40, front_rect.y + front_rect.h / 2));
+    try testing.expect(fixture.frame());
+    try testing.expectEqual(toast.Motion.moving, kit.motion);
+    try testing.expectEqual(@as(?u32, motion.frame_ms), kit.wakeMs());
+
+    // Advance until settled; older card now matches front width and sits above with gap.
+    _ = kit.tick(400);
+    try testing.expect(fixture.frame());
+    try testing.expectEqual(toast.Motion.settled, kit.motion);
+    const older_expanded = kit.tree.find(toast.cardId(first.serial)).?.rect;
+    try testing.expectApproxEqAbs(front_rect.w, older_expanded.w, 1e-3);
+    try testing.expect(older_expanded.y < older_collapsed.y);
+
+    // Leaving the window triggers redraw and collapses back.
+    try testing.expect(kit.pointerLeft());
+    try testing.expect(fixture.frame());
+    try testing.expectEqual(toast.Motion.moving, kit.motion);
 }

@@ -892,23 +892,30 @@ test "settings: Overlays preview buttons trigger, lay out, and dismiss in-window
     }
     try testing.expect(saw_toast_btn and saw_banner_btn and saw_dialog_btn);
 
-    // Click Test Toast -> pushes preview toast, waits for transition, and close button dismisses.
+    // Click Test Toast twice -> stacked preview deck starts collapsed, hovering triggers redraw.
     const toast_btn_id = Id.of("settings.preview_toast");
     _ = settings.update(&state, .{ .pointer = .{ .id = toast_btn_id } });
     _ = settings.update(&state, .{ .press = toast_btn_id });
     try testing.expect(settings.update(&state, .release));
     try testing.expectEqual(@as(usize, 1), state.preview_toast.len);
+    try testing.expectEqual(kit.toast.Layout.stacked, state.preview_toast.option.layout);
     try testing.expect(settings.wait(&state) != null);
 
-    const toast_serial = state.preview_toast.entries[0].serial;
+    _ = settings.update(&state, .{ .press = toast_btn_id });
+    try testing.expect(settings.update(&state, .release));
+    try testing.expectEqual(@as(usize, 2), state.preview_toast.len);
+
+    const toast_serial = state.preview_toast.entries[1].serial;
     tree.reset();
     try settings.view(&state, &tree, &kit.Theme.dark);
     try tree.layout(measurer, 960, 720);
     settings.place(&state, &tree);
     try testing.expect(tree.find(kit.toast.cardId(toast_serial)) != null);
+    try testing.expect(settings.update(&state, .{ .pointer = .{ .id = kit.toast.cardId(toast_serial) } }));
+    try testing.expectEqual(kit.toast.Pointer.over, state.preview_toast.pointer);
 
     try testing.expect(settings.update(&state, .{ .press = kit.toast.closeId(toast_serial) }));
-    try testing.expectEqual(kit.toast.Phase.leaving, std.meta.activeTag(state.preview_toast.entries[0].phase));
+    try testing.expectEqual(kit.toast.Phase.leaving, std.meta.activeTag(state.preview_toast.entries[1].phase));
 
     // Click Test Banner -> opens banner card and close button dismisses on release.
     const banner_btn_id = Id.of("settings.preview_banner");

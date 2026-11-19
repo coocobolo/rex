@@ -60,8 +60,10 @@ const Scene = enum {
     dialog_cancel_focused,
     /// The same dialog with a media icon above its title.
     dialog_media,
-    /// The app's toast stack (`kit/toast.zig`), its newest toast halfway in.
+    /// The app's toast stack (`kit/toast.zig`), expanded, its newest toast halfway in.
     toasts,
+    /// The app's toast stack (`kit/toast.zig`), settled in the default stacked deck layout.
+    toasts_stacked,
     /// Every shared component in every variant, size and state.
     specimen,
     /// Persistent top-center alert banner (`kit/alert.zig`).
@@ -168,7 +170,7 @@ fn build(
             marks.cancel = nodeWithId(tree, alert_dialog.actionId(0)) + 1;
             marks.confirm = nodeWithId(tree, alert_dialog.actionId(1)) + 1;
         },
-        .toasts => _ = try toast_stack.view(toasts, tree, theme),
+        .toasts, .toasts_stacked => _ = try toast_stack.view(toasts, tree, theme),
         .specimen => try specimen(tree, theme, &marks),
         .alert => {
             _ = try alert.view(alert_state, tree, theme) orelse unreachable;
@@ -516,6 +518,7 @@ fn render(scene: Scene, variant: Theme.Variant, background: Color, scale: f32, k
         _ = alert_dialog.update(&result.dialog, .{ .tick = Theme.duration });
         if (scene == .dialog_cancel_focused) _ = alert_dialog.update(&result.dialog, .{ .focus = .next });
     }
+    if (scene == .toasts) result.toasts.option.layout = .expanded;
     const pushes = [_]toast_stack.Push{
         .{ .title = "Couldn\u{2019}t save wellbeing data", .description = "AccessDenied in /home/user/.local/state/rex/wellbeing", .kind = .err, .duration_ms = 5000 },
         .{ .title = "Configuration reloaded", .kind = .success, .duration_ms = 5000 },
@@ -526,13 +529,13 @@ fn render(scene: Scene, variant: Theme.Variant, background: Color, scale: f32, k
         _ = toast_stack.update(&result.toasts, .{ .tick = Theme.duration });
         _ = toast_stack.update(&result.toasts, .{ .push = push });
     }
-    _ = toast_stack.update(&result.toasts, .{ .tick = Theme.duration / 2 });
+    _ = toast_stack.update(&result.toasts, .{ .tick = if (scene == .toasts_stacked) Theme.duration else Theme.duration / 2 });
 
     result.marks = try build(&tree, scene, variant.theme(), &result.toasts, &result.dialog, &result.alert, &result.lock_screen);
     // The specimen sheet needs more vertical room than the overlay scenes.
     const scene_height: f32 = if (scene == .specimen) 700 else @floatFromInt(view_height);
     try tree.layout(font.measurer(), view_width, scene_height);
-    if (scene == .toasts) {
+    if (scene == .toasts or scene == .toasts_stacked) {
         var table: memory.Table = .empty;
         _ = try toast_stack.place(&result.toasts, &tree, 0, &table, 0);
     }
@@ -661,6 +664,33 @@ test "KitPainter: the toast stack, with its newest toast halfway in" {
         // The stack keeps its margin: 24 px from the right edge.
         try testing.expectEqual(view_width - 24, settled.x + settled.w);
         try testing.expectEqual(rgb(terminal_dark), frame.at(view_width - 12, settled.y + settled.h / 2));
+    }
+}
+
+test "KitPainter: stacked toast deck renders front full-width card with peeking narrowed rims behind" {
+    for ([_]f32{ 1, 1.25, 1.5 }) |scale| {
+        var rendered = try render(.toasts_stacked, .dark, terminal_dark, scale, .pairs);
+        defer rendered.frame.deinit();
+        const frame = &rendered.frame;
+        const theme = &Theme.dark;
+
+        const entries = rendered.toasts.visible();
+        try testing.expectEqual(3, entries.len);
+        const oldest = rendered.card(entries[0].serial);
+        const middle = rendered.card(entries[1].serial);
+        const front = rendered.card(entries[2].serial);
+
+        // Front sits at full width against the right margin; behind cards peek upward and narrow.
+        try testing.expectEqual(view_width - 24, front.x + front.w);
+        try testing.expect(oldest.w < middle.w and middle.w < front.w);
+        try testing.expectApproxEqAbs(front.y - toast_stack.peek, middle.y, 1e-3);
+        try testing.expectApproxEqAbs(front.y - 2 * toast_stack.peek, oldest.y, 1e-3);
+
+        // Peeking rims show clean popover fill with no hidden text/icon bleeding through;
+        // the corner cut outside the narrower oldest card stays terminal background.
+        try testing.expectEqual(rgb(theme.popover), frame.at(middle.x + middle.w / 2, middle.y + 6));
+        try testing.expectEqual(rgb(theme.popover), frame.at(oldest.x + oldest.w / 2, oldest.y + 6));
+        try testing.expectEqual(rgb(terminal_dark), frame.at(front.x + 2, oldest.y + 4));
     }
 }
 

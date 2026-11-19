@@ -246,6 +246,7 @@ const key_meta_table = [_]KeyMetaEntry{
     .{ .section = .toast, .name = "enabled", .label = "Enable Toasts", .description = "Show brief pop-up notifications inside the terminal." },
     .{ .section = .toast, .name = "duration", .label = "Display Duration", .description = "How long a toast remains visible before dismissing." },
     .{ .section = .toast, .name = "position", .label = "Position", .description = "Corner or edge where toast notifications stack." },
+    .{ .section = .toast, .name = "layout", .label = "Stack Layout", .description = "Arrange multiple toasts as a collapsed deck that expands on hover, or as a vertical list." },
     .{ .section = .toast, .name = "width", .label = "Card Width", .description = "Width of toast notification cards in pixels." },
     .{ .section = .toast, .name = "margin", .label = "Edge Margin", .description = "Distance between the toast stack and window edges in pixels." },
     .{ .section = .toast, .name = "padding", .label = "Inner Padding", .description = "Space inside each toast card in pixels." },
@@ -955,12 +956,15 @@ fn syncPreviewOptions(state: *State) void {
     state.preview_dialog.motion = cfg.ui.motion;
 
     const next_toast_pos = overlayAnchor(win.toast.position);
-    if (state.preview_toast.option.position != next_toast_pos) {
+    if (state.preview_toast.option.position != next_toast_pos or
+        state.preview_toast.option.layout != win.toast.layout)
+    {
         state.preview_table = .empty;
     }
     state.preview_toast.option = .{
         .width = win.toast.width,
         .position = next_toast_pos,
+        .layout = win.toast.layout,
         .margin = win.toast.margin,
         .padding = win.toast.padding,
         .gap = win.toast.gap,
@@ -1274,7 +1278,16 @@ pub fn update(state: *State, event: host.Event) bool {
             const alert_over: kit.alert.Pointer = if (state.preview_banner.hit(pointer.id) == .close) .close else .away;
             const alert_changed = kit.alert.update(&state.preview_banner, .{ .pointer = alert_over });
             const toast_over: kit.toast.Pointer = if (state.preview_toast.hit(pointer.id) != .none) .over else .away;
-            _ = kit.toast.update(&state.preview_toast, .{ .pointer = toast_over });
+            const toast_hover_changes = state.preview_toast.pointer != toast_over and
+                state.preview_toast.option.layout == .stacked and
+                state.preview_toast.visible().len > 1;
+            var preview_ticked = false;
+            if (toast_hover_changes) {
+                preview_ticked = wakePreview(state);
+                state.preview_glide_ms = 0;
+            }
+            const toast_changed = kit.toast.update(&state.preview_toast, .{ .pointer = toast_over });
+            if (toast_changed and state.preview_last_ms == null) state.preview_last_ms = previewNowMs(state);
             const sb = state.frame.update(page_count, .{ .pointer = sidebar.hit(pointer.id, page_count) });
             const next_hover = over(state, pointer.id);
             const h_changed = !std.meta.eql(state.hover, next_hover);
@@ -1296,7 +1309,7 @@ pub fn update(state: *State, event: host.Event) bool {
                     }
                 }
             }
-            return sb or h_changed or alert_changed;
+            return sb or h_changed or alert_changed or preview_ticked or toast_changed;
         },
         .press => |id| {
             state.stepper_hold = .idle;
@@ -1340,7 +1353,7 @@ pub fn update(state: *State, event: host.Event) bool {
                     state.pressed = .none;
                     return false;
                 },
-                .none => {},
+                .none, .stack => {},
             }
             if (state.open_select) |sel| {
                 if (id == layer_id) {
@@ -2057,7 +2070,7 @@ fn over(state: *const State, id: Id) Target {
     }
     switch (state.preview_toast.hit(id)) {
         .close => |serial| return .{ .preview_toast_close = serial },
-        .toast => return .none,
+        .toast, .stack => return .none,
         .none => {},
     }
     if (id == layer_id) return .layer;

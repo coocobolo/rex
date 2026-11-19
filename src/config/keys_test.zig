@@ -411,6 +411,7 @@ test "availableOn: platform is Linux only, the rest everywhere" {
 const enum_names = [_]struct { []const u8, []const []const u8 }{
     .{ "window.platform", &.{ "auto", "wayland", "x11" } },
     .{ "toast.position", &.{ "top_left", "top_center", "top_right", "bottom_left", "bottom_center", "bottom_right" } },
+    .{ "toast.layout", &.{ "expanded", "stacked" } },
     .{ "banner.placement", &.{ "floating", "docked" } },
     .{ "banner.position", &.{ "top_left", "top_center", "top_right", "bottom_left", "bottom_center", "bottom_right" } },
     .{ "modal.position", &.{ "center", "top_center", "bottom_center" } },
@@ -605,12 +606,15 @@ test "apply: [scrollbar] keys parse, validate bounds, and reset to defaults" {
 
 test "apply: [toast], [banner], [modal], and [alert_dialog] layout keys" {
     var config = testConfig();
+    try std.testing.expectEqual(.stacked, config.window.toast.layout);
     try applyText(&config, .toast, "position", "top_left");
+    try applyText(&config, .toast, "layout", "expanded");
     try applyText(&config, .toast, "width", "400");
     try applyText(&config, .toast, "margin", "12");
     try applyText(&config, .toast, "padding", "10");
     try applyText(&config, .toast, "gap", "8");
     try std.testing.expectEqual(overlay.Position.top_left, config.window.toast.position);
+    try std.testing.expectEqual(.expanded, config.window.toast.layout);
     try std.testing.expectEqual(@as(f32, 400), config.window.toast.width);
     try std.testing.expectEqual(@as(u8, 12), config.window.toast.margin);
     try std.testing.expectEqual(@as(u8, 10), config.window.toast.padding);

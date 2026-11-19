@@ -100,7 +100,9 @@ pub fn configure(self: *KitOverlay, options: Options) void {
     self.lock_screen.motion = options.ui.motion;
     self.color_scheme = options.ui.color_scheme;
 
-    if (self.toasts.option.position != options.toast.position) {
+    if (self.toasts.option.position != options.toast.position or
+        self.toasts.option.layout != options.toast.layout)
+    {
         self.table = .empty;
     }
     self.alert.option = options.banner;
@@ -291,18 +293,18 @@ pub fn pointerMoved(self: *KitOverlay, x: f32, y: f32) bool {
     const alert_over: alert_mod.Pointer = if (self.alert.hit(id) == .close) .close else .away;
     const alert_changed = alert_mod.update(&self.alert, .{ .pointer = alert_over });
     const over = self.toasts.hit(id) != .none;
-    _ = toast.update(&self.toasts, .{ .pointer = if (over) .over else .away });
-    return widget_changed or alert_changed;
+    const toast_changed = toast.update(&self.toasts, .{ .pointer = if (over) .over else .away });
+    return widget_changed or alert_changed or toast_changed;
 }
 
 /// The pointer left the window. Returns whether a redraw is due.
 pub fn pointerLeft(self: *KitOverlay) bool {
-    _ = toast.update(&self.toasts, .{ .pointer = .away });
+    const toast_changed = toast.update(&self.toasts, .{ .pointer = .away });
     const widget_changed = widget_mod.update(&self.wellbeing_widget, .leave) != .quiet;
     const alert_changed = alert_mod.update(&self.alert, .{ .pointer = .away });
     const dialog_changed = alert_dialog.update(&self.dialog, .{ .pointer = alert_dialog.no_action }) == .redraw;
     const lock_changed = lock_mod.update(&self.lock_screen, .{ .pointer = .away }) == .redraw;
-    return widget_changed or alert_changed or dialog_changed or lock_changed;
+    return toast_changed or widget_changed or alert_changed or dialog_changed or lock_changed;
 }
 
 /// Returns the pointer shape requested by the kit surface at `(x, y)` in
@@ -356,7 +358,7 @@ pub fn press(self: *KitOverlay, x: f32, y: f32) Press {
         .none => {},
     }
     switch (self.toasts.hit(id)) {
-        .none => {},
+        .none, .stack => {},
         .toast => return .taken,
         .close => |serial| return if (toast.update(&self.toasts, .{ .dismiss = serial })) .changed else .taken,
     }

@@ -1,12 +1,16 @@
-//! The toast stack: up to `visible_max` toasts in the
-//! window's bottom right corner, the newest lowest, each leaving when its
-//! time is up. Timers stop while the pointer is over the stack.
+//! The toast stack: up to `visible_max` toasts anchored to a window corner or
+//! edge, each leaving when its time is up. In `.stacked` layout (default) the
+//! newest toast sits full-width in front with older toasts peeking behind it
+//! and expanding into a vertical list on hover; in `.expanded` layout every
+//! visible toast stays listed with `gap` between them. Timers stop while the
+//! pointer is over the stack.
 //!
 //! The surface follows ADR 0009. `State` is plain data and `update` is the
 //! only code that changes it. `view` writes the nodes for a state, layout
 //! gives them rectangles, and `place` then applies the motion layout knows
-//! nothing about: a toast rising in or sinking out, and the others gliding
-//! to their new place when the stack changes. Nothing allocates.
+//! nothing about: a toast rising in or sinking out, the deck expanding or
+//! collapsing on hover, and cards gliding to their new place when the stack
+//! changes. Nothing allocates.
 
 const std = @import("std");
 const assert = std.debug.assert;
@@ -24,8 +28,12 @@ const Index = Tree.Index;
 /// In logical pixels.
 pub const width = 356;
 pub const padding = 16;
-/// Between toasts.
+/// Between expanded toasts.
 pub const gap = 14;
+/// Visible vertical lip of each card behind the front toast when stacked.
+pub const peek = 12;
+/// Width shrink fraction per depth step behind the front toast when stacked.
+pub const scale_step: f32 = 0.05;
 /// From the window's edges.
 pub const margin = 24;
 pub const visible_max = 3;
@@ -46,12 +54,21 @@ const line_height = text.Style.sm_medium.metrics().line_height;
 
 pub const Position = Tree.ScreenAnchor;
 
+/// How multiple visible toasts are arranged on screen.
+pub const Layout = enum(u8) {
+    expanded,
+    stacked,
+};
+
 pub const Option = struct {
     width: f32 = width,
+    scale_step: f32 = scale_step,
     position: Position = .bottom_right,
+    layout: Layout = .stacked,
     margin: u8 = margin,
     padding: u8 = padding,
     gap: u8 = gap,
+    peek: u8 = peek,
 };
 
 pub const Kind = enum(u8) {
@@ -282,6 +299,7 @@ pub const State = struct {
     /// What the node `id` of the last view is.
     pub fn hit(self: *const State, id: Id) Hit {
         if (id == .none) return .none;
+        if (id == stack_id) return .stack;
         for (self.visible()) |entry| {
             if (id == closeId(entry.serial)) return .{ .close = entry.serial };
             if (id == cardId(entry.serial)) return .{ .toast = entry.serial };
@@ -296,6 +314,8 @@ pub const Hit = union(enum) {
     toast: u32,
     /// The close button of the toast with this serial.
     close: u32,
+    /// Inside the expanded stacked-toast footprint (gap between cards).
+    stack,
 };
 
 pub const Push = struct {
@@ -319,20 +339,29 @@ pub const Event = union(enum) {
 };
 
 /// Applies `event` and returns whether the view changed, which is when a
-/// redraw is due. A pointer event changes only when the stack next wakes
-/// (`State.wakeMs`).
+/// redraw is due. A pointer change triggers a redraw when a stacked deck of
+/// multiple toasts expands or collapses; otherwise it only changes when the
+/// stack next wakes (`State.wakeMs`).
 pub fn update(state: *State, event: Event) bool {
     return switch (event) {
         .push => |toast| state.push(toast),
         .tick => |dt_ms| state.tick(dt_ms),
         .pointer => |pointer| {
+            const changed = state.pointer != pointer and
+                state.option.layout == .stacked and
+                state.visible().len > 1;
             state.pointer = pointer;
-            return false;
+            return changed;
         },
         .dismiss => |serial| state.dismiss(serial),
         .dismiss_all => state.dismissAll(),
     };
 }
+
+/// Transparent hit target bridging gaps between cards while a stacked deck is
+/// hovered or mid-expansion.
+pub const stack_id: Id = Id.of("toast.stack");
+const expand_id: Id = Id.of("toast.expand");
 
 pub fn cardId(serial: u32) Id {
     return Id.of("toast").item(serial);
@@ -342,8 +371,9 @@ pub fn closeId(serial: u32) Id {
     return Id.of("toast.close").item(serial);
 }
 
-/// Most nodes one view of a full stack writes.
-pub const node_max = 1 + visible_max * 8;
+/// Most nodes one view of a full stack writes (root, optional hover bridge,
+/// and up to `visible_max` cards of 8 nodes each).
+pub const node_max = 2 + visible_max * 8;
 
 /// Writes the stack as one root that fills the window, and returns it, or
 /// null when no toast is on screen and nothing was written. The texts
@@ -360,7 +390,16 @@ pub fn view(state: *const State, tree: *Tree, theme: *const Theme) Tree.Error!?I
         .main = state.option.position.mainAlign(),
         .cross = state.option.position.crossAlign(),
     });
-    for (entries) |*entry| {
+    if (state.option.layout == .stacked and entries.len > 1) {
+        _ = try tree.leaf(.{
+            .id = stack_id,
+            .overlay = true,
+        });
+    }
+    for (entries, 0..) |*entry, i| {
+        const depth = entries.len - 1 - i;
+        const stacked_behind = state.option.layout == .stacked and depth > 0;
+        const close_active = !(stacked_behind and state.pointer == .away);
         const presence = entry.presence(state.motion);
         const card = try tree.open(.{
             .id = cardId(entry.serial),
@@ -372,6 +411,7 @@ pub fn view(state: *const State, tree: *Tree, theme: *const Theme) Tree.Error!?I
             .border = theme.border.fade(presence),
             .border_width = Theme.border_width,
             .radius = Theme.radius,
+            .overflow = if (stacked_behind) .clip else .visible,
         });
         if (entry.kind.mark(theme)) |mark| {
             // As tall as the title's line, so the icon centers on it.
@@ -386,8 +426,8 @@ pub fn view(state: *const State, tree: *Tree, theme: *const Theme) Tree.Error!?I
         }
         tree.close(body);
         const close = try tree.open(.{
-            .id = closeId(entry.serial),
-            .pointer = .hand,
+            .id = if (close_active) closeId(entry.serial) else .none,
+            .pointer = if (close_active) .hand else .arrow,
             .width = .{ .fixed = line_height },
             .height = .{ .fixed = line_height },
             .main = .center,
@@ -410,23 +450,137 @@ pub const Motion = enum { settled, moving };
 pub fn place(state: *const State, tree: *Tree, stack: ?Index, table: *memory.Table, dt_ms: u32) memory.Error!Motion {
     defer table.sweep();
     var status: Motion = .settled;
-    var card: Index = (stack orelse return status) + 1;
-    for (state.visible()) |*entry| {
-        const node = &tree.nodes[card];
+    const root = stack orelse return status;
+    const entries = state.visible();
+    if (entries.len == 0) return status;
+
+    var cursor: Index = root + 1;
+    var bridge: ?Index = null;
+    if (cursor < tree.len and tree.nodes[cursor].box.id == stack_id) {
+        bridge = cursor;
+        cursor = tree.nodes[cursor].end;
+    }
+
+    if (state.option.layout == .expanded) {
+        for (entries) |*entry| {
+            const node = &tree.nodes[cursor];
+            assert(node.box.id == cardId(entry.serial));
+            const target = node.rect.y;
+            // A toast seen for the first time starts in its place.
+            const drawn = switch (state.motion) {
+                .full => glide(table.get(node.box.id) orelse target, target, dt_ms),
+                .none => target,
+            };
+            try table.set(node.box.id, drawn);
+            if (drawn != target) status = .moving;
+            const rise_offset: f32 = if (state.option.position.isTop()) -rise else rise;
+            tree.translate(cursor, 0, drawn - target + (1 - entry.presence(state.motion)) * rise_offset);
+            cursor = node.end;
+        }
+        return status;
+    }
+
+    var cards: [visible_max]Index = undefined;
+    var orig: [visible_max]Tree.Rect = undefined;
+    for (entries, 0..) |*entry, i| {
+        const node = &tree.nodes[cursor];
         assert(node.box.id == cardId(entry.serial));
-        const target = node.rect.y;
-        // A toast seen for the first time starts in its place.
-        const drawn = switch (state.motion) {
-            .full => glide(table.get(node.box.id) orelse target, target, dt_ms),
-            .none => target,
+        cards[i] = cursor;
+        orig[i] = node.rect;
+        cursor = node.end;
+    }
+
+    const n = entries.len;
+    const front = n - 1;
+    const is_top = state.option.position.isTop();
+    const expand_target: f32 = if (state.pointer == .over and n > 1) 1 else 0;
+    const expand: f32 = if (n > 1) blk: {
+        const drawn_expand = switch (state.motion) {
+            .full => glideUnit(table.get(expand_id) orelse expand_target, expand_target, dt_ms),
+            .none => expand_target,
         };
-        try table.set(node.box.id, drawn);
-        if (drawn != target) status = .moving;
-        const rise_offset: f32 = if (state.option.position.isTop()) -rise else rise;
-        tree.translate(card, 0, drawn - target + (1 - entry.presence(state.motion)) * rise_offset);
-        card = node.end;
+        try table.set(expand_id, drawn_expand);
+        if (drawn_expand != expand_target) status = .moving;
+        break :blk drawn_expand;
+    } else 0;
+
+    const front_w = orig[front].w;
+    const front_h = orig[front].h;
+    const front_x = orig[front].x;
+    const anchor_edge = if (is_top) orig[0].y else orig[front].y + orig[front].h;
+    const gap_f: f32 = @floatFromInt(state.option.gap);
+    const peek_f: f32 = @floatFromInt(state.option.peek);
+    const step = if (std.math.isFinite(state.option.scale_step)) std.math.clamp(state.option.scale_step, 0, 0.25) else 0;
+    const rise_offset: f32 = if (is_top) -rise else rise;
+
+    var expanded_y: [visible_max]f32 = undefined;
+    var offset_y: f32 = 0;
+    var depth: usize = 0;
+    while (depth < n) : (depth += 1) {
+        const i = front - depth;
+        expanded_y[i] = if (is_top) anchor_edge + offset_y else anchor_edge - offset_y - orig[i].h;
+        offset_y += orig[i].h + gap_f;
+    }
+
+    var min_x: f32 = std.math.inf(f32);
+    var min_y: f32 = std.math.inf(f32);
+    var max_x: f32 = -std.math.inf(f32);
+    var max_y: f32 = -std.math.inf(f32);
+
+    for (entries, 0..) |*entry, i| {
+        const card = cards[i];
+        const node = &tree.nodes[card];
+        const d = front - i;
+        const d_f: f32 = @floatFromInt(d);
+
+        const scale = @max(0.5, 1 - d_f * step);
+        const target_w = front_w * (scale + (1 - scale) * expand);
+        const target_h = front_h + (orig[i].h - front_h) * expand;
+        const target_x = front_x + (front_w - target_w) * 0.5;
+        const collapsed_y = if (is_top) anchor_edge + d_f * peek_f else anchor_edge - front_h - d_f * peek_f;
+        const target_y = collapsed_y + (expanded_y[i] - collapsed_y) * expand;
+
+        const drawn_y = switch (state.motion) {
+            .full => glide(table.get(node.box.id) orelse target_y, target_y, dt_ms),
+            .none => target_y,
+        };
+        try table.set(node.box.id, drawn_y);
+        if (drawn_y != target_y) status = .moving;
+
+        const final_y = drawn_y + (1 - entry.presence(state.motion)) * rise_offset;
+        tree.translate(card, target_x - orig[i].x, final_y - orig[i].y);
+        node.rect.w = target_w;
+        node.rect.h = target_h;
+        if (d > 0) fadeDescendants(tree, card, expand);
+
+        min_x = @min(min_x, node.rect.x);
+        min_y = @min(min_y, node.rect.y);
+        max_x = @max(max_x, node.rect.x + node.rect.w);
+        max_y = @max(max_y, node.rect.y + node.rect.h);
+    }
+
+    if (bridge) |b| {
+        tree.nodes[b].rect = if (state.pointer == .over or expand > 0) .{
+            .x = min_x,
+            .y = min_y,
+            .w = @max(0, max_x - min_x),
+            .h = @max(0, max_y - min_y),
+        } else .{};
     }
     return status;
+}
+
+fn fadeDescendants(tree: *Tree, card: Index, factor: f32) void {
+    if (factor >= 1) return;
+    for (tree.nodes[card + 1 .. tree.nodes[card].end]) |*node| {
+        node.box.fill = node.box.fill.fade(factor);
+        node.box.border = node.box.border.fade(factor);
+        switch (node.content) {
+            .text => |*t| t.color = t.color.fade(factor),
+            .icon => |*ic| ic.color = ic.color.fade(factor),
+            .box, .dash, .border_sweep, .arc => {},
+        }
+    }
 }
 
 /// `from` after `dt_ms` of closing in on `to`: the distance left decays
@@ -435,4 +589,9 @@ pub fn place(state: *const State, tree: *Tree, stack: ?Index, table: *memory.Tab
 fn glide(from: f32, to: f32, dt_ms: u32) f32 {
     const left = (from - to) * @exp(-@as(f32, @floatFromInt(dt_ms)) / glide_ms);
     return if (@abs(left) < 0.5) to else to + left;
+}
+
+fn glideUnit(from: f32, to: f32, dt_ms: u32) f32 {
+    const left = (from - to) * @exp(-@as(f32, @floatFromInt(dt_ms)) / glide_ms);
+    return if (@abs(left) < 0.005) to else to + left;
 }
