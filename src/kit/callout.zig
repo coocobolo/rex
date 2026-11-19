@@ -45,7 +45,7 @@ pub fn view(tree: *Tree, theme: *const Theme, options: Options) Tree.Error!Frame
         .gap = 12,
         .cross = .start,
         .fill = theme.card,
-        .border = if (destructive) theme.destructive.alpha(45) else theme.border,
+        .border = theme.border,
         .border_width = Theme.border_width,
         .radius = Theme.radius,
     });

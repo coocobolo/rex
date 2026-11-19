@@ -57,7 +57,7 @@ test "callout: the destructive variant uses the error icon and destructive color
     var fixture: Fixture = .{};
     const tree = try show(&fixture, &Theme.light, .destructive, icons.circle_x, true);
 
-    try testing.expectEqual(Theme.light.destructive.alpha(45), tree.nodes[0].box.border);
+    try testing.expectEqual(Theme.light.border, tree.nodes[0].box.border);
     try testing.expectEqual(icons.circle_x, tree.nodes[2].content.icon.codepoint);
     try testing.expectEqual(Theme.light.destructive, tree.nodes[2].content.icon.color);
     try testing.expectEqual(Theme.light.destructive, tree.nodes[4].content.text.color);

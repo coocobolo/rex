@@ -47,22 +47,19 @@ pub const Kind = enum(u8) {
     warn,
     info,
 
-    fn accent(self: Kind, theme: *const Theme) struct { codepoint: u21, icon_color: Color, border: Color } {
+    fn accent(self: Kind, theme: *const Theme) struct { codepoint: u21, icon_color: Color } {
         return switch (self) {
             .err => .{
                 .codepoint = icons.circle_x,
                 .icon_color = theme.destructive,
-                .border = theme.destructive.alpha(45),
             },
             .warn => .{
                 .codepoint = icons.alert_triangle,
                 .icon_color = theme.warning,
-                .border = theme.warning.alpha(45),
             },
             .info => .{
                 .codepoint = icons.info,
                 .icon_color = theme.info,
-                .border = theme.border,
             },
         };
     }
@@ -227,7 +224,7 @@ pub fn view(state: *const State, tree: *Tree, theme: *const Theme) Tree.Error!?I
         .gap = 12,
         .cross = .start,
         .fill = theme.popover.fade(presence),
-        .border = style.border.fade(presence),
+        .border = theme.border.fade(presence),
         .border_width = Theme.border_width,
         .radius = if (docked) 0 else Theme.radius,
     });

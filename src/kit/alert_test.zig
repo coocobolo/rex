@@ -161,3 +161,29 @@ test "alert: bottom_right placement anchors at bottom right and slides upward" {
     const after = tree.find(alert.card_id).?.rect;
     try testing.expect(after.y > before.y);
 }
+
+test "alert: every kind keeps the neutral theme border while tinting its icon" {
+    const cases = [_]struct { kind: alert.Kind, icon_color: Theme.Color }{
+        .{ .kind = .err, .icon_color = Theme.dark.destructive },
+        .{ .kind = .warn, .icon_color = Theme.dark.warning },
+        .{ .kind = .info, .icon_color = Theme.dark.info },
+    };
+    for (cases) |c| {
+        var state: alert.State = .{ .motion = .none };
+        _ = alert.update(&state, .{ .show = .{ .kind = c.kind, .title = "Notice" } });
+        var nodes: [alert.node_max]Tree.Node = undefined;
+        var lines: [alert.line_max]text.Line = undefined;
+        var tree: Tree = .init(&nodes, &lines);
+        _ = (try alert.view(&state, &tree, &Theme.dark)).?;
+        const card = tree.find(alert.card_id).?;
+        try testing.expectEqual(Theme.dark.border, card.box.border);
+        var saw_icon = false;
+        for (tree.items()) |node| {
+            if (node.content == .icon and node.content.icon.color == c.icon_color) {
+                saw_icon = true;
+                break;
+            }
+        }
+        try testing.expect(saw_icon);
+    }
+}
