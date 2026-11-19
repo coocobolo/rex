@@ -430,8 +430,10 @@ const enum_names = [_]struct { []const u8, []const []const u8 }{
     .{ "wellbeing.screen_time.on_limit", &.{ "grayscale", "lock_input", "animation" } },
     .{ "wellbeing.focus.timer", &.{ "countdown", "countup" } },
     .{ "wellbeing.focus.on_phase_end", &.{ "wait", "start_next" } },
-    .{ "wellbeing.dashboard.timer_chart", &.{ "bar", "ring" } },
+    .{ "wellbeing.dashboard.timer_chart", &.{ "bar", "ring", "border", "half_rings" } },
     .{ "wellbeing.dashboard.program_chart", &.{ "bar", "donut" } },
+    .{ "wellbeing.widget.anchor", &.{ "top_left", "top_center", "top_right", "bottom_left", "bottom_center", "bottom_right" } },
+    .{ "wellbeing.widget.progress_style", &.{ "auto", "bar", "ring", "border", "half_rings" } },
     .{ "wellbeing.focus.during_task", &.{"mute_bell"} },
     .{ "wellbeing.focus.on_break", &.{ "prompt", "lock_input", "animation" } },
     .{ "wellbeing.focus.on_alert", &.{"pause"} },
@@ -765,4 +767,40 @@ test "apply: [window] decorations and padding keys" {
     try std.testing.expectEqual(Config.Window.Decorations.full, config.window.decorations);
     try std.testing.expectEqual(@as(u16, 0), config.window.padding_x);
     try std.testing.expectEqual(@as(u16, 0), config.window.padding_y);
+}
+
+test "apply: [wellbeing.dashboard] timer_chart and [wellbeing.widget] keys" {
+    var config = testConfig();
+    try std.testing.expectEqual(.bar, config.wellbeing.dashboard.timer_chart);
+    try std.testing.expect(!config.window.wellbeing_widget.default_visible);
+    try std.testing.expectEqual(.bottom_right, config.window.wellbeing_widget.anchor);
+    try std.testing.expectEqual(@as(f32, 264), config.window.wellbeing_widget.width);
+    try std.testing.expectEqual(@as(f32, 132), config.window.wellbeing_widget.height);
+    try std.testing.expectEqual(.auto, config.window.wellbeing_widget.progress_style);
+    try std.testing.expect(config.window.wellbeing_widget.tooltip);
+
+    try applyText(&config, .@"wellbeing.dashboard", "timer_chart", "border");
+    try std.testing.expectEqual(.border, config.wellbeing.dashboard.timer_chart);
+    try applyText(&config, .@"wellbeing.dashboard", "timer_chart", "half_rings");
+    try std.testing.expectEqual(.half_rings, config.wellbeing.dashboard.timer_chart);
+
+    try applyText(&config, .@"wellbeing.widget", "default_visible", "true");
+    try applyText(&config, .@"wellbeing.widget", "anchor", "top_left");
+    try applyText(&config, .@"wellbeing.widget", "width", "160");
+    try applyText(&config, .@"wellbeing.widget", "height", "120");
+    try applyText(&config, .@"wellbeing.widget", "progress_style", "half_rings");
+    try applyText(&config, .@"wellbeing.widget", "tooltip", "false");
+
+    try std.testing.expect(config.window.wellbeing_widget.default_visible);
+    try std.testing.expectEqual(.top_left, config.window.wellbeing_widget.anchor);
+    try std.testing.expectEqual(@as(f32, 160), config.window.wellbeing_widget.width);
+    try std.testing.expectEqual(@as(f32, 120), config.window.wellbeing_widget.height);
+    try std.testing.expectEqual(.half_rings, config.window.wellbeing_widget.progress_style);
+    try std.testing.expect(!config.window.wellbeing_widget.tooltip);
+
+    try std.testing.expectError(error.OutOfRange, applyText(&config, .@"wellbeing.widget", "width", "95"));
+    try std.testing.expectError(error.OutOfRange, applyText(&config, .@"wellbeing.widget", "width", "321"));
+    try std.testing.expectError(error.OutOfRange, applyText(&config, .@"wellbeing.widget", "height", "71"));
+    try std.testing.expectError(error.OutOfRange, applyText(&config, .@"wellbeing.widget", "height", "161"));
+    try std.testing.expectError(error.InvalidValue, applyText(&config, .@"wellbeing.widget", "progress_style", "donut"));
 }

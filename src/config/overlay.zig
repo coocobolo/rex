@@ -10,6 +10,7 @@ const ScreenAnchor = @import("../kit/Tree.zig").ScreenAnchor;
 const AlertPlacement = @import("../kit/alert.zig").Placement;
 const DialogPosition = @import("../kit/dialog.zig").Position;
 const toast = @import("../kit/toast.zig");
+const wellbeing_widget = @import("../kit/wellbeing_widget.zig");
 
 pub const Toast = struct {
     width: f32 = toast.width,
@@ -71,4 +72,23 @@ pub const AlertDialog = struct {
         @"error",
         none,
     };
+};
+
+pub const WellbeingWidget = struct {
+    width: f32 = wellbeing_widget.default_width,
+    height: f32 = wellbeing_widget.default_height,
+    anchor: ScreenAnchor = .bottom_right,
+    progress_style: wellbeing_widget.ProgressStyle = .auto,
+    default_visible: bool = false,
+    tooltip: bool = true,
+
+    pub fn toKitOption(self: WellbeingWidget) wellbeing_widget.Option {
+        return .{
+            .default_width = self.width,
+            .default_height = self.height,
+            .anchor = self.anchor,
+            .progress_style = self.progress_style,
+            .tooltip = self.tooltip,
+        };
+    }
 };

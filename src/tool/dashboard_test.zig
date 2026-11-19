@@ -135,7 +135,7 @@ test "dashboard: every page fits node_max, with either timer mark and the menu o
     var tmp: StateTmp = .init();
     defer tmp.deinit();
     const dir = try tmp.path();
-    for ([_]WellbeingOption.TimerChart{ .bar, .ring }) |mark| {
+    for ([_]WellbeingOption.TimerChart{ .bar, .ring, .border, .half_rings }) |mark| {
         var config = configWith(dir);
         config.wellbeing.dashboard.timer_chart = mark;
         var state = try openDashboard(&config, dir);
@@ -491,13 +491,15 @@ test "dashboard: the gear opens the view choices, and a choice changes the chart
     try testing.expect(dashboard.update(&state, .release));
     try testing.expectEqual(dashboard.Menu.view, state.menu);
 
-    const ring = kit.Tree.Id.of("wellbeing.timer_chart").item(1);
-    _ = dashboard.update(&state, .{ .pointer = .{ .id = ring } });
-    _ = dashboard.update(&state, .{ .press = ring });
-    try testing.expect(dashboard.update(&state, .release));
-    try testing.expectEqual(.ring, state.charts.timer_chart);
-    // The menu stays open for the next choice.
-    try testing.expectEqual(dashboard.Menu.view, state.menu);
+    for ([_]WellbeingOption.TimerChart{ .ring, .border, .half_rings }, [_]u32{ 1, 2, 3 }) |mark, item_idx| {
+        const tab = kit.Tree.Id.of("wellbeing.timer_chart").item(item_idx);
+        _ = dashboard.update(&state, .{ .pointer = .{ .id = tab } });
+        _ = dashboard.update(&state, .{ .press = tab });
+        try testing.expect(dashboard.update(&state, .release));
+        try testing.expectEqual(mark, state.charts.timer_chart);
+        // The menu stays open for the next choice.
+        try testing.expectEqual(dashboard.Menu.view, state.menu);
+    }
 
     // Selecting Light in Color scheme updates currentTheme immediately.
     try testing.expectEqual(&kit.Theme.dark, dashboard.currentTheme(&state));
@@ -733,8 +735,8 @@ test "dashboard: focus timer clock uses the same style in bar and ring, and 960 
     _ = dashboard.update(&state, .{ .size = .{ .width = 960, .height = 600 } });
 
     state.page = .focus;
-    var styles: [2]kit.text.Style = undefined;
-    for ([_]WellbeingOption.TimerChart{ .bar, .ring }, 0..) |mark, idx| {
+    var styles: [4]kit.text.Style = undefined;
+    for ([_]WellbeingOption.TimerChart{ .bar, .ring, .border, .half_rings }, 0..) |mark, idx| {
         state.charts.timer_chart = mark;
         var nodes: [dashboard.node_max]kit.Tree.Node = undefined;
         var lines: [dashboard.line_max]kit.text.Line = undefined;
@@ -747,7 +749,7 @@ test "dashboard: focus timer clock uses the same style in bar and ring, and 960 
         }
     }
     try testing.expectEqual(kit.text.Style.xxl_semibold, styles[0]);
-    try testing.expectEqual(styles[0], styles[1]);
+    for (styles[1..]) |style| try testing.expectEqual(styles[0], style);
 
     // On History at 960 px, delta and note stack cleanly and strip any leading middle dot.
     state.wb.data.history[0] = .{ .day = 195, .active_screen_s = 3600, .focus_s = 600 };

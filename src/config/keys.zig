@@ -44,6 +44,7 @@ pub const Section = enum {
     @"wellbeing.routines",
     @"wellbeing.privacy",
     @"wellbeing.dashboard",
+    @"wellbeing.widget",
     ui,
     scroll,
     scrollbar,
@@ -325,6 +326,13 @@ const tail_rows = [_]Key{
 
     .{ .section = .@"wellbeing.dashboard", .name = "timer_chart", .field = "wellbeing.dashboard.timer_chart" },
     .{ .section = .@"wellbeing.dashboard", .name = "program_chart", .field = "wellbeing.dashboard.program_chart" },
+
+    .{ .section = .@"wellbeing.widget", .name = "default_visible", .field = "window.wellbeing_widget.default_visible" },
+    .{ .section = .@"wellbeing.widget", .name = "anchor", .field = "window.wellbeing_widget.anchor" },
+    .{ .section = .@"wellbeing.widget", .name = "width", .field = "window.wellbeing_widget.width", .bounds = .{ .min = 96, .max = 320 } },
+    .{ .section = .@"wellbeing.widget", .name = "height", .field = "window.wellbeing_widget.height", .bounds = .{ .min = 72, .max = 160 } },
+    .{ .section = .@"wellbeing.widget", .name = "progress_style", .field = "window.wellbeing_widget.progress_style" },
+    .{ .section = .@"wellbeing.widget", .name = "tooltip", .field = "window.wellbeing_widget.tooltip" },
 
     .{ .section = .ui, .name = "motion", .field = "ui.motion" },
     .{ .section = .ui, .name = "color_scheme", .field = "ui.color_scheme" },

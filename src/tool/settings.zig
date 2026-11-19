@@ -88,7 +88,7 @@ const page_descriptions = [_][]const u8{
     "Window behavior, bell, scrolling, scrollbar, selection, clipboard, and shell.",
     "Toasts, banners, and modal dialogs.",
     "Wellbeing tracking, daily screen time limits, and dashboard charts.",
-    "Pomodoro focus intervals, alerts, and evening wind-down schedule.",
+    "Pomodoro focus intervals, floating focus widget, alerts, and evening wind-down schedule.",
     "Periodic eyesight and movement break reminders.",
 };
 
@@ -98,7 +98,7 @@ pub fn pageForSection(section: keys.Section) ?Page {
         .window, .bell, .scroll, .scrollbar, .selection, .clipboard, .shell => .window_shell,
         .toast, .banner, .modal, .@"modal.blur", .alert_dialog => .overlays,
         .wellbeing, .@"wellbeing.screen_time", .@"wellbeing.privacy", .@"wellbeing.dashboard" => .wellbeing,
-        .@"wellbeing.focus", .@"wellbeing.winddown" => .focus_winddown,
+        .@"wellbeing.focus", .@"wellbeing.widget", .@"wellbeing.winddown" => .focus_winddown,
         .@"wellbeing.eyesight", .@"wellbeing.movement" => .reminders,
         .@"wellbeing.routines", .keybinds, .env => null,
     };
@@ -133,6 +133,7 @@ const section_titles = std.EnumArray(keys.Section, []const u8).init(.{
     .@"wellbeing.routines" = "Routines",
     .@"wellbeing.privacy" = "Privacy",
     .@"wellbeing.dashboard" = "Dashboard",
+    .@"wellbeing.widget" = "Focus Widget",
     .ui = "Interface",
     .scroll = "Scroll",
     .scrollbar = "Scrollbar",
@@ -296,6 +297,13 @@ const key_meta_table = [_]KeyMetaEntry{
     .{ .section = .@"wellbeing.focus", .name = "during_task", .label = "During Focus", .description = "UI indicators or behaviors active during a focus interval." },
     .{ .section = .@"wellbeing.focus", .name = "on_break", .label = "On Break", .description = "Actions triggered when a focus interval transitions into a break." },
     .{ .section = .@"wellbeing.focus", .name = "on_alert", .label = "On Alert", .description = "Notification cues played when a focus phase ends." },
+
+    .{ .section = .@"wellbeing.widget", .name = "default_visible", .label = "Show on Startup", .description = "Show the floating focus widget automatically when opening a terminal window." },
+    .{ .section = .@"wellbeing.widget", .name = "anchor", .label = "Screen Anchor", .description = "Default corner or edge where the floating focus widget docks before being dragged." },
+    .{ .section = .@"wellbeing.widget", .name = "width", .label = "Default Width", .description = "Initial width of the floating focus widget in logical pixels (96–320)." },
+    .{ .section = .@"wellbeing.widget", .name = "height", .label = "Default Height", .description = "Initial height of the floating focus widget in logical pixels (72–160)." },
+    .{ .section = .@"wellbeing.widget", .name = "progress_style", .label = "Progress Style", .description = "Focus progress look on the widget (Automatic, Bar, Ring, Border, or Half rings)." },
+    .{ .section = .@"wellbeing.widget", .name = "tooltip", .label = "Mini Hover Tooltip", .description = "Show the phase badge and cycle count tooltip when hovering the compact widget." },
 
     .{ .section = .@"wellbeing.winddown", .name = "enabled", .label = "Evening Wind-down", .description = "Shift terminal colors warmer during your scheduled wind-down hours." },
     .{ .section = .@"wellbeing.winddown", .name = "start", .label = "Start Time", .description = "24-hour clock time when wind-down begins (HH:MM)." },

@@ -134,6 +134,8 @@ pub const Window = struct {
     modal: overlay.Modal = .{},
     /// Alert confirmation dialog options including width and initial focus.
     alert_dialog: overlay.AlertDialog = .{},
+    /// In-terminal floating wellbeing focus widget options (`[wellbeing.widget]`).
+    wellbeing_widget: overlay.WellbeingWidget = .{},
     /// What closing the window does.
     on_close: OnClose = .ask_if_running,
     /// Visual effects applied while the window is unfocused.

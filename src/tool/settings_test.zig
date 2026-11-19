@@ -1231,13 +1231,17 @@ test "settings: external config edits sync on wake without clobbering dirty inpu
     try config_writer.writeKey(gpa, testing.io, cfg_path, .ui, "color_scheme", "light");
     try waitExtWake(1);
     const after_first = ext_wakes.load(.acquire);
-    try config_writer.writeKey(gpa, testing.io, cfg_path, .@"wellbeing.dashboard", "timer_chart", "ring");
+    try config_writer.writeKey(gpa, testing.io, cfg_path, .@"wellbeing.dashboard", "timer_chart", "half_rings");
     try waitExtWake(after_first + 1);
+    const after_second = ext_wakes.load(.acquire);
+    try config_writer.writeKey(gpa, testing.io, cfg_path, .@"wellbeing.widget", "progress_style", "border");
+    try waitExtWake(after_second + 1);
 
     try testing.expect(settings.wake(&state));
     try testing.expectEqual(.light, state.activeConfig().ui.color_scheme);
     try testing.expectEqual(&kit.Theme.light, settings.currentTheme(&state));
-    try testing.expectEqual(.ring, state.activeConfig().wellbeing.dashboard.timer_chart);
+    try testing.expectEqual(.half_rings, state.activeConfig().wellbeing.dashboard.timer_chart);
+    try testing.expectEqual(.border, state.activeConfig().window.wellbeing_widget.progress_style);
     try testing.expectEqualStrings("draft title", state.inputs[title_idx].text());
     try testing.expect(state.dirty[title_idx]);
 
