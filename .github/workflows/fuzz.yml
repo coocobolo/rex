@@ -34,15 +34,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Install system libraries
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            libx11-dev libxrandr-dev libxi-dev libxcursor-dev \
-            libxinerama-dev libxext-dev libgl-dev libegl-dev \
-            libwayland-dev libwayland-bin libxkbcommon-dev \
-            libpng-dev zlib1g-dev
-
+      # The fuzz module builds without native dependencies (no libc, C headers,
+      # GLFW, FreeType, GL or Wayland), so no system packages are installed.
       - uses: mlugg/setup-zig@v2.2.1
 
       - name: Restore corpus
