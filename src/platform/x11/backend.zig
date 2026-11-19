@@ -12,7 +12,7 @@ const window_config = @import("../../config/window.zig");
 const events = @import("../Event.zig");
 const Window = @import("../Window.zig");
 const xlib = @import("xlib.zig");
-const egl = @import("egl.zig");
+const egl = @import("../egl.zig");
 const X11Window = @import("X11Window.zig");
 const pipe = @import("../../termio/pipe.zig");
 
