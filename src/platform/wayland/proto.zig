@@ -39,10 +39,12 @@ pub fn interfaces() *const Interfaces {
     return rex_wayland_interfaces();
 }
 
+/// Core wl_display requests.
 pub const display = struct {
     pub const get_registry: u32 = 1;
 };
 
+/// Core wl_registry requests and listener.
 pub const registry = struct {
     pub const bind: u32 = 0;
 
@@ -52,15 +54,18 @@ pub const registry = struct {
     };
 };
 
+/// Core wl_compositor requests.
 pub const compositor = struct {
     pub const create_surface: u32 = 0;
 };
 
+/// Core wl_surface requests.
 pub const surface = struct {
     pub const destroy: u32 = 0;
     pub const commit: u32 = 6;
 };
 
+/// xdg_wm_base requests and ping listener.
 pub const xdg_wm_base = struct {
     pub const destroy: u32 = 0;
     pub const get_xdg_surface: u32 = 2;
@@ -71,6 +76,7 @@ pub const xdg_wm_base = struct {
     };
 };
 
+/// xdg_surface requests and configure listener.
 pub const xdg_surface = struct {
     pub const destroy: u32 = 0;
     pub const get_toplevel: u32 = 1;
@@ -81,6 +87,7 @@ pub const xdg_surface = struct {
     };
 };
 
+/// xdg_toplevel requests, states and listener.
 pub const xdg_toplevel = struct {
     pub const destroy: u32 = 0;
     pub const set_title: u32 = 2;
@@ -97,11 +104,13 @@ pub const xdg_toplevel = struct {
     };
 };
 
+/// zxdg_decoration_manager_v1 requests.
 pub const xdg_decoration_manager = struct {
     pub const destroy: u32 = 0;
     pub const get_toplevel_decoration: u32 = 1;
 };
 
+/// zxdg_toplevel_decoration_v1 requests, modes and listener.
 pub const xdg_toplevel_decoration = struct {
     pub const destroy: u32 = 0;
     pub const set_mode: u32 = 1;
@@ -114,6 +123,7 @@ pub const xdg_toplevel_decoration = struct {
     };
 };
 
+/// Core wl_seat requests, capabilities and listener.
 pub const seat = struct {
     pub const get_pointer: u32 = 0;
     pub const get_keyboard: u32 = 1;
@@ -128,6 +138,7 @@ pub const seat = struct {
     };
 };
 
+/// Core wl_keyboard requests, constants and listener.
 pub const keyboard = struct {
     pub const release: u32 = 0;
 
@@ -145,6 +156,7 @@ pub const keyboard = struct {
     };
 };
 
+/// Core wl_pointer requests, constants and listener.
 pub const pointer = struct {
     pub const set_cursor: u32 = 0;
     pub const release: u32 = 1;
@@ -169,11 +181,13 @@ pub const pointer = struct {
     };
 };
 
+/// wp_cursor_shape_manager_v1 requests.
 pub const cursor_shape_manager = struct {
     pub const destroy: u32 = 0;
     pub const get_pointer: u32 = 1;
 };
 
+/// wp_cursor_shape_device_v1 requests and shapes.
 pub const cursor_shape_device = struct {
     pub const destroy: u32 = 0;
     pub const set_shape: u32 = 1;
@@ -183,11 +197,13 @@ pub const cursor_shape_device = struct {
     pub const shape_text: u32 = 9;
 };
 
+/// wp_fractional_scale_manager_v1 requests.
 pub const fractional_scale_manager = struct {
     pub const destroy: u32 = 0;
     pub const get_fractional_scale: u32 = 1;
 };
 
+/// wp_fractional_scale_v1 requests and listener.
 pub const fractional_scale = struct {
     pub const destroy: u32 = 0;
 
@@ -196,21 +212,25 @@ pub const fractional_scale = struct {
     };
 };
 
+/// wp_viewporter requests.
 pub const viewporter = struct {
     pub const destroy: u32 = 0;
     pub const get_viewport: u32 = 1;
 };
 
+/// wp_viewport requests.
 pub const viewport = struct {
     pub const destroy: u32 = 0;
     pub const set_destination: u32 = 2;
 };
 
+/// zwp_text_input_manager_v3 requests.
 pub const text_input_manager = struct {
     pub const destroy: u32 = 0;
     pub const get_text_input: u32 = 1;
 };
 
+/// zwp_text_input_v3 requests and listener.
 pub const text_input = struct {
     pub const destroy: u32 = 0;
     pub const enable: u32 = 1;
@@ -227,11 +247,13 @@ pub const text_input = struct {
     };
 };
 
+/// wl_data_device_manager requests.
 pub const data_device_manager = struct {
     pub const create_data_source: u32 = 0;
     pub const get_data_device: u32 = 1;
 };
 
+/// wl_data_device requests and listener.
 pub const data_device = struct {
     pub const set_selection: u32 = 1;
     pub const release: u32 = 2;
@@ -246,6 +268,7 @@ pub const data_device = struct {
     };
 };
 
+/// wl_data_source requests and listener.
 pub const data_source = struct {
     pub const offer: u32 = 0;
     pub const destroy: u32 = 1;
@@ -260,6 +283,7 @@ pub const data_source = struct {
     };
 };
 
+/// wl_data_offer requests and listener.
 pub const data_offer = struct {
     pub const receive: u32 = 1;
     pub const destroy: u32 = 2;
@@ -271,12 +295,14 @@ pub const data_offer = struct {
     };
 };
 
+/// zwp_primary_selection_device_manager_v1 requests.
 pub const primary_selection_manager = struct {
     pub const create_source: u32 = 0;
     pub const get_device: u32 = 1;
     pub const destroy: u32 = 2;
 };
 
+/// zwp_primary_selection_device_v1 requests and listener.
 pub const primary_selection_device = struct {
     pub const set_selection: u32 = 0;
     pub const destroy: u32 = 1;
@@ -287,6 +313,7 @@ pub const primary_selection_device = struct {
     };
 };
 
+/// zwp_primary_selection_source_v1 requests and listener.
 pub const primary_selection_source = struct {
     pub const offer: u32 = 0;
     pub const destroy: u32 = 1;
@@ -297,6 +324,7 @@ pub const primary_selection_source = struct {
     };
 };
 
+/// zwp_primary_selection_offer_v1 requests and listener.
 pub const primary_selection_offer = struct {
     pub const receive: u32 = 0;
     pub const destroy: u32 = 1;
@@ -306,12 +334,14 @@ pub const primary_selection_offer = struct {
     };
 };
 
+/// xdg_activation_v1 requests.
 pub const xdg_activation = struct {
     pub const destroy: u32 = 0;
     pub const get_activation_token: u32 = 1;
     pub const activate: u32 = 2;
 };
 
+/// xdg_activation_token_v1 requests and listener.
 pub const xdg_activation_token = struct {
     pub const set_serial: u32 = 0;
     pub const set_app_id: u32 = 1;
@@ -324,6 +354,7 @@ pub const xdg_activation_token = struct {
     };
 };
 
+/// xdg_system_bell_v1 requests.
 pub const xdg_system_bell = struct {
     pub const destroy: u32 = 0;
     pub const ring: u32 = 1;

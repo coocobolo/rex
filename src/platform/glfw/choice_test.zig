@@ -1,3 +1,5 @@
+//! Tests for GLFW backend platform choice and formatting.
+
 const std = @import("std");
 const testing = std.testing;
 

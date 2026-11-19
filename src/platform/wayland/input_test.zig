@@ -1,3 +1,5 @@
+//! Tests for Wayland key, button and repeat translation.
+
 const std = @import("std");
 const testing = std.testing;
 

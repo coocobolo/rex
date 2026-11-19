@@ -38,6 +38,7 @@ pending_activated: bool = false,
 pointer_visible: bool = true,
 pointer_shape: Window.PointerShape = .arrow,
 
+/// The size, title, and decoration preference requested for a new window.
 pub const InitOption = struct {
     width: u16,
     height: u16,
@@ -373,11 +374,13 @@ pub fn windowHandle(self: *WaylandWindow) Window {
     return .{ .impl = @ptrCast(self) };
 }
 
+/// The drawable width in device pixels.
 pub fn pixelWidth(self: *const WaylandWindow) u32 {
     const scaled: f32 = @round(@as(f32, @floatFromInt(self.logical_width)) * self.scale);
     return @max(@as(u32, @intFromFloat(scaled)), 1);
 }
 
+/// The drawable height in device pixels.
 pub fn pixelHeight(self: *const WaylandWindow) u32 {
     const scaled: f32 = @round(@as(f32, @floatFromInt(self.logical_height)) * self.scale);
     return @max(@as(u32, @intFromFloat(scaled)), 1);

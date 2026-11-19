@@ -110,6 +110,7 @@ pub const SelectionState = struct {
     primary_text: [selection_capacity]u8 = undefined,
     read_text: [selection_capacity]u8 = undefined,
 
+    /// Resets the selection owners and lengths, leaving the buffers intact.
     pub fn clear(self: *SelectionState) void {
         self.clipboard_owner = 0;
         self.primary_owner = 0;
@@ -219,6 +220,7 @@ fn gladLoader(name: [*c]const u8) callconv(.c) ?*anyopaque {
     return @constCast(p);
 }
 
+/// GLAD resolves GL symbols through the EGL display at runtime.
 pub fn getProcAddress() gl.GLADloadproc {
     return &gladLoader;
 }
@@ -231,6 +233,7 @@ pub fn postWakeup() void {
     _ = system.write(state.wakeup_write, &b, 1);
 }
 
+/// Processes pending X11 events without blocking.
 pub fn pollEvents() void {
     if (state.phase == .ready) x11_events.pump();
 }
@@ -277,6 +280,7 @@ pub fn primaryRefreshHz() ?u32 {
     return 60;
 }
 
+/// Whether a key is currently held on the X11 display.
 pub fn isKeyDown(window: Window, k: input_key.Key) bool {
     _ = window;
     const sym = key.toKeysym(k) orelse return false;
@@ -288,18 +292,22 @@ pub fn isKeyDown(window: Window, k: input_key.Key) bool {
     return (map[code / 8] & (@as(u8, 1) << @intCast(code % 8))) != 0;
 }
 
+/// Appends an event to the process-wide ring.
 pub fn pushEvent(event: Event) void {
     state.event_ring.push(event);
 }
 
+/// Copies the oldest queued event into `out`, returning false when empty.
 pub fn nextEvent(out: *Event) bool {
     return state.event_ring.next(out);
 }
 
+/// Returns and resets the count of events dropped by a full ring.
 pub fn takeDropped() u32 {
     return state.event_ring.takeDropped();
 }
 
+/// Readies a hidden GL context for renderer tests, skipping without a display.
 pub fn testGlContext() !void {
     if (!builtin.is_test) @compileError("testGlContext is for tests only");
     if (state.test_context != null) {
@@ -320,6 +328,7 @@ pub fn testGlContext() !void {
         log.warn("got compatibility profile, not core", .{});
 }
 
+/// Injects a synthetic key press into the ring for tests.
 pub fn testKeyEvent(window: Window, k: input_key.Key) void {
     if (!builtin.is_test) @compileError("testKeyEvent is for tests only");
     // A real XKeyEvent cannot be safely synthesized (XLookupString needs the
@@ -335,6 +344,7 @@ pub fn testKeyEvent(window: Window, k: input_key.Key) void {
     } });
 }
 
+/// Creates a window in a free slot and prepares its EGL context.
 pub fn createWindow(option: X11Window.InitOption) error{ PlatformNotInitialised, TooManyWindows, WindowCreatedFailed, SurfaceFailed, ContextFailed, MakeCurrentFailed, GladLoadFailed }!Window {
     if (state.phase != .ready) return error.PlatformNotInitialised;
     var slot: ?usize = null;
@@ -351,6 +361,7 @@ pub fn createWindow(option: X11Window.InitOption) error{ PlatformNotInitialised,
     return .{ .impl = @ptrCast(impl) };
 }
 
+/// Destroys the window and frees its backend slot.
 pub fn destroyWindow(window: Window) void {
     const impl: *X11Window = @ptrCast(@alignCast(window.impl));
     for (state.window_used, 0..) |used, i| {
@@ -366,78 +377,97 @@ fn implOf(window: Window) *X11Window {
     return @ptrCast(@alignCast(window.impl));
 }
 
+/// Associates an application pointer with the window.
 pub fn windowSetContext(window: Window, ptr: ?*anyopaque) void {
     implOf(window).context_ptr = ptr;
 }
 
+/// The application pointer set on the window.
 pub fn windowGetContext(window: Window) ?*anyopaque {
     return implOf(window).context_ptr;
 }
 
+/// Sets the title shown by the desktop.
 pub fn windowSetTitle(window: Window, title: [:0]const u8) void {
     implOf(window).setTitle(title);
 }
 
+/// Shows or hides the window manager decorations.
 pub fn windowSetDecorated(window: Window, decorated: bool) void {
     implOf(window).setDecorated(decorated);
 }
 
+/// Whether the window system has asked the window to close.
 pub fn windowShouldClose(window: Window) bool {
     return implOf(window).should_close;
 }
 
+/// Marks the window to close on the next event loop pass.
 pub fn windowSetShouldClose(window: Window, set: bool) void {
     implOf(window).should_close = set;
 }
 
+/// Presents the rendered frame.
 pub fn windowSwapBuffers(window: Window) void {
     implOf(window).swapBuffers();
 }
 
+/// The drawable size in pixels, converted to `T`.
 pub fn windowFramebufferSize(window: Window, comptime T: type) Dimension(T) {
     return implOf(window).framebufferSize(T);
 }
 
+/// The scale from logical to device pixels.
 pub fn windowContentScale(window: Window) Dimension(f32) {
     return implOf(window).contentScale();
 }
 
+/// Whether the window currently has input focus.
 pub fn windowFocused(window: Window) bool {
     return implOf(window).focused;
 }
 
+/// Sets the smallest size the user may resize to.
 pub fn windowSetMinimumSize(window: Window, width: c_int, height: c_int) void {
     implOf(window).setMinimumSize(width, height);
 }
 
+/// Shows the given standard cursor over the window.
 pub fn windowSetPointerShape(window: Window, shape: Window.PointerShape) void {
     implOf(window).setPointerShape(shape);
 }
 
+/// Shows or hides the pointer over the window.
 pub fn windowSetPointerVisible(window: Window, visible: bool) void {
     implOf(window).setPointerVisible(visible);
 }
 
+/// Sets the CLIPBOARD selection to the given text.
 pub fn windowSetClipboard(window: Window, text: [:0]const u8) void {
     implOf(window).setClipboard(text);
 }
 
+/// The CLIPBOARD text, or null when the selection is empty.
 pub fn windowGetClipboard(window: Window) ?[:0]const u8 {
     return implOf(window).getClipboard();
 }
 
+/// The PRIMARY selection, or null when unavailable.
 pub fn windowGetPrimarySelection(window: Window) ?[:0]const u8 {
     return implOf(window).getPrimarySelection();
 }
 
+/// Sets PRIMARY where supported, returning false when unavailable.
 pub fn windowSetPrimarySelection(window: Window, text: [:0]const u8) bool {
     return implOf(window).setPrimarySelection(text);
 }
 
+/// Asks the desktop to draw attention to the window.
 pub fn windowRequestAttention(window: Window) void {
     implOf(window).requestAttention();
 }
 
+/// Rings the audible bell at the given volume.
 pub fn windowRingBell(window: Window, volume: f32) void {
     implOf(window).ringBell(volume);
 }

@@ -1,3 +1,5 @@
+//! Runtime EGL and GL context test on a native X11 window.
+
 const std = @import("std");
 const testing = std.testing;
 

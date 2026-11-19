@@ -1,3 +1,5 @@
+//! Runtime symbol-resolution test for the Wayland libraries.
+
 const std = @import("std");
 const testing = std.testing;
 

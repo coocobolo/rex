@@ -14,6 +14,7 @@ const selection = @import("selection.zig");
 
 const X11Window = @This();
 
+/// The size, title, and decoration preference requested for a new window.
 pub const InitOption = struct {
     width: u16,
     height: u16,
@@ -33,6 +34,7 @@ focused: bool = false,
 pointer_visible: bool = true,
 pointer_shape: Window.PointerShape = .arrow,
 
+/// Creates the X11 window, EGL surface and core context in place.
 pub fn init(self: *X11Window, option: InitOption) error{ WindowCreatedFailed, SurfaceFailed, ContextFailed, MakeCurrentFailed, GladLoadFailed }!void {
     const lib = &backend.state.x11.?;
     const display = backend.state.display.?;
@@ -103,6 +105,7 @@ fn setWindowProperties(lib: *const xlib.Xlib, display: *x.Display, handle: x.Win
     _ = lib.XChangeProperty(display, handle, lib.XInternAtom(display, "_NET_WM_NAME", 0), backend.state.utf8_atom, 8, x.PropModeReplace, @ptrCast(title.ptr), @intCast(title.len));
 }
 
+/// Releases the context, surface and window, then poisons `self`.
 pub fn deinit(self: *X11Window) void {
     const lib = &backend.state.x11.?;
     const egl_lib = &backend.state.egl.?;
@@ -117,14 +120,17 @@ pub fn deinit(self: *X11Window) void {
     self.* = undefined;
 }
 
+/// Associates an application pointer with the window.
 pub fn setContext(self: *X11Window, ptr: ?*anyopaque) void {
     self.context_ptr = ptr;
 }
 
+/// The application pointer set on the window.
 pub fn getContext(self: *const X11Window) ?*anyopaque {
     return self.context_ptr;
 }
 
+/// Sets the window title and EWMH name.
 pub fn setTitle(self: *X11Window, title: [:0]const u8) void {
     const lib = &backend.state.x11.?;
     const display = backend.state.display.?;
@@ -149,10 +155,12 @@ fn applyDecoratedHint(lib: *const xlib.Xlib, display: *x.Display, handle: x.Wind
     _ = lib.XChangeProperty(display, handle, atom, atom, 32, x.PropModeReplace, @ptrCast(&hints), hints.len);
 }
 
+/// Presents the rendered frame.
 pub fn swapBuffers(self: *const X11Window) void {
     _ = backend.state.egl.?.eglSwapBuffers(backend.state.egl_display, self.surface);
 }
 
+/// The drawable size in pixels, converted to `T`.
 pub fn framebufferSize(self: *const X11Window, comptime T: type) Dimension(T) {
     var root: x.Window = 0;
     var x_pos: c_int = 0;
@@ -186,11 +194,13 @@ fn convert(comptime T: type, value: c_uint) T {
     };
 }
 
+/// The logical-to-device scale, which X11 reports as one.
 pub fn contentScale(self: *const X11Window) Dimension(f32) {
     _ = self;
     return .{ .width = 1, .height = 1 };
 }
 
+/// Sets the smallest size the user may resize to.
 pub fn setMinimumSize(self: *X11Window, width: c_int, height: c_int) void {
     var hints: x.XSizeHints = .{};
     hints.flags = x.PMinSize;
@@ -200,6 +210,7 @@ pub fn setMinimumSize(self: *X11Window, width: c_int, height: c_int) void {
     _ = backend.state.x11.?.XFlush(backend.state.display.?);
 }
 
+/// Shows the given standard cursor over the window.
 pub fn setPointerShape(self: *X11Window, shape: Window.PointerShape) void {
     if (shape == self.pointer_shape) return;
     const lib = &backend.state.x11.?;
@@ -222,6 +233,7 @@ fn shapeCursor(self: *X11Window, shape: Window.PointerShape) x.Cursor {
     return self.cursors[index];
 }
 
+/// Shows or hides the pointer over the window.
 pub fn setPointerVisible(self: *X11Window, visible: bool) void {
     if (visible == self.pointer_visible) return;
     const lib = &backend.state.x11.?;
@@ -295,6 +307,7 @@ pub fn getPrimarySelection(self: *X11Window) ?[:0]const u8 {
     return sel.read_text[0..sel.read_len :0];
 }
 
+/// Sets PRIMARY, returning false when the text does not fit.
 pub fn setPrimarySelection(self: *X11Window, text: [:0]const u8) bool {
     const sel = &backend.selection_state;
     if (text.len >= sel.primary_text.len) {
@@ -311,6 +324,7 @@ pub fn setPrimarySelection(self: *X11Window, text: [:0]const u8) bool {
     return true;
 }
 
+/// Marks the window urgent to draw attention.
 pub fn requestAttention(self: *const X11Window) void {
     const lib = &backend.state.x11.?;
     const display = backend.state.display.?;
@@ -326,6 +340,7 @@ pub fn requestAttention(self: *const X11Window) void {
     _ = lib.XFlush(display);
 }
 
+/// Rings XBell at the given volume.
 pub fn ringBell(self: *const X11Window, volume: f32) void {
     _ = self;
     const fraction = if (std.math.isFinite(volume)) std.math.clamp(volume, 0, 1) else 0;

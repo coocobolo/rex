@@ -1,3 +1,5 @@
+//! Layout assertions for the pinned Wayland backend structs.
+
 const std = @import("std");
 const testing = std.testing;
 

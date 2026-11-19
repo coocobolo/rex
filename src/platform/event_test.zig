@@ -1,3 +1,5 @@
+//! Tests for the platform event types and bounded ring.
+
 const std = @import("std");
 const testing = std.testing;
 

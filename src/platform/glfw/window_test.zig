@@ -1,3 +1,5 @@
+//! Tests for GLFW window lifecycle and event delivery.
+
 const std = @import("std");
 const testing = std.testing;
 

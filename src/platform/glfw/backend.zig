@@ -81,6 +81,8 @@ pub fn choose(requested: window_config.Platform, wayland_session: bool) Choice {
     };
 }
 
+// Windows live in fixed slots so the opaque handle stays a stable pointer
+// without allocating; eight is well above the one-window-per-process design.
 const max_windows = 8;
 
 /// Who started GLFW and whether a platform choice was recorded. A test context
@@ -246,9 +248,7 @@ pub fn takeDropped() u32 {
     return state.event_ring.takeDropped();
 }
 
-/// Windows live in fixed slots so the opaque handle stays a stable pointer
-/// without allocating. Eight is well above the one-window-per-process design.
-/// Creates a window in a fixed slot and installs the event callbacks.
+/// Creates a window in a free slot and installs the event callbacks.
 pub fn createWindow(option: GlfwWindow.InitOption) error{ PlatformNotInitialised, TooManyWindows, WindowCreatedFailed, GladLoadFailed }!Window {
     if (state.phase == .none) return error.PlatformNotInitialised;
     var slot: ?usize = null;

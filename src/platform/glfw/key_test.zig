@@ -1,3 +1,5 @@
+//! Tests for GLFW key-code and modifier translation.
+
 const std = @import("std");
 const testing = std.testing;
 

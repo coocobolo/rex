@@ -571,78 +571,96 @@ pub fn destroyWindow(window: Window) void {
     }
 }
 
+/// Associates an application pointer with the window.
 pub fn windowSetContext(window: Window, ptr: ?*anyopaque) void {
     fromHandle(window).context_ptr = ptr;
 }
 
+/// The application pointer set on the window.
 pub fn windowGetContext(window: Window) ?*anyopaque {
     return fromHandle(window).context_ptr;
 }
 
+/// Sets the title on the window's xdg_toplevel.
 pub fn windowSetTitle(window: Window, title: [:0]const u8) void {
     fromHandle(window).setTitle(title);
 }
 
+/// Requests server-side or client-side decorations.
 pub fn windowSetDecorated(window: Window, decorated: bool) void {
     fromHandle(window).setDecorated(decorated);
 }
 
+/// Whether the compositor has asked the window to close.
 pub fn windowShouldClose(window: Window) bool {
     return fromHandle(window).should_close;
 }
 
+/// Marks the window to close on the next event loop pass.
 pub fn windowSetShouldClose(window: Window, set: bool) void {
     fromHandle(window).should_close = set;
 }
 
+/// Presents the rendered frame.
 pub fn windowSwapBuffers(window: Window) void {
     fromHandle(window).swapBuffers();
 }
 
+/// The drawable size in pixels, converted to `T`.
 pub fn windowFramebufferSize(window: Window, comptime T: type) Dimension(T) {
     return fromHandle(window).framebufferSize(T);
 }
 
+/// The scale from logical to device pixels.
 pub fn windowContentScale(window: Window) Dimension(f32) {
     return fromHandle(window).contentScale();
 }
 
+/// Whether the window currently has input focus.
 pub fn windowFocused(window: Window) bool {
     return fromHandle(window).focused;
 }
 
+/// Sets the smallest size the user may resize to.
 pub fn windowSetMinimumSize(window: Window, width: c_int, height: c_int) void {
     fromHandle(window).setMinimumSize(width, height);
 }
 
+/// Shows the given standard cursor over the window.
 pub fn windowSetPointerShape(window: Window, shape: Window.PointerShape) void {
     const win = fromHandle(window);
     win.pointer_shape = shape;
     state.seat_state.applyCursor(win);
 }
 
+/// Shows or hides the pointer over the window.
 pub fn windowSetPointerVisible(window: Window, visible: bool) void {
     const win = fromHandle(window);
     win.pointer_visible = visible;
     state.seat_state.applyCursor(win);
 }
 
+/// Advertises the text on the display-wide CLIPBOARD selection.
 pub fn windowSetClipboard(_: Window, text: [:0]const u8) void {
     selection_state.setClipboard(text);
 }
 
+/// The CLIPBOARD text, or null when no offer holds it.
 pub fn windowGetClipboard(_: Window) ?[:0]const u8 {
     return selection_state.getClipboard();
 }
 
+/// The PRIMARY text, or null when no offer holds it.
 pub fn windowGetPrimarySelection(_: Window) ?[:0]const u8 {
     return selection_state.getPrimary();
 }
 
+/// Advertises the text on PRIMARY, returning false when unsupported.
 pub fn windowSetPrimarySelection(_: Window, text: [:0]const u8) bool {
     return selection_state.setPrimary(text);
 }
 
+/// Asks the compositor to activate the window.
 pub fn windowRequestAttention(window: Window) void {
     const wl_lib = if (state.wl) |*wlib| wlib else return;
     const activation = state.xdg_activation orelse return;
@@ -672,6 +690,7 @@ pub fn windowRequestAttention(window: Window) void {
     if (state.display) |dpy| _ = wl_lib.wl_display_flush(dpy);
 }
 
+/// Rings the compositor bell, falling back to attention.
 pub fn windowRingBell(window: Window, volume: f32) void {
     if (volume <= 0) return;
     const wl_lib = if (state.wl) |*wlib| wlib else return;

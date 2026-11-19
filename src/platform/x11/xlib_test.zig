@@ -1,3 +1,5 @@
+//! Runtime symbol-resolution test for the Xlib entry points.
+
 const std = @import("std");
 const testing = std.testing;
 

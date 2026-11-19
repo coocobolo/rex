@@ -22,6 +22,7 @@ const system = posix.system;
 /// Maximum number of `input.Key` variants tracked in `keys_down`.
 const key_bitset_len = 128;
 
+/// The wl_seat input state, pinned in backend storage for C listeners.
 pub const Seat = struct {
     wl_keyboard: ?*wl.Proxy = null,
     wl_pointer: ?*wl.Proxy = null,

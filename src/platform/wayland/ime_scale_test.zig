@@ -1,3 +1,5 @@
+//! Tests for text-input staging and fractional-scale conversion.
+
 const std = @import("std");
 const testing = std.testing;
 

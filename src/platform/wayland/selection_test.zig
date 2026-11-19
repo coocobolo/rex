@@ -1,3 +1,5 @@
+//! Tests for Wayland selection MIME precedence and ownership.
+
 const std = @import("std");
 const testing = std.testing;
 

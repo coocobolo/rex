@@ -1,3 +1,5 @@
+//! Runtime EGL and GL context test on a Wayland surface.
+
 const std = @import("std");
 const testing = std.testing;
 

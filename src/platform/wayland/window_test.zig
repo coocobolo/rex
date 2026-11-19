@@ -1,3 +1,5 @@
+//! Tests for Wayland platform choice and window lifecycle.
+
 const std = @import("std");
 const testing = std.testing;
 

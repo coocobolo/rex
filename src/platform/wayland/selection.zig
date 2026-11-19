@@ -25,12 +25,14 @@ const OfferMime = packed struct(u8) {
     plain: bool = false,
     _: u6 = 0,
 
+    /// The preferred offered MIME type, or null when none was offered.
     pub fn preferred(self: OfferMime) ?[:0]const u8 {
         if (self.utf8) return mime_utf8;
         if (self.plain) return mime_plain;
         return null;
     }
 
+    /// Records a MIME type only when Rex accepts it.
     pub fn record(self: *OfferMime, mime: []const u8) void {
         if (std.mem.eql(u8, mime, mime_utf8) or std.mem.eql(u8, mime, "UTF8_STRING")) {
             self.utf8 = true;
@@ -40,6 +42,7 @@ const OfferMime = packed struct(u8) {
     }
 };
 
+/// The display-wide CLIPBOARD and PRIMARY selection state.
 pub const Selection = struct {
     data_device: ?*wl.Proxy = null,
     clipboard_source: ?*wl.Proxy = null,

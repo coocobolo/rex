@@ -17,6 +17,7 @@ pub const max_commit_bytes = 128;
 /// characters, matching `Event.PreeditEvent`). Oversized preedits are dropped.
 pub const max_preedit_bytes = 32;
 
+/// The text-input-v3 state, pinned in backend storage for C listeners.
 pub const TextInput = struct {
     proxy: ?*wl.Proxy = null,
     focus: ?*WaylandWindow = null,
