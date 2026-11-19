@@ -928,17 +928,6 @@ const preview_dialog_actions = [_]kit.alert_dialog.Action{
     .{ .label = "Close window", .variant = .destructive },
 };
 
-fn overlayAnchor(pos: overlay.Position) kit.Tree.ScreenAnchor {
-    return switch (pos) {
-        .top_left => .top_left,
-        .top_center => .top_center,
-        .top_right => .top_right,
-        .bottom_left => .bottom_left,
-        .bottom_center => .bottom_center,
-        .bottom_right => .bottom_right,
-    };
-}
-
 fn alertDialogMedia(icon: overlay.AlertDialog.Icon) kit.alert_dialog.Media {
     return switch (icon) {
         .warning => .warning,
@@ -955,15 +944,14 @@ fn syncPreviewOptions(state: *State) void {
     state.preview_banner.motion = cfg.ui.motion;
     state.preview_dialog.motion = cfg.ui.motion;
 
-    const next_toast_pos = overlayAnchor(win.toast.position);
-    if (state.preview_toast.option.position != next_toast_pos or
+    if (state.preview_toast.option.position != win.toast.position or
         state.preview_toast.option.layout != win.toast.layout)
     {
         state.preview_table = .empty;
     }
     state.preview_toast.option = .{
         .width = win.toast.width,
-        .position = next_toast_pos,
+        .position = win.toast.position,
         .layout = win.toast.layout,
         .margin = win.toast.margin,
         .padding = win.toast.padding,
@@ -971,21 +959,14 @@ fn syncPreviewOptions(state: *State) void {
     };
     state.preview_banner.option = .{
         .max_width = win.banner.max_width,
-        .placement = switch (win.banner.placement) {
-            .floating => .floating,
-            .docked => .docked,
-        },
-        .position = overlayAnchor(win.banner.position),
+        .placement = win.banner.placement,
+        .position = win.banner.position,
         .margin = win.banner.margin,
         .padding = win.banner.padding,
     };
     state.preview_dialog.option = .{
         .width = win.alert_dialog.width,
-        .position = switch (win.modal.position) {
-            .center => .center,
-            .top_center => .top_center,
-            .bottom_center => .bottom_center,
-        },
+        .position = win.modal.position,
         .margin = win.modal.margin,
         .padding = win.modal.padding,
         .gap = win.modal.gap,

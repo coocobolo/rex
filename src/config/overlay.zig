@@ -6,22 +6,15 @@
 
 const std = @import("std");
 
+const ScreenAnchor = @import("../kit/Tree.zig").ScreenAnchor;
+const AlertPlacement = @import("../kit/alert.zig").Placement;
+const DialogPosition = @import("../kit/dialog.zig").Position;
 const ToastLayout = @import("../kit/toast.zig").Layout;
-
-/// Screen corner or edge anchor for floating and docked overlays.
-pub const Position = enum(u8) {
-    top_left,
-    top_center,
-    top_right,
-    bottom_left,
-    bottom_center,
-    bottom_right,
-};
 
 pub const Toast = struct {
     width: f32 = 356,
     duration_ms: u32 = 5000,
-    position: Position = .bottom_right,
+    position: ScreenAnchor = .bottom_right,
     layout: ToastLayout = .stacked,
     margin: u8 = 24,
     padding: u8 = 16,
@@ -31,23 +24,17 @@ pub const Toast = struct {
 
 pub const Banner = struct {
     max_width: f32 = 560,
-    placement: Placement = .floating,
-    position: Position = .top_center,
+    placement: AlertPlacement = .floating,
+    position: ScreenAnchor = .top_center,
     margin: u8 = 16,
     padding: u8 = 14,
     enabled: bool = true,
-
-    /// Whether the banner floats over the terminal or sits flush on its edge.
-    pub const Placement = enum(u8) {
-        floating,
-        docked,
-    };
 };
 
 pub const Modal = struct {
     /// Opacity of the darkened backdrop behind the dialog, 0 to 1.
     backdrop_opacity: f32 = 180.0 / 255.0,
-    position: Modal.Position = .center,
+    position: DialogPosition = .center,
     on_outside_click: OutsideClick = .close,
     blur_radius: u8 = 12,
     margin: u8 = 16,
@@ -61,12 +48,6 @@ pub const Modal = struct {
         const opacity = if (std.math.isFinite(self.backdrop_opacity)) std.math.clamp(self.backdrop_opacity, 0, 1) else 0;
         return @intFromFloat(@round(opacity * 255));
     }
-
-    pub const Position = enum(u8) {
-        center,
-        top_center,
-        bottom_center,
-    };
 
     /// What a click outside an open dialog does.
     pub const OutsideClick = enum(u8) { close, ignore };

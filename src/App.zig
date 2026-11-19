@@ -4424,17 +4424,14 @@ fn kitOverlayOptions(ui: Config.Ui, win: Config.Window) KitOverlay.Options {
         .ui = ui,
         .banner = .{
             .max_width = win.banner.max_width,
-            .placement = switch (win.banner.placement) {
-                .floating => .floating,
-                .docked => .docked,
-            },
-            .position = overlayAnchor(win.banner.position),
+            .placement = win.banner.placement,
+            .position = win.banner.position,
             .margin = win.banner.margin,
             .padding = win.banner.padding,
         },
         .toast = .{
             .width = win.toast.width,
-            .position = overlayAnchor(win.toast.position),
+            .position = win.toast.position,
             .layout = win.toast.layout,
             .margin = win.toast.margin,
             .padding = win.toast.padding,
@@ -4442,11 +4439,7 @@ fn kitOverlayOptions(ui: Config.Ui, win: Config.Window) KitOverlay.Options {
         },
         .dialog = .{
             .width = win.alert_dialog.width,
-            .position = switch (win.modal.position) {
-                .center => .center,
-                .top_center => .top_center,
-                .bottom_center => .bottom_center,
-            },
+            .position = win.modal.position,
             .margin = win.modal.margin,
             .padding = win.modal.padding,
             .gap = win.modal.gap,
@@ -4462,17 +4455,6 @@ fn alertDialogMedia(icon: @import("config/overlay.zig").AlertDialog.Icon) alert_
         .info => .info,
         .@"error" => .err,
         .none => .none,
-    };
-}
-
-fn overlayAnchor(pos: @import("config/overlay.zig").Position) @import("kit/Tree.zig").ScreenAnchor {
-    return switch (pos) {
-        .top_left => .top_left,
-        .top_center => .top_center,
-        .top_right => .top_right,
-        .bottom_left => .bottom_left,
-        .bottom_center => .bottom_center,
-        .bottom_right => .bottom_right,
     };
 }
 

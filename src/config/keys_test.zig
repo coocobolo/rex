@@ -613,7 +613,7 @@ test "apply: [toast], [banner], [modal], and [alert_dialog] layout keys" {
     try applyText(&config, .toast, "margin", "12");
     try applyText(&config, .toast, "padding", "10");
     try applyText(&config, .toast, "gap", "8");
-    try std.testing.expectEqual(overlay.Position.top_left, config.window.toast.position);
+    try std.testing.expectEqual(.top_left, config.window.toast.position);
     try std.testing.expectEqual(.expanded, config.window.toast.layout);
     try std.testing.expectEqual(@as(f32, 400), config.window.toast.width);
     try std.testing.expectEqual(@as(u8, 12), config.window.toast.margin);
@@ -625,8 +625,8 @@ test "apply: [toast], [banner], [modal], and [alert_dialog] layout keys" {
     try applyText(&config, .banner, "max_width", "720");
     try applyText(&config, .banner, "margin", "20");
     try applyText(&config, .banner, "padding", "18");
-    try std.testing.expectEqual(overlay.Banner.Placement.docked, config.window.banner.placement);
-    try std.testing.expectEqual(overlay.Position.bottom_center, config.window.banner.position);
+    try std.testing.expectEqual(.docked, config.window.banner.placement);
+    try std.testing.expectEqual(.bottom_center, config.window.banner.position);
     try std.testing.expectEqual(@as(f32, 720), config.window.banner.max_width);
     try std.testing.expectEqual(@as(u8, 20), config.window.banner.margin);
     try std.testing.expectEqual(@as(u8, 18), config.window.banner.padding);
@@ -635,7 +635,7 @@ test "apply: [toast], [banner], [modal], and [alert_dialog] layout keys" {
     try applyText(&config, .modal, "margin", "24");
     try applyText(&config, .modal, "padding", "32");
     try applyText(&config, .modal, "gap", "20");
-    try std.testing.expectEqual(overlay.Modal.Position.top_center, config.window.modal.position);
+    try std.testing.expectEqual(.top_center, config.window.modal.position);
     try std.testing.expectEqual(@as(u8, 24), config.window.modal.margin);
     try std.testing.expectEqual(@as(u8, 32), config.window.modal.padding);
     try std.testing.expectEqual(@as(u8, 20), config.window.modal.gap);
