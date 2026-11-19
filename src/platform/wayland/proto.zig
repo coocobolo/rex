@@ -112,3 +112,72 @@ pub const xdg_toplevel_decoration = struct {
         configure: *const fn (?*anyopaque, ?*wl.Proxy, u32) callconv(.c) void,
     };
 };
+
+pub const seat = struct {
+    pub const get_pointer: u32 = 0;
+    pub const get_keyboard: u32 = 1;
+    pub const release: u32 = 3;
+
+    pub const capability_pointer: u32 = 1;
+    pub const capability_keyboard: u32 = 2;
+
+    pub const Listener = extern struct {
+        capabilities: *const fn (?*anyopaque, ?*wl.Proxy, u32) callconv(.c) void,
+        name: *const fn (?*anyopaque, ?*wl.Proxy, [*c]const u8) callconv(.c) void,
+    };
+};
+
+pub const keyboard = struct {
+    pub const release: u32 = 0;
+
+    pub const keymap_format_xkb_v1: u32 = 1;
+    pub const key_state_released: u32 = 0;
+    pub const key_state_pressed: u32 = 1;
+
+    pub const Listener = extern struct {
+        keymap: *const fn (?*anyopaque, ?*wl.Proxy, u32, i32, u32) callconv(.c) void,
+        enter: *const fn (?*anyopaque, ?*wl.Proxy, u32, ?*wl.Proxy, ?*w.wl_array) callconv(.c) void,
+        leave: *const fn (?*anyopaque, ?*wl.Proxy, u32, ?*wl.Proxy) callconv(.c) void,
+        key: *const fn (?*anyopaque, ?*wl.Proxy, u32, u32, u32, u32) callconv(.c) void,
+        modifiers: *const fn (?*anyopaque, ?*wl.Proxy, u32, u32, u32, u32, u32) callconv(.c) void,
+        repeat_info: *const fn (?*anyopaque, ?*wl.Proxy, i32, i32) callconv(.c) void,
+    };
+};
+
+pub const pointer = struct {
+    pub const set_cursor: u32 = 0;
+    pub const release: u32 = 1;
+
+    pub const button_state_released: u32 = 0;
+    pub const button_state_pressed: u32 = 1;
+    pub const axis_vertical: u32 = 0;
+    pub const axis_horizontal: u32 = 1;
+
+    pub const Listener = extern struct {
+        enter: *const fn (?*anyopaque, ?*wl.Proxy, u32, ?*wl.Proxy, i32, i32) callconv(.c) void,
+        leave: *const fn (?*anyopaque, ?*wl.Proxy, u32, ?*wl.Proxy) callconv(.c) void,
+        motion: *const fn (?*anyopaque, ?*wl.Proxy, u32, i32, i32) callconv(.c) void,
+        button: *const fn (?*anyopaque, ?*wl.Proxy, u32, u32, u32, u32) callconv(.c) void,
+        axis: *const fn (?*anyopaque, ?*wl.Proxy, u32, u32, i32) callconv(.c) void,
+        frame: *const fn (?*anyopaque, ?*wl.Proxy) callconv(.c) void,
+        axis_source: *const fn (?*anyopaque, ?*wl.Proxy, u32) callconv(.c) void,
+        axis_stop: *const fn (?*anyopaque, ?*wl.Proxy, u32, u32) callconv(.c) void,
+        axis_discrete: *const fn (?*anyopaque, ?*wl.Proxy, u32, i32) callconv(.c) void,
+        axis_value120: *const fn (?*anyopaque, ?*wl.Proxy, u32, i32) callconv(.c) void,
+        axis_relative_direction: *const fn (?*anyopaque, ?*wl.Proxy, u32, u32) callconv(.c) void,
+    };
+};
+
+pub const cursor_shape_manager = struct {
+    pub const destroy: u32 = 0;
+    pub const get_pointer: u32 = 1;
+};
+
+pub const cursor_shape_device = struct {
+    pub const destroy: u32 = 0;
+    pub const set_shape: u32 = 1;
+
+    pub const shape_default: u32 = 1;
+    pub const shape_pointer: u32 = 4;
+    pub const shape_text: u32 = 9;
+};

@@ -16,6 +16,7 @@ const egl = @import("../egl.zig");
 const events = @import("../Event.zig");
 const Window = @import("../Window.zig");
 const proto = @import("proto.zig");
+const seat = @import("seat.zig");
 const WaylandWindow = @import("WaylandWindow.zig");
 const wl = @import("wl.zig");
 const wl_egl = @import("wl_egl.zig");
@@ -85,7 +86,9 @@ const State = struct {
     compositor: ?*wl.Proxy = null,
     xdg_wm_base: ?*wl.Proxy = null,
     xdg_decoration_manager: ?*wl.Proxy = null,
+    cursor_shape_manager: ?*wl.Proxy = null,
     seat: ?*wl.Proxy = null,
+    seat_state: seat.Seat = .{},
     egl_display: e.EGLDisplay = null,
     egl_config: e.EGLConfig = null,
     context: e.EGLContext = null,
@@ -312,6 +315,7 @@ pub fn pollEvents() void {
     } else {
         wl_lib.wl_display_cancel_read(dpy);
     }
+    state.seat_state.tickRepeat(seat.monotonicNs());
 }
 
 /// Waits for Wayland events or a wakeup signal, up to `timeout_ms`.
@@ -329,7 +333,12 @@ pub fn waitEvents(timeout_ms: ?f64) void {
         .{ .fd = wl_lib.wl_display_get_fd(dpy), .events = posix.POLL.IN, .revents = 0 },
         .{ .fd = state.wakeup_read, .events = posix.POLL.IN, .revents = 0 },
     };
-    const timeout: i32 = if (timeout_ms) |ms| blk: {
+    const repeat_ms = state.seat_state.repeatTimeoutMs(seat.monotonicNs());
+    const effective_ms: ?f64 = if (timeout_ms) |t|
+        (if (repeat_ms) |r| @min(t, r) else t)
+    else
+        repeat_ms;
+    const timeout: i32 = if (effective_ms) |ms| blk: {
         const clamped = @max(ms, 0.0);
         const max_ms: f64 = @floatFromInt(std.math.maxInt(i32));
         break :blk @intFromFloat(@min(clamped, max_ms));
@@ -347,6 +356,7 @@ pub fn waitEvents(timeout_ms: ?f64) void {
     if (ready > 0 and (pfds[1].revents & posix.POLL.IN) != 0) {
         drainWakeup();
     }
+    state.seat_state.tickRepeat(seat.monotonicNs());
 }
 
 /// Monotonic clock in seconds.
@@ -360,9 +370,18 @@ pub fn primaryRefreshHz() ?u32 {
     return 60;
 }
 
-/// Whether `k` is currently held on `window` (implemented in Stage 3.3).
-pub fn isKeyDown(_: Window, _: input_key.Key) bool {
-    return false;
+/// Whether `k` is currently held on `window`.
+pub fn isKeyDown(window: Window, k: input_key.Key) bool {
+    return state.seat_state.isKeyDown(fromHandle(window), k);
+}
+
+/// Finds the active `WaylandWindow` owning `surface`, or null.
+pub fn findWindowBySurface(surface: ?*wl.Proxy) ?*WaylandWindow {
+    const target = surface orelse return null;
+    for (&state.window_slots, &state.window_used) |*slot, used| {
+        if (used and slot.wl_surface == target) return slot;
+    }
+    return null;
 }
 
 /// Appends `event` to the bounded event ring.
@@ -463,6 +482,7 @@ pub fn destroyWindow(window: Window) void {
     const ptr = fromHandle(window);
     for (&state.window_slots, &state.window_used) |*slot, *used| {
         if (slot == ptr and used.*) {
+            state.seat_state.onWindowDestroyed(slot);
             slot.deinit();
             used.* = false;
             return;
@@ -511,11 +531,15 @@ pub fn windowSetMinimumSize(window: Window, width: c_int, height: c_int) void {
 }
 
 pub fn windowSetPointerShape(window: Window, shape: Window.PointerShape) void {
-    fromHandle(window).pointer_shape = shape;
+    const win = fromHandle(window);
+    win.pointer_shape = shape;
+    state.seat_state.applyCursor(win);
 }
 
 pub fn windowSetPointerVisible(window: Window, visible: bool) void {
-    fromHandle(window).pointer_visible = visible;
+    const win = fromHandle(window);
+    win.pointer_visible = visible;
+    state.seat_state.applyCursor(win);
 }
 
 pub fn windowSetClipboard(_: Window, _: [:0]const u8) void {}
@@ -546,7 +570,12 @@ fn drainWakeup() void {
 }
 
 fn destroyGlobals() void {
+    state.seat_state.deinit();
     const wl_lib = if (state.wl) |*wlib| wlib else return;
+    if (state.cursor_shape_manager) |p| {
+        _ = wl_lib.wl_proxy_marshal_flags(p, proto.cursor_shape_manager.destroy, null, wl_lib.wl_proxy_get_version(p), proto.marshal_flag_destroy);
+        state.cursor_shape_manager = null;
+    }
     if (state.xdg_decoration_manager) |p| {
         _ = wl_lib.wl_proxy_marshal_flags(p, proto.xdg_decoration_manager.destroy, null, wl_lib.wl_proxy_get_version(p), proto.marshal_flag_destroy);
         state.xdg_decoration_manager = null;
@@ -556,7 +585,11 @@ fn destroyGlobals() void {
         state.xdg_wm_base = null;
     }
     if (state.seat) |p| {
-        wl_lib.wl_proxy_destroy(p);
+        if (wl_lib.wl_proxy_get_version(p) >= 5) {
+            _ = wl_lib.wl_proxy_marshal_flags(p, proto.seat.release, null, wl_lib.wl_proxy_get_version(p), proto.marshal_flag_destroy);
+        } else {
+            wl_lib.wl_proxy_destroy(p);
+        }
         state.seat = null;
     }
     if (state.compositor) |p| {
@@ -622,9 +655,22 @@ fn onRegistryGlobal(
             v,
             @as(?*anyopaque, null),
         );
+    } else if (std.mem.eql(u8, iface_name, "wp_cursor_shape_manager_v1") and state.cursor_shape_manager == null) {
+        const v: u32 = @min(version, 1);
+        state.cursor_shape_manager = wl_lib.wl_proxy_marshal_flags(
+            registry,
+            proto.registry.bind,
+            ifaces.cursor_shape_manager,
+            v,
+            0,
+            name,
+            ifaces.cursor_shape_manager.name,
+            v,
+            @as(?*anyopaque, null),
+        );
     } else if (std.mem.eql(u8, iface_name, "wl_seat") and state.seat == null) {
         const v: u32 = @min(version, 8);
-        state.seat = wl_lib.wl_proxy_marshal_flags(
+        if (wl_lib.wl_proxy_marshal_flags(
             registry,
             proto.registry.bind,
             wl_lib.seat_interface,
@@ -634,7 +680,10 @@ fn onRegistryGlobal(
             wl_lib.seat_interface.name,
             v,
             @as(?*anyopaque, null),
-        );
+        )) |wl_seat| {
+            state.seat = wl_seat;
+            state.seat_state.attach(wl_seat);
+        }
     }
 }
 
