@@ -3,13 +3,16 @@
 
 const std = @import("std");
 
-const X11Window = @This();
-
 const x = @import("x11");
 const e = @import("egl");
 const gl = @import("../../renderer/gl.zig");
+const Dimension = @import("../../renderer/dimension.zig").Dimension;
 const backend = @import("backend.zig");
 const Window = @import("../Window.zig");
+const xlib = @import("xlib.zig");
+const selection = @import("selection.zig");
+
+const X11Window = @This();
 
 pub const InitOption = struct {
     width: u16,
@@ -92,7 +95,7 @@ pub fn init(self: *X11Window, option: InitOption) error{ WindowCreatedFailed, Su
 
 /// Standard properties GLFW sets on X11: tooling locates a window by
 /// _NET_WM_PID, and window managers use WM_CLASS and the EWMH title.
-fn setWindowProperties(lib: *const @import("xlib.zig").Xlib, display: *x.Display, handle: x.Window, title: [:0]const u8) void {
+fn setWindowProperties(lib: *const xlib.Xlib, display: *x.Display, handle: x.Window, title: [:0]const u8) void {
     const pid: c_long = @intCast(std.c.getpid());
     _ = lib.XChangeProperty(display, handle, lib.XInternAtom(display, "_NET_WM_PID", 0), x.XA_CARDINAL, 32, x.PropModeReplace, @ptrCast(&pid), 1);
     const class = "rex\x00Rex\x00";
@@ -137,7 +140,7 @@ pub fn setDecorated(self: *const X11Window, decorated: bool) void {
     _ = lib.XFlush(display);
 }
 
-fn applyDecoratedHint(lib: *const @import("xlib.zig").Xlib, display: *x.Display, handle: x.Window, decorated: bool) void {
+fn applyDecoratedHint(lib: *const xlib.Xlib, display: *x.Display, handle: x.Window, decorated: bool) void {
     const atom = lib.XInternAtom(display, "_MOTIF_WM_HINTS", 0);
     if (atom == 0) return;
     // Xlib format 32 expects `c_ulong` elements per property item:
@@ -150,7 +153,7 @@ pub fn swapBuffers(self: *const X11Window) void {
     _ = backend.state.egl.?.eglSwapBuffers(backend.state.egl_display, self.surface);
 }
 
-pub fn framebufferSize(self: *const X11Window, comptime T: type) @import("../../renderer/dimension.zig").Dimension(T) {
+pub fn framebufferSize(self: *const X11Window, comptime T: type) Dimension(T) {
     var root: x.Window = 0;
     var x_pos: c_int = 0;
     var y_pos: c_int = 0;
@@ -183,7 +186,7 @@ fn convert(comptime T: type, value: c_uint) T {
     };
 }
 
-pub fn contentScale(self: *const X11Window) @import("../../renderer/dimension.zig").Dimension(f32) {
+pub fn contentScale(self: *const X11Window) Dimension(f32) {
     _ = self;
     return .{ .width = 1, .height = 1 };
 }
@@ -270,7 +273,7 @@ pub fn getClipboard(self: *X11Window) ?[:0]const u8 {
         if (sel.clipboard_len == 0) return null;
         return sel.clipboard_text[0..sel.clipboard_len :0];
     }
-    const n = @import("selection.zig").read(backend.state.clipboard_atom, sel.read_text[0 .. sel.read_text.len - 1]) orelse return null;
+    const n = selection.read(backend.state.clipboard_atom, sel.read_text[0 .. sel.read_text.len - 1]) orelse return null;
     sel.read_text[n] = 0;
     sel.read_len = n;
     return sel.read_text[0..sel.read_len :0];
@@ -286,7 +289,7 @@ pub fn getPrimarySelection(self: *X11Window) ?[:0]const u8 {
         if (sel.primary_len == 0) return null;
         return sel.primary_text[0..sel.primary_len :0];
     }
-    const n = @import("selection.zig").read(x.XA_PRIMARY, sel.read_text[0 .. sel.read_text.len - 1]) orelse return null;
+    const n = selection.read(x.XA_PRIMARY, sel.read_text[0 .. sel.read_text.len - 1]) orelse return null;
     sel.read_text[n] = 0;
     sel.read_len = n;
     return sel.read_text[0..sel.read_len :0];

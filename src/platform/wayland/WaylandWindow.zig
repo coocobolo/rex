@@ -2,8 +2,6 @@
 //! lives in a stable backend slot so Wayland listener user-data pointers stay
 //! valid for the window's lifetime; no allocation happens after creation.
 
-const WaylandWindow = @This();
-
 const std = @import("std");
 
 const e = @import("egl");
@@ -14,6 +12,8 @@ const Window = @import("../Window.zig");
 const backend = @import("backend.zig");
 const proto = @import("proto.zig");
 const wl = @import("wl.zig");
+
+const WaylandWindow = @This();
 
 wl_surface: ?*wl.Proxy = null,
 xdg_surface: ?*wl.Proxy = null,

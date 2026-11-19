@@ -5,6 +5,7 @@
 const std = @import("std");
 
 const c_xkb = @import("xkbcommon");
+const w = @import("wayland");
 const Key = @import("../../input/key.zig").Key;
 const Modifiers = @import("../../input/key.zig").Modifiers;
 const events = @import("../Event.zig");
@@ -320,7 +321,7 @@ fn onKeyboardEnter(
     _: ?*wl.Proxy,
     serial: u32,
     surface: ?*wl.Proxy,
-    _: ?*@import("wayland").wl_array,
+    _: ?*w.wl_array,
 ) callconv(.c) void {
     const self: *Seat = @ptrCast(@alignCast(data.?));
     self.last_serial = serial;

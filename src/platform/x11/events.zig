@@ -5,9 +5,10 @@ const std = @import("std");
 
 const x = @import("x11");
 const backend = @import("backend.zig");
-const Event = @import("../Event.zig").Event;
+const events = @import("../Event.zig");
 const Window = @import("../Window.zig");
 const key = @import("key.zig");
+const selection = @import("selection.zig");
 
 // X11 auto-repeat arrives as a synthetic KeyRelease immediately followed by a
 // KeyPress with the same keycode and timestamp (ICCCM "keyboard auto-repeat").
@@ -45,7 +46,7 @@ pub fn dispatch(event: *x.XEvent) void {
         x.KeyPress, x.KeyRelease => {
             const e = event.xkey;
             const window = findWindow(e.window) orelse return;
-            const action: @import("../Event.zig").Action = if (event.type == x.KeyPress)
+            const action: events.Action = if (event.type == x.KeyPress)
                 (if (last_release) |r|
                     (if (e.keycode == r.keycode and e.time == r.time) .repeat else .press)
                 else
@@ -109,7 +110,7 @@ pub fn dispatch(event: *x.XEvent) void {
                     return;
                 }
             }
-            const button: @import("../Event.zig").MouseButton = switch (e.button) {
+            const button: events.MouseButton = switch (e.button) {
                 1 => .left,
                 2 => .middle,
                 3 => .right,
@@ -165,7 +166,7 @@ pub fn dispatch(event: *x.XEvent) void {
                 e.data.l[0] == @as(c_long, @intCast(backend.state.wm_delete_atom)))
                 backend.pushEvent(.{ .close = .{ .window = window } });
         },
-        x.SelectionRequest => @import("selection.zig").answerRequest(&event.xselectionrequest),
+        x.SelectionRequest => selection.answerRequest(&event.xselectionrequest),
         else => {},
     }
 }

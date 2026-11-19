@@ -2,14 +2,14 @@
 //! windows share the event ring and the wakeup function. No backend type
 //! appears in the application's view of it.
 
-const Platform = @This();
-
 const std = @import("std");
 const backend = @import("backend.zig").selected;
 const window_config = @import("../config/window.zig");
 const input_key = @import("../input/key.zig");
 const PlatformEvent = @import("Event.zig").Event;
 const Window = @import("Window.zig");
+
+const Platform = @This();
 const Choice = backend.Choice;
 
 choice: Choice,

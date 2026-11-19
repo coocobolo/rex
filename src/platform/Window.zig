@@ -3,10 +3,10 @@
 //! backend casts to its own window struct. Every method is a thin delegation
 //! to that backend.
 
-const Window = @This();
-
 const backend = @import("backend.zig").selected;
 const Dimension = @import("../renderer/dimension.zig").Dimension;
+
+const Window = @This();
 
 /// The pointer shapes a window can show.
 pub const PointerShape = enum(u8) {

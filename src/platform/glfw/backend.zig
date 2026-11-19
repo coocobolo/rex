@@ -6,7 +6,9 @@ const builtin = @import("builtin");
 
 const c = @import("glfw");
 const gl = @import("../../renderer/gl.zig");
+const Dimension = @import("../../renderer/dimension.zig").Dimension;
 const window_config = @import("../../config/window.zig");
+const input_key = @import("../../input/key.zig");
 const events = @import("../Event.zig");
 const Window = @import("../Window.zig");
 const GlfwWindow = @import("GlfwWindow.zig");
@@ -202,7 +204,7 @@ pub fn primaryRefreshHz() ?u32 {
 
 /// Key state belongs to a window, not to whatever context happens to be
 /// current, so multi-window hosts cannot ask about the wrong one.
-pub fn isKeyDown(window: Window, k: @import("../../input/key.zig").Key) bool {
+pub fn isKeyDown(window: Window, k: input_key.Key) bool {
     const code = key_translate.toGlfw(k) orelse return false;
     const handle: *c.GLFWwindow = @ptrCast(@alignCast(window.impl));
     return c.glfwGetKey(handle, code) == c.GLFW_PRESS;
@@ -227,7 +229,7 @@ pub fn pushEvent(event: Event) void {
 
 /// Delivers a key through the real GLFW callback path so tests exercise the
 /// user-pointer routing that events from the window system rely on.
-pub fn testKeyEvent(window: Window, k: @import("../../input/key.zig").Key) void {
+pub fn testKeyEvent(window: Window, k: input_key.Key) void {
     if (!builtin.is_test) @compileError("testKeyEvent is for tests only");
     const code = key_translate.toGlfw(k) orelse return;
     const impl: *GlfwWindow = @ptrCast(@alignCast(window.impl));
@@ -329,12 +331,12 @@ pub fn windowSwapBuffers(window: Window) void {
 }
 
 /// The drawable size in pixels, converted to T.
-pub fn windowFramebufferSize(window: Window, comptime T: type) @import("../../renderer/dimension.zig").Dimension(T) {
+pub fn windowFramebufferSize(window: Window, comptime T: type) Dimension(T) {
     return implOf(window).framebufferSize(T);
 }
 
 /// The scale from logical to device pixels.
-pub fn windowContentScale(window: Window) @import("../../renderer/dimension.zig").Dimension(f32) {
+pub fn windowContentScale(window: Window) Dimension(f32) {
     return implOf(window).contentScale();
 }
 
@@ -350,11 +352,7 @@ pub fn windowSetMinimumSize(window: Window, width: c_int, height: c_int) void {
 
 /// Shows the given standard cursor over the window.
 pub fn windowSetPointerShape(window: Window, shape: Window.PointerShape) void {
-    implOf(window).setPointerShape(switch (shape) {
-        .arrow => .arrow,
-        .hand => .hand,
-        .text => .text,
-    });
+    implOf(window).setPointerShape(shape);
 }
 
 /// Shows or hides the pointer over the window.

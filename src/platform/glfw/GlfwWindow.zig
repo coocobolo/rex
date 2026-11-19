@@ -2,19 +2,16 @@
 //! file and its siblings under `src/platform/glfw/`.
 
 const std = @import("std");
+const builtin = @import("builtin");
 
 const c = @import("glfw");
 const gl = @import("../../renderer/gl.zig");
 const Dimension = @import("../../renderer/dimension.zig").Dimension;
+const Window = @import("../Window.zig");
+
+const GlfwWindow = @This();
 
 const log = std.log.scoped(.platform);
-
-/// The standard cursor shapes a window can show.
-pub const PointerShape = enum(u8) {
-    arrow,
-    hand,
-    text,
-};
 
 /// The two Xlib functions the bell needs. Rex does not link libX11; GLFW
 /// loads it at runtime, so opening it again only takes another reference.
@@ -46,7 +43,7 @@ pub const Xlib = struct {
     }
 };
 
-const has_x11 = @import("builtin").os.tag == .linux or @import("builtin").os.tag == .freebsd;
+const has_x11 = builtin.os.tag == .linux or builtin.os.tag == .freebsd;
 
 extern "c" fn glfwGetX11Display() ?*Xlib.Display;
 extern "c" fn glfwSetX11SelectionString(string: [*:0]const u8) void;
@@ -61,7 +58,6 @@ pub const InitOption = struct {
 };
 
 /// A GLFW window and the state that belongs to it.
-const GlfwWindow = @This();
 handle: *c.GLFWwindow,
 /// Application context, set and read through the platform API. GLFW's
 /// user pointer is reserved for the window impl so callbacks can route.
@@ -70,8 +66,8 @@ xlib: union(enum) { unloaded, loaded: Xlib, failed } = .unloaded,
 silent_bell_logged: bool = false,
 no_primary_logged: bool = false,
 pointer_visible: bool = true,
-cursors: [@typeInfo(PointerShape).@"enum".fields.len]?*c.GLFWcursor = @splat(null),
-pointer_shape: PointerShape = .arrow,
+cursors: [@typeInfo(Window.PointerShape).@"enum".fields.len]?*c.GLFWcursor = @splat(null),
+pointer_shape: Window.PointerShape = .arrow,
 
 /// Creates a window in place with a GL context and loads GLAD through the
 /// given loader. The window is destroyed on every failure path.
@@ -197,7 +193,7 @@ pub fn setMinimumSize(self: *const GlfwWindow, width: c_int, height: c_int) void
 }
 
 /// Shows the given standard cursor while the pointer is over the window.
-pub fn setPointerShape(self: *GlfwWindow, shape: PointerShape) void {
+pub fn setPointerShape(self: *GlfwWindow, shape: Window.PointerShape) void {
     if (shape == self.pointer_shape) return;
     const slot = &self.cursors[@intFromEnum(shape)];
     if (slot.* == null and shape != .arrow) {

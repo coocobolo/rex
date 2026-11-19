@@ -8,9 +8,13 @@ const builtin = @import("builtin");
 const x = @import("x11");
 const e = @import("egl");
 const gl = @import("../../renderer/gl.zig");
+const Dimension = @import("../../renderer/dimension.zig").Dimension;
 const window_config = @import("../../config/window.zig");
+const input_key = @import("../../input/key.zig");
 const events = @import("../Event.zig");
 const Window = @import("../Window.zig");
+const x11_events = @import("events.zig");
+const key = @import("key.zig");
 const xlib = @import("xlib.zig");
 const egl = @import("../egl.zig");
 const X11Window = @import("X11Window.zig");
@@ -228,7 +232,7 @@ pub fn postWakeup() void {
 }
 
 pub fn pollEvents() void {
-    if (state.phase == .ready) @import("events.zig").pump();
+    if (state.phase == .ready) x11_events.pump();
 }
 
 /// Blocks in poll() on the X11 connection and the wakeup pipe, so an idle
@@ -238,7 +242,7 @@ pub fn waitEvents(timeout_ms: ?f64) void {
     const lib = &state.x11.?;
     const display = state.display.?;
     if (lib.XPending(display) > 0) {
-        @import("events.zig").pump();
+        x11_events.pump();
         return;
     }
     const x_fd = lib.XConnectionNumber(display);
@@ -259,7 +263,7 @@ pub fn waitEvents(timeout_ms: ?f64) void {
         }
     }
     if (fds[0].revents & system.POLL.IN != 0 or lib.XPending(display) > 0)
-        @import("events.zig").pump();
+        x11_events.pump();
 }
 
 /// Monotonic clock in seconds, from the caller's Io.
@@ -273,9 +277,9 @@ pub fn primaryRefreshHz() ?u32 {
     return 60;
 }
 
-pub fn isKeyDown(window: Window, k: @import("../../input/key.zig").Key) bool {
+pub fn isKeyDown(window: Window, k: input_key.Key) bool {
     _ = window;
-    const sym = @import("key.zig").toKeysym(k) orelse return false;
+    const sym = key.toKeysym(k) orelse return false;
     const lib = &state.x11.?;
     const code = lib.XKeysymToKeycode(state.display.?, sym);
     if (code == 0) return false;
@@ -316,13 +320,13 @@ pub fn testGlContext() !void {
         log.warn("got compatibility profile, not core", .{});
 }
 
-pub fn testKeyEvent(window: Window, k: @import("../../input/key.zig").Key) void {
+pub fn testKeyEvent(window: Window, k: input_key.Key) void {
     if (!builtin.is_test) @compileError("testKeyEvent is for tests only");
     // A real XKeyEvent cannot be safely synthesized (XLookupString needs the
     // full event state Xlib fills in on XNextEvent), so inject the translated
     // key straight into the ring, mirroring GLFW's callback-based helper.
-    const sym = @import("key.zig").toKeysym(k) orelse return;
-    if (@import("key.zig").fromKeysym(sym) == null) return;
+    const sym = key.toKeysym(k) orelse return;
+    if (key.fromKeysym(sym) == null) return;
     pushEvent(.{ .key = .{
         .window = window,
         .key = k,
@@ -390,11 +394,11 @@ pub fn windowSwapBuffers(window: Window) void {
     implOf(window).swapBuffers();
 }
 
-pub fn windowFramebufferSize(window: Window, comptime T: type) @import("../../renderer/dimension.zig").Dimension(T) {
+pub fn windowFramebufferSize(window: Window, comptime T: type) Dimension(T) {
     return implOf(window).framebufferSize(T);
 }
 
-pub fn windowContentScale(window: Window) @import("../../renderer/dimension.zig").Dimension(f32) {
+pub fn windowContentScale(window: Window) Dimension(f32) {
     return implOf(window).contentScale();
 }
 
