@@ -91,3 +91,30 @@ test "lock_screen: blur drops keyboard activation until focus restores it" {
     try testing.expect(state.focused);
     try testing.expectEqual(lock_screen.Outcome.unlocked, lock_screen.update(&state, .activate));
 }
+
+test "lock_screen: hud layout anchors at bottom with transparent scrim and dismiss action" {
+    var req = sample;
+    req.layout = .hud;
+    req.action = .dismiss;
+
+    var state: lock_screen.State = .empty;
+    try testing.expectEqual(lock_screen.Outcome.redraw, lock_screen.update(&state, .{ .sync = req }));
+    _ = lock_screen.update(&state, .{ .tick = Theme.duration });
+
+    var nodes: [lock_screen.node_max]Tree.Node = undefined;
+    var lines: [lock_screen.line_max]text.Line = undefined;
+    var tree: Tree = .init(&nodes, &lines);
+    try lock_screen.view(&state, &tree, &Theme.dark);
+    try tree.layout(measurer, 800, 600);
+
+    const scrim = tree.find(lock_screen.scrim_id).?;
+    try testing.expectEqual(@as(u8, 0), scrim.box.fill.a);
+
+    const bar = tree.find(lock_screen.card_id).?.rect;
+    // Bottom-anchored HUD sits near the bottom edge leaving the center open.
+    try testing.expect(bar.y > 460);
+    try testing.expect(bar.w <= lock_screen.hud_max_width + 1);
+    const dismiss = tree.find(lock_screen.unlock_id).?.rect;
+    try testing.expectEqual(lock_screen.Hit.unlock, state.hit(tree.hitTest(dismiss.x + dismiss.w / 2, dismiss.y + dismiss.h / 2)));
+    try testing.expectEqual(lock_screen.Hit.scrim, state.hit(tree.hitTest(400, 200)));
+}

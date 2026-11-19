@@ -19,6 +19,12 @@ const Tree = @import("Tree.zig");
 const Id = Tree.Id;
 
 pub const width: f32 = 440;
+/// Maximum logical width of the minimal bottom HUD bar used over the
+/// fullscreen ASCII animation backdrop.
+pub const hud_max_width: f32 = 680;
+/// Logical height reserved at the bottom of the viewport for the HUD bar so
+/// the fullscreen ASCII grid stays centered above it.
+pub const hud_reserve: f32 = 96;
 
 pub const title_capacity = 64;
 pub const subtitle_capacity = 96;
@@ -29,7 +35,7 @@ pub const scrim_id = Id.of("lock.scrim");
 pub const card_id = Id.of("lock.card");
 pub const unlock_id = Id.of("lock.unlock");
 
-pub const Tone = enum(u8) {
+pub const Tone = enum(u2) {
     healthy,
     warning,
     critical,
@@ -43,8 +49,45 @@ pub const Tone = enum(u8) {
     }
 };
 
+/// Presentation style of the wellbeing overlay surface.
+pub const Layout = enum(u1) {
+    /// Centered modal card over a dimmed scrim.
+    card,
+    /// Compact bottom bar leaving the viewport open for the ASCII backdrop.
+    hud,
+};
+
+/// Action button semantics for locking breaks versus dismissible reminders.
+pub const Action = enum(u1) {
+    unlock,
+    dismiss,
+
+    pub fn label(self: Action) []const u8 {
+        return switch (self) {
+            .unlock => "Unlock early",
+            .dismiss => "Dismiss",
+        };
+    }
+
+    pub fn keyCap(self: Action) []const u8 {
+        return switch (self) {
+            .unlock => "Ctrl+Shift+D",
+            .dismiss => "Esc",
+        };
+    }
+};
+
+const Presentation = packed struct(u8) {
+    tone: Tone = .healthy,
+    layout: Layout = .card,
+    action: Action = .unlock,
+    _: u4 = 0,
+};
+
 pub const Request = struct {
     tone: Tone = .healthy,
+    layout: Layout = .card,
+    action: Action = .unlock,
     title: []const u8,
     subtitle: []const u8,
     prompt: []const u8,
@@ -59,7 +102,7 @@ pub const Request = struct {
 
 pub const State = struct {
     phase: dialog.Phase = .closed,
-    tone: Tone = .healthy,
+    presentation: Presentation = .{},
     touch: button.State = .normal,
     focused: bool = false,
     motion: motion.Mode = .full,
@@ -175,7 +218,9 @@ fn sync(self: *State, req: Request) Outcome {
         0;
 
     const same = self.phase.acceptsInput() and
-        self.tone == req.tone and
+        self.presentation.tone == req.tone and
+        self.presentation.layout == req.layout and
+        self.presentation.action == req.action and
         self.scrim_alpha == req.scrim_alpha and
         self.steps_total == clamped_steps_total and
         self.steps_done == clamped_steps_done and
@@ -191,7 +236,11 @@ fn sync(self: *State, req: Request) Outcome {
         self.focused = req.focus;
     }
 
-    self.tone = req.tone;
+    self.presentation = .{
+        .tone = req.tone,
+        .layout = req.layout,
+        .action = req.action,
+    };
     self.scrim_alpha = req.scrim_alpha;
     self.steps_total = clamped_steps_total;
     self.steps_done = clamped_steps_done;
@@ -277,8 +326,15 @@ pub const node_max = dialog.node_max + 9 + steps_max + chart.progress_nodes + bu
 pub fn view(state: *const State, tree: *Tree, theme: *const Theme) Tree.Error!void {
     if (state.phase == .closed) return;
     const presence = state.phase.presence(state.motion);
-    const accent = state.tone.accent(theme).fade(presence);
+    const accent = state.presentation.tone.accent(theme).fade(presence);
 
+    switch (state.presentation.layout) {
+        .card => try viewCard(state, tree, theme, presence, accent),
+        .hud => try viewHud(state, tree, theme, presence, accent),
+    }
+}
+
+fn viewCard(state: *const State, tree: *Tree, theme: *const Theme, presence: f32, accent: Color) Tree.Error!void {
     const frame = try dialog.open(tree, theme, .{
         .scrim_id = scrim_id,
         .card_id = card_id,
@@ -300,23 +356,7 @@ pub fn view(state: *const State, tree: *Tree, theme: *const Theme) Tree.Error!vo
         .style = .lg_semibold,
         .width = .fill,
     });
-    if (state.steps_total > 0) {
-        const pips = try tree.open(.{
-            .axis = .row,
-            .cross = .center,
-            .gap = 4,
-        });
-        for (0..state.steps_total) |idx| {
-            const done = idx < state.steps_done;
-            _ = try tree.leaf(.{
-                .width = .{ .fixed = 8 },
-                .height = .{ .fixed = 8 },
-                .radius = 4,
-                .fill = if (done) accent else theme.muted.fade(presence),
-            });
-        }
-        tree.close(pips);
-    }
+    try viewSteps(tree, theme, state.steps_total, state.steps_done, accent, presence);
     tree.close(title_row);
     if (state.subtitle_len > 0) {
         try dialog.description(tree, theme, state.subtitle(), presence);
@@ -350,8 +390,8 @@ pub fn view(state: *const State, tree: *Tree, theme: *const Theme) Tree.Error!vo
     const footer = try dialog.footer(tree);
     try button.view(tree, theme, .{
         .id = unlock_id,
-        .label = "Unlock early",
-        .key_cap = "Ctrl+Shift+D",
+        .label = state.presentation.action.label(),
+        .key_cap = state.presentation.action.keyCap(),
         .variant = .outline,
         .size = .sm,
         .state = state.touch,
@@ -361,4 +401,90 @@ pub fn view(state: *const State, tree: *Tree, theme: *const Theme) Tree.Error!vo
     tree.close(footer);
 
     dialog.close(tree, frame);
+}
+
+fn viewHud(state: *const State, tree: *Tree, theme: *const Theme, presence: f32, accent: Color) Tree.Error!void {
+    const scrim = try tree.open(.{
+        .id = scrim_id,
+        .width = .fill,
+        .height = .fill,
+        .main = .end,
+        .cross = .center,
+        .padding = .{ .top = 16, .right = 20, .bottom = 20, .left = 20 },
+    });
+    const bar = try tree.open(.{
+        .id = card_id,
+        .axis = .row,
+        .width = .{ .at_most = hud_max_width },
+        .cross = .center,
+        .gap = 16,
+        .padding = .{ .top = 12, .right = 16, .bottom = 12, .left = 16 },
+        .radius = Theme.radius,
+        .fill = theme.popover.alpha(90).fade(presence),
+        .border_width = 1,
+        .border = theme.border.fade(presence),
+    });
+
+    const body = try tree.open(.{ .width = .fill, .gap = 6 });
+    const top_row = try tree.open(.{
+        .axis = .row,
+        .width = .fill,
+        .cross = .center,
+        .gap = 8,
+    });
+    _ = try tree.text(state.title(), .{
+        .color = theme.foreground.fade(presence),
+        .style = .sm_medium,
+        .width = .fill,
+    });
+    try viewSteps(tree, theme, state.steps_total, state.steps_done, accent, presence);
+    _ = try tree.text(state.timeText(), .{
+        .color = theme.foreground.fade(presence),
+        .style = .sm_medium,
+        .figures = .tabular,
+    });
+    tree.close(top_row);
+
+    if (state.prompt_len > 0) {
+        _ = try tree.text(state.prompt(), .{
+            .color = theme.muted_foreground.fade(presence),
+            .style = .xs,
+            .width = .fill,
+        });
+    }
+    try chart.progress(tree, theme, .bar, state.progress, accent, 4);
+    tree.close(body);
+
+    try button.view(tree, theme, .{
+        .id = unlock_id,
+        .label = state.presentation.action.label(),
+        .key_cap = state.presentation.action.keyCap(),
+        .variant = .outline,
+        .size = .sm,
+        .state = state.touch,
+        .focused = state.focused,
+        .presence = presence,
+    });
+
+    tree.close(bar);
+    tree.close(scrim);
+}
+
+fn viewSteps(tree: *Tree, theme: *const Theme, total: u8, done_count: u8, accent: Color, presence: f32) Tree.Error!void {
+    if (total == 0) return;
+    const pips = try tree.open(.{
+        .axis = .row,
+        .cross = .center,
+        .gap = 4,
+    });
+    for (0..total) |idx| {
+        const done = idx < done_count;
+        _ = try tree.leaf(.{
+            .width = .{ .fixed = 8 },
+            .height = .{ .fixed = 8 },
+            .radius = 4,
+            .fill = if (done) accent else theme.muted.fade(presence),
+        });
+    }
+    tree.close(pips);
 }
