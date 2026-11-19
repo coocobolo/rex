@@ -76,7 +76,7 @@ const keysyms = [_]struct { name: []const u8, cp: u16 }{
 
 const Page = [96]u16;
 
-const Error = error{ MissingDefine, MissingMacro, BadEntry, UnknownKeysym };
+const Error = error{ MissingDefine, MissingMacro, BadMacro, BadEntry, UnknownKeysym };
 
 pub fn main(init: std.process.Init) !void {
     var args = init.minimal.args.iterate();
@@ -149,14 +149,34 @@ fn macroBody(header: []const u8, macro: []const u8) Error![]const u8 {
     const needle = std.fmt.bufPrint(&buf, "#define map_{s}(code", .{macro}) catch return error.MissingMacro;
     var pos: usize = 0;
     while (mem.indexOfPos(u8, header, pos, needle)) |at| : (pos = at + needle.len) {
-        // A macro ends at the first line without a trailing backslash.
+        // Tokenize the macro by braces instead of trusting backslash
+        // continuations: an unbalanced body is malformed input, not a page.
         var end = at;
+        var depth: usize = 0;
+        var saw_switch = false;
         while (mem.indexOfScalarPos(u8, header, end, '\n')) |nl| {
+            const line = header[end..nl];
+            const continued = line.len > 0 and line[line.len - 1] == '\\';
+            if (mem.indexOf(u8, line, "switch") != null) saw_switch = true;
+            for (line) |ch| switch (ch) {
+                '{' => depth += 1,
+                '}' => {
+                    if (depth == 0) return error.BadMacro;
+                    depth -= 1;
+                },
+                else => {},
+            };
             end = nl + 1;
-            if (nl == 0 or header[nl - 1] != '\\') break;
-        } else end = header.len;
-        const body = header[at..end];
-        if (mem.indexOf(u8, body, "switch") != null) return body;
+            if (!continued) {
+                if (!saw_switch) break; // empty fallback; try the next definition
+                if (depth != 0) return error.BadMacro;
+                return header[at..end];
+            }
+        } else {
+            if (!saw_switch) break;
+            if (depth != 0) return error.BadMacro;
+            return header[at..];
+        }
     }
     return error.MissingMacro;
 }
@@ -212,7 +232,11 @@ fn parseEntry(text: []const u8, undef: u16, pua: u16) Error!struct { code: u16, 
     }
     if (mem.startsWith(u8, value, "XK_")) {
         if (mem.indexOf(u8, value, "U+")) |u| {
-            const cp = std.fmt.parseInt(u16, value[u + 2 .. u + 6], 16) catch return error.BadEntry;
+            const hex = value[u + 2 ..];
+            var end: usize = 0;
+            while (end < hex.len and std.ascii.isHex(hex[end])) end += 1;
+            if (end == 0 or end > 4) return error.BadEntry;
+            const cp = std.fmt.parseInt(u16, hex[0..end], 16) catch return error.BadEntry;
             return .{ .code = code, .cp = cp };
         }
         const name_end = mem.indexOfScalar(u8, value, ')') orelse return error.BadEntry;

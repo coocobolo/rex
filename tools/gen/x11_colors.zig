@@ -16,6 +16,7 @@
 
 const std = @import("std");
 const ucd = @import("ucd.zig");
+const emit = @import("emit.zig");
 
 const gen_name = "x11-colors";
 const usage_args = "<out.zig> <rgb.txt>";
@@ -145,10 +146,9 @@ fn parse(writer: *std.Io.Writer, gpa: std.mem.Allocator, content: []const u8) !u
         }
 
         count += 1;
-        try writer.print(
-            "    .{{ \"{s}\", Rgb{{ .r = {d}, .g = {d}, .b = {d} }} }},\n",
-            .{ lower, r, g, b },
-        );
+        try writer.writeAll("    .{ \"");
+        try emit.writeStringLiteral(writer, lower);
+        try writer.print("\", Rgb{{ .r = {d}, .g = {d}, .b = {d} }} }},\n", .{ r, g, b });
     }
 
     try writer.writeAll("});\n");

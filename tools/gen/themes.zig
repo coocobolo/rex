@@ -11,6 +11,7 @@
 
 const std = @import("std");
 const ucd = @import("ucd.zig");
+const emit = @import("emit.zig");
 const parser = @import("scheme");
 
 const gen_name = "themes";
@@ -91,10 +92,11 @@ fn writePresets(w: *std.Io.Writer, schemes: []const parser.Scheme) !void {
 
     try w.writeAll("pub const entries = [_]Entry{\n");
     for (schemes) |scheme| {
-        try w.print(
-            "    .{{ .slug = \"{s}\", .title = \"{s}\", .variant = .{t}, .theme = {s} }},\n",
-            .{ scheme.slug, scheme.title, scheme.variant, scheme.slug },
-        );
+        try w.writeAll("    .{ .slug = \"");
+        try emit.writeStringLiteral(w, scheme.slug);
+        try w.writeAll("\", .title = \"");
+        try emit.writeStringLiteral(w, scheme.title);
+        try w.print("\", .variant = .{t}, .theme = {s} }},\n", .{ scheme.variant, scheme.slug });
     }
     try w.writeAll("};\n");
 }

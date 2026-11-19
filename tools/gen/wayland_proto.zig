@@ -111,11 +111,25 @@ fn emitSanitized(
         const line = std.mem.trimEnd(u8, raw_line, "\r");
         const trimmed = std.mem.trimStart(u8, line, " \t");
 
+        const directive = directiveName(trimmed);
         if (skip_depth > 0) {
-            if (std.mem.startsWith(u8, trimmed, "#if")) {
-                skip_depth += 1;
-            } else if (std.mem.startsWith(u8, trimmed, "#endif")) {
-                skip_depth -= 1;
+            if (directive) |name| {
+                if (std.mem.eql(u8, name, "if") or
+                    std.mem.eql(u8, name, "ifdef") or
+                    std.mem.eql(u8, name, "ifndef"))
+                {
+                    skip_depth += 1;
+                } else if (std.mem.eql(u8, name, "endif")) {
+                    skip_depth -= 1;
+                } else if (std.mem.eql(u8, name, "else") or
+                    std.mem.eql(u8, name, "elif") or
+                    std.mem.eql(u8, name, "define") or
+                    std.mem.eql(u8, name, "include"))
+                {
+                    // Branch and declaration lines inside a skipped block.
+                } else {
+                    return error.UnsupportedPreprocessorDirective;
+                }
             }
             continue;
         }
@@ -126,8 +140,16 @@ fn emitSanitized(
             skip_depth = 1;
             continue;
         }
-        if (std.mem.startsWith(u8, trimmed, "#include ")) {
-            continue;
+        if (directive) |name| {
+            if (std.mem.eql(u8, name, "include")) continue;
+            const emitted = std.mem.eql(u8, name, "define") or
+                std.mem.eql(u8, name, "if") or
+                std.mem.eql(u8, name, "ifdef") or
+                std.mem.eql(u8, name, "ifndef") or
+                std.mem.eql(u8, name, "else") or
+                std.mem.eql(u8, name, "elif") or
+                std.mem.eql(u8, name, "endif");
+            if (!emitted) return error.UnsupportedPreprocessorDirective;
         }
 
         const extern_prefix = "extern const struct wl_interface ";
@@ -143,4 +165,15 @@ fn emitSanitized(
 
         try w.print("{s}\n", .{line});
     }
+    if (skip_depth != 0) return error.UnbalancedPreprocessor;
+}
+
+/// The directive word of a preprocessor line, or null for ordinary source.
+fn directiveName(trimmed: []const u8) ?[]const u8 {
+    if (!std.mem.startsWith(u8, trimmed, "#")) return null;
+    var rest = trimmed[1..];
+    while (rest.len > 0 and (rest[0] == ' ' or rest[0] == '\t')) rest = rest[1..];
+    var end: usize = 0;
+    while (end < rest.len and rest[end] != ' ' and rest[end] != '\t' and rest[end] != '(') end += 1;
+    return rest[0..end];
 }
