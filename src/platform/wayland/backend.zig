@@ -303,16 +303,38 @@ pub fn postWakeup() void {
     _ = system.write(state.wakeup_write, &byte, 1);
 }
 
+fn markAllWindowsClosed() void {
+    for (&state.window_slots, &state.window_used) |*slot, used| {
+        if (used and !slot.should_close) {
+            slot.should_close = true;
+            pushEvent(.{ .close = .{ .window = slot.windowHandle() } });
+        }
+    }
+}
+
 /// Processes pending Wayland events without blocking.
 pub fn pollEvents() void {
     if (state.phase != .ready) return;
     const wl_lib = &state.wl.?;
     const dpy = state.display orelse return;
 
-    while (wl_lib.wl_display_prepare_read(dpy) != 0) {
-        _ = wl_lib.wl_display_dispatch_pending(dpy);
+    if (wl_lib.wl_display_get_error(dpy) != 0) {
+        markAllWindowsClosed();
+        return;
     }
-    _ = wl_lib.wl_display_flush(dpy);
+
+    while (wl_lib.wl_display_prepare_read(dpy) != 0) {
+        if (wl_lib.wl_display_dispatch_pending(dpy) < 0) {
+            markAllWindowsClosed();
+            return;
+        }
+    }
+    const flush_res = wl_lib.wl_display_flush(dpy);
+    if (flush_res < 0 and posix.errno(flush_res) != .AGAIN) {
+        wl_lib.wl_display_cancel_read(dpy);
+        markAllWindowsClosed();
+        return;
+    }
 
     var pfd = [1]posix.pollfd{.{
         .fd = wl_lib.wl_display_get_fd(dpy),
@@ -321,11 +343,16 @@ pub fn pollEvents() void {
     }};
     const ready = system.poll(&pfd, 1, 0);
     if (ready > 0 and (pfd[0].revents & posix.POLL.IN) != 0) {
-        if (wl_lib.wl_display_read_events(dpy) == 0) {
-            _ = wl_lib.wl_display_dispatch_pending(dpy);
+        if (wl_lib.wl_display_read_events(dpy) < 0 or wl_lib.wl_display_dispatch_pending(dpy) < 0) {
+            markAllWindowsClosed();
+            return;
         }
     } else {
         wl_lib.wl_display_cancel_read(dpy);
+    }
+    if (ready > 0 and (pfd[0].revents & (posix.POLL.HUP | posix.POLL.ERR | posix.POLL.NVAL)) != 0) {
+        markAllWindowsClosed();
+        return;
     }
     if (state.seat_state.repeat_active) {
         state.seat_state.tickRepeat(seat.monotonicNs());
@@ -338,11 +365,24 @@ pub fn waitEvents(timeout_ms: ?f64) void {
     const wl_lib = &state.wl.?;
     const dpy = state.display orelse return;
 
+    if (wl_lib.wl_display_get_error(dpy) != 0) {
+        markAllWindowsClosed();
+        return;
+    }
+
     while (wl_lib.wl_display_prepare_read(dpy) != 0) {
-        _ = wl_lib.wl_display_dispatch_pending(dpy);
+        if (wl_lib.wl_display_dispatch_pending(dpy) < 0) {
+            markAllWindowsClosed();
+            return;
+        }
     }
     const flush_res = wl_lib.wl_display_flush(dpy);
     const need_flush_out = flush_res < 0 and posix.errno(flush_res) == .AGAIN;
+    if (flush_res < 0 and !need_flush_out) {
+        wl_lib.wl_display_cancel_read(dpy);
+        markAllWindowsClosed();
+        return;
+    }
 
     var pfds = [2]posix.pollfd{
         .{
@@ -368,14 +408,23 @@ pub fn waitEvents(timeout_ms: ?f64) void {
 
     const ready = system.poll(&pfds, 2, timeout);
     if (ready > 0 and (pfds[0].revents & posix.POLL.IN) != 0) {
-        if (wl_lib.wl_display_read_events(dpy) == 0) {
-            _ = wl_lib.wl_display_dispatch_pending(dpy);
+        if (wl_lib.wl_display_read_events(dpy) < 0 or wl_lib.wl_display_dispatch_pending(dpy) < 0) {
+            markAllWindowsClosed();
+            return;
         }
     } else {
         wl_lib.wl_display_cancel_read(dpy);
     }
+    if (ready > 0 and (pfds[0].revents & (posix.POLL.HUP | posix.POLL.ERR | posix.POLL.NVAL)) != 0) {
+        markAllWindowsClosed();
+        return;
+    }
     if (need_flush_out and ready > 0 and (pfds[0].revents & posix.POLL.OUT) != 0) {
-        _ = wl_lib.wl_display_flush(dpy);
+        const res = wl_lib.wl_display_flush(dpy);
+        if (res < 0 and posix.errno(res) != .AGAIN) {
+            markAllWindowsClosed();
+            return;
+        }
     }
 
     if (ready > 0 and (pfds[1].revents & posix.POLL.IN) != 0) {
