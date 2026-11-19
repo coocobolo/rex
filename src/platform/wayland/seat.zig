@@ -30,8 +30,7 @@ pub const Seat = struct {
     xkb_state: ?*c_xkb.xkb_state = null,
     kb_focus: ?*WaylandWindow = null,
     ptr_focus: ?*WaylandWindow = null,
-    pending_scroll_x: f64 = 0,
-    pending_scroll_y: f64 = 0,
+    pending_scroll: ?Scroll = null,
     repeat_next_ns: i64 = 0,
     last_serial: u32 = 0,
     pointer_enter_serial: u32 = 0,
@@ -42,8 +41,12 @@ pub const Seat = struct {
     repeat_key: Key = .escape,
     mods: Modifiers = .none,
     repeat_active: bool = false,
-    has_pending_scroll: bool = false,
     keys_down: std.StaticBitSet(key_bitset_len) = .initEmpty(),
+
+    const Scroll = struct {
+        dx: f64 = 0,
+        dy: f64 = 0,
+    };
 
     /// Attaches the `wl_seat` listener and creates the `xkbcommon` context.
     pub fn attach(self: *Seat, wl_seat: *wl.Proxy) void {
@@ -189,6 +192,11 @@ pub const Seat = struct {
         if (self.repeat_active and self.repeat_keycode == keycode) {
             self.repeat_active = false;
         }
+    }
+
+    fn addScroll(self: *Seat, dx: f64, dy: f64) void {
+        const pending: Scroll = self.pending_scroll orelse .{};
+        self.pending_scroll = .{ .dx = pending.dx + dx, .dy = pending.dy + dy };
     }
 };
 
@@ -492,28 +500,22 @@ fn onPointerAxis(data: ?*anyopaque, _: ?*wl.Proxy, _: u32, axis: u32, value: i32
     const self: *Seat = @ptrCast(@alignCast(data.?));
     const pixels = key.fixedToF64(value);
     if (axis == proto.pointer.axis_vertical) {
-        self.pending_scroll_y += key.verticalScroll(pixels);
-        self.has_pending_scroll = true;
+        self.addScroll(0, key.verticalScroll(pixels));
     } else if (axis == proto.pointer.axis_horizontal) {
-        self.pending_scroll_x += key.horizontalScroll(pixels);
-        self.has_pending_scroll = true;
+        self.addScroll(key.horizontalScroll(pixels), 0);
     }
 }
 
 fn onPointerFrame(data: ?*anyopaque, _: ?*wl.Proxy) callconv(.c) void {
     const self: *Seat = @ptrCast(@alignCast(data.?));
-    if (!self.has_pending_scroll) return;
-    self.has_pending_scroll = false;
-    const dx = self.pending_scroll_x;
-    const dy = self.pending_scroll_y;
-    self.pending_scroll_x = 0;
-    self.pending_scroll_y = 0;
+    const scroll = self.pending_scroll orelse return;
+    self.pending_scroll = null;
     const win = self.ptr_focus orelse return;
-    if (dx != 0 or dy != 0) {
+    if (scroll.dx != 0 or scroll.dy != 0) {
         backend.pushEvent(.{ .scroll = .{
             .window = win.windowHandle(),
-            .dx = dx,
-            .dy = dy,
+            .dx = scroll.dx,
+            .dy = scroll.dy,
         } });
     }
 }

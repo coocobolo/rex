@@ -3,6 +3,7 @@ const testing = std.testing;
 
 const backend = @import("backend.zig");
 const seat = @import("seat.zig");
+const text_input = @import("text_input.zig");
 const WaylandWindow = @import("WaylandWindow.zig");
 
 test "WaylandWindow and backend state layout stay compact and aligned" {
@@ -13,10 +14,16 @@ test "WaylandWindow and backend state layout stay compact and aligned" {
     try testing.expectEqual(@as(usize, 80), @offsetOf(WaylandWindow, "logical_width"));
 
     try testing.expectEqual(@as(usize, 8), @alignOf(seat.Seat));
-    try testing.expect(@sizeOf(seat.Seat) <= 160);
+    // 8 pointers (64B) + optional 16B scroll payload (24B) + 40B scalars/flags
+    // + 16B key bitset = 144B.
+    try testing.expectEqual(@as(usize, 144), @sizeOf(seat.Seat));
+
+    try testing.expectEqual(@as(usize, 8), @alignOf(text_input.TextInput));
+    // Two optionals (36B preedit + 130B commit) plus 2 pointers and a flag.
+    try testing.expectEqual(@as(usize, 184), @sizeOf(text_input.TextInput));
 
     const State = @TypeOf(backend.state);
     try testing.expectEqual(@as(usize, 8), @alignOf(State));
     // Selection buffers live separately in .bss so backend.state stays small.
-    try testing.expect(@sizeOf(State) < 20_000);
+    try testing.expectEqual(@as(usize, 16_312), @sizeOf(State));
 }

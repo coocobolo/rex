@@ -13,19 +13,28 @@ const wl = @import("wl.zig");
 /// Maximum UTF-8 bytes accepted in one `commit_string` event. Oversized
 /// commits are dropped whole rather than truncated.
 pub const max_commit_bytes = 128;
+/// Maximum UTF-8 bytes accepted in one `preedit_string` event (ten 3-byte CJK
+/// characters, matching `Event.PreeditEvent`). Oversized preedits are dropped.
+pub const max_preedit_bytes = 32;
 
 pub const TextInput = struct {
     proxy: ?*wl.Proxy = null,
     focus: ?*WaylandWindow = null,
-    pending_preedit: [32]u8 = undefined,
-    pending_preedit_len: u8 = 0,
-    pending_preedit_cursor: u8 = 0,
-    pending_preedit_selection: u8 = 0,
-    has_pending_preedit: bool = false,
-    pending_commit: [max_commit_bytes]u8 = undefined,
-    pending_commit_len: u8 = 0,
-    has_pending_commit: bool = false,
+    pending_preedit: ?Preedit = null,
+    pending_commit: ?Commit = null,
     preedit_active: bool = false,
+
+    const Preedit = struct {
+        text: [max_preedit_bytes]u8 = undefined,
+        len: u8 = 0,
+        cursor: u8 = 0,
+        selection: u8 = 0,
+    };
+
+    const Commit = struct {
+        text: [max_commit_bytes]u8 = undefined,
+        len: u8 = 0,
+    };
 
     /// Creates a `zwp_text_input_v3` object on `seat` and binds its listener.
     pub fn attach(self: *TextInput, mgr: *wl.Proxy, wl_seat: *wl.Proxy) void {
@@ -66,36 +75,35 @@ pub const TextInput = struct {
         }
     }
 
-    /// Stages a preedit string for the next `done` event. Oversized preedit
-    /// strings (> 32 bytes) are dropped whole, matching `Event.PreeditEvent`.
+    /// Stages a preedit string for the next `done` event. Preedits over
+    /// `max_preedit_bytes` are dropped whole, matching `Event.PreeditEvent`.
     pub fn stagePreedit(self: *TextInput, text: ?[]const u8, cursor_begin: i32, cursor_end: i32) void {
         const bytes = text orelse {
-            self.pending_preedit_len = 0;
-            self.pending_preedit_cursor = 0;
-            self.pending_preedit_selection = 0;
-            self.has_pending_preedit = true;
+            // A present but empty preedit clears the active one on `done`.
+            self.pending_preedit = .{};
             return;
         };
-        if (bytes.len > self.pending_preedit.len) {
+        if (bytes.len > max_preedit_bytes) {
             // Drop whole rather than emitting a truncated UTF-8 sequence.
-            self.has_pending_preedit = false;
+            self.pending_preedit = null;
             return;
         }
-        @memcpy(self.pending_preedit[0..bytes.len], bytes);
+        var preedit: Preedit = .{};
+        @memcpy(preedit.text[0..bytes.len], bytes);
         const len_u8: u8 = @intCast(bytes.len);
-        self.pending_preedit_len = len_u8;
-        self.pending_preedit_cursor = clampPos(cursor_begin, len_u8);
-        self.pending_preedit_selection = clampPos(cursor_end, len_u8);
-        self.has_pending_preedit = true;
+        preedit.len = len_u8;
+        preedit.cursor = clampPos(cursor_begin, len_u8);
+        preedit.selection = clampPos(cursor_end, len_u8);
+        self.pending_preedit = preedit;
     }
 
     /// Stages a commit string for the next `done` event.
     pub fn stageCommit(self: *TextInput, text: ?[]const u8) void {
         const bytes = text orelse return;
-        if (bytes.len == 0 or bytes.len > self.pending_commit.len) return;
-        @memcpy(self.pending_commit[0..bytes.len], bytes);
-        self.pending_commit_len = @intCast(bytes.len);
-        self.has_pending_commit = true;
+        if (bytes.len == 0 or bytes.len > max_commit_bytes) return;
+        var commit: Commit = .{ .len = @intCast(bytes.len) };
+        @memcpy(commit.text[0..bytes.len], bytes);
+        self.pending_commit = commit;
     }
 
     /// Applies staged commit and preedit state to the event ring on `done`.
@@ -103,8 +111,8 @@ pub const TextInput = struct {
         defer self.resetPending();
         const win = self.focus orelse return;
 
-        if (self.has_pending_commit) {
-            const slice = self.pending_commit[0..self.pending_commit_len];
+        if (self.pending_commit) |*commit| {
+            const slice = commit.text[0..commit.len];
             if (std.unicode.Utf8View.init(slice)) |view| {
                 var it = view.iterator();
                 while (it.nextCodepoint()) |cp| {
@@ -119,14 +127,14 @@ pub const TextInput = struct {
             }
         }
 
-        if (self.has_pending_preedit) {
+        if (self.pending_preedit) |*preedit| {
             var ev: events.PreeditEvent = .{
                 .window = win.windowHandle(),
-                .len = self.pending_preedit_len,
-                .cursor = self.pending_preedit_cursor,
-                .selection = self.pending_preedit_selection,
+                .len = preedit.len,
+                .cursor = preedit.cursor,
+                .selection = preedit.selection,
             };
-            @memcpy(ev.text[0..ev.len], self.pending_preedit[0..ev.len]);
+            @memcpy(ev.text[0..ev.len], preedit.text[0..ev.len]);
             backend.pushEvent(.{ .preedit = ev });
             self.preedit_active = ev.len > 0;
         }
@@ -145,12 +153,8 @@ pub const TextInput = struct {
     }
 
     fn resetPending(self: *TextInput) void {
-        self.pending_preedit_len = 0;
-        self.pending_preedit_cursor = 0;
-        self.pending_preedit_selection = 0;
-        self.has_pending_preedit = false;
-        self.pending_commit_len = 0;
-        self.has_pending_commit = false;
+        self.pending_preedit = null;
+        self.pending_commit = null;
     }
 };
 
