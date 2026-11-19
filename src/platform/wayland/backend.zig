@@ -17,6 +17,7 @@ const events = @import("../Event.zig");
 const Window = @import("../Window.zig");
 const proto = @import("proto.zig");
 const seat = @import("seat.zig");
+const selection = @import("selection.zig");
 const text_input = @import("text_input.zig");
 const WaylandWindow = @import("WaylandWindow.zig");
 const wl = @import("wl.zig");
@@ -91,6 +92,10 @@ const State = struct {
     viewporter: ?*wl.Proxy = null,
     text_input_manager: ?*wl.Proxy = null,
     cursor_shape_manager: ?*wl.Proxy = null,
+    data_device_manager: ?*wl.Proxy = null,
+    primary_selection_manager: ?*wl.Proxy = null,
+    xdg_activation: ?*wl.Proxy = null,
+    xdg_system_bell: ?*wl.Proxy = null,
     seat: ?*wl.Proxy = null,
     seat_state: seat.Seat = .{},
     text_input_state: text_input.TextInput = .{},
@@ -108,6 +113,9 @@ const State = struct {
 };
 
 pub var state: State = .{};
+/// Kept in `.bss` separately from `state` so its 3 MiB fixed selection buffers
+/// are never copied on the stack during `state = .{}` resets.
+pub var selection_state: selection.Selection = .{};
 
 pub const InitError = error{
     X11Unavailable,
@@ -548,23 +556,70 @@ pub fn windowSetPointerVisible(window: Window, visible: bool) void {
     state.seat_state.applyCursor(win);
 }
 
-pub fn windowSetClipboard(_: Window, _: [:0]const u8) void {}
+pub fn windowSetClipboard(_: Window, text: [:0]const u8) void {
+    selection_state.setClipboard(text);
+}
 
 pub fn windowGetClipboard(_: Window) ?[:0]const u8 {
-    return null;
+    return selection_state.getClipboard();
 }
 
 pub fn windowGetPrimarySelection(_: Window) ?[:0]const u8 {
-    return null;
+    return selection_state.getPrimary();
 }
 
-pub fn windowSetPrimarySelection(_: Window, _: [:0]const u8) bool {
-    return false;
+pub fn windowSetPrimarySelection(_: Window, text: [:0]const u8) bool {
+    return selection_state.setPrimary(text);
 }
 
-pub fn windowRequestAttention(_: Window) void {}
+pub fn windowRequestAttention(window: Window) void {
+    const wl_lib = if (state.wl) |*wlib| wlib else return;
+    const activation = state.xdg_activation orelse return;
+    const win = fromHandle(window);
+    const surf = win.wl_surface orelse return;
+    const ifaces = proto.interfaces();
 
-pub fn windowRingBell(_: Window, _: f32) void {}
+    const token = wl_lib.wl_proxy_marshal_flags(
+        activation,
+        proto.xdg_activation.get_activation_token,
+        ifaces.xdg_activation_token,
+        wl_lib.wl_proxy_get_version(activation),
+        0,
+        @as(?*anyopaque, null),
+    ) orelse return;
+    _ = wl_lib.wl_proxy_add_listener(token, @ptrCast(@constCast(&activation_token_listener)), win);
+    const ver = wl_lib.wl_proxy_get_version(token);
+    const app_id: [:0]const u8 = "rex";
+    _ = wl_lib.wl_proxy_marshal_flags(token, proto.xdg_activation_token.set_app_id, null, ver, 0, app_id.ptr);
+    _ = wl_lib.wl_proxy_marshal_flags(token, proto.xdg_activation_token.set_surface, null, ver, 0, surf);
+    if (state.seat) |s| {
+        if (state.seat_state.last_serial != 0) {
+            _ = wl_lib.wl_proxy_marshal_flags(token, proto.xdg_activation_token.set_serial, null, ver, 0, state.seat_state.last_serial, s);
+        }
+    }
+    _ = wl_lib.wl_proxy_marshal_flags(token, proto.xdg_activation_token.commit, null, ver, 0);
+    if (state.display) |dpy| _ = wl_lib.wl_display_flush(dpy);
+}
+
+pub fn windowRingBell(window: Window, volume: f32) void {
+    if (volume <= 0) return;
+    const wl_lib = if (state.wl) |*wlib| wlib else return;
+    if (state.xdg_system_bell) |bell| {
+        const surf = fromHandle(window).wl_surface;
+        _ = wl_lib.wl_proxy_marshal_flags(
+            bell,
+            proto.xdg_system_bell.ring,
+            null,
+            wl_lib.wl_proxy_get_version(bell),
+            0,
+            surf,
+        );
+        if (state.display) |dpy| _ = wl_lib.wl_display_flush(dpy);
+        return;
+    }
+    // Degrade to attention-only bell when the compositor omits xdg_system_bell_v1.
+    windowRequestAttention(window);
+}
 
 fn fromHandle(window: Window) *WaylandWindow {
     return @ptrCast(@alignCast(window.impl));
@@ -576,9 +631,26 @@ fn drainWakeup() void {
 }
 
 fn destroyGlobals() void {
+    selection_state.deinit();
     state.text_input_state.deinit();
     state.seat_state.deinit();
     const wl_lib = if (state.wl) |*wlib| wlib else return;
+    if (state.xdg_system_bell) |p| {
+        _ = wl_lib.wl_proxy_marshal_flags(p, proto.xdg_system_bell.destroy, null, wl_lib.wl_proxy_get_version(p), proto.marshal_flag_destroy);
+        state.xdg_system_bell = null;
+    }
+    if (state.xdg_activation) |p| {
+        _ = wl_lib.wl_proxy_marshal_flags(p, proto.xdg_activation.destroy, null, wl_lib.wl_proxy_get_version(p), proto.marshal_flag_destroy);
+        state.xdg_activation = null;
+    }
+    if (state.primary_selection_manager) |p| {
+        _ = wl_lib.wl_proxy_marshal_flags(p, proto.primary_selection_manager.destroy, null, wl_lib.wl_proxy_get_version(p), proto.marshal_flag_destroy);
+        state.primary_selection_manager = null;
+    }
+    if (state.data_device_manager) |p| {
+        wl_lib.wl_proxy_destroy(p);
+        state.data_device_manager = null;
+    }
     if (state.text_input_manager) |p| {
         _ = wl_lib.wl_proxy_marshal_flags(p, proto.text_input_manager.destroy, null, wl_lib.wl_proxy_get_version(p), proto.marshal_flag_destroy);
         state.text_input_manager = null;
@@ -729,6 +801,64 @@ fn onRegistryGlobal(
             v,
             @as(?*anyopaque, null),
         );
+    } else if (std.mem.eql(u8, iface_name, "wl_data_device_manager") and state.data_device_manager == null) {
+        const v: u32 = @min(version, 3);
+        state.data_device_manager = wl_lib.wl_proxy_marshal_flags(
+            registry,
+            proto.registry.bind,
+            wl_lib.data_device_manager_interface,
+            v,
+            0,
+            name,
+            wl_lib.data_device_manager_interface.name,
+            v,
+            @as(?*anyopaque, null),
+        );
+        if (state.data_device_manager) |mgr| {
+            if (state.seat) |s| selection_state.attachClipboard(mgr, s);
+        }
+    } else if (std.mem.eql(u8, iface_name, "zwp_primary_selection_device_manager_v1") and state.primary_selection_manager == null) {
+        const v: u32 = @min(version, 1);
+        state.primary_selection_manager = wl_lib.wl_proxy_marshal_flags(
+            registry,
+            proto.registry.bind,
+            ifaces.primary_selection_manager,
+            v,
+            0,
+            name,
+            ifaces.primary_selection_manager.name,
+            v,
+            @as(?*anyopaque, null),
+        );
+        if (state.primary_selection_manager) |mgr| {
+            if (state.seat) |s| selection_state.attachPrimary(mgr, s);
+        }
+    } else if (std.mem.eql(u8, iface_name, "xdg_activation_v1") and state.xdg_activation == null) {
+        const v: u32 = @min(version, 1);
+        state.xdg_activation = wl_lib.wl_proxy_marshal_flags(
+            registry,
+            proto.registry.bind,
+            ifaces.xdg_activation,
+            v,
+            0,
+            name,
+            ifaces.xdg_activation.name,
+            v,
+            @as(?*anyopaque, null),
+        );
+    } else if (std.mem.eql(u8, iface_name, "xdg_system_bell_v1") and state.xdg_system_bell == null) {
+        const v: u32 = @min(version, 1);
+        state.xdg_system_bell = wl_lib.wl_proxy_marshal_flags(
+            registry,
+            proto.registry.bind,
+            ifaces.xdg_system_bell,
+            v,
+            0,
+            name,
+            ifaces.xdg_system_bell.name,
+            v,
+            @as(?*anyopaque, null),
+        );
     } else if (std.mem.eql(u8, iface_name, "wl_seat") and state.seat == null) {
         const v: u32 = @min(version, 8);
         if (wl_lib.wl_proxy_marshal_flags(
@@ -745,6 +875,8 @@ fn onRegistryGlobal(
             state.seat = wl_seat;
             state.seat_state.attach(wl_seat);
             if (state.text_input_manager) |mgr| state.text_input_state.attach(mgr, wl_seat);
+            if (state.data_device_manager) |mgr| selection_state.attachClipboard(mgr, wl_seat);
+            if (state.primary_selection_manager) |mgr| selection_state.attachPrimary(mgr, wl_seat);
         }
     }
 }
@@ -766,6 +898,28 @@ fn onXdgWmBasePing(_: ?*anyopaque, wm_base: ?*wl.Proxy, serial: u32) callconv(.c
 const registry_listener: proto.registry.Listener = .{
     .global = onRegistryGlobal,
     .global_remove = onRegistryGlobalRemove,
+};
+
+fn onActivationTokenDone(data: ?*anyopaque, token_proxy: ?*wl.Proxy, token: [*c]const u8) callconv(.c) void {
+    const wl_lib = if (state.wl) |*wlib| wlib else return;
+    defer _ = wl_lib.wl_proxy_marshal_flags(token_proxy, proto.xdg_activation_token.destroy, null, wl_lib.wl_proxy_get_version(token_proxy), proto.marshal_flag_destroy);
+    const activation = state.xdg_activation orelse return;
+    if (token == null or data == null) return;
+    const win: *WaylandWindow = @ptrCast(@alignCast(data.?));
+    const surf = win.wl_surface orelse return;
+    _ = wl_lib.wl_proxy_marshal_flags(
+        activation,
+        proto.xdg_activation.activate,
+        null,
+        wl_lib.wl_proxy_get_version(activation),
+        0,
+        token,
+        surf,
+    );
+}
+
+const activation_token_listener: proto.xdg_activation_token.Listener = .{
+    .done = onActivationTokenDone,
 };
 
 const xdg_wm_base_listener: proto.xdg_wm_base.Listener = .{

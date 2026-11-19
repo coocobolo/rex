@@ -6,5 +6,6 @@ test {
     _ = @import("layout_test.zig");
     _ = @import("input_test.zig");
     _ = @import("ime_scale_test.zig");
+    _ = @import("selection_test.zig");
     _ = @import("window_test.zig");
 }

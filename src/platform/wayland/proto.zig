@@ -225,3 +225,105 @@ pub const text_input = struct {
         done: *const fn (?*anyopaque, ?*wl.Proxy, u32) callconv(.c) void,
     };
 };
+
+pub const data_device_manager = struct {
+    pub const create_data_source: u32 = 0;
+    pub const get_data_device: u32 = 1;
+};
+
+pub const data_device = struct {
+    pub const set_selection: u32 = 1;
+    pub const release: u32 = 2;
+
+    pub const Listener = extern struct {
+        data_offer: *const fn (?*anyopaque, ?*wl.Proxy, ?*wl.Proxy) callconv(.c) void,
+        enter: *const fn (?*anyopaque, ?*wl.Proxy, u32, ?*wl.Proxy, i32, i32, ?*wl.Proxy) callconv(.c) void,
+        leave: *const fn (?*anyopaque, ?*wl.Proxy) callconv(.c) void,
+        motion: *const fn (?*anyopaque, ?*wl.Proxy, u32, i32, i32) callconv(.c) void,
+        drop: *const fn (?*anyopaque, ?*wl.Proxy) callconv(.c) void,
+        selection: *const fn (?*anyopaque, ?*wl.Proxy, ?*wl.Proxy) callconv(.c) void,
+    };
+};
+
+pub const data_source = struct {
+    pub const offer: u32 = 0;
+    pub const destroy: u32 = 1;
+
+    pub const Listener = extern struct {
+        target: *const fn (?*anyopaque, ?*wl.Proxy, [*c]const u8) callconv(.c) void,
+        send: *const fn (?*anyopaque, ?*wl.Proxy, [*c]const u8, i32) callconv(.c) void,
+        cancelled: *const fn (?*anyopaque, ?*wl.Proxy) callconv(.c) void,
+        dnd_drop_performed: *const fn (?*anyopaque, ?*wl.Proxy) callconv(.c) void,
+        dnd_finished: *const fn (?*anyopaque, ?*wl.Proxy) callconv(.c) void,
+        action: *const fn (?*anyopaque, ?*wl.Proxy, u32) callconv(.c) void,
+    };
+};
+
+pub const data_offer = struct {
+    pub const receive: u32 = 1;
+    pub const destroy: u32 = 2;
+
+    pub const Listener = extern struct {
+        offer: *const fn (?*anyopaque, ?*wl.Proxy, [*c]const u8) callconv(.c) void,
+        source_actions: *const fn (?*anyopaque, ?*wl.Proxy, u32) callconv(.c) void,
+        action: *const fn (?*anyopaque, ?*wl.Proxy, u32) callconv(.c) void,
+    };
+};
+
+pub const primary_selection_manager = struct {
+    pub const create_source: u32 = 0;
+    pub const get_device: u32 = 1;
+    pub const destroy: u32 = 2;
+};
+
+pub const primary_selection_device = struct {
+    pub const set_selection: u32 = 0;
+    pub const destroy: u32 = 1;
+
+    pub const Listener = extern struct {
+        data_offer: *const fn (?*anyopaque, ?*wl.Proxy, ?*wl.Proxy) callconv(.c) void,
+        selection: *const fn (?*anyopaque, ?*wl.Proxy, ?*wl.Proxy) callconv(.c) void,
+    };
+};
+
+pub const primary_selection_source = struct {
+    pub const offer: u32 = 0;
+    pub const destroy: u32 = 1;
+
+    pub const Listener = extern struct {
+        send: *const fn (?*anyopaque, ?*wl.Proxy, [*c]const u8, i32) callconv(.c) void,
+        cancelled: *const fn (?*anyopaque, ?*wl.Proxy) callconv(.c) void,
+    };
+};
+
+pub const primary_selection_offer = struct {
+    pub const receive: u32 = 0;
+    pub const destroy: u32 = 1;
+
+    pub const Listener = extern struct {
+        offer: *const fn (?*anyopaque, ?*wl.Proxy, [*c]const u8) callconv(.c) void,
+    };
+};
+
+pub const xdg_activation = struct {
+    pub const destroy: u32 = 0;
+    pub const get_activation_token: u32 = 1;
+    pub const activate: u32 = 2;
+};
+
+pub const xdg_activation_token = struct {
+    pub const set_serial: u32 = 0;
+    pub const set_app_id: u32 = 1;
+    pub const set_surface: u32 = 2;
+    pub const commit: u32 = 3;
+    pub const destroy: u32 = 4;
+
+    pub const Listener = extern struct {
+        done: *const fn (?*anyopaque, ?*wl.Proxy, [*c]const u8) callconv(.c) void,
+    };
+};
+
+pub const xdg_system_bell = struct {
+    pub const destroy: u32 = 0;
+    pub const ring: u32 = 1;
+};
