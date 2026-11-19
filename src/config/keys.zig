@@ -45,6 +45,7 @@ pub const Section = enum {
     @"wellbeing.privacy",
     @"wellbeing.dashboard",
     @"wellbeing.widget",
+    @"wellbeing.ascii",
     ui,
     scroll,
     scrollbar,
@@ -333,6 +334,13 @@ const tail_rows = [_]Key{
     .{ .section = .@"wellbeing.widget", .name = "height", .field = "window.wellbeing_widget.height", .bounds = .{ .min = 72, .max = 160 } },
     .{ .section = .@"wellbeing.widget", .name = "progress_style", .field = "window.wellbeing_widget.progress_style" },
     .{ .section = .@"wellbeing.widget", .name = "tooltip", .field = "window.wellbeing_widget.tooltip" },
+
+    .{ .section = .@"wellbeing.ascii", .name = "enabled", .field = "window.wellbeing_ascii.enabled" },
+    .{ .section = .@"wellbeing.ascii", .name = "scene", .field = "window.wellbeing_ascii.scene" },
+    .{ .section = .@"wellbeing.ascii", .name = "file", .field = "window.wellbeing_ascii.file", .kind = .path, .null_keyword = .none },
+    .{ .section = .@"wellbeing.ascii", .name = "fps", .field = "window.wellbeing_ascii.fps", .bounds = .{ .min = 1, .max = 30 } },
+    .{ .section = .@"wellbeing.ascii", .name = "cell_aspect", .field = "window.wellbeing_ascii.cell_aspect" },
+    .{ .section = .@"wellbeing.ascii", .name = "trigger", .field = "window.wellbeing_ascii.trigger" },
 
     .{ .section = .ui, .name = "motion", .field = "ui.motion" },
     .{ .section = .ui, .name = "color_scheme", .field = "ui.color_scheme" },

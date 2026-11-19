@@ -136,6 +136,8 @@ pub const Window = struct {
     alert_dialog: overlay.AlertDialog = .{},
     /// In-terminal floating wellbeing focus widget options (`[wellbeing.widget]`).
     wellbeing_widget: overlay.WellbeingWidget = .{},
+    /// Fullscreen ASCII animation overlay options (`[wellbeing.ascii]`).
+    wellbeing_ascii: overlay.WellbeingAscii = .{},
     /// What closing the window does.
     on_close: OnClose = .ask_if_running,
     /// Visual effects applied while the window is unfocused.

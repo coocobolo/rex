@@ -7,6 +7,7 @@
 const std = @import("std");
 
 const ScreenAnchor = @import("../kit/Tree.zig").ScreenAnchor;
+const AsciiCanvas = @import("../kit/AsciiCanvas.zig");
 const AlertPlacement = @import("../kit/alert.zig").Placement;
 const DialogPosition = @import("../kit/dialog.zig").Position;
 const toast = @import("../kit/toast.zig");
@@ -91,4 +92,21 @@ pub const WellbeingWidget = struct {
             .tooltip = self.tooltip,
         };
     }
+};
+
+/// Fullscreen ASCII animation overlay shown during wellbeing breaks and
+/// reminders (`[wellbeing.ascii]`).
+pub const WellbeingAscii = struct {
+    /// Opt-out switch: when false, locking reminders use the classic card.
+    enabled: bool = true,
+    /// Built-in procedural scene or external multi-frame ASCII file.
+    scene: AsciiCanvas.Scene = .spin_3d,
+    /// Optional path to a UTF-8 frame-delimited ASCII file when `scene = file`.
+    file: ?[*:0]const u8 = null,
+    /// Animation playback cadence in frames per second (1..30).
+    fps: u8 = 20,
+    /// Cell geometry used to lay out the ASCII grid (`square` or `terminal`).
+    cell_aspect: AsciiCanvas.CellAspect = .square,
+    /// Whether all wellbeing reminders or only locking breaks open the overlay.
+    trigger: AsciiCanvas.Trigger = .all,
 };

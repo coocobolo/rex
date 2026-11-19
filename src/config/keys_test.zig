@@ -434,6 +434,9 @@ const enum_names = [_]struct { []const u8, []const []const u8 }{
     .{ "wellbeing.dashboard.program_chart", &.{ "bar", "donut" } },
     .{ "wellbeing.widget.anchor", &.{ "top_left", "top_center", "top_right", "bottom_left", "bottom_center", "bottom_right" } },
     .{ "wellbeing.widget.progress_style", &.{ "auto", "bar", "ring", "border", "half_rings", "coil" } },
+    .{ "wellbeing.ascii.scene", &.{ "spin_3d", "torus", "breathe", "wave", "file" } },
+    .{ "wellbeing.ascii.cell_aspect", &.{ "square", "terminal" } },
+    .{ "wellbeing.ascii.trigger", &.{ "all", "lock_only" } },
     .{ "wellbeing.focus.during_task", &.{"mute_bell"} },
     .{ "wellbeing.focus.on_break", &.{ "prompt", "lock_input", "animation" } },
     .{ "wellbeing.focus.on_alert", &.{"pause"} },
@@ -803,4 +806,30 @@ test "apply: [wellbeing.dashboard] timer_chart and [wellbeing.widget] keys" {
     try std.testing.expectError(error.OutOfRange, applyText(&config, .@"wellbeing.widget", "height", "71"));
     try std.testing.expectError(error.OutOfRange, applyText(&config, .@"wellbeing.widget", "height", "161"));
     try std.testing.expectError(error.InvalidValue, applyText(&config, .@"wellbeing.widget", "progress_style", "donut"));
+}
+
+test "apply: [wellbeing.ascii] keys" {
+    var config = testConfig();
+    try std.testing.expect(config.window.wellbeing_ascii.enabled);
+    try std.testing.expectEqual(.spin_3d, config.window.wellbeing_ascii.scene);
+    try std.testing.expectEqual(@as(?[*:0]const u8, null), config.window.wellbeing_ascii.file);
+    try std.testing.expectEqual(@as(u8, 20), config.window.wellbeing_ascii.fps);
+    try std.testing.expectEqual(.square, config.window.wellbeing_ascii.cell_aspect);
+    try std.testing.expectEqual(.all, config.window.wellbeing_ascii.trigger);
+
+    try applyText(&config, .@"wellbeing.ascii", "enabled", "false");
+    try applyText(&config, .@"wellbeing.ascii", "scene", "breathe");
+    try applyText(&config, .@"wellbeing.ascii", "fps", "15");
+    try applyText(&config, .@"wellbeing.ascii", "cell_aspect", "terminal");
+    try applyText(&config, .@"wellbeing.ascii", "trigger", "lock_only");
+
+    try std.testing.expect(!config.window.wellbeing_ascii.enabled);
+    try std.testing.expectEqual(.breathe, config.window.wellbeing_ascii.scene);
+    try std.testing.expectEqual(@as(u8, 15), config.window.wellbeing_ascii.fps);
+    try std.testing.expectEqual(.terminal, config.window.wellbeing_ascii.cell_aspect);
+    try std.testing.expectEqual(.lock_only, config.window.wellbeing_ascii.trigger);
+
+    try std.testing.expectError(error.OutOfRange, applyText(&config, .@"wellbeing.ascii", "fps", "0"));
+    try std.testing.expectError(error.OutOfRange, applyText(&config, .@"wellbeing.ascii", "fps", "31"));
+    try std.testing.expectError(error.InvalidValue, applyText(&config, .@"wellbeing.ascii", "scene", "matrix"));
 }

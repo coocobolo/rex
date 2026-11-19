@@ -1248,3 +1248,10 @@ test "settings: external config edits sync on wake without clobbering dirty inpu
     // A second wake with no new file change is a quiet no-op.
     try testing.expect(!settings.wake(&state));
 }
+
+test "settings: Reminders page maps all [wellbeing.ascii] keys" {
+    try testing.expectEqual(settings.Page.reminders, settings.pageForSection(.@"wellbeing.ascii"));
+    inline for (.{ "enabled", "scene", "file", "fps", "cell_aspect", "trigger" }) |name| {
+        try testing.expect(keys.lookup(.@"wellbeing.ascii", name) != null);
+    }
+}

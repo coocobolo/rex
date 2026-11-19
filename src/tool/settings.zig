@@ -89,7 +89,7 @@ const page_descriptions = [_][]const u8{
     "Toasts, banners, and modal dialogs.",
     "Wellbeing tracking, daily screen time limits, and dashboard charts.",
     "Pomodoro focus intervals, floating focus widget, alerts, and evening wind-down schedule.",
-    "Periodic eyesight and movement break reminders.",
+    "Periodic eyesight and movement break reminders, plus fullscreen ASCII overlay.",
 };
 
 pub fn pageForSection(section: keys.Section) ?Page {
@@ -99,7 +99,7 @@ pub fn pageForSection(section: keys.Section) ?Page {
         .toast, .banner, .modal, .@"modal.blur", .alert_dialog => .overlays,
         .wellbeing, .@"wellbeing.screen_time", .@"wellbeing.privacy", .@"wellbeing.dashboard" => .wellbeing,
         .@"wellbeing.focus", .@"wellbeing.widget", .@"wellbeing.winddown" => .focus_winddown,
-        .@"wellbeing.eyesight", .@"wellbeing.movement" => .reminders,
+        .@"wellbeing.eyesight", .@"wellbeing.movement", .@"wellbeing.ascii" => .reminders,
         .@"wellbeing.routines", .keybinds, .env => null,
     };
 }
@@ -134,6 +134,7 @@ const section_titles = std.EnumArray(keys.Section, []const u8).init(.{
     .@"wellbeing.privacy" = "Privacy",
     .@"wellbeing.dashboard" = "Dashboard",
     .@"wellbeing.widget" = "Focus Widget",
+    .@"wellbeing.ascii" = "ASCII Overlay",
     .ui = "Interface",
     .scroll = "Scroll",
     .scrollbar = "Scrollbar",
@@ -304,6 +305,13 @@ const key_meta_table = [_]KeyMetaEntry{
     .{ .section = .@"wellbeing.widget", .name = "height", .label = "Default Height", .description = "Initial height of the floating focus widget in logical pixels (72–160)." },
     .{ .section = .@"wellbeing.widget", .name = "progress_style", .label = "Progress Style", .description = "Focus progress look on the widget (Automatic, Bar, Ring, Border, Half rings, or Coil)." },
     .{ .section = .@"wellbeing.widget", .name = "tooltip", .label = "Mini Hover Tooltip", .description = "Show the phase badge and cycle count tooltip when hovering the compact widget." },
+
+    .{ .section = .@"wellbeing.ascii", .name = "enabled", .label = "ASCII Overlay", .description = "Display a fullscreen ASCII animation behind a compact bottom HUD during wellbeing breaks and reminders." },
+    .{ .section = .@"wellbeing.ascii", .name = "scene", .label = "Animation Scene", .description = "Built-in procedural animation (3D spin, Torus, Breathe, Wave) or external UTF-8 frame file." },
+    .{ .section = .@"wellbeing.ascii", .name = "file", .label = "ASCII Frame File", .description = "Path to a frame-delimited UTF-8 ASCII art file used when Scene is set to File." },
+    .{ .section = .@"wellbeing.ascii", .name = "fps", .label = "Frame Rate", .description = "Playback cadence in frames per second (1–30); pauses while unfocused." },
+    .{ .section = .@"wellbeing.ascii", .name = "cell_aspect", .label = "Cell Aspect", .description = "Render cells as 1:1 squares or match the terminal's native monospace cell pitch." },
+    .{ .section = .@"wellbeing.ascii", .name = "trigger", .label = "Overlay Trigger", .description = "Show the ASCII overlay on all wellbeing reminders or only when input is locked." },
 
     .{ .section = .@"wellbeing.winddown", .name = "enabled", .label = "Evening Wind-down", .description = "Shift terminal colors warmer during your scheduled wind-down hours." },
     .{ .section = .@"wellbeing.winddown", .name = "start", .label = "Start Time", .description = "24-hour clock time when wind-down begins (HH:MM)." },
