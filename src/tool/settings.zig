@@ -1706,6 +1706,7 @@ const on_inactive_idx = keys.lookup(.window, "on_inactive") orelse unreachable;
 const inactive_bg_opacity_idx = keys.lookup(.window, "inactive_background_opacity") orelse unreachable;
 const inactive_dim_opacity_idx = keys.lookup(.window, "inactive_dim_opacity") orelse unreachable;
 const inactive_blur_radius_idx = keys.lookup(.window, "inactive_blur_radius") orelse unreachable;
+const ascii_file_idx = keys.lookup(.@"wellbeing.ascii", "file") orelse unreachable;
 
 const inactive_sub_rows = [_]u16{
     inactive_bg_opacity_idx,
@@ -1728,6 +1729,7 @@ pub fn rowVisible(idx: u16, cfg: *const Config) bool {
         inactive_bg_opacity_idx => cfg.window.on_inactive.contains(.opacity),
         inactive_dim_opacity_idx => cfg.window.on_inactive.contains(.dim),
         inactive_blur_radius_idx => cfg.window.on_inactive.contains(.blur),
+        ascii_file_idx => cfg.window.wellbeing_ascii.scene == .file,
         else => true,
     };
 }

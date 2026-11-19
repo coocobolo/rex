@@ -1254,4 +1254,10 @@ test "settings: Reminders page maps all [wellbeing.ascii] keys" {
     inline for (.{ "enabled", "scene", "file", "fps", "cell_aspect", "trigger" }) |name| {
         try testing.expect(keys.lookup(.@"wellbeing.ascii", name) != null);
     }
+
+    const file_idx = keys.lookup(.@"wellbeing.ascii", "file").?;
+    var cfg = config_defaults.default;
+    try testing.expect(!settings.rowVisible(file_idx, &cfg));
+    cfg.window.wellbeing_ascii.scene = .file;
+    try testing.expect(settings.rowVisible(file_idx, &cfg));
 }
