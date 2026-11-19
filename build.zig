@@ -10,9 +10,10 @@ pub fn build(b: *std.Build) !void {
     const platform_backend = b.option(
         []const u8,
         "platform_backend",
-        "Platform backend to compile in: glfw or x11",
+        "Platform backend to compile in: glfw, x11, or wayland",
     ) orelse "glfw";
     if (!std.mem.eql(u8, platform_backend, "x11") and
+        !std.mem.eql(u8, platform_backend, "wayland") and
         !std.mem.eql(u8, platform_backend, "glfw"))
         std.debug.panic("unknown platform_backend: {s}", .{platform_backend});
 
@@ -120,6 +121,20 @@ pub fn build(b: *std.Build) !void {
         .link_libc = true,
     });
     const egl_mod = egl_c.createModule();
+    const wayland_c = b.addTranslateC(.{
+        .root_source_file = b.path("src/wayland.h"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    const wayland_mod = wayland_c.createModule();
+    const xkbcommon_c = b.addTranslateC(.{
+        .root_source_file = b.path("src/xkbcommon.h"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    const xkbcommon_mod = xkbcommon_c.createModule();
 
     // Core library module
     // Only the rex module links native code; the fuzz module must not need it.
@@ -133,6 +148,8 @@ pub fn build(b: *std.Build) !void {
             .{ .name = "glfw", .module = glfw_mod },
             .{ .name = "x11", .module = x11_mod },
             .{ .name = "egl", .module = egl_mod },
+            .{ .name = "wayland", .module = wayland_mod },
+            .{ .name = "xkbcommon", .module = xkbcommon_mod },
         },
     });
     mod.addIncludePath(freetype_dep.path("include"));

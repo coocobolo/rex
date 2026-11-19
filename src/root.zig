@@ -33,6 +33,7 @@ test {
     _ = @import("platform/root.zig");
     _ = @import("platform/glfw/root.zig");
     _ = @import("platform/x11/root.zig");
+    _ = @import("platform/wayland/root.zig");
     _ = @import("driver/root.zig");
     _ = @import("config/root.zig");
     _ = @import("flag_set.zig");
