@@ -22,7 +22,7 @@ const posix = std.posix;
 const system = posix.system;
 
 const rex = @import("root.zig");
-const KitOverlay = @import("KitOverlay.zig");
+pub const KitOverlay = @import("KitOverlay.zig");
 const alert_dialog = @import("kit/alert_dialog.zig");
 const icons = @import("kit/icons.zig");
 

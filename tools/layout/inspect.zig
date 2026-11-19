@@ -223,9 +223,6 @@ fn buildCatalog() []const Entry {
     comptime {
         var c: Collector = .{};
         c.walk("", rex, 0);
-        // `KitOverlay` is a private field type on `App` rather than a `pub const` declaration.
-        const KitOverlayType = std.meta.Child(std.meta.Child(@FieldType(rex.App, "kit")));
-        c.append("KitOverlay", KitOverlayType);
         const out = c.entries[0..c.len].*;
         return &out;
     }
@@ -456,7 +453,7 @@ test "catalog walks rex namespaces including builtin, FreeType, kit, and KitOver
         if (std.mem.eql(u8, entry.name, "kit.Tree.Node")) has_tree_node = true;
         if (std.mem.startsWith(u8, entry.name, "builtin.")) has_builtin = true;
         if (std.mem.startsWith(u8, entry.name, "FreeType.")) has_freetype = true;
-        if (std.mem.eql(u8, entry.name, "KitOverlay")) has_overlay = true;
+        if (std.mem.endsWith(u8, entry.name, "KitOverlay")) has_overlay = true;
     }
     try std.testing.expect(has_tree_node);
     try std.testing.expect(has_builtin);
