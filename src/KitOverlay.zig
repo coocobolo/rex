@@ -471,7 +471,7 @@ pub fn buildFrame(self: *KitOverlay, atlas: *Atlas, width: f32, height: f32, bac
 
 fn build(self: *KitOverlay, atlas: *Atlas, width: f32, height: f32, theme: *const Theme, dt_ms: u32) !void {
     if (self.lock_screen.isShown()) {
-        try lock_mod.view(&self.lock_screen, &self.tree, theme);
+        try lock_mod.viewIn(&self.lock_screen, &self.tree, theme, width);
         try self.tree.layout(self.font.measurer(), width, height);
         self.motion = .settled;
         try self.painter.paint(&self.tree, &self.font, atlas);
@@ -479,7 +479,7 @@ fn build(self: *KitOverlay, atlas: *Atlas, width: f32, height: f32, theme: *cons
     }
     if (self.dialog.phase != .closed) {
         // The scrim covers the window, so non-modal surfaces are not built.
-        _ = try alert_dialog.view(&self.dialog, &self.tree, theme);
+        _ = try alert_dialog.viewIn(&self.dialog, &self.tree, theme, width);
         try self.tree.layout(self.font.measurer(), width, height);
         self.motion = .settled;
         try self.painter.paint(&self.tree, &self.font, atlas);

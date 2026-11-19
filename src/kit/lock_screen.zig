@@ -22,6 +22,9 @@ pub const width: f32 = 440;
 /// Maximum logical width of the minimal bottom HUD bar used over the
 /// fullscreen ASCII animation backdrop.
 pub const hud_max_width: f32 = 680;
+/// Logical viewport width below which the bottom HUD stacks vertically so
+/// the title, countdown, prompt, and action button never crowd each other.
+pub const hud_stack_width: f32 = 460;
 /// Logical height reserved at the bottom of the viewport for the HUD bar so
 /// the fullscreen ASCII grid stays centered above it.
 pub const hud_reserve: f32 = 96;
@@ -324,23 +327,32 @@ pub const node_max = dialog.node_max + 9 + steps_max + chart.progress_nodes + bu
 
 /// Writes the lock screen over the terminal, or nothing when closed.
 pub fn view(state: *const State, tree: *Tree, theme: *const Theme) Tree.Error!void {
+    return viewIn(state, tree, theme, hud_max_width);
+}
+
+/// Writes the lock screen adapted to a viewport `viewport_width` logical pixels
+/// wide, stacking the bottom HUD vertically on narrow windows.
+pub fn viewIn(state: *const State, tree: *Tree, theme: *const Theme, viewport_width: f32) Tree.Error!void {
     if (state.phase == .closed) return;
     const presence = state.phase.presence(state.motion);
     const accent = state.presentation.tone.accent(theme).fade(presence);
 
     switch (state.presentation.layout) {
-        .card => try viewCard(state, tree, theme, presence, accent),
-        .hud => try viewHud(state, tree, theme, presence, accent),
+        .card => try viewCard(state, tree, theme, presence, accent, viewport_width),
+        .hud => try viewHud(state, tree, theme, presence, accent, viewport_width),
     }
 }
 
-fn viewCard(state: *const State, tree: *Tree, theme: *const Theme, presence: f32, accent: Color) Tree.Error!void {
+fn viewCard(state: *const State, tree: *Tree, theme: *const Theme, presence: f32, accent: Color, viewport_width: f32) Tree.Error!void {
+    const narrow = viewport_width < 300;
     const frame = try dialog.open(tree, theme, .{
         .scrim_id = scrim_id,
         .card_id = card_id,
         .width = width,
         .presence = presence,
         .scrim_alpha = state.scrim_alpha,
+        .margin = if (narrow) 8 else dialog.margin,
+        .padding = if (narrow) 14 else dialog.padding,
     });
 
     // Header: title on left, cycle step pips on right.
@@ -387,15 +399,19 @@ fn viewCard(state: *const State, tree: *Tree, theme: *const Theme, presence: f32
     try chart.progress(tree, theme, .bar, state.progress, accent, 6);
     tree.close(prog);
 
-    const footer = try dialog.footer(tree);
+    const footer = if (narrow)
+        try dialog.footerStacked(tree, .zero)
+    else
+        try dialog.footer(tree);
     try button.view(tree, theme, .{
         .id = unlock_id,
         .label = state.presentation.action.label(),
-        .key_cap = state.presentation.action.keyCap(),
+        .key_cap = if (viewport_width < 220) "" else state.presentation.action.keyCap(),
         .variant = .outline,
         .size = .sm,
         .state = state.touch,
         .focused = state.focused,
+        .fill_width = narrow,
         .presence = presence,
     });
     tree.close(footer);
@@ -403,34 +419,41 @@ fn viewCard(state: *const State, tree: *Tree, theme: *const Theme, presence: f32
     dialog.close(tree, frame);
 }
 
-fn viewHud(state: *const State, tree: *Tree, theme: *const Theme, presence: f32, accent: Color) Tree.Error!void {
+fn viewHud(state: *const State, tree: *Tree, theme: *const Theme, presence: f32, accent: Color, viewport_width: f32) Tree.Error!void {
+    const stacked = viewport_width < hud_stack_width;
+    const narrow = viewport_width < 300;
+    const compact = viewport_width < 240;
+    const scrim_pad_h: u8 = if (narrow) 10 else 20;
+    const card_pad_h: u8 = if (narrow) 12 else 16;
+
     const scrim = try tree.open(.{
         .id = scrim_id,
         .width = .fill,
         .height = .fill,
         .main = .end,
         .cross = .center,
-        .padding = .{ .top = 16, .right = 20, .bottom = 20, .left = 20 },
+        .padding = .{ .top = 16, .right = scrim_pad_h, .bottom = if (narrow) 12 else 20, .left = scrim_pad_h },
     });
     const bar = try tree.open(.{
         .id = card_id,
-        .axis = .row,
-        .width = .{ .at_most = hud_max_width },
-        .cross = .center,
-        .gap = 16,
-        .padding = .{ .top = 12, .right = 16, .bottom = 12, .left = 16 },
+        .axis = if (stacked) .column else .row,
+        .width = if (stacked) .fill else .{ .at_most = hud_max_width },
+        .cross = if (stacked) .start else .center,
+        .gap = if (stacked) 10 else 16,
+        .padding = .{ .top = 12, .right = card_pad_h, .bottom = 12, .left = card_pad_h },
         .radius = Theme.radius,
         .fill = theme.popover.alpha(90).fade(presence),
         .border_width = 1,
         .border = theme.border.fade(presence),
+        .overflow = .clip,
     });
 
     const body = try tree.open(.{ .width = .fill, .gap = 6 });
     const top_row = try tree.open(.{
-        .axis = .row,
+        .axis = if (compact) .column else .row,
         .width = .fill,
-        .cross = .center,
-        .gap = 8,
+        .cross = if (compact) .start else .center,
+        .gap = if (compact) 4 else 8,
     });
     _ = try tree.text(state.title(), .{
         .color = theme.foreground.fade(presence),
@@ -442,6 +465,7 @@ fn viewHud(state: *const State, tree: *Tree, theme: *const Theme, presence: f32,
         .color = theme.foreground.fade(presence),
         .style = .sm_medium,
         .figures = .tabular,
+        .wrap = .none,
     });
     tree.close(top_row);
 
@@ -458,11 +482,12 @@ fn viewHud(state: *const State, tree: *Tree, theme: *const Theme, presence: f32,
     try button.view(tree, theme, .{
         .id = unlock_id,
         .label = state.presentation.action.label(),
-        .key_cap = state.presentation.action.keyCap(),
+        .key_cap = if (viewport_width < 220) "" else state.presentation.action.keyCap(),
         .variant = .outline,
         .size = .sm,
         .state = state.touch,
         .focused = state.focused,
+        .fill_width = stacked,
         .presence = presence,
     });
 

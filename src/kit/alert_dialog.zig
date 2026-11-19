@@ -356,12 +356,25 @@ fn hasDestructiveAction(self: *const State) bool {
 /// media box and its icon, the title, the body, the separator and the buttons.
 pub const node_max = dialog.node_max + 6 + actions_max * button.node_max;
 
+/// Logical viewport width below which dialog action buttons stack vertically
+/// at full card width so labels never overflow the card edge.
+pub const narrow_width: f32 = 300;
+
 /// Writes the dialog as one root, the scrim, and returns it, or null when
 /// the dialog is closed and nothing was written. The texts point into
 /// `state`: rebuild the view after every `update`.
 pub fn view(state: *const State, tree: *Tree, theme: *const Theme) Tree.Error!?Index {
+    return viewIn(state, tree, theme, width);
+}
+
+/// Like `view`, adapting padding and stacking footer buttons on narrow
+/// viewports (`viewport_width < narrow_width`).
+pub fn viewIn(state: *const State, tree: *Tree, theme: *const Theme, viewport_width: f32) Tree.Error!?Index {
     if (state.phase == .closed) return null;
     const presence = state.phase.presence(state.motion);
+    const narrow = viewport_width < narrow_width;
+    const card_margin: u8 = if (narrow) @min(state.option.margin, 8) else state.option.margin;
+    const card_padding: u8 = if (narrow) @min(state.option.padding, 14) else state.option.padding;
 
     const frame = try dialog.openScrimCard(tree, theme, .{
         .scrim_id = scrim_id,
@@ -370,13 +383,13 @@ pub fn view(state: *const State, tree: *Tree, theme: *const Theme) Tree.Error!?I
         .presence = presence,
         .scrim_alpha = state.scrim_alpha orelse state.option.scrim_alpha,
         .position = state.option.position,
-        .margin = state.option.margin,
-        .padding = state.option.padding,
+        .margin = card_margin,
+        .padding = card_padding,
         .gap = state.option.gap,
     }, .zero, 0);
     const body_box = try tree.open(.{
         .width = .fill,
-        .padding = .all(state.option.padding),
+        .padding = .all(card_padding),
         .gap = state.option.gap,
     });
     const header = try dialog.header(tree);
@@ -404,16 +417,20 @@ pub fn view(state: *const State, tree: *Tree, theme: *const Theme) Tree.Error!?I
     tree.close(header);
     tree.close(body_box);
     try dialog.separator(tree, theme, presence);
-    const footer_v: u8 = @max(12, @min(state.option.padding, state.option.gap));
-    const footer = try dialog.footerPadded(tree, .symmetric(state.option.padding, footer_v));
+    const footer_v: u8 = @max(12, @min(card_padding, state.option.gap));
+    const footer = if (narrow)
+        try dialog.footerStacked(tree, .symmetric(card_padding, footer_v))
+    else
+        try dialog.footerPadded(tree, .symmetric(card_padding, footer_v));
     for (state.buttons[0..state.count], 0..) |*action, index| {
         try button.view(tree, theme, .{
             .id = actionId(@intCast(index)),
             .label = action.label(),
-            .key_cap = action.keyCap(),
+            .key_cap = if (viewport_width < 220) "" else action.keyCap(),
             .variant = action.variant,
             .state = if (state.hover != index) .normal else if (state.pressed == index) .pressed else .hovered,
             .focused = state.focus == index,
+            .fill_width = narrow,
             .presence = presence,
         });
     }

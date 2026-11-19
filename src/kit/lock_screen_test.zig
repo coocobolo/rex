@@ -117,4 +117,14 @@ test "lock_screen: hud layout anchors at bottom with transparent scrim and dismi
     const dismiss = tree.find(lock_screen.unlock_id).?.rect;
     try testing.expectEqual(lock_screen.Hit.unlock, state.hit(tree.hitTest(dismiss.x + dismiss.w / 2, dismiss.y + dismiss.h / 2)));
     try testing.expectEqual(lock_screen.Hit.scrim, state.hit(tree.hitTest(400, 200)));
+
+    // On narrow viewports, the HUD stacks vertically and keeps the button inside the bar.
+    tree.reset();
+    try lock_screen.viewIn(&state, &tree, &Theme.dark, 220);
+    try tree.layout(measurer, 220, 600);
+    const narrow_bar = tree.find(lock_screen.card_id).?;
+    const narrow_btn = tree.find(lock_screen.unlock_id).?.rect;
+    try testing.expectEqual(Tree.Axis.column, narrow_bar.box.axis);
+    try testing.expect(narrow_btn.x >= narrow_bar.rect.x);
+    try testing.expect(narrow_btn.x + narrow_btn.w <= narrow_bar.rect.x + narrow_bar.rect.w + 0.5);
 }

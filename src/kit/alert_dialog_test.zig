@@ -494,3 +494,33 @@ test "dialog: narrow widths wrap footer buttons without wrapping labels" {
     try testing.expectEqual(@as(u16, 1), close_label.content.text.line_count);
     try testing.expectEqual(@as(f32, Theme.control), close_face.rect.h);
 }
+
+test "dialog: narrow viewport stacks full-width buttons inside the card" {
+    const actions = [_]alert_dialog.Action{
+        .{ .label = "Cancel", .key_cap = "Esc", .role = .dismiss },
+        .{ .label = "Close window", .variant = .destructive },
+    };
+    var state: State = .{ .motion = .none };
+    _ = update(&state, .{ .open = .{
+        .title = "Close this window?",
+        .body = "This will end the active shell session.",
+        .actions = &actions,
+    } });
+
+    var fixture: Fixture = .{};
+    var tree = fixture.tree();
+    const scrim = (try alert_dialog.viewIn(&state, &tree, &Theme.dark, 180)).?;
+    try tree.layout(measurer, 180, 500);
+
+    const card = tree.nodes[scrim + 1].rect;
+    const cancel_face = face(&tree, 0).rect;
+    const close_face = face(&tree, 1).rect;
+
+    try testing.expect(close_face.y >= cancel_face.y + cancel_face.h);
+    try testing.expect(cancel_face.x >= card.x);
+    try testing.expect(cancel_face.x + cancel_face.w <= card.x + card.w + 0.5);
+    try testing.expect(close_face.x >= card.x);
+    try testing.expect(close_face.x + close_face.w <= card.x + card.w + 0.5);
+    // Key cap is omitted below 220px so labels keep room to breathe.
+    try testing.expectEqual(@as(?*const Tree.Node, null), textByBytes(&tree, "Esc"));
+}

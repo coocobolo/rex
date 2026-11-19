@@ -210,6 +210,7 @@ pub fn openScrimCard(
         .border = theme.border.fade(options.presence),
         .border_width = Theme.border_width,
         .radius = Theme.radius,
+        .overflow = .clip,
     });
     return .{ .scrim = scrim, .card = card };
 }
@@ -266,5 +267,17 @@ pub fn footerPadded(tree: *Tree, card_padding: Tree.Edges) Tree.Error!Index {
         .cross = .center,
         .gap = button.gap,
         .wrap = true,
+    });
+}
+
+/// Starts a stacked vertical footer for narrow viewports where horizontal
+/// buttons would overflow or clip.
+pub fn footerStacked(tree: *Tree, card_padding: Tree.Edges) Tree.Error!Index {
+    return tree.open(.{
+        .axis = .column,
+        .width = .fill,
+        .padding = card_padding,
+        .cross = .start,
+        .gap = button.gap,
     });
 }
