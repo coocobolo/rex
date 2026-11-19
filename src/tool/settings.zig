@@ -302,7 +302,7 @@ const key_meta_table = [_]KeyMetaEntry{
     .{ .section = .@"wellbeing.widget", .name = "anchor", .label = "Screen Anchor", .description = "Default corner or edge where the floating focus widget docks before being dragged." },
     .{ .section = .@"wellbeing.widget", .name = "width", .label = "Default Width", .description = "Initial width of the floating focus widget in logical pixels (96–320)." },
     .{ .section = .@"wellbeing.widget", .name = "height", .label = "Default Height", .description = "Initial height of the floating focus widget in logical pixels (72–160)." },
-    .{ .section = .@"wellbeing.widget", .name = "progress_style", .label = "Progress Style", .description = "Focus progress look on the widget (Automatic, Bar, Ring, Border, or Half rings)." },
+    .{ .section = .@"wellbeing.widget", .name = "progress_style", .label = "Progress Style", .description = "Focus progress look on the widget (Automatic, Bar, Ring, Border, Half rings, or Coil)." },
     .{ .section = .@"wellbeing.widget", .name = "tooltip", .label = "Mini Hover Tooltip", .description = "Show the phase badge and cycle count tooltip when hovering the compact widget." },
 
     .{ .section = .@"wellbeing.winddown", .name = "enabled", .label = "Evening Wind-down", .description = "Shift terminal colors warmer during your scheduled wind-down hours." },

@@ -35,7 +35,7 @@ pub const Wellbeing = struct {
     } = .{},
 
     pub const default: Wellbeing = .{};
-    pub const TimerChart = enum { bar, ring, border, half_rings };
+    pub const TimerChart = enum { bar, ring, border, half_rings, coil };
     pub const ProgramChart = enum { bar, donut };
 };
 

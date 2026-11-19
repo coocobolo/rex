@@ -66,7 +66,7 @@ pub const Menu = enum(u8) { closed, more, view };
 
 const ColorScheme = @FieldType(@import("../config/Config.zig").Ui, "color_scheme");
 const scheme_labels = [_][]const u8{ "Auto", "Dark", "Light" };
-const timer_chart_labels = [_][]const u8{ "Bar", "Ring", "Border", "Half rings" };
+const timer_chart_labels = [_][]const u8{ "Bar", "Ring", "Border", "Half rings", "Coil" };
 const program_chart_labels = [_][]const u8{ "Bar", "Donut" };
 
 /// Below this width the four cards take two rows; below `narrow_width` the
@@ -174,17 +174,18 @@ fn over(id: Id) Over {
 }
 
 /// The frame: the root, the header, the tab list, and the right group
-/// (Today's chip or History's switch, and the gear button).
-const frame_nodes = 2 + tabs.nodeMax(page_count) + 1 + @as(usize, @max(4, tabs.nodeMax(period_count))) + button.node_max;
+/// (Today's chip, Focus's timer style switch or History's period switch,
+/// and the gear button).
+const frame_nodes = 2 + tabs.nodeMax(page_count) + 1 + @as(usize, @max(4, tabs.nodeMax(timer_chart_labels.len))) + button.node_max;
 /// The card rows' outer column and up to two rows.
 const card_rows_nodes = 3;
-/// The gear's popup: layer and card, the column and controls block, three
+/// The gear's popup: layer and card, the column and controls block, two
 /// groups (box, label, tabs), the rule, and the settings item.
-const choices_nodes = popup.node_max + 2 + (2 + tabs.nodeMax(timer_chart_labels.len)) + (2 + tabs.nodeMax(program_chart_labels.len)) + (2 + tabs.nodeMax(scheme_labels.len)) + separator.node_max + popup.item_node_max;
-/// The Focus page: its scroll area, the timer block (badge, time, task line
-/// and the largest of the four marks), the button row and three buttons, and
-/// the popup with its one item.
-const focus_nodes = scroll_area.node_max + 14 + badge.node_max + 1 + 3 * button.node_max + popup.node_max + popup.item_node_max;
+const choices_nodes = popup.node_max + 2 + (2 + tabs.nodeMax(program_chart_labels.len)) + (2 + tabs.nodeMax(scheme_labels.len)) + separator.node_max + popup.item_node_max;
+/// The Focus page: its scroll area, the two-badge header row, the timer
+/// mark and clock, the button row and three buttons, and the popup with its
+/// one item.
+const focus_nodes = scroll_area.node_max + 1 + 2 * badge.node_max + 4 + chart.half_rings_arc_nodes_max + 1 + 3 * button.node_max + popup.node_max + popup.item_node_max;
 
 /// The Today page: its scroll area, the card row and four stat cards (box,
 /// title, value, bar or spacer, note), the lower row, the week card and the
@@ -907,19 +908,13 @@ fn offPage(tree: *Tree, theme: *const Theme) kit.Tree.Error!void {
     tree.close(page);
 }
 
-/// The gear's popup: the chart looks, the color scheme, and the way to the
-/// settings window.
+/// The gear's popup: the program chart look, the color scheme, and the way to
+/// the settings window.
 fn viewChoices(state: *const State, tree: *Tree, theme: *const Theme) kit.Tree.Error!void {
     const menu = try popup.open(tree, theme, .{ .layer_id = layer_id, .anchor = gear_id });
-    const column = try tree.open(.{ .width = .{ .fixed = 312 }, .gap = 4 });
+    const column = try tree.open(.{ .width = .{ .fixed = 252 }, .gap = 4 });
     const controls = try tree.open(.{ .width = .fill, .padding = .all(8), .gap = 10 });
 
-    var timer_tabs: [timer_chart_labels.len]tabs.Tab = undefined;
-    for (&timer_tabs, timer_chart_labels, 0..) |*tab, label, index| tab.* = .{ .id = timer_chart_id.item(@intCast(index)), .label = label };
-    try choiceGroup(tree, theme, "Timer", &timer_tabs, @intFromEnum(state.charts.timer_chart), switch (state.hover) {
-        .timer_chart => |mark| @intFromEnum(mark),
-        else => tabs.none,
-    });
     var program_tabs: [program_chart_labels.len]tabs.Tab = undefined;
     for (&program_tabs, program_chart_labels, 0..) |*tab, label, index| tab.* = .{ .id = program_chart_id.item(@intCast(index)), .label = label };
     try choiceGroup(tree, theme, "Programs", &program_tabs, @intFromEnum(state.charts.program_chart), switch (state.hover) {
@@ -1218,7 +1213,20 @@ fn header(state: *const State, tree: *Tree, theme: *const Theme) kit.Tree.Error!
         .today => {
             if (state.shown.phase != .idle and state.width >= narrow_width) try timerChip(state, tree, theme);
         },
-        .focus => {},
+        .focus => {
+            var timer_tabs: [timer_chart_labels.len]tabs.Tab = undefined;
+            for (&timer_tabs, timer_chart_labels, 0..) |*tab, label, index| {
+                tab.* = .{ .id = timer_chart_id.item(@intCast(index)), .label = label };
+            }
+            try tabs.view(tree, theme, .{
+                .tabs = &timer_tabs,
+                .current = @intFromEnum(state.charts.timer_chart),
+                .hovered = switch (state.hover) {
+                    .timer_chart => |mark| @intFromEnum(mark),
+                    else => tabs.none,
+                },
+            });
+        },
         .history => {
             var periods: [period_count]tabs.Tab = undefined;
             for (&periods, 0..) |*tab, index| {
@@ -1282,26 +1290,25 @@ fn focusPage(state: *const State, tree: *Tree, theme: *const Theme) kit.Tree.Err
         .width = .fill,
         .height = .fill,
         .padding = .{ .left = margin, .right = margin, .top = 8, .bottom = 40 },
-        .gap = 28,
+        .gap = 24,
         .main = .center,
         .cross = .center,
     });
     const color = phaseColor(theme, state.shown.phase);
+    try timerBadges(state, tree, theme);
     switch (state.charts.timer_chart) {
         .bar => {
-            const block = try tree.open(.{ .width = .{ .at_most = 400 }, .gap = 8, .cross = .center });
-            try timerText(state, tree, theme);
+            const block = try tree.open(.{ .width = .{ .fixed = chart.border_pill_width }, .gap = 12, .cross = .center });
+            try timerClock(state, tree, theme);
             try chart.progress(tree, theme, .bar, state.shown.fraction, color, 6);
-            _ = try tree.text(state.taskLine(), .{ .color = theme.muted_foreground });
             tree.close(block);
         },
         .ring => {
             const side = chart.ring_radius * 2;
             const square = try tree.open(.{ .width = .{ .fixed = side }, .height = .{ .fixed = side } });
             try chart.progress(tree, theme, .ring, state.shown.fraction, color, 6);
-            const inside = try tree.open(.{ .overlay = true, .width = .fill, .height = .fill, .gap = 4, .main = .center, .cross = .center });
-            try timerText(state, tree, theme);
-            _ = try tree.text(state.taskLine(), .{ .color = theme.muted_foreground });
+            const inside = try tree.open(.{ .overlay = true, .width = .fill, .height = .fill, .main = .center, .cross = .center });
+            try timerClock(state, tree, theme);
             tree.close(inside);
             tree.close(square);
         },
@@ -1319,73 +1326,60 @@ fn focusPage(state: *const State, tree: *Tree, theme: *const Theme) kit.Tree.Err
                 .overlay = true,
                 .width = .fill,
                 .height = .fill,
-                .gap = 4,
                 .main = .center,
                 .cross = .center,
             });
-            try timerText(state, tree, theme);
-            _ = try tree.text(state.taskLine(), .{ .color = theme.muted_foreground });
+            try timerClock(state, tree, theme);
             tree.close(inside);
             tree.close(pill);
         },
         .half_rings => {
-            const box = try tree.open(.{
-                .width = .{ .fixed = 340 },
-                .height = .{ .fixed = 176 },
-                .padding = .all(20),
-                .overflow = .clip,
-                .fill = theme.card,
-                .border = theme.border,
-                .border_width = Theme.border_width,
-                .radius = Theme.radius,
+            const side = chart.half_ring_outer_radius * 2;
+            const arch_h = chart.half_ring_outer_radius + 4;
+            const holder = try tree.open(.{
+                .width = .{ .fixed = side },
+                .height = .{ .fixed = arch_h },
             });
-            const left = try tree.open(.{
-                .width = .fill,
-                .height = .fill,
-                .cross = .start,
-                .gap = 6,
-            });
-            try timerText(state, tree, theme);
-            _ = try tree.leaf(.{ .width = .{ .fixed = 1 }, .height = .fill });
-            _ = try tree.text(state.taskLine(), .{ .color = theme.muted_foreground });
-            tree.close(left);
-
-            const corner = try tree.open(.{
-                .overlay = true,
-                .width = .fill,
-                .height = .fill,
-                .main = .end,
-                .cross = .end,
-                .padding = .{ .right = 14, .bottom = 14 },
-            });
-            const medallion = try tree.open(.{
-                .width = .{ .fixed = 44 },
-                .height = .{ .fixed = 44 },
-                .main = .center,
-                .cross = .center,
-                .fill = theme.muted,
-                .border = theme.border,
-                .border_width = Theme.border_width,
-                .radius = 22,
+            const square = try tree.open(.{
+                .width = .{ .fixed = side },
+                .height = .{ .fixed = side },
             });
             try chart.halfRingsArcs(tree, theme, chart.HalfRings.fromCycle(
                 toChartPhase(state.shown.phase),
                 state.shown.fraction,
                 state.wb.timer().tasks_in_cycle,
                 state.wb.option.focus.tasks_before_long_break,
-            ), .{
-                .outer_radius = 68,
-                .thickness = 6,
-                .gap = 5,
+            ), .{});
+            tree.close(square);
+            const inside = try tree.open(.{
+                .overlay = true,
+                .width = .fill,
+                .height = .fill,
+                .padding = .{ .bottom = 12 },
+                .main = .end,
+                .cross = .center,
             });
-            _ = try tree.icon(.{
-                .codepoint = if (state.wb.timer().run == .running) icons.pause else icons.play,
-                .color = color,
-                .size = Theme.icon,
+            try timerClock(state, tree, theme);
+            tree.close(inside);
+            tree.close(holder);
+        },
+        .coil => {
+            const block = try tree.open(.{
+                .width = .{ .fixed = chart.coil_width },
+                .gap = 16,
+                .cross = .center,
             });
-            tree.close(medallion);
-            tree.close(corner);
-            tree.close(box);
+            try chart.coil(tree, .{
+                .width = .fill,
+                .height = .{ .fixed = chart.coil_height },
+                .fill = color,
+                .track = theme.muted.alpha(35),
+                .fraction = state.shown.fraction,
+                .thickness = chart.coil_thickness,
+                .columns = chart.coil_columns,
+            });
+            try timerClock(state, tree, theme);
+            tree.close(block);
         },
     }
     try timerButtons(state, tree, theme);
@@ -1401,17 +1395,32 @@ fn toChartPhase(phase: focus.Phase) chart.FocusPhase {
     };
 }
 
-/// The phase over the time.
-fn timerText(state: *const State, tree: *Tree, theme: *const Theme) kit.Tree.Error!void {
+/// The phase and cycle task badges side by side.
+fn timerBadges(state: *const State, tree: *Tree, theme: *const Theme) kit.Tree.Error!void {
     const phase = state.shown.phase;
+    const row = try tree.open(.{
+        .axis = .row,
+        .gap = 8,
+        .cross = .center,
+    });
     try badge.view(tree, theme, .{
         .label = phaseLabel(phase),
         .variant = phaseBadgeVariant(phase),
         .size = .lg,
     });
+    try badge.view(tree, theme, .{
+        .label = state.taskLine(),
+        .variant = .muted,
+        .size = .lg,
+    });
+    tree.close(row);
+}
+
+/// The tabular clock digits.
+fn timerClock(state: *const State, tree: *Tree, theme: *const Theme) kit.Tree.Error!void {
     _ = try tree.text(state.clock(), .{
         .color = theme.foreground,
-        .style = .xxl_semibold,
+        .style = .display_md,
         .figures = .tabular,
     });
 }
@@ -1476,7 +1485,8 @@ fn phaseBadgeVariant(phase: focus.Phase) badge.Variant {
     return switch (phase) {
         .idle => .muted,
         .task => .info,
-        .short_break, .long_break => .success,
+        .short_break => .success,
+        .long_break => .secondary,
     };
 }
 
@@ -1484,7 +1494,8 @@ fn phaseColor(theme: *const Theme, phase: focus.Phase) Theme.Color {
     return switch (phase) {
         .idle => theme.muted_foreground,
         .task => theme.info,
-        .short_break, .long_break => theme.success,
+        .short_break => theme.success,
+        .long_break => theme.foreground,
     };
 }
 

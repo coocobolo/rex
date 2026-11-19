@@ -135,7 +135,7 @@ test "dashboard: every page fits node_max, with either timer mark and the menu o
     var tmp: StateTmp = .init();
     defer tmp.deinit();
     const dir = try tmp.path();
-    for ([_]WellbeingOption.TimerChart{ .bar, .ring, .border, .half_rings }) |mark| {
+    for ([_]WellbeingOption.TimerChart{ .bar, .ring, .border, .half_rings, .coil }) |mark| {
         var config = configWith(dir);
         config.wellbeing.dashboard.timer_chart = mark;
         var state = try openDashboard(&config, dir);
@@ -491,7 +491,7 @@ test "dashboard: the gear opens the view choices, and a choice changes the chart
     try testing.expect(dashboard.update(&state, .release));
     try testing.expectEqual(dashboard.Menu.view, state.menu);
 
-    for ([_]WellbeingOption.TimerChart{ .ring, .border, .half_rings }, [_]u32{ 1, 2, 3 }) |mark, item_idx| {
+    for ([_]WellbeingOption.TimerChart{ .ring, .border, .half_rings, .coil }, [_]u32{ 1, 2, 3, 4 }) |mark, item_idx| {
         const tab = kit.Tree.Id.of("wellbeing.timer_chart").item(item_idx);
         _ = dashboard.update(&state, .{ .pointer = .{ .id = tab } });
         _ = dashboard.update(&state, .{ .press = tab });
@@ -703,7 +703,7 @@ test "dashboard: lower row cards share the page width with a 16 px gap, and view
 
     var week_card: ?kit.Tree.Rect = null;
     var prog_card: ?kit.Tree.Rect = null;
-    var timer_label_x: ?f32 = null;
+    var programs_label_x: ?f32 = null;
     var settings_label_x: ?f32 = null;
     for (tree.items()) |node| {
         if (node.content != .text) continue;
@@ -713,8 +713,8 @@ test "dashboard: lower row cards share the page width with a 16 px gap, and view
             week_card = tree.nodes[head.parent].rect;
         } else if (std.mem.eql(u8, bytes, "Programs today")) {
             prog_card = tree.nodes[node.parent].rect;
-        } else if (std.mem.eql(u8, bytes, "Timer")) {
-            timer_label_x = node.rect.x;
+        } else if (std.mem.eql(u8, bytes, "Programs")) {
+            programs_label_x = node.rect.x;
         } else if (std.mem.eql(u8, bytes, "Wellbeing settings\u{2026}")) {
             settings_label_x = node.rect.x;
         }
@@ -722,7 +722,7 @@ test "dashboard: lower row cards share the page width with a 16 px gap, and view
     try testing.expectApproxEqAbs(@as(f32, 24), week_card.?.x, 1e-3);
     try testing.expectApproxEqAbs(week_card.?.x + week_card.?.w + 16, prog_card.?.x, 1e-3);
     try testing.expectApproxEqAbs(@as(f32, 960 - 24), prog_card.?.x + prog_card.?.w, 1e-3);
-    try testing.expectEqual(timer_label_x.?, settings_label_x.?);
+    try testing.expectEqual(programs_label_x.?, settings_label_x.?);
 }
 
 test "dashboard: focus timer clock uses the same style in bar and ring, and 960 px history cards stack delta over note" {
@@ -735,20 +735,25 @@ test "dashboard: focus timer clock uses the same style in bar and ring, and 960 
     _ = dashboard.update(&state, .{ .size = .{ .width = 960, .height = 600 } });
 
     state.page = .focus;
-    var styles: [4]kit.text.Style = undefined;
-    for ([_]WellbeingOption.TimerChart{ .bar, .ring, .border, .half_rings }, 0..) |mark, idx| {
+    var styles: [5]kit.text.Style = undefined;
+    for ([_]WellbeingOption.TimerChart{ .bar, .ring, .border, .half_rings, .coil }, 0..) |mark, idx| {
         state.charts.timer_chart = mark;
         var nodes: [dashboard.node_max]kit.Tree.Node = undefined;
         var lines: [dashboard.line_max]kit.text.Line = undefined;
         var tree = kit.Tree.init(&nodes, &lines);
         try dashboard.view(&state, &tree, &kit.Theme.dark);
+        var no_state: u8 = 0;
+        try tree.layout(.{ .context = &no_state, .widthFn = fixedWidth }, 960, 600);
         for (tree.items()) |node| {
             if (node.content == .text and std.mem.eql(u8, node.content.text.bytes, state.clock())) {
                 styles[idx] = node.content.text.style;
             }
+            if (node.content == .text and std.mem.eql(u8, node.content.text.bytes, "Half rings")) {
+                try testing.expectEqual(@as(u32, 1), node.content.text.line_count);
+            }
         }
     }
-    try testing.expectEqual(kit.text.Style.xxl_semibold, styles[0]);
+    try testing.expectEqual(kit.text.Style.display_md, styles[0]);
     for (styles[1..]) |style| try testing.expectEqual(styles[0], style);
 
     // On History at 960 px, delta and note stack cleanly and strip any leading middle dot.
