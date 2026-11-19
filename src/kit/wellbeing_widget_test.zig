@@ -2,10 +2,18 @@ const std = @import("std");
 const testing = std.testing;
 
 const Theme = @import("Theme.zig");
+const chart = @import("chart.zig");
 const icons = @import("icons.zig");
 const text = @import("text.zig");
 const Tree = @import("Tree.zig");
 const widget = @import("wellbeing_widget.zig");
+
+comptime {
+    std.debug.assert(@sizeOf(widget.Option) == 12);
+    std.debug.assert(@alignOf(widget.Option) == 4);
+    std.debug.assert(@sizeOf(widget.State) == 96);
+    std.debug.assert(@alignOf(widget.State) == 4);
+}
 
 const byte_width = 7;
 
@@ -57,9 +65,9 @@ test "wellbeing_widget: hidden produces no nodes and sync updates only on change
     const root = (try widget.view(&state, &tree, &Theme.dark, 800, 600)).?;
     try tree.layout(measurer, 800, 600);
     widget.place(&state, &tree, root, 800, 600);
-    // Default position sits near the top-right corner.
+    // Default anchor (.bottom_right) sits near the bottom-right corner.
     try testing.expect(tree.nodes[root].rect.x > 400);
-    try testing.expectEqual(@as(f32, 16), tree.nodes[root].rect.y);
+    try testing.expectEqual(@as(f32, 600 - 16 - 132), tree.nodes[root].rect.y);
 }
 
 test "wellbeing_widget: drag move and aspect-locked corner resize keep top-left anchored" {
@@ -407,6 +415,7 @@ test "wellbeing_widget: mini uses full space for foreground time with phase-colo
 
 test "wellbeing_widget: hover tooltip shows phase and cycle only in mini while not dragging" {
     var state: widget.State = .empty;
+    state.option.anchor = .top_right;
     _ = widget.update(&state, .toggle_visible);
     _ = widget.update(&state, .{ .sync = .{
         .phase = .task,
@@ -527,6 +536,7 @@ test "wellbeing_widget: hover tooltip shows phase and cycle only in mini while n
 
 test "wellbeing_widget: tooltip picks below/above/left/right side cleanly with flush corner alignment" {
     var state: widget.State = .empty;
+    state.option.anchor = .top_right;
     state.visible = true;
     state.width = 96;
     state.height = 96;
@@ -590,5 +600,138 @@ test "wellbeing_widget: tooltip picks below/above/left/right side cleanly with f
         }
         if (c.flush_right) try testing.expectApproxEqAbs(card_rect.x + card_rect.w, tip_rect.x + tip_rect.w, 0.5);
         if (c.flush_left) try testing.expectApproxEqAbs(card_rect.x, tip_rect.x, 0.5);
+    }
+}
+
+test "wellbeing_widget: all five progress_style modes render in mini and normal sizes" {
+    const styles = [_]widget.ProgressStyle{ .auto, .bar, .ring, .border, .half_rings };
+    const sizes = [_]struct { w: f32, h: f32, normal: bool }{
+        .{ .w = 120, .h = 120, .normal = false },
+        .{ .w = 144, .h = 72, .normal = false },
+        .{ .w = 264, .h = 132, .normal = true },
+    };
+
+    for (styles) |style| {
+        for (sizes) |sz| {
+            var state: widget.State = .empty;
+            state.visible = true;
+            state.option.progress_style = style;
+            state.width = sz.w;
+            state.height = sz.h;
+            _ = widget.update(&state, .{ .sync = .{
+                .phase = .short_break,
+                .run = .running,
+                .fraction = 0.5,
+                .seconds = 180,
+                .tasks_in_cycle = 2,
+                .tasks_before_long_break = 4,
+            } });
+
+            var fixture: Fixture = .{};
+            var tree = fixture.tree();
+            const root = (try widget.view(&state, &tree, &Theme.dark, 800, 600)).?;
+            try tree.layout(measurer, 800, 600);
+            widget.place(&state, &tree, root, 800, 600);
+
+            const play_node = tree.find(widget.play_pause_id).?;
+            var arcs: usize = 0;
+            var border_sweeps: usize = 0;
+            var bars: usize = 0;
+            for (tree.nodes[0..tree.len]) |node| {
+                switch (node.content) {
+                    .arc => arcs += 1,
+                    .border_sweep => border_sweeps += 1,
+                    .box => if (node.rect.h == 6 and node.box.fill == Theme.dark.muted) {
+                        bars += 1;
+                    },
+                    else => {},
+                }
+            }
+
+            switch (style) {
+                .auto => if (sz.normal) {
+                    try testing.expectEqual(@as(usize, 2), arcs);
+                    try testing.expectEqual(@as(usize, 0), border_sweeps);
+                } else {
+                    try testing.expectEqual(@as(usize, 0), arcs);
+                    try testing.expectEqual(@as(usize, 1), border_sweeps);
+                },
+                .bar => {
+                    try testing.expectEqual(@as(usize, 0), arcs);
+                    try testing.expectEqual(@as(usize, 0), border_sweeps);
+                    try testing.expectEqual(@as(usize, 1), bars);
+                },
+                .ring => {
+                    try testing.expectEqual(@as(usize, 2), arcs);
+                    try testing.expectEqual(@as(usize, 0), border_sweeps);
+                },
+                .border => {
+                    try testing.expectEqual(@as(usize, 0), arcs);
+                    try testing.expectEqual(@as(usize, 1), border_sweeps);
+                    try testing.expectEqual(chart.pillRadius(play_node.rect.h), play_node.box.radius);
+                },
+                .half_rings => {
+                    try testing.expectEqual(chart.half_rings_arc_nodes, arcs);
+                    try testing.expectEqual(@as(usize, 0), border_sweeps);
+                    try testing.expectEqual(chart.pillRadius(play_node.rect.h), play_node.box.radius);
+                    // Play/pause circular button center is clickable and clear of the resize grip.
+                    const cx = play_node.rect.x + play_node.rect.w * 0.5;
+                    const cy = play_node.rect.y + play_node.rect.h * 0.5;
+                    try testing.expectEqual(widget.play_pause_id, tree.hitTest(cx, cy));
+                },
+            }
+        }
+    }
+}
+
+test "wellbeing_widget: Option anchor, default size, configure, and tooltip disable" {
+    var state: widget.State = .empty;
+    state.visible = true;
+    state.pointer_inside = true;
+    _ = widget.update(&state, .{ .sync = .{
+        .phase = .task,
+        .run = .running,
+        .fraction = 0.5,
+        .seconds = 600,
+    } });
+
+    // configure applies default_width, default_height, anchor, and tooltip = false.
+    try testing.expect(widget.configure(&state, .{
+        .default_width = 120,
+        .default_height = 120,
+        .anchor = .top_left,
+        .progress_style = .border,
+        .tooltip = false,
+    }));
+
+    {
+        var fixture: Fixture = .{};
+        var tree = fixture.tree();
+        const root = (try widget.view(&state, &tree, &Theme.dark, 800, 600)).?;
+        try testing.expectEqual(null, try widget.viewTooltip(&state, &tree, &Theme.dark, 800, 600));
+        try tree.layout(measurer, 800, 600);
+        widget.place(&state, &tree, root, 800, 600);
+        try testing.expectEqual(Tree.Rect{ .x = 16, .y = 16, .w = 120, .h = 120 }, tree.nodes[root].rect);
+    }
+
+    // Switching anchor via configure re-docks the widget at each screen position.
+    const anchors = [_]struct { anchor: Tree.ScreenAnchor, x: f32, y: f32 }{
+        .{ .anchor = .top_center, .x = (800 - 120) / 2, .y = 16 },
+        .{ .anchor = .top_right, .x = 800 - 16 - 120, .y = 16 },
+        .{ .anchor = .bottom_left, .x = 16, .y = 600 - 16 - 120 },
+        .{ .anchor = .bottom_center, .x = (800 - 120) / 2, .y = 600 - 16 - 120 },
+        .{ .anchor = .bottom_right, .x = 800 - 16 - 120, .y = 600 - 16 - 120 },
+    };
+    for (anchors) |a| {
+        var next = state.option;
+        next.anchor = a.anchor;
+        try testing.expect(widget.configure(&state, next));
+        var fixture: Fixture = .{};
+        var tree = fixture.tree();
+        const root = (try widget.view(&state, &tree, &Theme.dark, 800, 600)).?;
+        try tree.layout(measurer, 800, 600);
+        widget.place(&state, &tree, root, 800, 600);
+        try testing.expectEqual(a.x, tree.nodes[root].rect.x);
+        try testing.expectEqual(a.y, tree.nodes[root].rect.y);
     }
 }

@@ -12,6 +12,7 @@ const Theme = @import("Theme.zig");
 const Color = Theme.Color;
 const badge = @import("badge.zig");
 const button = @import("button.zig");
+const chart = @import("chart.zig");
 const icons = @import("icons.zig");
 const layout = @import("layout.zig");
 const text = @import("text.zig");
@@ -50,6 +51,25 @@ pub const Phase = enum(u8) { idle, task, short_break, long_break };
 pub const Run = enum(u8) { paused, running, waiting };
 pub const Grid = enum(u8) { square, horizontal };
 pub const Mode = enum(u8) { mini, normal };
+
+/// Focus progress visual style for the floating widget.
+/// `.auto` adapts between `mini` border-sweep and `normal` circular ring by card size.
+pub const ProgressStyle = enum(u8) {
+    auto,
+    bar,
+    ring,
+    border,
+    half_rings,
+};
+
+/// User-configurable appearance and initial geometry options (`[wellbeing.widget]`).
+pub const Option = struct {
+    default_width: f32 = default_width,
+    default_height: f32 = default_height,
+    progress_style: ProgressStyle = .auto,
+    anchor: Tree.ScreenAnchor = .bottom_right,
+    tooltip: bool = true,
+};
 
 pub const Hit = enum(u8) {
     none,
@@ -105,6 +125,7 @@ pub const Outcome = union(enum) {
 };
 
 pub const State = struct {
+    option: Option = .{},
     width: f32 = default_width,
     height: f32 = default_height,
     x: f32 = 0,
@@ -118,6 +139,7 @@ pub const State = struct {
     hovered: Hit = .none,
     visible: bool = false,
     positioned: bool = false,
+    resized: bool = false,
     pointer_inside: bool = false,
     time_len: u8 = 5,
     cycle_len: u8 = 3,
@@ -160,14 +182,35 @@ pub const State = struct {
     pub fn effectiveSize(self: *const State, viewport_w: f32, viewport_h: f32) struct { w: f32, h: f32, grid: Grid, mode: Mode } {
         const fit_w = @max(1, viewport_w - min_clamp_margin * 2);
         const fit_h = @max(1, viewport_h - min_clamp_margin * 2);
-        const clamped_w = std.math.clamp(self.width, min_width, max_width);
-        const clamped_h = std.math.clamp(self.height, min_height, max_height);
+        const use_default_w = !self.resized and self.width == default_width;
+        const use_default_h = !self.resized and self.height == default_height;
+        const target_w = if (use_default_w) self.option.default_width else self.width;
+        const target_h = if (use_default_h) self.option.default_height else self.height;
+        const clamped_w = std.math.clamp(target_w, min_width, max_width);
+        const clamped_h = std.math.clamp(target_h, min_height, max_height);
         const w = @max(@min(min_width, fit_w), @min(clamped_w, fit_w));
         const h = @max(@min(min_height, fit_h), @min(clamped_h, fit_h));
         const classified = classify(w, h);
         return .{ .w = w, .h = h, .grid = classified.grid, .mode = classified.mode };
     }
 };
+
+/// Applies updated `[wellbeing.widget]` options and returns whether a visible widget needs a redraw.
+pub fn configure(state: *State, option: Option) bool {
+    const changed = !std.meta.eql(state.option, option);
+    const size_changed = state.option.default_width != option.default_width or
+        state.option.default_height != option.default_height;
+    if (size_changed or !state.resized) {
+        state.width = std.math.clamp(option.default_width, min_width, max_width);
+        state.height = std.math.clamp(option.default_height, min_height, max_height);
+        if (size_changed) state.resized = false;
+    }
+    if (state.option.anchor != option.anchor) {
+        state.positioned = false;
+    }
+    state.option = option;
+    return changed and state.visible;
+}
 
 /// Chooses the grid shape (`square` 1:1 or `horizontal` 2:1) and density (`mini` or `normal`).
 pub fn classify(w: f32, h: f32) struct { grid: Grid, mode: Mode } {
@@ -310,13 +353,14 @@ fn handlePointer(state: *State, over: Hit, x: f32, y: f32) Outcome {
 
 fn handlePress(state: *State, target: Hit, x: f32, y: f32) Outcome {
     if (!state.visible) return .quiet;
+    const eff = state.effectiveSize(std.math.inf(f32), std.math.inf(f32));
     const orig: DragOrigin = .{
         .pointer_x = x,
         .pointer_y = y,
         .x = state.x,
         .y = state.y,
-        .w = state.width,
-        .h = state.height,
+        .w = eff.w,
+        .h = eff.h,
     };
     switch (target) {
         .card => {
@@ -325,6 +369,9 @@ fn handlePress(state: *State, target: Hit, x: f32, y: f32) Outcome {
         },
         .resize => {
             state.positioned = true;
+            state.resized = true;
+            state.width = eff.w;
+            state.height = eff.h;
             state.capture = .{ .resize = orig };
             state.hovered = .resize;
             return .redraw;
@@ -427,6 +474,24 @@ pub fn view(
 }
 
 fn viewMini(state: *const State, tree: *Tree, theme: *const Theme, grid: Grid, w: f32, h: f32) Tree.Error!void {
+    switch (state.option.progress_style) {
+        .auto => try viewMiniBorder(state, tree, theme, grid, w, h, false),
+        .border => try viewMiniBorder(state, tree, theme, grid, w, h, true),
+        .bar => try viewMiniBar(state, tree, theme, grid, w, h),
+        .ring => try viewMiniRing(state, tree, theme, w, h),
+        .half_rings => try viewMiniHalfRings(state, tree, theme, grid, w, h),
+    }
+}
+
+fn viewMiniBorder(
+    state: *const State,
+    tree: *Tree,
+    theme: *const Theme,
+    grid: Grid,
+    w: f32,
+    h: f32,
+    stadium_pill: bool,
+) Tree.Error!void {
     const pad: u8 = if (w < 108 or h < 96) 3 else if (grid == .horizontal and h >= 96) 6 else 4;
     const surface = try tree.open(.{
         .axis = .column,
@@ -436,22 +501,28 @@ fn viewMini(state: *const State, tree: *Tree, theme: *const Theme, grid: Grid, w
     });
 
     const box_state = buttonState(state, .play_pause);
-    const radius: u8 = if (h < 96) Theme.radius else Theme.radius + 2;
+    const tile_h = @max(1, h - @as(f32, @floatFromInt(pad * 2)));
+    const radius: u8 = if (stadium_pill)
+        chart.pillRadius(tile_h)
+    else if (h < 96)
+        Theme.radius
+    else
+        Theme.radius + 2;
     const border_w: u8 = if (grid == .square) (if (h >= 108) 4 else 3) else (if (h >= 96) 4 else 3);
 
-    const tile = try tree.open(.{
+    const tile = try chart.openBorderPill(tree, .{
         .id = play_pause_id,
-        .axis = .column,
         .width = .fill,
         .height = .fill,
-        .fill = progressBoxFill(theme, box_state),
-        .border = progressTrackBorder(theme, box_state),
+        .pill_height = tile_h,
         .border_width = border_w,
         .radius = radius,
+        .fill = progressBoxFill(theme, box_state),
+        .track = progressTrackBorder(theme, box_state),
+        .active = progressBorderColor(theme, state.phase, state.run, box_state),
+        .fraction = if (state.phase == .idle) 0 else state.fraction,
         .pointer = .hand,
     });
-
-    try viewProgressBorderOverlay(state, tree, theme, box_state, border_w, radius);
 
     // Borders paint inside the tile bounds, so content padding includes `border_w` plus breathing room.
     const inner_pad_x: u8 = border_w + if (grid == .square) @as(u8, 6) else (if (h >= 96) @as(u8, 10) else @as(u8, 8));
@@ -459,14 +530,6 @@ fn viewMini(state: *const State, tree: *Tree, theme: *const Theme, grid: Grid, w
     const inner_w = @max(1, w - @as(f32, @floatFromInt(pad * 2 + inner_pad_x * 2)));
     const inner_h = @max(1, h - @as(f32, @floatFromInt(pad * 2 + inner_pad_y * 2)));
     const time_color = progressTimeColor(theme, state.phase, state.run, box_state);
-    const full_time = state.timeText();
-    const stacked_style: ?text.Style = if (grid == .square and full_time.len == 5 and full_time[2] == ':') blk: {
-        if (inner_h >= 128 and inner_w >= 80) break :blk .xxl_semibold;
-        if (inner_h >= 104 and inner_w >= 64) break :blk .display_md;
-        if (inner_h >= 84 and inner_w >= 48) break :blk .display_sm;
-        if (inner_h >= 66 and inner_w >= 44) break :blk .xl_semibold;
-        break :blk null;
-    } else null;
 
     const content = try tree.open(.{
         .axis = .column,
@@ -477,6 +540,159 @@ fn viewMini(state: *const State, tree: *Tree, theme: *const Theme, grid: Grid, w
         .padding = .symmetric(inner_pad_x, inner_pad_y),
         .gap = 0,
     });
+    try viewMiniTimeText(state, tree, time_color, grid, inner_w, inner_h, !stadium_pill);
+    tree.close(content);
+    tree.close(tile);
+    tree.close(surface);
+}
+
+fn viewMiniBar(state: *const State, tree: *Tree, theme: *const Theme, grid: Grid, w: f32, h: f32) Tree.Error!void {
+    const pad: u8 = if (w < 108 or h < 96) 4 else 6;
+    const surface = try tree.open(.{
+        .axis = .column,
+        .width = .fill,
+        .height = .fill,
+        .padding = .all(pad),
+    });
+    const box_state = buttonState(state, .play_pause);
+    const tile = try tree.open(.{
+        .id = play_pause_id,
+        .axis = .column,
+        .width = .fill,
+        .height = .fill,
+        .main = .center,
+        .cross = .center,
+        .padding = .symmetric(10, 8),
+        .gap = 8,
+        .fill = progressBoxFill(theme, box_state),
+        .border = tileBorder(theme, box_state),
+        .border_width = Theme.border_width,
+        .radius = Theme.radius + 2,
+        .pointer = .hand,
+    });
+    const inner_w = @max(1, w - @as(f32, @floatFromInt(pad * 2 + 20)));
+    const inner_h = @max(1, h - @as(f32, @floatFromInt(pad * 2 + 30)));
+    const time_color = progressTimeColor(theme, state.phase, state.run, box_state);
+    try viewMiniTimeText(state, tree, time_color, grid, inner_w, inner_h, false);
+    try chart.progress(
+        tree,
+        theme,
+        .bar,
+        if (state.phase == .idle) 0 else state.fraction,
+        progressColor(theme, state.phase, state.run),
+        6,
+    );
+    tree.close(tile);
+    tree.close(surface);
+}
+
+fn viewMiniRing(state: *const State, tree: *Tree, theme: *const Theme, w: f32, h: f32) Tree.Error!void {
+    const pad: u8 = 4;
+    const surface = try tree.open(.{
+        .axis = .column,
+        .width = .fill,
+        .height = .fill,
+        .padding = .all(pad),
+    });
+    const box_state = buttonState(state, .play_pause);
+    const tile = try tree.open(.{
+        .id = play_pause_id,
+        .width = .fill,
+        .height = .fill,
+        .main = .center,
+        .cross = .center,
+        .fill = progressBoxFill(theme, box_state),
+        .border = tileBorder(theme, box_state),
+        .border_width = Theme.border_width,
+        .radius = Theme.radius + 2,
+        .pointer = .hand,
+    });
+    const side = @max(36, @min(w, h) - @as(f32, @floatFromInt(pad * 2 + 12)));
+    const radius = side / 2;
+    const thick: f32 = if (side >= 84) 6 else 5;
+    const dial = try tree.open(.{
+        .width = .{ .fixed = side },
+        .height = .{ .fixed = side },
+    });
+    _ = try tree.arc(.{
+        .radius = radius,
+        .thickness = thick,
+        .sweep = turn,
+        .fill = trackColor(theme, state.phase, state.run),
+    }, .{ .overlay = true, .width = .fill, .height = .fill });
+    if (state.fraction > 0 and state.phase != .idle) {
+        _ = try tree.arc(.{
+            .radius = radius,
+            .thickness = thick,
+            .sweep = state.fraction * turn,
+            .fill = progressColor(theme, state.phase, state.run),
+            .caps = .round,
+        }, .{ .overlay = true, .width = .fill, .height = .fill });
+    }
+    const center = try tree.open(.{
+        .overlay = true,
+        .width = .fill,
+        .height = .fill,
+        .main = .center,
+        .cross = .center,
+    });
+    const inner = @max(1, side - thick * 2 - 8);
+    const time_color = progressTimeColor(theme, state.phase, state.run, box_state);
+    _ = try tree.text(state.timeText(), .{
+        .color = time_color,
+        .style = fitTimerStyle(inner, inner, state.timeText().len, false),
+        .figures = .tabular,
+    });
+    tree.close(center);
+    tree.close(dial);
+    tree.close(tile);
+    tree.close(surface);
+}
+
+fn viewMiniHalfRings(state: *const State, tree: *Tree, theme: *const Theme, grid: Grid, w: f32, h: f32) Tree.Error!void {
+    const pad: u8 = if (grid == .horizontal) 10 else 8;
+    const surface = try tree.open(.{
+        .axis = .column,
+        .width = .fill,
+        .height = .fill,
+        .padding = .all(pad),
+        .cross = .start,
+    });
+    const box_state = buttonState(state, .play_pause);
+    const time_color = progressTimeColor(theme, state.phase, state.run, box_state);
+    const avail_w = @max(1, w - @as(f32, @floatFromInt(pad * 2)) - 28);
+    const avail_h = @max(1, h - @as(f32, @floatFromInt(pad * 2)) - 24);
+    _ = try tree.text(state.timeText(), .{
+        .color = time_color,
+        .style = fitTimerStyle(avail_w, avail_h, state.timeText().len, false),
+        .figures = .tabular,
+    });
+    tree.close(surface);
+
+    const center_side: f32 = if (@min(w, h) >= 112) 32 else 28;
+    const outer_r: f32 = if (@min(w, h) >= 112) 52 else 44;
+    const thick: f32 = if (@min(w, h) >= 112) 5 else 4;
+    const ring_gap: f32 = if (@min(w, h) >= 112) 4 else 3;
+    try viewCornerHalfRings(state, tree, theme, 12, center_side, outer_r, thick, ring_gap);
+}
+
+fn viewMiniTimeText(
+    state: *const State,
+    tree: *Tree,
+    time_color: Color,
+    grid: Grid,
+    inner_w: f32,
+    inner_h: f32,
+    allow_stacked: bool,
+) Tree.Error!void {
+    const full_time = state.timeText();
+    const stacked_style: ?text.Style = if (allow_stacked and grid == .square and full_time.len == 5 and full_time[2] == ':') blk: {
+        if (inner_h >= 128 and inner_w >= 80) break :blk .xxl_semibold;
+        if (inner_h >= 104 and inner_w >= 64) break :blk .display_md;
+        if (inner_h >= 84 and inner_w >= 48) break :blk .display_sm;
+        if (inner_h >= 66 and inner_w >= 44) break :blk .xl_semibold;
+        break :blk null;
+    } else null;
 
     if (stacked_style) |style| {
         _ = try tree.text(full_time[0..2], .{
@@ -496,13 +712,25 @@ fn viewMini(state: *const State, tree: *Tree, theme: *const Theme, grid: Grid, w
             .figures = .tabular,
         });
     }
-
-    tree.close(content);
-    tree.close(tile);
-    tree.close(surface);
 }
 
 fn viewHorizontalNormal(state: *const State, tree: *Tree, theme: *const Theme, w: f32, h: f32) Tree.Error!void {
+    switch (state.option.progress_style) {
+        .auto, .ring => try viewHorizontalNormalDial(state, tree, theme, w, h, .ring),
+        .bar => try viewHorizontalNormalDial(state, tree, theme, w, h, .bar),
+        .border => try viewHorizontalNormalBorder(state, tree, theme, w, h),
+        .half_rings => try viewHorizontalNormalHalfRings(state, tree, theme, w, h),
+    }
+}
+
+fn viewHorizontalNormalDial(
+    state: *const State,
+    tree: *Tree,
+    theme: *const Theme,
+    w: f32,
+    h: f32,
+    comptime mark: enum { ring, bar },
+) Tree.Error!void {
     const roomy = w >= 290 and h >= 144;
     const hpad: u8 = if (roomy) 14 else 12;
     const vpad: u8 = if (roomy) 12 else 10;
@@ -528,9 +756,150 @@ fn viewHorizontalNormal(state: *const State, tree: *Tree, theme: *const Theme, w
         .width = .fill,
         .height = .fill,
         .cross = .start,
-        .gap = 0,
+        .gap = if (mark == .bar) 4 else 0,
     });
 
+    try viewMetaRow(state, tree, theme, roomy);
+
+    _ = try tree.leaf(.{ .width = .{ .fixed = 1 }, .height = .fill });
+
+    const left_w = @max(1, w - chrome_x - tile_side);
+    const avail_h = @max(1, h - chrome_y - if (mark == .bar) @as(f32, 72) else @as(f32, 58));
+    _ = try tree.text(state.timeText(), .{
+        .color = theme.foreground,
+        .style = fitTimerStyle(left_w, avail_h, state.timeText().len, roomy and mark != .bar),
+        .figures = .tabular,
+    });
+    if (mark == .bar) {
+        try chart.progress(
+            tree,
+            theme,
+            .bar,
+            if (state.phase == .idle) 0 else state.fraction,
+            progressColor(theme, state.phase, state.run),
+            6,
+        );
+    }
+
+    _ = try tree.leaf(.{ .width = .{ .fixed = 1 }, .height = .fill });
+
+    try viewControlButtons(state, tree, theme, roomy);
+    tree.close(left);
+
+    const ring_pad: f32 = if (tile_side >= 116) 20 else 16;
+    const ring_side = tile_side - ring_pad;
+    const thick: f32 = if (tile_side >= 116) 6 else 5;
+    switch (mark) {
+        .ring => try viewDialTile(state, tree, theme, tile_side, ring_side, thick, Theme.radius + 2),
+        .bar => try viewPlayButtonTile(state, tree, theme, tile_side, Theme.radius + 2),
+    }
+
+    tree.close(surface);
+}
+
+fn viewHorizontalNormalBorder(state: *const State, tree: *Tree, theme: *const Theme, w: f32, h: f32) Tree.Error!void {
+    const roomy = w >= 290 and h >= 144;
+    const hpad: u8 = if (roomy) 14 else 12;
+    const vpad: u8 = if (roomy) 12 else 10;
+    const right_pad: u8 = hpad + 2;
+    const bottom_pad: u8 = vpad + 2;
+    const surface = try tree.open(.{
+        .axis = .column,
+        .width = .fill,
+        .height = .fill,
+        .padding = .{ .left = hpad, .right = right_pad, .top = vpad, .bottom = bottom_pad },
+        .gap = 8,
+    });
+
+    const top_row = try tree.open(.{
+        .axis = .row,
+        .width = .fill,
+        .cross = .center,
+        .gap = 8,
+    });
+    try viewMetaRow(state, tree, theme, roomy);
+    try viewControlButtons(state, tree, theme, roomy);
+    tree.close(top_row);
+
+    const box_state = buttonState(state, .play_pause);
+    const pill_h = @max(40, h - @as(f32, @floatFromInt(vpad + bottom_pad)) - 46);
+    const pill_w = @max(80, w - @as(f32, @floatFromInt(hpad + right_pad)));
+    const border_w: u8 = if (roomy) 5 else 4;
+    const pill = try chart.openBorderPill(tree, .{
+        .id = play_pause_id,
+        .width = .fill,
+        .height = .fill,
+        .pill_height = pill_h,
+        .border_width = border_w,
+        .fill = progressBoxFill(theme, box_state),
+        .track = progressTrackBorder(theme, box_state),
+        .active = progressBorderColor(theme, state.phase, state.run, box_state),
+        .fraction = if (state.phase == .idle) 0 else state.fraction,
+        .pointer = .hand,
+    });
+    const inside = try tree.open(.{
+        .overlay = true,
+        .width = .fill,
+        .height = .fill,
+        .main = .center,
+        .cross = .center,
+        .padding = .symmetric(16, 6),
+    });
+    const time_color = progressTimeColor(theme, state.phase, state.run, box_state);
+    _ = try tree.text(state.timeText(), .{
+        .color = time_color,
+        .style = fitTimerStyle(pill_w - 32, pill_h - 12, state.timeText().len, true),
+        .figures = .tabular,
+    });
+    tree.close(inside);
+    tree.close(pill);
+    tree.close(surface);
+}
+
+fn viewHorizontalNormalHalfRings(state: *const State, tree: *Tree, theme: *const Theme, w: f32, h: f32) Tree.Error!void {
+    const roomy = w >= 290 and h >= 144;
+    const hpad: u8 = if (roomy) 14 else 12;
+    const vpad: u8 = if (roomy) 12 else 10;
+    const bottom_pad: u8 = vpad + 2;
+    const chrome_y: f32 = @floatFromInt(vpad + bottom_pad);
+
+    const center_side: f32 = if (roomy) 42 else 38;
+    const outer_r: f32 = if (roomy) 64 else 56;
+    const thick: f32 = if (roomy) 6 else 5;
+    const ring_gap: f32 = if (roomy) 5 else 4;
+    const corner_pad: u8 = if (roomy) 16 else 14;
+
+    const surface = try tree.open(.{
+        .axis = .row,
+        .width = .fill,
+        .height = .fill,
+        .padding = .{ .left = hpad, .right = hpad, .top = vpad, .bottom = bottom_pad },
+        .cross = .center,
+    });
+    const left = try tree.open(.{
+        .width = .fill,
+        .height = .fill,
+        .cross = .start,
+        .gap = 0,
+    });
+    try viewMetaRow(state, tree, theme, roomy);
+    _ = try tree.leaf(.{ .width = .{ .fixed = 1 }, .height = .fill });
+    const left_w = @max(1, w - @as(f32, @floatFromInt(hpad * 2)) - outer_r - @as(f32, @floatFromInt(corner_pad)));
+    const avail_h = @max(1, h - chrome_y - 58);
+    _ = try tree.text(state.timeText(), .{
+        .color = theme.foreground,
+        .style = fitTimerStyle(left_w, avail_h, state.timeText().len, roomy),
+        .figures = .tabular,
+    });
+    _ = try tree.leaf(.{ .width = .{ .fixed = 1 }, .height = .fill });
+    try viewControlButtons(state, tree, theme, roomy);
+    tree.close(left);
+    tree.close(surface);
+
+    try viewCornerHalfRings(state, tree, theme, corner_pad, center_side, outer_r, thick, ring_gap);
+}
+
+fn viewMetaRow(state: *const State, tree: *Tree, theme: *const Theme, roomy: bool) Tree.Error!void {
     const meta = try tree.open(.{
         .axis = .row,
         .width = .fill,
@@ -550,19 +919,9 @@ fn viewHorizontalNormal(state: *const State, tree: *Tree, theme: *const Theme, w
         });
     }
     tree.close(meta);
+}
 
-    _ = try tree.leaf(.{ .width = .{ .fixed = 1 }, .height = .fill });
-
-    const left_w = @max(1, w - chrome_x - tile_side);
-    const avail_h = @max(1, h - chrome_y - 58);
-    _ = try tree.text(state.timeText(), .{
-        .color = theme.foreground,
-        .style = fitTimerStyle(left_w, avail_h, state.timeText().len, roomy),
-        .figures = .tabular,
-    });
-
-    _ = try tree.leaf(.{ .width = .{ .fixed = 1 }, .height = .fill });
-
+fn viewControlButtons(state: *const State, tree: *Tree, theme: *const Theme, roomy: bool) Tree.Error!void {
     const controls = try tree.open(.{
         .axis = .row,
         .gap = if (roomy) 8 else 6,
@@ -585,34 +944,103 @@ fn viewHorizontalNormal(state: *const State, tree: *Tree, theme: *const Theme, w
         .state = if (state.canSkip()) buttonState(state, .skip) else .disabled,
     });
     tree.close(controls);
-    tree.close(left);
-
-    const ring_pad: f32 = if (tile_side >= 116) 20 else 16;
-    const ring_side = tile_side - ring_pad;
-    const thick: f32 = if (tile_side >= 116) 6 else 5;
-    try viewDialTile(state, tree, theme, tile_side, ring_side, thick, Theme.radius + 2);
-
-    tree.close(surface);
 }
 
-fn viewProgressBorderOverlay(
+fn viewPlayButtonTile(
     state: *const State,
     tree: *Tree,
     theme: *const Theme,
-    box_state: button.State,
-    border_w: u8,
+    tile_side: f32,
     radius: u8,
 ) Tree.Error!void {
-    if (state.fraction <= 0 or state.phase == .idle) return;
-    const sweep_val: u16 = @max(1, @as(u16, @intFromFloat(@round(clamp01(state.fraction) * 65535.0))));
-    _ = try tree.borderSweep(sweep_val, .{
+    const box_state = buttonState(state, .play_pause);
+    const tile = try tree.open(.{
+        .id = play_pause_id,
+        .width = .{ .fixed = tile_side },
+        .height = .{ .fixed = tile_side },
+        .main = .center,
+        .cross = .center,
+        .fill = tileFill(theme, box_state),
+        .border = tileBorder(theme, box_state),
+        .border_width = Theme.border_width,
+        .radius = radius,
+        .pointer = .hand,
+    });
+    const disc_side = @max(28, tile_side - 28);
+    const disc = try tree.open(.{
+        .width = .{ .fixed = disc_side },
+        .height = .{ .fixed = disc_side },
+        .main = .center,
+        .cross = .center,
+        .fill = theme.background.alpha(85),
+        .radius = chart.pillRadius(disc_side),
+    });
+    _ = try tree.icon(.{
+        .codepoint = if (state.run == .running) icons.pause else icons.play,
+        .color = theme.foreground,
+        .size = if (disc_side >= 58) 20 else Theme.icon,
+    });
+    tree.close(disc);
+    tree.close(tile);
+}
+
+fn viewCornerHalfRings(
+    state: *const State,
+    tree: *Tree,
+    theme: *const Theme,
+    corner_pad: u8,
+    center_side: f32,
+    outer_radius: f32,
+    thickness: f32,
+    gap: f32,
+) Tree.Error!void {
+    const box_state = buttonState(state, .play_pause);
+    const corner = try tree.open(.{
         .overlay = true,
         .width = .fill,
         .height = .fill,
-        .border = progressBorderColor(theme, state.phase, state.run, box_state),
-        .border_width = border_w,
-        .radius = radius,
+        .main = .end,
+        .cross = .end,
+        .padding = .{ .right = corner_pad, .bottom = corner_pad },
     });
+    const center_btn = try tree.open(.{
+        .id = play_pause_id,
+        .width = .{ .fixed = center_side },
+        .height = .{ .fixed = center_side },
+        .main = .center,
+        .cross = .center,
+        .fill = tileFill(theme, box_state),
+        .border = tileBorder(theme, box_state),
+        .border_width = Theme.border_width,
+        .radius = chart.pillRadius(center_side),
+        .pointer = .hand,
+    });
+    try chart.halfRingsArcs(tree, theme, chart.HalfRings.fromCycle(
+        toChartPhase(state.phase),
+        state.fraction,
+        state.tasks_in_cycle,
+        state.tasks_before_long_break,
+    ), .{
+        .outer_radius = outer_radius,
+        .thickness = thickness,
+        .gap = gap,
+    });
+    _ = try tree.icon(.{
+        .codepoint = if (state.run == .running) icons.pause else icons.play,
+        .color = theme.foreground,
+        .size = if (center_side >= 36) Theme.icon else 14,
+    });
+    tree.close(center_btn);
+    tree.close(corner);
+}
+
+fn toChartPhase(phase: Phase) chart.FocusPhase {
+    return switch (phase) {
+        .idle => .idle,
+        .task => .task,
+        .short_break => .short_break,
+        .long_break => .long_break,
+    };
 }
 
 fn viewDialTile(
@@ -743,7 +1171,7 @@ fn viewResizeHandle(state: *const State, tree: *Tree, theme: *const Theme) Tree.
 }
 
 /// Builds the hover tooltip for `mini` mode (colored phase badge and cycle tally),
-/// returning null when unfocused, dragging/resizing, hidden, or in `normal` mode.
+/// returning null when disabled (`!option.tooltip`), unfocused, dragging/resizing, hidden, or in `normal` mode.
 pub fn viewTooltip(
     state: *const State,
     tree: *Tree,
@@ -751,7 +1179,7 @@ pub fn viewTooltip(
     viewport_w: f32,
     viewport_h: f32,
 ) Tree.Error!?Index {
-    if (!state.visible) return null;
+    if (!state.visible or !state.option.tooltip) return null;
     if (!state.pointer_inside and state.hovered == .none) return null;
     if (state.capture == .move or state.capture == .resize) return null;
     const eff = state.effectiveSize(viewport_w, viewport_h);
@@ -798,13 +1226,20 @@ pub fn placeTooltip(tree: *Tree, widget_root: ?Index, tip_root: ?Index, viewport
 }
 
 /// Translates the widget to its clamped `(x, y)` viewport coordinates after layout.
-/// When never dragged or resized, defaults cleanly into the top-right corner.
+/// When never dragged or resized, docks cleanly at `state.option.anchor`.
 pub fn place(state: *State, tree: *Tree, root: ?Index, viewport_w: f32, viewport_h: f32) void {
     const idx = root orelse return;
     const rect = tree.nodes[idx].rect;
     if (!state.positioned) {
-        state.x = @max(edge_margin, viewport_w - edge_margin - rect.w);
-        state.y = edge_margin;
+        state.x = switch (state.option.anchor) {
+            .top_left, .bottom_left => edge_margin,
+            .top_center, .bottom_center => @round((viewport_w - rect.w) * 0.5),
+            .top_right, .bottom_right => @max(edge_margin, viewport_w - edge_margin - rect.w),
+        };
+        state.y = if (state.option.anchor.isTop())
+            edge_margin
+        else
+            @max(edge_margin, viewport_h - edge_margin - rect.h);
     }
     const max_x = @max(min_clamp_margin, viewport_w - min_clamp_margin - rect.w);
     const max_y = @max(min_clamp_margin, viewport_h - min_clamp_margin - rect.h);
