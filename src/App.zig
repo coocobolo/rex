@@ -769,6 +769,10 @@ pub fn init(
     var initial_pending_banner: ?PendingAlert = null;
     if (kit) |k| {
         k.configure(kitOverlayOptions(active_config.ui, active_config.window));
+        if (active_config.wellbeing.enabled and active_config.window.wellbeing_widget.default_visible) {
+            _ = k.toggleWellbeingWidget();
+            _ = k.syncWellbeingWidget(wellbeingWidgetSnapshot(&wellbeing_state));
+        }
         if (active_config.window.banner.enabled) {
             if (startup_banner) |b| {
                 if (win.focused()) {
@@ -1923,6 +1927,7 @@ pub fn reloadConfig(self: *App) void {
     // FreeType keeps the path pointer in its stream (src/base/ftsystem.c:252)
     // but never reads it after opening the file, so this is safe. A new
     // rasterizer (font size change below) gets the new path.
+    const widget_default_visible_changed = self.config.window.wellbeing_widget.default_visible != new_config.window.wellbeing_widget.default_visible;
     self.config_arena.deinit();
     self.config_arena = loaded.takeArena();
     self.config = new_config;
@@ -1984,6 +1989,16 @@ pub fn reloadConfig(self: *App) void {
     }
 
     self.wellbeing_state.applyOption(self.config.wellbeing);
+    if (self.kit) |kit| {
+        if (widget_default_visible_changed) {
+            if (self.config.window.wellbeing_widget.default_visible and self.wellbeing_state.option.enabled) {
+                if (!kit.wellbeingWidgetShown()) _ = kit.toggleWellbeingWidget();
+            } else {
+                _ = kit.hideWellbeingWidget();
+            }
+        }
+        self.syncWellbeingKit(false);
+    }
     // The state directory, file name or `enabled` may have changed.
     if (self.wellbeing_watch) |watch| watch.destroy(self.allocator);
     self.wellbeing_watch = startWellbeingWatch(self.allocator, &self.wellbeing_state, self.dirs.state);
@@ -4419,7 +4434,7 @@ fn rendererScrollbarOption(sb: Config.Scrollbar) renderer_mod.Scrollbar.Option {
     return out;
 }
 
-fn kitOverlayOptions(ui: Config.Ui, win: Config.Window) KitOverlay.Options {
+pub fn kitOverlayOptions(ui: Config.Ui, win: Config.Window) KitOverlay.Options {
     return .{
         .ui = ui,
         .banner = .{
@@ -4448,6 +4463,7 @@ fn kitOverlayOptions(ui: Config.Ui, win: Config.Window) KitOverlay.Options {
             .scrim_alpha = win.modal.backdropAlpha(),
             .media = alertDialogMedia(win.alert_dialog.icon),
         },
+        .wellbeing_widget = win.wellbeing_widget.toKitOption(),
     };
 }
 

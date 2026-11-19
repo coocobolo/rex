@@ -399,7 +399,7 @@ test "KitOverlay: the dialog covers the toast stack" {
 test "KitOverlay: its size" {
     // Nearly all of it is two tables: the font's kerning pairs, and
     // the painter's 2048 instances of 64 bytes with its glyph position cache.
-    try testing.expectEqual(378296, @sizeOf(KitOverlay));
+    try testing.expectEqual(378304, @sizeOf(KitOverlay));
     try testing.expectEqual(161048, @sizeOf(@FieldType(KitOverlay, "painter")));
     try testing.expectEqual(190424, @sizeOf(@FieldType(KitOverlay, "font")));
     try testing.expectEqual(9152, @sizeOf(@FieldType(KitOverlay, "nodes")));
@@ -728,4 +728,38 @@ test "KitOverlay: hovering a stacked toast deck triggers redraw, expands, and co
     try testing.expect(kit.pointerLeft());
     try testing.expect(fixture.frame());
     try testing.expectEqual(toast.Motion.moving, kit.motion);
+}
+
+test "KitOverlay: configure applies wellbeing_widget options and renders all progress styles" {
+    var fixture: Fixture = try .init(1);
+    defer fixture.deinit();
+    const kit = fixture.kit;
+
+    try testing.expect(kit.toggleWellbeingWidget());
+    try testing.expect(kit.syncWellbeingWidget(.{
+        .phase = .task,
+        .run = .running,
+        .fraction = 0.5,
+        .seconds = 750,
+        .tasks_in_cycle = 1,
+        .tasks_before_long_break = 4,
+    }));
+
+    for ([_]wellbeing_widget.ProgressStyle{ .auto, .bar, .ring, .border, .half_rings }) |style| {
+        kit.configure(.{
+            .wellbeing_widget = .{
+                .default_width = 264,
+                .default_height = 132,
+                .anchor = .top_left,
+                .progress_style = style,
+                .tooltip = false,
+            },
+        });
+        try testing.expectEqual(style, kit.wellbeing_widget.option.progress_style);
+        try testing.expectEqual(.top_left, kit.wellbeing_widget.option.anchor);
+        try testing.expect(!kit.wellbeing_widget.option.tooltip);
+        try testing.expect(fixture.frame());
+        const card = kit.tree.find(wellbeing_widget.card_id).?;
+        try testing.expectEqual(Rect{ .x = 16, .y = 16, .w = 264, .h = 132 }, card.rect);
+    }
 }

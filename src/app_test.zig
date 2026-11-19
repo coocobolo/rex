@@ -153,3 +153,23 @@ test "gridLayout and cellPosAt: inner padding scales, shrinks on tiny windows, a
     try testing.expectEqual(.{ @as(u16, 0), @as(u16, 0) }, App.cellPosAt(25, 15, 20, 10, 10, 20, 220, 200));
     try testing.expectEqual(.{ @as(u16, 2), @as(u16, 3) }, App.cellPosAt(45, 75, 20, 10, 10, 20, 220, 200));
 }
+
+test "kitOverlayOptions: forwards [wellbeing.widget] options to KitOverlay" {
+    const testing = std.testing;
+    var win: Config.Window = .default;
+    win.wellbeing_widget = .{
+        .default_visible = true,
+        .anchor = .top_left,
+        .width = 180,
+        .height = 96,
+        .progress_style = .half_rings,
+        .tooltip = false,
+    };
+
+    const opts = App.kitOverlayOptions(.{}, win);
+    try testing.expectEqual(.top_left, opts.wellbeing_widget.anchor);
+    try testing.expectEqual(@as(f32, 180), opts.wellbeing_widget.default_width);
+    try testing.expectEqual(@as(f32, 96), opts.wellbeing_widget.default_height);
+    try testing.expectEqual(.half_rings, opts.wellbeing_widget.progress_style);
+    try testing.expect(!opts.wellbeing_widget.tooltip);
+}

@@ -90,6 +90,7 @@ pub const Options = struct {
     banner: alert_mod.Option = .{},
     toast: toast.Option = .{},
     dialog: alert_dialog.Option = .{},
+    wellbeing_widget: widget_mod.Option = .{},
 };
 
 /// Applies the user's `[ui]` and overlay settings, from the next frame on.
@@ -108,6 +109,7 @@ pub fn configure(self: *KitOverlay, options: Options) void {
     self.alert.option = options.banner;
     self.toasts.option = options.toast;
     self.dialog.option = options.dialog;
+    _ = widget_mod.configure(&self.wellbeing_widget, options.wellbeing_widget);
 }
 
 /// Shows or updates the persistent alert banner. Returns whether a redraw is due.
