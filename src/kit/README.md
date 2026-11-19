@@ -119,8 +119,8 @@ sits in one cell as wide as the widest digit, and is not kerned.
 | `base` | 16 / 24 | regular | 0 | settings body |
 | `lg_semibold` | 18 / 28 | semibold | 0 | dialog titles |
 | `xl_semibold` | 24 / 32 | semibold | 0 | card values |
-| `display_sm` | 36 / 42 | semibold | −1 | compact display values |
-| `display_md` | 44 / 52 | semibold | −1 | medium display values |
+| `display_sm` | 36 / 42 | regular | −1 | compact display values |
+| `display_md` | 44 / 52 | regular | −1 | medium display values |
 | `xxl_semibold` | 56 / 64 | semibold | −1 | compact timer |
 | `xxxl_semibold` | 80 / 88 | semibold | −2 | timer |
 

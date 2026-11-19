@@ -23,6 +23,41 @@ float roundedBox(vec2 p, vec2 b, float r) {
   return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r;
 }
 
+// Updates exact distance to a vertical coil leg `[a, b]` and its active prefix `[0, target]`.
+void evalCoilLeg(vec2 p, vec2 a, vec2 b, float s0, float target, inout float d_track, inout float d_active) {
+  vec2 ba = b - a;
+  float len = length(ba);
+  float h = clamp(dot(p - a, ba) / max(len * len, 1e-6), 0.0, 1.0);
+  d_track = min(d_track, length(p - (a + ba * h)));
+  if (target > s0) {
+    float h_act = clamp((target - s0) / max(len, 1e-6), 0.0, 1.0);
+    d_active = min(d_active, length(p - (a + ba * min(h, h_act))));
+  }
+}
+
+// Updates exact distance to a 180-degree semicircular coil U-turn and its active prefix `[0, target]`.
+void evalCoilTurn(vec2 p, vec2 c, float r, bool bottom, float s0, float target, inout float d_track, inout float d_active) {
+  const float PI = 3.14159265359;
+  vec2 d = p - c;
+  float dist_c = max(length(d), 1e-6);
+  bool on_arc_side = bottom ? (d.y >= 0.0) : (d.y <= 0.0);
+  float phi = on_arc_side ? acos(clamp(-d.x / dist_c, -1.0, 1.0)) : (d.x < 0.0 ? 0.0 : PI);
+  float sy = bottom ? 1.0 : -1.0;
+  vec2 q_phi = c + vec2(-cos(phi), sy * sin(phi)) * r;
+  float dist_phi = length(p - q_phi);
+  d_track = min(d_track, dist_phi);
+  if (target > s0) {
+    float phi_act = clamp((target - s0) / max(r, 1e-6), 0.0, PI);
+    if (phi <= phi_act) {
+      d_active = min(d_active, dist_phi);
+    } else {
+      vec2 q_start = c + vec2(-r, 0.0);
+      vec2 q_end = c + vec2(-cos(phi_act), sy * sin(phi_act)) * r;
+      d_active = min(d_active, min(length(p - q_start), length(p - q_end)));
+    }
+  }
+}
+
 vec4 sampleShape() {
   if (v_kind == 1u) {
     float coverage = texture(u_atlas_gray, v_uv).a;
@@ -73,6 +108,66 @@ vec4 sampleShape() {
     if (period > 0.0 && mod(x, period) >= v_params.x) return vec4(0.0);
     if (v_fill.a < 0.004) return vec4(0.0);
     return v_fill;
+  }
+
+  // A serpentine progress ribbon: `N` vertical legs joined by alternating
+  // bottom/top 180-degree U-turns, evaluated in O(1) over the local neighborhood.
+  if (v_kind == 4u) {
+    const float PI = 3.14159265359;
+    float w = v_half.x * 2.0;
+    float h = v_half.y * 2.0;
+    float n = max(floor(v_params.y + 0.5), 2.0);
+    float t = clamp(v_params.x, 1.0, min(w / (n * 1.35), h * 0.4));
+    float ht = t * 0.5;
+    float span_x = max(w - t, 1.0);
+    float pitch = span_x / (n - 1.0);
+    float r = pitch * 0.5;
+    float y_turn = max(v_half.y - r - ht, 0.0);
+
+    float l_seg = 2.0 * y_turn;
+    float l_arc = PI * r;
+    float l_step = l_seg + l_arc;
+    float s_total = (n - 1.0) * l_step + l_seg + 2.0 * r;
+    float frac = clamp(v_arc.x, 0.0, 1.0);
+    float target = frac * s_total;
+
+    float u = (v_local.x + span_x * 0.5) / pitch;
+    float k0 = clamp(floor(u), 0.0, n - 2.0);
+    float d_track = 1e9;
+    float d_active = 1e9;
+
+    // Two nearest vertical legs (`k0` and `k0 + 1`).
+    for (int di = 0; di <= 1; ++di) {
+      float idx = k0 + float(di);
+      float x_col = -span_x * 0.5 + idx * pitch;
+      bool down = mod(idx, 2.0) < 0.5;
+      float top_y = (idx < 0.5 || (idx > n - 1.5 && !down)) ? -(y_turn + r) : -y_turn;
+      float bot_y = (idx > n - 1.5 && down) ? (y_turn + r) : y_turn;
+      vec2 a = vec2(x_col, down ? top_y : bot_y);
+      vec2 b = vec2(x_col, down ? bot_y : top_y);
+      float s0 = (idx < 0.5) ? 0.0 : (r + idx * l_step);
+      evalCoilLeg(v_local, a, b, s0, target, d_track, d_active);
+    }
+
+    // Up to three nearest U-turns (`k0 - 1`, `k0`, `k0 + 1`).
+    for (int dk = -1; dk <= 1; ++dk) {
+      float k = k0 + float(dk);
+      if (k < 0.0 || k > n - 2.0) continue;
+      float x_turn = -span_x * 0.5 + (k + 0.5) * pitch;
+      bool bottom = mod(k, 2.0) < 0.5;
+      vec2 c = vec2(x_turn, bottom ? y_turn : -y_turn);
+      float s0 = r + k * l_step + l_seg;
+      evalCoilTurn(v_local, c, r, bottom, s0, target, d_track, d_active);
+    }
+
+    float track_cov = clamp(0.5 - (d_track - ht), 0.0, 1.0);
+    float active_cov = (frac > 0.0) ? clamp(0.5 - (d_active - ht), 0.0, 1.0) : 0.0;
+    float a_act = v_fill.a * active_cov;
+    float a_trk = v_border.a * track_cov;
+    float out_a = a_act + a_trk * (1.0 - a_act);
+    if (out_a < 0.004) return vec4(0.0);
+    vec3 out_rgb = (v_fill.rgb * a_act + v_border.rgb * a_trk * (1.0 - a_act)) / out_a;
+    return vec4(out_rgb, out_a);
   }
 
   float radius = min(v_params.x, min(v_half.x, v_half.y));

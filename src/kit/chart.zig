@@ -22,14 +22,25 @@ pub const strip_gap = 2;
 pub const ring_radius: f32 = 115;
 pub const ring_thickness: f32 = 6;
 /// Default stadium pill size and border stroke for `.border` focus progress.
-pub const border_pill_width: f32 = 280;
-pub const border_pill_height: f32 = 140;
-pub const border_pill_thickness: u8 = 6;
-/// Starting angle (`5π/4`, bottom-left) and clockwise span (`π`, semicircle to top-right)
-/// for bottom-right corner `half_rings` gauges.
-pub const half_ring_start: f32 = 5.0 * std.math.pi / 4.0;
+pub const border_pill_width: f32 = 260;
+pub const border_pill_height: f32 = 104;
+pub const border_pill_thickness: u8 = 4;
+/// Default outer radius, stroke thickness, and gap for standalone `half_rings` arches.
+pub const half_ring_outer_radius: f32 = 128;
+pub const half_ring_thickness: f32 = 7;
+pub const half_ring_gap: f32 = 6;
+/// Starting angle (`3π/2`, 9 o'clock) and clockwise span (`π`, top semicircle to 3 o'clock)
+/// for horizontal `half_rings` gauges, plus (`π`, 6 o'clock) for right-edge vertical gauges.
+pub const half_ring_start: f32 = 3.0 * std.math.pi / 2.0;
+pub const half_ring_vertical_start: f32 = std.math.pi;
+pub const half_ring_vertical_left_start: f32 = 0;
 pub const half_ring_sweep: f32 = std.math.pi;
 pub const half_rings_count = 3;
+/// Default dimensions and density for standalone `.coil` serpentine focus progress ribbons.
+pub const coil_width: f32 = 240;
+pub const coil_height: f32 = 104;
+pub const coil_thickness: f32 = 4.5;
+pub const coil_columns: u8 = 22;
 /// Outer radius and thickness of the program donut. The HTML draws a
 /// centerline of 54 with a stroke of 16.
 pub const donut_radius: f32 = 62;
@@ -38,13 +49,24 @@ pub const donut_thickness: f32 = 16;
 pub const donut_gap: f32 = 2;
 
 /// How one focus progress value or cycle state is drawn.
-pub const ProgressMark = enum(u8) { bar, ring, border, half_rings };
+pub const ProgressMark = enum(u8) { bar, ring, border, half_rings, coil };
 /// Focus timer phase mapped onto the three concentric `half_rings` arcs.
 pub const FocusPhase = enum(u8) { idle, task, short_break, long_break };
 /// How named parts are drawn.
 pub const ShareMark = enum { bar, donut };
 /// How one value per day is drawn.
 pub const DayMark = enum { bar };
+
+/// Serpentine progress ribbon configuration for `coil`.
+pub const CoilOptions = struct {
+    width: Tree.Size = .{ .fixed = coil_width },
+    height: Tree.Size = .{ .fixed = coil_height },
+    fill: Color,
+    track: Color = .transparent,
+    fraction: f32 = 0,
+    thickness: f32 = coil_thickness,
+    columns: u8 = coil_columns,
+};
 
 /// Stadium-rounded border pill configuration for `openBorderPill`.
 pub const BorderOptions = struct {
@@ -64,18 +86,25 @@ pub const BorderOptions = struct {
 
 /// Three concentric `.round`-cap arc fractions for the `half_rings` focus mark:
 /// outer task progress (`theme.info`), middle cycle progress (`theme.success`),
-/// and inner break progress (`theme.warning`).
+/// and inner break progress (`theme.foreground`), drawn over `theme.muted` tracks.
 pub const HalfRings = struct {
     task: f32 = 0,
     cycle: f32 = 0,
     break_phase: f32 = 0,
+    /// Number of discrete rounded segments on the middle cycle ring (`0`, `1`, or values above
+    /// `half_rings_max_segments` draw a continuous arc).
+    cycle_segments: u8 = 0,
 
-    /// Concentric ring geometry and track opacity for `halfRings` and `halfRingsArcs`.
+    /// Concentric ring geometry for `halfRings` and `halfRingsArcs`.
     pub const Options = struct {
-        outer_radius: f32 = 58,
-        thickness: f32 = 6,
-        gap: f32 = 5,
-        track_alpha: u8 = 24,
+        outer_radius: f32 = half_ring_outer_radius,
+        thickness: f32 = half_ring_thickness,
+        gap: f32 = half_ring_gap,
+        start: f32 = half_ring_start,
+        sweep: f32 = half_ring_sweep,
+        /// When > 0, trims each vertical semicircle's `start` and `sweep` symmetrically so its
+        /// round caps stay within `±clip_half_height` of center instead of clipping off top/bottom.
+        clip_half_height: f32 = 0,
     };
 
     /// Maps the current focus timer phase, phase fraction, and cycle counts onto the three concentric arcs.
@@ -86,14 +115,20 @@ pub const HalfRings = struct {
         tasks_before_long_break: u8,
     ) HalfRings {
         const clamped = clamp01(fraction);
-        const cycle_frac = if (tasks_before_long_break == 0)
+        const total: f32 = @floatFromInt(tasks_before_long_break);
+        const completed_frac = if (tasks_before_long_break == 0)
             0
         else
-            clamp01(@as(f32, @floatFromInt(tasks_in_cycle)) / @as(f32, @floatFromInt(tasks_before_long_break)));
+            clamp01(@as(f32, @floatFromInt(tasks_in_cycle)) / total);
+        const active_task_frac = if (tasks_before_long_break == 0)
+            0
+        else
+            clamp01(@as(f32, @floatFromInt(@min(tasks_in_cycle +| 1, tasks_before_long_break))) / total);
         return switch (phase) {
-            .idle => .{ .task = 0, .cycle = cycle_frac, .break_phase = 0 },
-            .task => .{ .task = clamped, .cycle = cycle_frac, .break_phase = 0 },
-            .short_break, .long_break => .{ .task = 1.0, .cycle = cycle_frac, .break_phase = clamped },
+            .idle => .{ .task = 0, .cycle = completed_frac, .break_phase = 0, .cycle_segments = tasks_before_long_break },
+            .task => .{ .task = clamped, .cycle = active_task_frac, .break_phase = 0, .cycle_segments = tasks_before_long_break },
+            .short_break => .{ .task = 1.0, .cycle = completed_frac, .break_phase = clamped, .cycle_segments = tasks_before_long_break },
+            .long_break => .{ .task = 1.0, .cycle = if (tasks_before_long_break == 0) 0 else 1.0, .break_phase = clamped, .cycle_segments = tasks_before_long_break },
         };
     }
 };
@@ -125,10 +160,23 @@ pub const progress_nodes = 2;
 pub const ring_nodes = 3;
 /// The stadium pill track box and its overlaid `border_sweep` node.
 pub const border_nodes = 2;
-/// Three concentric track + active arc pairs emitted by `halfRingsArcs`.
+/// Maximum discrete segments drawn on the middle `half_rings` cycle ring before falling back to continuous.
+pub const half_rings_max_segments: u8 = 8;
+/// Three continuous track + active arc pairs emitted by unsegmented `halfRingsArcs`.
 pub const half_rings_arc_nodes = half_rings_count * 2;
+/// Worst-case arc nodes emitted by `halfRingsArcs` (outer 2 + middle up to `max_segments + 1` + inner 2).
+pub const half_rings_arc_nodes_max = 4 + half_rings_max_segments + 1;
 /// The enclosing square box plus `half_rings_arc_nodes`.
 pub const half_rings_nodes = 1 + half_rings_arc_nodes;
+/// Single serpentine ribbon node emitted by `coil`.
+pub const coil_nodes = 1;
+
+/// Picks a proportional vertical-leg count for a coil ribbon of `width` and `thickness` (clamped to `8..28`).
+pub fn coilColumns(width: f32, stroke: f32) u8 {
+    if (!std.math.isFinite(width) or !std.math.isFinite(stroke) or width <= 0 or stroke <= 0) return coil_columns;
+    const raw = @round(width / (stroke * 2.2));
+    return @intFromFloat(std.math.clamp(raw, 8.0, 28.0));
+}
 
 /// Stadium-pill corner radius (`ceil(height / 2)` clamped to `u8`) for a pill of `height` logical pixels.
 pub fn pillRadius(height: f32) u8 {
@@ -178,25 +226,68 @@ pub fn halfRingsArcs(
     options: HalfRings.Options,
 ) Tree.Error!void {
     const step = options.thickness + options.gap;
-    const specs = [half_rings_count]struct { radius: f32, fraction: f32, color: Color }{
-        .{ .radius = options.outer_radius, .fraction = rings.task, .color = theme.info },
-        .{ .radius = @max(1, options.outer_radius - step), .fraction = rings.cycle, .color = theme.success },
-        .{ .radius = @max(1, options.outer_radius - step * 2), .fraction = rings.break_phase, .color = theme.warning },
+    const specs = [half_rings_count]struct { radius: f32, fraction: f32, color: Color, segments: u8 }{
+        .{ .radius = options.outer_radius, .fraction = rings.task, .color = theme.info, .segments = 0 },
+        .{ .radius = @max(1, options.outer_radius - step), .fraction = rings.cycle, .color = theme.success, .segments = rings.cycle_segments },
+        .{ .radius = @max(1, options.outer_radius - step * 2), .fraction = rings.break_phase, .color = theme.foreground, .segments = 0 },
     };
     for (specs) |spec| {
+        const cl = @max(1, spec.radius - options.thickness * 0.5);
+        const trim: f32 = if (options.clip_half_height > 0 and cl > options.clip_half_height)
+            std.math.acos(std.math.clamp(options.clip_half_height / cl, 0.0, 1.0))
+        else
+            0;
+        const ring_start = options.start + trim;
+        const ring_sweep = @max(0.25, options.sweep - trim * 2.0);
+        const clamped = clamp01(spec.fraction);
+        if (spec.segments >= 2 and spec.segments <= half_rings_max_segments) {
+            const count_f: f32 = @floatFromInt(spec.segments);
+            const visual_gap_px = @max(4.0, options.thickness * 0.85);
+            // Round caps extend by `thickness / 2` past each centerline end, so add `thickness`.
+            const gap_rad = (options.thickness + visual_gap_px) / cl;
+            const seg_sweep = (ring_sweep - gap_rad * (count_f - 1.0)) / count_f;
+            if (seg_sweep >= (options.thickness * 0.5) / cl) {
+                for (0..spec.segments) |i| {
+                    const idx_f: f32 = @floatFromInt(i);
+                    const seg_start = ring_start + idx_f * (seg_sweep + gap_rad);
+                    const seg_frac = clamp01(clamped * count_f - idx_f);
+                    if (seg_frac < 1.0) {
+                        try segment(tree, .{
+                            .radius = spec.radius,
+                            .thickness = options.thickness,
+                            .start = seg_start,
+                            .sweep = seg_sweep,
+                            .fill = theme.muted,
+                            .caps = .round,
+                        }, .none);
+                    }
+                    if (seg_frac > 0.0) {
+                        try segment(tree, .{
+                            .radius = spec.radius,
+                            .thickness = options.thickness,
+                            .start = seg_start,
+                            .sweep = seg_frac * seg_sweep,
+                            .fill = spec.color,
+                            .caps = .round,
+                        }, .none);
+                    }
+                }
+                continue;
+            }
+        }
         try segment(tree, .{
             .radius = spec.radius,
             .thickness = options.thickness,
-            .start = half_ring_start,
-            .sweep = half_ring_sweep,
-            .fill = spec.color.alpha(options.track_alpha),
+            .start = ring_start,
+            .sweep = ring_sweep,
+            .fill = theme.muted,
             .caps = .round,
         }, .none);
         try segment(tree, .{
             .radius = spec.radius,
             .thickness = options.thickness,
-            .start = half_ring_start,
-            .sweep = clamp01(spec.fraction) * half_ring_sweep,
+            .start = ring_start,
+            .sweep = clamped * ring_sweep,
             .fill = spec.color,
             .caps = .round,
         }, .none);
@@ -217,6 +308,20 @@ pub fn halfRings(
     });
     try halfRingsArcs(tree, theme, rings, options);
     tree.close(square);
+}
+
+/// Draws a standalone serpentine progress ribbon filling `options.width` x `options.height`.
+pub fn coil(tree: *Tree, options: CoilOptions) Tree.Error!void {
+    _ = try tree.coil(.{
+        .fill = options.fill,
+        .track = options.track,
+        .fraction = clamp01(options.fraction),
+        .thickness = options.thickness,
+        .columns = @max(2, options.columns),
+    }, .{
+        .width = options.width,
+        .height = options.height,
+    });
 }
 
 /// The strip, then each part's slot and segment.
@@ -256,6 +361,11 @@ pub fn progress(tree: *Tree, theme: *const Theme, mark: ProgressMark, fraction: 
             tree.close(pill);
         },
         .half_rings => try halfRings(tree, theme, .{ .task = fraction }, .{}),
+        .coil => try coil(tree, .{
+            .fill = fill,
+            .track = theme.muted.alpha(45),
+            .fraction = fraction,
+        }),
     }
 }
 

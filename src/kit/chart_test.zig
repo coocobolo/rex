@@ -184,13 +184,13 @@ test "chart: a border pill uses stadium radius and clockwise perimeter sweep" {
     try testing.expectEqual(@as(f32, 200), pill.rect.w);
     try testing.expectEqual(chart.border_pill_height, pill.rect.h);
     try testing.expectEqual(chart.pillRadius(chart.border_pill_height), pill.box.radius);
-    try testing.expectEqual(@as(u8, 70), pill.box.radius);
+    try testing.expectEqual(@as(u8, 52), pill.box.radius);
     try testing.expectEqual(Theme.dark.muted, pill.box.border);
     try testing.expectEqual(chart.border_pill_thickness, pill.box.border_width);
 
     try testing.expectEqual(pill.rect, sweep_node.rect);
     try testing.expectEqual(Theme.dark.info, sweep_node.box.border);
-    try testing.expectEqual(@as(u8, 70), sweep_node.box.radius);
+    try testing.expectEqual(@as(u8, 52), sweep_node.box.radius);
     try testing.expectEqual(chart.borderSweepValue(0.5), sweep_node.content.border_sweep);
 
     // Zero or negative fraction keeps node count stable and sets sweep border transparent.
@@ -207,9 +207,14 @@ test "chart: HalfRings.fromCycle maps task, cycle, and break fractions" {
     try testing.expectApproxEqAbs(@as(f32, 0.5), idle.cycle, 0.001);
     try testing.expectEqual(@as(f32, 0), idle.break_phase);
 
+    const first_task = chart.HalfRings.fromCycle(.task, 0.2, 0, 4);
+    try testing.expectApproxEqAbs(@as(f32, 0.2), first_task.task, 0.001);
+    try testing.expectApproxEqAbs(@as(f32, 0.25), first_task.cycle, 0.001);
+    try testing.expectEqual(@as(f32, 0), first_task.break_phase);
+
     const task = chart.HalfRings.fromCycle(.task, 0.4, 1, 4);
     try testing.expectApproxEqAbs(@as(f32, 0.4), task.task, 0.001);
-    try testing.expectApproxEqAbs(@as(f32, 0.25), task.cycle, 0.001);
+    try testing.expectApproxEqAbs(@as(f32, 0.5), task.cycle, 0.001);
     try testing.expectEqual(@as(f32, 0), task.break_phase);
 
     const short_brk = chart.HalfRings.fromCycle(.short_break, 0.6, 2, 4);
@@ -217,7 +222,8 @@ test "chart: HalfRings.fromCycle maps task, cycle, and break fractions" {
     try testing.expectApproxEqAbs(@as(f32, 0.5), short_brk.cycle, 0.001);
     try testing.expectApproxEqAbs(@as(f32, 0.6), short_brk.break_phase, 0.001);
 
-    const long_brk = chart.HalfRings.fromCycle(.long_break, 0.8, 4, 4);
+    // `focus.zig` resets `tasks_in_cycle` to 0 when transitioning into `long_break`.
+    const long_brk = chart.HalfRings.fromCycle(.long_break, 0.8, 0, 4);
     try testing.expectEqual(@as(f32, 1.0), long_brk.task);
     try testing.expectEqual(@as(f32, 1.0), long_brk.cycle);
     try testing.expectApproxEqAbs(@as(f32, 0.8), long_brk.break_phase, 0.001);
@@ -236,29 +242,71 @@ test "chart: half_rings builds three concentric round-cap semicircles" {
         .gap = 5,
     });
     try lay(&tree);
-    try testing.expectEqual(chart.half_rings_nodes, tree.len);
+    // Square + outer (2) + 4 discrete cycle segments (2 active + 2 muted) + inner (2) = 9 nodes.
+    try testing.expectEqual(@as(usize, 9), tree.len);
 
-    // Outer (info): track + full semicircle sweep (1.0 * pi).
+    // Outer (info): muted track + full semicircle sweep (1.0 * pi).
     const outer_track = tree.nodes[1].content.arc;
     const outer_active = tree.nodes[2].content.arc;
     try testing.expectEqual(@as(f32, 58), outer_track.radius);
+    try testing.expectEqual(Theme.dark.muted, outer_track.fill);
     try testing.expectEqual(Tree.Arc.Caps.round, outer_track.caps);
     try testing.expectApproxEqAbs(chart.half_ring_start, outer_active.start, 0.001);
     try testing.expectApproxEqAbs(chart.half_ring_sweep, outer_active.sweep, 0.001);
     try testing.expectEqual(Theme.dark.info, outer_active.fill);
     try testing.expectEqual(Tree.Arc.Caps.round, outer_active.caps);
 
-    // Middle (success): radius 58 - 11 = 47, sweep 0.5 * pi.
-    const mid_active = tree.nodes[4].content.arc;
-    try testing.expectEqual(@as(f32, 47), mid_active.radius);
-    try testing.expectApproxEqAbs(chart.half_ring_sweep * 0.5, mid_active.sweep, 0.001);
-    try testing.expectEqual(Theme.dark.success, mid_active.fill);
+    // Middle (success): radius 58 - 11 = 47, split into 4 separated rounded segments (2 active, 2 muted).
+    const mid_seg0 = tree.nodes[3].content.arc;
+    const mid_seg1 = tree.nodes[4].content.arc;
+    const mid_seg2 = tree.nodes[5].content.arc;
+    const mid_seg3 = tree.nodes[6].content.arc;
+    try testing.expectEqual(@as(f32, 47), mid_seg0.radius);
+    try testing.expectEqual(Theme.dark.success, mid_seg0.fill);
+    try testing.expectEqual(Theme.dark.success, mid_seg1.fill);
+    try testing.expectEqual(Theme.dark.muted, mid_seg2.fill);
+    try testing.expectEqual(Theme.dark.muted, mid_seg3.fill);
+    try testing.expect(mid_seg1.start > mid_seg0.start + mid_seg0.sweep);
 
-    // Inner (warning): radius 58 - 22 = 36, sweep 0.5 * pi.
-    const inner_active = tree.nodes[6].content.arc;
+    // Inner (foreground): radius 58 - 22 = 36, sweep 0.5 * pi.
+    const inner_active = tree.nodes[8].content.arc;
     try testing.expectEqual(@as(f32, 36), inner_active.radius);
     try testing.expectApproxEqAbs(chart.half_ring_sweep * 0.5, inner_active.sweep, 0.001);
-    try testing.expectEqual(Theme.dark.warning, inner_active.fill);
+    try testing.expectEqual(Theme.dark.foreground, inner_active.fill);
+
+    // Trimming a wide vertical half-ring keeps each ring's caps within ±clip_half_height.
+    var clipped_fixture: Fixture = .{};
+    var clipped_tree = clipped_fixture.tree();
+    const box = try clipped_tree.open(.{ .width = .{ .fixed = 2 }, .height = .{ .fixed = 132 } });
+    try chart.halfRingsArcs(&clipped_tree, &Theme.dark, .{ .task = 0.5, .cycle = 1.0, .break_phase = 0 }, .{
+        .outer_radius = 99,
+        .thickness = 8,
+        .gap = 6.5,
+        .start = chart.half_ring_vertical_start,
+        .sweep = chart.half_ring_sweep,
+        .clip_half_height = 56,
+    });
+    clipped_tree.close(box);
+    const trimmed_track = clipped_tree.nodes[1].content.arc;
+    const trimmed_active = clipped_tree.nodes[2].content.arc;
+    const expected_trim = std.math.acos(@as(f32, 56.0) / 95.0);
+    try testing.expectApproxEqAbs(chart.half_ring_vertical_start + expected_trim, trimmed_track.start, 0.001);
+    try testing.expectApproxEqAbs(chart.half_ring_sweep - expected_trim * 2.0, trimmed_track.sweep, 0.001);
+    try testing.expectApproxEqAbs(trimmed_track.sweep * 0.5, trimmed_active.sweep, 0.001);
+}
+
+test "chart: coil emits a single serpentine progress node with clamped fraction and proportional columns" {
+    var fixture: Fixture = .{};
+    var tree = fixture.tree();
+    try chart.progress(&tree, &Theme.dark, .coil, 0.65, Theme.dark.info, 8);
+    try lay(&tree);
+    try testing.expectEqual(chart.coil_nodes, tree.len);
+    const c = tree.nodes[0].content.coil;
+    try testing.expectEqual(Theme.dark.info, c.fill);
+    try testing.expectApproxEqAbs(@as(f32, 0.65), c.fraction, 0.001);
+    try testing.expectEqual(chart.coil_columns, c.columns);
+    try testing.expectEqual(@as(u8, 8), chart.coilColumns(20, 4));
+    try testing.expectEqual(@as(u8, 28), chart.coilColumns(500, 4));
 }
 
 test "chart: donut slices share the square and the gaps" {

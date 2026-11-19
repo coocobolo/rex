@@ -1319,18 +1319,64 @@ test "KitPainter: chart border pill sweep and half_rings corner clip" {
 
     // Clipped half_rings card at x=[20..220], y=[140..260]:
     // Anchor center is at (220 - 10 - 18, 260 - 10 - 18) = (192, 232).
-    // Outer ring (radius 58, thickness 6 -> r in [52..58]) directly left of center at (192 - 55, 232) = (137, 232)
-    // is at 270 deg (within [225..45] deg sweep) and renders theme.info.
-    try testing.expectEqual(rgb(theme.info), frame.at(137, 232));
-    // Middle ring (radius 47, thickness 6 -> r in [41..47], 50% sweep -> [225..315] deg)
-    // directly left of center at (192 - 44, 232) = (148, 232) renders theme.success.
-    try testing.expectEqual(rgb(theme.success), frame.at(148, 232));
-    // Inner ring (radius 36, thickness 6 -> r in [30..36], 50% sweep -> [225..315] deg)
-    // directly left of center at (192 - 33, 232) = (159, 232) renders theme.warning.
-    try testing.expectEqual(rgb(theme.warning), frame.at(159, 232));
-    // Pixels outside the card's bottom and right edges (where the 58px radius rings would extend without clip)
+    // Outer ring (radius 58, thickness 6 -> r in [52..58]) directly above center at (192, 232 - 55) = (192, 177)
+    // is at 0 deg (within [270..90] deg top semicircle sweep) and renders theme.info.
+    try testing.expectEqual(rgb(theme.info), frame.at(192, 177));
+    // Middle ring (radius 47, thickness 6 -> cl = 44, split into 4 segments over [270..90] deg):
+    // 292.5 deg (segment 0 mid) and 337.5 deg (segment 1 mid) render active theme.success;
+    // 0 deg (192, 188) sits in the transparent separator gap between segments 1 and 2 (theme.popover);
+    // 22.5 deg (segment 2 mid) renders unswept theme.muted.
+    try testing.expectEqual(rgb(theme.success), frame.at(151, 215));
+    try testing.expectEqual(rgb(theme.success), frame.at(175, 191));
+    try testing.expectEqual(rgb(theme.popover), frame.at(192, 188));
+    try testing.expectEqual(rgb(theme.muted), frame.at(209, 191));
+    // Inner ring (radius 36, thickness 6 -> r in [30..36], 50% sweep -> [270..360] deg)
+    // upper-left of center at 315 deg: (192 - 23, 232 - 23) = (169, 209) renders theme.foreground.
+    try testing.expectEqual(rgb(theme.foreground), frame.at(169, 209));
+    // Pixels outside the card's right edge (where the 58px radius rings extend to x = 192 + 55 = 247 > 220)
     // stay terminal_dark.
     try testing.expectEqual(rgb(terminal_dark), frame.at(225, 232));
     try testing.expectEqual(rgb(terminal_dark), frame.at(192, 265));
     try testing.expectEqual(rgb(terminal_dark), frame.at(218, 258));
+}
+
+test "KitPainter: coil draws serpentine active legs, U-turns, and track over clean gaps" {
+    try testGlContext();
+    const theme = &Theme.dark;
+    var atlas = try Atlas.init(testing.allocator, .{ .width = 512, .height = 512 });
+    defer atlas.deinit();
+    var font = try KitFont.init(inter, .{});
+    defer font.deinit();
+    var painter = try KitPainter.init();
+    defer painter.deinit();
+
+    var nodes: [8]Tree.Node = undefined;
+    var lines: [4]text.Line = undefined;
+    var tree: Tree = .init(&nodes, &lines);
+    const root = try tree.open(.{ .width = .fill, .height = .fill, .padding = .all(20) });
+    // 100x80 coil at (20, 20), 6 columns, thickness 6 -> span_x = 94, pitch = 18.8, r = 9.4,
+    // y_turn = 40 - 9.4 - 3 = 27.6 (center y = 60). Half progress fills columns 0..2 and leaves 3..5 in track.
+    try chart.coil(&tree, .{
+        .width = .{ .fixed = 100 },
+        .height = .{ .fixed = 80 },
+        .fill = theme.info,
+        .track = theme.muted,
+        .fraction = 0.5,
+        .thickness = 6,
+        .columns = 6,
+    });
+    tree.close(root);
+
+    try tree.layout(font.measurer(), 140, 120);
+    var frame = try drawToFrame(&painter, &font, &atlas, &tree, 140, 120, 1, terminal_dark);
+    defer frame.deinit();
+
+    // Column 0 center x = 20 + 3 = 23, midpoint y = 60 -> active theme.info.
+    try testing.expectEqual(rgb(theme.info), frame.at(23, 60));
+    // Bottom U-turn 0 apex at x = 23 + 9.4 ~= 32, y = 60 + 27.6 + 9.4 = 97 -> active theme.info.
+    try testing.expectEqual(rgb(theme.info), frame.at(32, 97));
+    // Gap between column 0 (x=23) and column 1 (x=41.8) at midpoint x = 32, y = 60 -> background terminal_dark.
+    try testing.expectEqual(rgb(terminal_dark), frame.at(32, 60));
+    // Column 5 center x = 20 + 97 = 117, midpoint y = 60 -> unfilled track theme.muted.
+    try testing.expectEqual(rgb(theme.muted), frame.at(117, 60));
 }

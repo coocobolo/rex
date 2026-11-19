@@ -28,7 +28,7 @@ const layout = @import("../kit/layout.zig");
 
 const log = std.log.scoped(.kit_painter);
 
-pub const Kind = enum(u32) { box = 0, glyph = 1, arc = 2, dash = 3 };
+pub const Kind = enum(u32) { box = 0, glyph = 1, arc = 2, dash = 3, coil = 4 };
 
 /// One box or glyph, as the shader reads it (`shaders/kit.vert`).
 pub const Instance = extern struct {
@@ -251,6 +251,24 @@ pub fn paint(self: *KitPainter, tree: *const Tree, font: *KitFont, atlas: *Atlas
                 instance.clip_round = clip.round;
                 instance.clip_radius = clip.radius;
                 try self.push(instance);
+            },
+            .coil => |c| {
+                if (!(c.thickness > 0 and c.columns >= 2)) continue;
+                if (!std.math.isFinite(c.thickness) or !std.math.isFinite(c.fraction)) continue;
+                if (c.fill.a == 0 and c.track.a == 0) continue;
+                const rect = layout.snap(node.rect, scale);
+                if (rect.w <= 0 or rect.h <= 0) continue;
+                try self.push(.{
+                    .rect = pixels(rect),
+                    .fill = c.fill,
+                    .border = c.track,
+                    .params = .{ c.thickness * scale, @floatFromInt(c.columns) },
+                    .kind = .coil,
+                    .clip = clip.rect,
+                    .arc = .{ std.math.clamp(c.fraction, 0, 1), 0 },
+                    .clip_round = clip.round,
+                    .clip_radius = clip.radius,
+                });
             },
             .text => |t| {
                 const line_height: f32 = @floatFromInt(t.style.metrics().line_height);

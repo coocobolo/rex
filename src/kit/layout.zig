@@ -373,7 +373,7 @@ fn fit(nodes: []Node, range: Range, comptime dimension: Dimension, measurer: tex
             },
             .icon => |icon| @floatFromInt(icon.size),
             .arc => |arc| arc.radius * 2,
-            .box, .dash, .border_sweep => contentExtent(nodes, i, dimension, dimension == .vertical),
+            .box, .dash, .border_sweep, .coil => contentExtent(nodes, i, dimension, dimension == .vertical),
         };
         extent(node, dimension).* = switch (size(node, dimension)) {
             .fixed, .at_most => |value| value,
@@ -575,7 +575,7 @@ fn wrapTexts(tree: *Tree, range: Range, measurer: text.Measurer) Error!void {
                 };
                 node.rect.h = @floatFromInt(t.line_count * t.style.metrics().line_height);
             },
-            .box, .dash, .border_sweep, .icon, .arc => {},
+            .box, .dash, .border_sweep, .icon, .arc, .coil => {},
         }
     }
 }

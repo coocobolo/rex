@@ -578,7 +578,7 @@ fn fadeDescendants(tree: *Tree, card: Index, factor: f32) void {
         switch (node.content) {
             .text => |*t| t.color = t.color.fade(factor),
             .icon => |*ic| ic.color = ic.color.fade(factor),
-            .box, .dash, .border_sweep, .arc => {},
+            .box, .dash, .border_sweep, .arc, .coil => {},
         }
     }
 }

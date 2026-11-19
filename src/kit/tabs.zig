@@ -111,6 +111,7 @@ pub fn view(tree: *Tree, theme: *const Theme, options: Options) Tree.Error!void 
         _ = try tree.text(tab.label, .{
             .color = if (current or i == options.hovered) theme.foreground else theme.muted_foreground,
             .style = .sm_medium,
+            .wrap = .none,
         });
         if (line) {
             const mark = try tree.open(.{

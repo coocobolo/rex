@@ -287,10 +287,26 @@ pub const Arc = struct {
     caps: Caps = .butt,
 };
 
+/// Serpentine progress ribbon specification passed to `Tree.coil`.
+///
+/// Snakes continuously down and up across `columns` vertical legs joined by alternating
+/// 180-degree semicircular U-turns, filling `fraction` (`0..1`) of total arc length in
+/// `fill` over an optional `track` color.
+pub const Coil = struct {
+    fill: Color,
+    track: Color = .transparent,
+    /// Elapsed fraction of total ribbon arc length, clamped to `0..1`.
+    fraction: f32,
+    /// Stroke thickness in logical pixels.
+    thickness: f32,
+    /// Number of vertical legs across the node's width (`>= 2`).
+    columns: u8 = 16,
+};
+
 /// One flat entry in `Tree.nodes`: pairs input rules (`box`, `content`), computed `layout`
 /// geometry (`rect`), and array slice bounds (`parent`, `end`).
 pub const Node = struct {
-    /// Payload variant of a `Node` (`box` container/leaf vs `text`, `icon`, `dash`, `border_sweep`, or `arc` primitive).
+    /// Payload variant of a `Node` (`box` container/leaf vs `text`, `icon`, `dash`, `border_sweep`, `arc`, or `coil` primitive).
     pub const Content = union(enum) {
         box,
         text: Text,
@@ -298,6 +314,7 @@ pub const Node = struct {
         dash: Dash,
         border_sweep: u16,
         arc: Arc,
+        coil: Coil,
     };
 
     /// Set by layout.
@@ -765,6 +782,11 @@ pub fn borderSweep(self: *Tree, fraction: u16, box: Box) Error!Index {
 /// An arc. `box.overlay` lays it over its parent instead of in the flow.
 pub fn arc(self: *Tree, value: Arc, box: Box) Error!Index {
     return self.push(.{ .arc = value }, box);
+}
+
+/// A serpentine progress ribbon filling its `box` bounds.
+pub fn coil(self: *Tree, value: Coil, box: Box) Error!Index {
+    return self.push(.{ .coil = value }, box);
 }
 
 fn push(self: *Tree, content: Node.Content, box: Box) Error!Index {
