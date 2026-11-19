@@ -315,7 +315,7 @@ test "wellbeing_widget: play_pause box drags past threshold and horizontal timer
     for (tree.nodes[0..tree.len]) |node| {
         switch (node.content) {
             .text => |t| if (std.mem.eql(u8, t.bytes, "02:25")) {
-                try testing.expect(node.rect.x + node.rect.w <= tile_rect.x);
+                try testing.expect(node.rect.x + node.rect.w <= tile_rect.x or node.rect.x >= tile_rect.x + tile_rect.w);
                 saw_time = true;
                 break;
             },
@@ -603,8 +603,8 @@ test "wellbeing_widget: tooltip picks below/above/left/right side cleanly with f
     }
 }
 
-test "wellbeing_widget: all five progress_style modes render in mini and normal sizes" {
-    const styles = [_]widget.ProgressStyle{ .auto, .bar, .ring, .border, .half_rings };
+test "wellbeing_widget: all six progress_style modes render in mini and normal sizes" {
+    const styles = [_]widget.ProgressStyle{ .auto, .bar, .ring, .border, .half_rings, .coil };
     const sizes = [_]struct { w: f32, h: f32, normal: bool }{
         .{ .w = 120, .h = 120, .normal = false },
         .{ .w = 144, .h = 72, .normal = false },
@@ -636,11 +636,13 @@ test "wellbeing_widget: all five progress_style modes render in mini and normal 
             const play_node = tree.find(widget.play_pause_id).?;
             var arcs: usize = 0;
             var border_sweeps: usize = 0;
+            var coils: usize = 0;
             var bars: usize = 0;
             for (tree.nodes[0..tree.len]) |node| {
                 switch (node.content) {
                     .arc => arcs += 1,
                     .border_sweep => border_sweeps += 1,
+                    .coil => coils += 1,
                     .box => if (node.rect.h == 6 and node.box.fill == Theme.dark.muted) {
                         bars += 1;
                     },
@@ -671,10 +673,24 @@ test "wellbeing_widget: all five progress_style modes render in mini and normal 
                     try testing.expectEqual(chart.pillRadius(play_node.rect.h), play_node.box.radius);
                 },
                 .half_rings => {
-                    try testing.expectEqual(chart.half_rings_arc_nodes, arcs);
+                    // Outer (2) + middle (4 discrete segments or continuous 2) + inner (2).
+                    try testing.expect(arcs >= chart.half_rings_arc_nodes and arcs <= chart.half_rings_arc_nodes_max);
                     try testing.expectEqual(@as(usize, 0), border_sweeps);
-                    try testing.expectEqual(chart.pillRadius(play_node.rect.h), play_node.box.radius);
-                    // Play/pause circular button center is clickable and clear of the resize grip.
+                    // Ghost wrapper takes half the widget width and full height with no inner card chrome.
+                    const card_rect = tree.nodes[root].rect;
+                    try testing.expectEqual(Theme.Color.transparent, play_node.box.fill);
+                    try testing.expectEqual(@as(u8, 0), play_node.box.border_width);
+                    try testing.expectApproxEqAbs(card_rect.w * 0.5, play_node.rect.w, 0.5);
+                    try testing.expectApproxEqAbs(card_rect.h, play_node.rect.h, 0.5);
+                    try testing.expect(play_node.rect.x + play_node.rect.w * 0.5 > card_rect.x + card_rect.w * 0.5);
+                    const cx = play_node.rect.x + play_node.rect.w * 0.5;
+                    const cy = play_node.rect.y + play_node.rect.h * 0.5;
+                    try testing.expectEqual(widget.play_pause_id, tree.hitTest(cx, cy));
+                },
+                .coil => {
+                    try testing.expectEqual(@as(usize, 0), arcs);
+                    try testing.expectEqual(@as(usize, 0), border_sweeps);
+                    try testing.expectEqual(@as(usize, 1), coils);
                     const cx = play_node.rect.x + play_node.rect.w * 0.5;
                     const cy = play_node.rect.y + play_node.rect.h * 0.5;
                     try testing.expectEqual(widget.play_pause_id, tree.hitTest(cx, cy));
@@ -734,4 +750,36 @@ test "wellbeing_widget: Option anchor, default size, configure, and tooltip disa
         try testing.expectEqual(a.x, tree.nodes[root].rect.x);
         try testing.expectEqual(a.y, tree.nodes[root].rect.y);
     }
+
+    // Half-rings container auto-flips by anchor side and toggles on swap button click.
+    try testing.expect(widget.configure(&state, .{
+        .default_width = 264,
+        .default_height = 132,
+        .anchor = .bottom_right,
+        .progress_style = .half_rings,
+    }));
+    try testing.expect(!state.isDialOnLeft(800));
+    _ = widget.update(&state, .{ .press = .{ .hit = .swap, .x = 0, .y = 0 } });
+    try testing.expectEqual(widget.Outcome.redraw, widget.update(&state, .{ .release = .swap }));
+    try testing.expect(state.isDialOnLeft(800));
+    {
+        var fixture: Fixture = .{};
+        var tree = fixture.tree();
+        const root = (try widget.view(&state, &tree, &Theme.dark, 800, 600)).?;
+        try tree.layout(measurer, 800, 600);
+        widget.place(&state, &tree, root, 800, 600);
+        const card_rect = tree.nodes[root].rect;
+        const play_node = tree.find(widget.play_pause_id).?;
+        try testing.expect(play_node.rect.x + play_node.rect.w * 0.5 < card_rect.x + card_rect.w * 0.5);
+    }
+
+    // Dragging across the horizontal midpoint dynamically auto-flips the dial side.
+    state.x = 500;
+    state.positioned = true;
+    state.swapped = false;
+    try testing.expect(!state.isDialOnLeft(800));
+    _ = widget.update(&state, .{ .press = .{ .hit = .card, .x = 520, .y = 100 } });
+    _ = widget.update(&state, .{ .pointer = .{ .over = .card, .x = 120, .y = 100 } });
+    _ = widget.update(&state, .{ .release = .card });
+    try testing.expect(state.isDialOnLeft(800));
 }

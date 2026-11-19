@@ -45,6 +45,7 @@ pub const card_id = Id.of("wellbeing_widget.card");
 pub const play_pause_id = Id.of("wellbeing_widget.play_pause");
 pub const skip_id = Id.of("wellbeing_widget.skip");
 pub const reset_id = Id.of("wellbeing_widget.reset");
+pub const swap_id = Id.of("wellbeing_widget.swap");
 pub const resize_id = Id.of("wellbeing_widget.resize");
 
 pub const Phase = enum(u8) { idle, task, short_break, long_break };
@@ -60,6 +61,7 @@ pub const ProgressStyle = enum(u8) {
     ring,
     border,
     half_rings,
+    coil,
 };
 
 /// User-configurable appearance and initial geometry options (`[wellbeing.widget]`).
@@ -77,6 +79,7 @@ pub const Hit = enum(u8) {
     play_pause,
     skip,
     reset,
+    swap,
     resize,
 };
 
@@ -141,6 +144,7 @@ pub const State = struct {
     positioned: bool = false,
     resized: bool = false,
     pointer_inside: bool = false,
+    swapped: bool = false,
     time_len: u8 = 5,
     cycle_len: u8 = 3,
     time_buf: [16]u8 = .{ '0', '0', ':', '0', '0', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
@@ -168,11 +172,26 @@ pub const State = struct {
         return self.phase != .idle;
     }
 
+    /// Returns whether the dial/half-ring container sits on the left side of the widget:
+    /// dynamically tracks which half of `viewport_w` the widget sits in (or `option.anchor`
+    /// before being dragged) and flips whenever the swap button is toggled.
+    pub fn isDialOnLeft(self: *const State, viewport_w: f32) bool {
+        const eff = self.effectiveSize(viewport_w, std.math.inf(f32));
+        const natural_left = if (self.positioned and std.math.isFinite(viewport_w) and viewport_w > 0)
+            (self.x + eff.w * 0.5) < (viewport_w * 0.5)
+        else switch (self.option.anchor) {
+            .top_left, .bottom_left => true,
+            .top_center, .bottom_center, .top_right, .bottom_right => false,
+        };
+        return natural_left != self.swapped;
+    }
+
     pub fn hit(self: *const State, id: Id) Hit {
         if (!self.visible or id == .none) return .none;
         if (id == play_pause_id) return .play_pause;
         if (id == skip_id) return .skip;
         if (id == reset_id) return .reset;
+        if (id == swap_id) return .swap;
         if (id == resize_id) return .resize;
         if (id == card_id) return .card;
         return .none;
@@ -207,6 +226,7 @@ pub fn configure(state: *State, option: Option) bool {
     }
     if (state.option.anchor != option.anchor) {
         state.positioned = false;
+        state.swapped = false;
     }
     state.option = option;
     return changed and state.visible;
@@ -289,7 +309,7 @@ fn hoverTarget(state: *const State, over: Hit) Hit {
     return switch (over) {
         .reset => if (state.canReset()) .reset else .none,
         .skip => if (state.canSkip()) .skip else .none,
-        .play_pause, .resize => over,
+        .play_pause, .swap, .resize => over,
         .card, .none => .none,
     };
 }
@@ -316,6 +336,7 @@ fn handlePointer(state: *State, over: Hit, x: f32, y: f32) Outcome {
             state.x = next_x;
             state.y = next_y;
             state.positioned = true;
+            state.swapped = false;
             return .redraw;
         },
         .resize => |orig| {
@@ -338,6 +359,7 @@ fn handlePointer(state: *State, over: Hit, x: f32, y: f32) Outcome {
             state.x = orig.x + dx;
             state.y = orig.y + dy;
             state.positioned = true;
+            state.swapped = false;
             return .redraw;
         },
         .button => return .quiet,
@@ -388,6 +410,11 @@ fn handlePress(state: *State, target: Hit, x: f32, y: f32) Outcome {
             state.hovered = .skip;
             return .redraw;
         },
+        .swap => {
+            state.capture = .{ .button = .swap };
+            state.hovered = .swap;
+            return .redraw;
+        },
         .play_pause => {
             state.capture = .{ .play_pause = orig };
             state.hovered = .play_pause;
@@ -417,6 +444,10 @@ fn handleRelease(state: *State, over: Hit) Outcome {
             return switch (target) {
                 .skip => .{ .action = .skip },
                 .reset => .{ .action = .reset },
+                .swap => {
+                    state.swapped = !state.swapped;
+                    return .redraw;
+                },
                 else => .redraw,
             };
         },
@@ -460,11 +491,12 @@ pub fn view(
         .radius = Theme.radius + 4,
     });
 
+    const on_left = state.isDialOnLeft(viewport_w);
     switch (eff.grid) {
-        .square => try viewMini(state, tree, theme, .square, eff.w, eff.h),
+        .square => try viewMini(state, tree, theme, .square, eff.w, eff.h, on_left),
         .horizontal => switch (eff.mode) {
-            .mini => try viewMini(state, tree, theme, .horizontal, eff.w, eff.h),
-            .normal => try viewHorizontalNormal(state, tree, theme, eff.w, eff.h),
+            .mini => try viewMini(state, tree, theme, .horizontal, eff.w, eff.h, on_left),
+            .normal => try viewHorizontalNormal(state, tree, theme, eff.w, eff.h, on_left),
         },
     }
 
@@ -473,13 +505,14 @@ pub fn view(
     return card;
 }
 
-fn viewMini(state: *const State, tree: *Tree, theme: *const Theme, grid: Grid, w: f32, h: f32) Tree.Error!void {
+fn viewMini(state: *const State, tree: *Tree, theme: *const Theme, grid: Grid, w: f32, h: f32, on_left: bool) Tree.Error!void {
     switch (state.option.progress_style) {
         .auto => try viewMiniBorder(state, tree, theme, grid, w, h, false),
         .border => try viewMiniBorder(state, tree, theme, grid, w, h, true),
         .bar => try viewMiniBar(state, tree, theme, grid, w, h),
         .ring => try viewMiniRing(state, tree, theme, w, h),
-        .half_rings => try viewMiniHalfRings(state, tree, theme, grid, w, h),
+        .half_rings => try viewMiniHalfRings(state, tree, theme, grid, w, h, on_left),
+        .coil => try viewMiniCoil(state, tree, theme, grid, w, h),
     }
 }
 
@@ -649,31 +682,104 @@ fn viewMiniRing(state: *const State, tree: *Tree, theme: *const Theme, w: f32, h
     tree.close(surface);
 }
 
-fn viewMiniHalfRings(state: *const State, tree: *Tree, theme: *const Theme, grid: Grid, w: f32, h: f32) Tree.Error!void {
-    const pad: u8 = if (grid == .horizontal) 10 else 8;
+fn viewMiniHalfRings(state: *const State, tree: *Tree, theme: *const Theme, grid: Grid, w: f32, h: f32, on_left: bool) Tree.Error!void {
+    const pad_x: u8 = if (grid == .horizontal) 8 else 6;
+    const pad_y: u8 = 4;
+    const half_w = w * 0.5;
+
     const surface = try tree.open(.{
+        .axis = .row,
+        .width = .fill,
+        .height = .fill,
+        .cross = .center,
+    });
+    if (on_left) {
+        try viewHalfRingsContainer(state, tree, theme, half_w, h, true);
+    }
+    const info = try tree.open(.{
+        .axis = .column,
+        .width = .fill,
+        .height = .fill,
+        .main = .center,
+        .cross = .center,
+        .padding = if (on_left)
+            .{ .left = 4, .right = pad_x, .top = pad_y, .bottom = pad_y }
+        else
+            .{ .left = pad_x, .right = 4, .top = pad_y, .bottom = pad_y },
+    });
+    const box_state = buttonState(state, .play_pause);
+    const time_color = progressTimeColor(theme, state.phase, state.run, box_state);
+    const avail_w = @max(1, half_w - @as(f32, @floatFromInt(pad_x + 4)));
+    const avail_h = @max(1, h - @as(f32, @floatFromInt(pad_y * 2)));
+    const full_time = state.timeText();
+    // Both 1:1 square (1:2 half) and 2:1 mini (1:1 half) have a tall/square timer half,
+    // so stacking MM over SS fills it cleanly with larger Regular display digits.
+    const stacked_style: ?text.Style = if (full_time.len == 5 and full_time[2] == ':') blk: {
+        if (avail_h >= 104 and avail_w >= 54) break :blk .display_md;
+        if (avail_h >= 84 and avail_w >= 44) break :blk .display_sm;
+        if (avail_h >= 64 and avail_w >= 34) break :blk .xl_semibold;
+        break :blk null;
+    } else null;
+    if (stacked_style) |style| {
+        _ = try tree.text(full_time[0..2], .{
+            .color = time_color,
+            .style = style,
+            .figures = .tabular,
+        });
+        _ = try tree.text(full_time[3..5], .{
+            .color = time_color,
+            .style = style,
+            .figures = .tabular,
+        });
+    } else {
+        _ = try tree.text(full_time, .{
+            .color = time_color,
+            .style = fitTimerStyle(avail_w, avail_h, full_time.len, grid == .horizontal),
+            .figures = .tabular,
+        });
+    }
+    tree.close(info);
+    if (!on_left) {
+        try viewHalfRingsContainer(state, tree, theme, half_w, h, false);
+    }
+    tree.close(surface);
+}
+
+fn viewMiniCoil(state: *const State, tree: *Tree, theme: *const Theme, grid: Grid, w: f32, h: f32) Tree.Error!void {
+    const pad: u8 = if (w < 112 or h < 88) 8 else 12;
+    const gap: u8 = if (h < 92) 4 else 8;
+    const box_state = buttonState(state, .play_pause);
+    const tile = try tree.open(.{
+        .id = play_pause_id,
         .axis = .column,
         .width = .fill,
         .height = .fill,
         .padding = .all(pad),
-        .cross = .start,
+        .gap = gap,
+        .cross = .center,
+        .fill = progressBoxFill(theme, box_state),
+        .pointer = .hand,
     });
-    const box_state = buttonState(state, .play_pause);
+    const inner_w = @max(24, w - @as(f32, @floatFromInt(pad * 2)));
+    const time_h_budget = @max(20, (h - @as(f32, @floatFromInt(pad * 2 + gap))) * (if (grid == .square) @as(f32, 0.36) else @as(f32, 0.44)));
+    const time_style = fitTimerStyle(inner_w, time_h_budget, state.timeText().len, true);
+    const thick: f32 = if (inner_w >= 120 and h >= 112) 4.0 else if (inner_w >= 88 and h >= 84) 3.5 else 3.0;
+    try chart.coil(tree, .{
+        .width = .fill,
+        .height = .fill,
+        .fill = progressColor(theme, state.phase, state.run),
+        .track = theme.muted.alpha(35),
+        .fraction = if (state.phase == .idle) 0 else state.fraction,
+        .thickness = thick,
+        .columns = chart.coilColumns(inner_w, thick),
+    });
     const time_color = progressTimeColor(theme, state.phase, state.run, box_state);
-    const avail_w = @max(1, w - @as(f32, @floatFromInt(pad * 2)) - 28);
-    const avail_h = @max(1, h - @as(f32, @floatFromInt(pad * 2)) - 24);
     _ = try tree.text(state.timeText(), .{
         .color = time_color,
-        .style = fitTimerStyle(avail_w, avail_h, state.timeText().len, false),
+        .style = time_style,
         .figures = .tabular,
     });
-    tree.close(surface);
-
-    const center_side: f32 = if (@min(w, h) >= 112) 32 else 28;
-    const outer_r: f32 = if (@min(w, h) >= 112) 52 else 44;
-    const thick: f32 = if (@min(w, h) >= 112) 5 else 4;
-    const ring_gap: f32 = if (@min(w, h) >= 112) 4 else 3;
-    try viewCornerHalfRings(state, tree, theme, 12, center_side, outer_r, thick, ring_gap);
+    tree.close(tile);
 }
 
 fn viewMiniTimeText(
@@ -714,12 +820,13 @@ fn viewMiniTimeText(
     }
 }
 
-fn viewHorizontalNormal(state: *const State, tree: *Tree, theme: *const Theme, w: f32, h: f32) Tree.Error!void {
+fn viewHorizontalNormal(state: *const State, tree: *Tree, theme: *const Theme, w: f32, h: f32, on_left: bool) Tree.Error!void {
     switch (state.option.progress_style) {
-        .auto, .ring => try viewHorizontalNormalDial(state, tree, theme, w, h, .ring),
-        .bar => try viewHorizontalNormalDial(state, tree, theme, w, h, .bar),
+        .auto, .ring => try viewHorizontalNormalDial(state, tree, theme, w, h, on_left, .ring),
+        .bar => try viewHorizontalNormalDial(state, tree, theme, w, h, on_left, .bar),
         .border => try viewHorizontalNormalBorder(state, tree, theme, w, h),
-        .half_rings => try viewHorizontalNormalHalfRings(state, tree, theme, w, h),
+        .half_rings => try viewHorizontalNormalHalfRings(state, tree, theme, w, h, on_left),
+        .coil => try viewHorizontalNormalCoil(state, tree, theme, w, h, on_left),
     }
 }
 
@@ -729,6 +836,7 @@ fn viewHorizontalNormalDial(
     theme: *const Theme,
     w: f32,
     h: f32,
+    on_left: bool,
     comptime mark: enum { ring, bar },
 ) Tree.Error!void {
     const roomy = w >= 290 and h >= 144;
@@ -749,8 +857,18 @@ fn viewHorizontalNormalDial(
     });
 
     // Reserve `min_left_w` so the phase badge and cycle tally never wrap at any `normal` size.
-    const min_left_w: f32 = if (roomy) 146 else 124;
-    const tile_side = std.math.clamp(@min(h - chrome_y, w - chrome_x - min_left_w), 76, 134);
+    const min_left_w: f32 = if (roomy) 146 else 132;
+    const tile_side = std.math.clamp(@min(h - chrome_y, w - chrome_x - min_left_w), 72, 134);
+    const ring_pad: f32 = if (tile_side >= 116) 20 else 16;
+    const ring_side = tile_side - ring_pad;
+    const thick: f32 = if (tile_side >= 116) 6 else 5;
+
+    if (on_left) {
+        switch (mark) {
+            .ring => try viewDialTile(state, tree, theme, tile_side, ring_side, thick, Theme.radius + 2),
+            .bar => try viewPlayButtonTile(state, tree, theme, tile_side, Theme.radius + 2),
+        }
+    }
 
     const left = try tree.open(.{
         .width = .fill,
@@ -786,12 +904,11 @@ fn viewHorizontalNormalDial(
     try viewControlButtons(state, tree, theme, roomy);
     tree.close(left);
 
-    const ring_pad: f32 = if (tile_side >= 116) 20 else 16;
-    const ring_side = tile_side - ring_pad;
-    const thick: f32 = if (tile_side >= 116) 6 else 5;
-    switch (mark) {
-        .ring => try viewDialTile(state, tree, theme, tile_side, ring_side, thick, Theme.radius + 2),
-        .bar => try viewPlayButtonTile(state, tree, theme, tile_side, Theme.radius + 2),
+    if (!on_left) {
+        switch (mark) {
+            .ring => try viewDialTile(state, tree, theme, tile_side, ring_side, thick, Theme.radius + 2),
+            .bar => try viewPlayButtonTile(state, tree, theme, tile_side, Theme.radius + 2),
+        }
     }
 
     tree.close(surface);
@@ -822,7 +939,7 @@ fn viewHorizontalNormalBorder(state: *const State, tree: *Tree, theme: *const Th
     tree.close(top_row);
 
     const box_state = buttonState(state, .play_pause);
-    const pill_h = @max(40, h - @as(f32, @floatFromInt(vpad + bottom_pad)) - 46);
+    const pill_h = @max(40, h - @as(f32, @floatFromInt(vpad + bottom_pad)) - (if (roomy) @as(f32, 46) else @as(f32, 38)));
     const pill_w = @max(80, w - @as(f32, @floatFromInt(hpad + right_pad)));
     const border_w: u8 = if (roomy) 5 else 4;
     const pill = try chart.openBorderPill(tree, .{
@@ -856,47 +973,220 @@ fn viewHorizontalNormalBorder(state: *const State, tree: *Tree, theme: *const Th
     tree.close(surface);
 }
 
-fn viewHorizontalNormalHalfRings(state: *const State, tree: *Tree, theme: *const Theme, w: f32, h: f32) Tree.Error!void {
+fn viewHorizontalNormalHalfRings(state: *const State, tree: *Tree, theme: *const Theme, w: f32, h: f32, on_left: bool) Tree.Error!void {
     const roomy = w >= 290 and h >= 144;
     const hpad: u8 = if (roomy) 14 else 12;
     const vpad: u8 = if (roomy) 12 else 10;
     const bottom_pad: u8 = vpad + 2;
-    const chrome_y: f32 = @floatFromInt(vpad + bottom_pad);
-
-    const center_side: f32 = if (roomy) 42 else 38;
-    const outer_r: f32 = if (roomy) 64 else 56;
-    const thick: f32 = if (roomy) 6 else 5;
-    const ring_gap: f32 = if (roomy) 5 else 4;
-    const corner_pad: u8 = if (roomy) 16 else 14;
+    const inner_edge_pad: u8 = 6;
+    const half_w = w * 0.5;
 
     const surface = try tree.open(.{
         .axis = .row,
         .width = .fill,
         .height = .fill,
-        .padding = .{ .left = hpad, .right = hpad, .top = vpad, .bottom = bottom_pad },
         .cross = .center,
     });
-    const left = try tree.open(.{
+    if (on_left) {
+        try viewHalfRingsContainer(state, tree, theme, half_w, h, true);
+    }
+    const info = try tree.open(.{
         .width = .fill,
         .height = .fill,
+        .padding = if (on_left)
+            .{ .left = inner_edge_pad, .right = hpad, .top = vpad, .bottom = bottom_pad }
+        else
+            .{ .left = hpad, .right = inner_edge_pad, .top = vpad, .bottom = bottom_pad },
         .cross = .start,
         .gap = 0,
     });
     try viewMetaRow(state, tree, theme, roomy);
     _ = try tree.leaf(.{ .width = .{ .fixed = 1 }, .height = .fill });
-    const left_w = @max(1, w - @as(f32, @floatFromInt(hpad * 2)) - outer_r - @as(f32, @floatFromInt(corner_pad)));
-    const avail_h = @max(1, h - chrome_y - 58);
+    const left_w = @max(1, half_w - @as(f32, @floatFromInt(hpad + inner_edge_pad)));
+    const avail_h = @max(1, h - @as(f32, @floatFromInt(vpad + bottom_pad)) - 58);
     _ = try tree.text(state.timeText(), .{
         .color = theme.foreground,
-        .style = fitTimerStyle(left_w, avail_h, state.timeText().len, roomy),
+        .style = fitTimerStyle(left_w, avail_h, state.timeText().len, true),
         .figures = .tabular,
     });
     _ = try tree.leaf(.{ .width = .{ .fixed = 1 }, .height = .fill });
     try viewControlButtons(state, tree, theme, roomy);
-    tree.close(left);
+    tree.close(info);
+    if (!on_left) {
+        try viewHalfRingsContainer(state, tree, theme, half_w, h, false);
+    }
     tree.close(surface);
+}
 
-    try viewCornerHalfRings(state, tree, theme, corner_pad, center_side, outer_r, thick, ring_gap);
+fn viewHalfRingsContainer(
+    state: *const State,
+    tree: *Tree,
+    theme: *const Theme,
+    box_w: f32,
+    box_h: f32,
+    on_left: bool,
+) Tree.Error!void {
+    const outer_r = @max(18, box_w * 0.75);
+    const thick = std.math.clamp(@round(outer_r * 0.08 * 2.0) * 0.5, 3.0, 8.0);
+    const ring_gap = std.math.clamp(@round(outer_r * 0.065 * 2.0) * 0.5, 2.0, 7.0);
+    const inner_r = @max(12, outer_r - (thick + ring_gap) * 2 - thick);
+    // Align ring endpoints flush with the card's top and bottom borders/corners so the
+    // card clip connects each concentric band seamlessly into the edge.
+    const clip_half_h = @max(1, box_h * 0.5);
+    const icon_size: u8 = if (inner_r >= 52) 20 else if (inner_r >= 26) Theme.icon else if (inner_r >= 18) 14 else 12;
+    // Semicircle optical centroid sits at ~0.43 of inner_r from the flat edge.
+    const edge_offset: u8 = @intFromFloat(@max(4, @round(inner_r * 0.43 - @as(f32, @floatFromInt(icon_size)) * 0.5)));
+
+    const box_state = buttonState(state, .play_pause);
+    const hover_disc_fill: ?Color = switch (box_state) {
+        .pressed => theme.secondary.alpha(85),
+        .hovered => theme.accent.alpha(65),
+        else => null,
+    };
+    const icon_color: Color = switch (box_state) {
+        .pressed, .hovered => theme.foreground,
+        else => theme.foreground.alpha(90),
+    };
+
+    const pane = try tree.open(.{
+        .id = play_pause_id,
+        .width = .fill,
+        .height = .fill,
+        .overflow = .clip,
+        .pointer = .hand,
+    });
+    const dock = try tree.open(.{
+        .overlay = true,
+        .axis = .row,
+        .width = .fill,
+        .height = .fill,
+        .main = if (on_left) .start else .end,
+        .cross = .center,
+    });
+    const anchor = try tree.open(.{
+        .width = .{ .fixed = 2 },
+        .height = .fill,
+    });
+    const ring_start = if (on_left) chart.half_ring_vertical_left_start else chart.half_ring_vertical_start;
+    if (hover_disc_fill) |disc_color| {
+        const disc_r = @max(8, inner_r - 3);
+        _ = try tree.arc(.{
+            .radius = disc_r,
+            .thickness = disc_r,
+            .start = ring_start,
+            .sweep = chart.half_ring_sweep,
+            .fill = disc_color,
+            .caps = .butt,
+        }, .{ .overlay = true, .width = .fill, .height = .fill });
+    }
+    try chart.halfRingsArcs(tree, theme, chart.HalfRings.fromCycle(
+        toChartPhase(state.phase),
+        state.fraction,
+        state.tasks_in_cycle,
+        state.tasks_before_long_break,
+    ), .{
+        .outer_radius = outer_r,
+        .thickness = thick,
+        .gap = ring_gap,
+        .start = ring_start,
+        .sweep = chart.half_ring_sweep,
+        .clip_half_height = clip_half_h,
+    });
+    tree.close(anchor);
+    tree.close(dock);
+
+    const icon_slot = try tree.open(.{
+        .axis = .row,
+        .width = .fill,
+        .height = .fill,
+        .main = if (on_left) .start else .end,
+        .cross = .center,
+        .padding = if (on_left) .{ .left = edge_offset } else .{ .right = edge_offset },
+    });
+    _ = try tree.icon(.{
+        .codepoint = if (state.run == .running) icons.pause else icons.play,
+        .color = icon_color,
+        .size = icon_size,
+    });
+    tree.close(icon_slot);
+    tree.close(pane);
+}
+
+fn viewHorizontalNormalCoil(state: *const State, tree: *Tree, theme: *const Theme, w: f32, h: f32, on_left: bool) Tree.Error!void {
+    const roomy = w >= 290 and h >= 144;
+    const hpad: u8 = if (roomy) 14 else 12;
+    const vpad: u8 = if (roomy) 12 else 10;
+    const bottom_pad: u8 = vpad + 2;
+    const inner_edge_pad: u8 = 6;
+    const half_w = w * 0.5;
+
+    const surface = try tree.open(.{
+        .axis = .row,
+        .width = .fill,
+        .height = .fill,
+        .cross = .center,
+    });
+    if (on_left) {
+        try viewCoilContainer(state, tree, theme, half_w, h, roomy);
+    }
+    const info = try tree.open(.{
+        .width = .fill,
+        .height = .fill,
+        .padding = if (on_left)
+            .{ .left = inner_edge_pad, .right = hpad, .top = vpad, .bottom = bottom_pad }
+        else
+            .{ .left = hpad, .right = inner_edge_pad, .top = vpad, .bottom = bottom_pad },
+        .cross = .start,
+        .gap = 0,
+    });
+    try viewMetaRow(state, tree, theme, roomy);
+    _ = try tree.leaf(.{ .width = .{ .fixed = 1 }, .height = .fill });
+    const left_w = @max(1, half_w - @as(f32, @floatFromInt(hpad + inner_edge_pad)));
+    const avail_h = @max(1, h - @as(f32, @floatFromInt(vpad + bottom_pad)) - 58);
+    _ = try tree.text(state.timeText(), .{
+        .color = theme.foreground,
+        .style = fitTimerStyle(left_w, avail_h, state.timeText().len, true),
+        .figures = .tabular,
+    });
+    _ = try tree.leaf(.{ .width = .{ .fixed = 1 }, .height = .fill });
+    try viewControlButtons(state, tree, theme, roomy);
+    tree.close(info);
+    if (!on_left) {
+        try viewCoilContainer(state, tree, theme, half_w, h, roomy);
+    }
+    tree.close(surface);
+}
+
+fn viewCoilContainer(
+    state: *const State,
+    tree: *Tree,
+    theme: *const Theme,
+    box_w: f32,
+    box_h: f32,
+    roomy: bool,
+) Tree.Error!void {
+    const pad: u8 = if (roomy) 14 else 12;
+    const inner_w = @max(24, box_w - @as(f32, @floatFromInt(pad * 2)));
+    const thick: f32 = if (box_h >= 144) 4.0 else 3.5;
+    const box_state = buttonState(state, .play_pause);
+    const pane = try tree.open(.{
+        .id = play_pause_id,
+        .width = .fill,
+        .height = .fill,
+        .padding = .all(pad),
+        .fill = progressBoxFill(theme, box_state),
+        .pointer = .hand,
+    });
+    try chart.coil(tree, .{
+        .width = .fill,
+        .height = .fill,
+        .fill = progressColor(theme, state.phase, state.run),
+        .track = theme.muted.alpha(35),
+        .fraction = if (state.phase == .idle) 0 else state.fraction,
+        .thickness = thick,
+        .columns = chart.coilColumns(inner_w, thick),
+    });
+    tree.close(pane);
 }
 
 fn viewMetaRow(state: *const State, tree: *Tree, theme: *const Theme, roomy: bool) Tree.Error!void {
@@ -912,19 +1202,20 @@ fn viewMetaRow(state: *const State, tree: *Tree, theme: *const Theme, roomy: boo
         .size = if (roomy) .lg else .sm,
     });
     if (state.phase != .idle and state.cycle_len > 0) {
-        _ = try tree.text(state.cycleText(), .{
-            .color = theme.muted_foreground,
-            .style = if (roomy) .sm else .xs,
-            .figures = .tabular,
+        try badge.view(tree, theme, .{
+            .label = state.cycleText(),
+            .variant = .muted,
+            .size = if (roomy) .lg else .sm,
         });
     }
     tree.close(meta);
 }
 
 fn viewControlButtons(state: *const State, tree: *Tree, theme: *const Theme, roomy: bool) Tree.Error!void {
+    const btn_size: button.Size = if (roomy) .sm else .xs;
     const controls = try tree.open(.{
         .axis = .row,
-        .gap = if (roomy) 8 else 6,
+        .gap = if (roomy) 6 else 4,
         .cross = .center,
     });
     try button.view(tree, theme, .{
@@ -932,7 +1223,7 @@ fn viewControlButtons(state: *const State, tree: *Tree, theme: *const Theme, roo
         .label = "",
         .icon = icons.rotate_ccw,
         .variant = .outline,
-        .size = .sm,
+        .size = btn_size,
         .state = if (state.canReset()) buttonState(state, .reset) else .disabled,
     });
     try button.view(tree, theme, .{
@@ -940,8 +1231,16 @@ fn viewControlButtons(state: *const State, tree: *Tree, theme: *const Theme, roo
         .label = "",
         .icon = icons.skip_forward,
         .variant = .outline,
-        .size = .sm,
+        .size = btn_size,
         .state = if (state.canSkip()) buttonState(state, .skip) else .disabled,
+    });
+    try button.view(tree, theme, .{
+        .id = swap_id,
+        .label = "",
+        .icon = icons.panel_left,
+        .variant = .outline,
+        .size = btn_size,
+        .state = buttonState(state, .swap),
     });
     tree.close(controls);
 }
@@ -982,56 +1281,6 @@ fn viewPlayButtonTile(
     });
     tree.close(disc);
     tree.close(tile);
-}
-
-fn viewCornerHalfRings(
-    state: *const State,
-    tree: *Tree,
-    theme: *const Theme,
-    corner_pad: u8,
-    center_side: f32,
-    outer_radius: f32,
-    thickness: f32,
-    gap: f32,
-) Tree.Error!void {
-    const box_state = buttonState(state, .play_pause);
-    const corner = try tree.open(.{
-        .overlay = true,
-        .width = .fill,
-        .height = .fill,
-        .main = .end,
-        .cross = .end,
-        .padding = .{ .right = corner_pad, .bottom = corner_pad },
-    });
-    const center_btn = try tree.open(.{
-        .id = play_pause_id,
-        .width = .{ .fixed = center_side },
-        .height = .{ .fixed = center_side },
-        .main = .center,
-        .cross = .center,
-        .fill = tileFill(theme, box_state),
-        .border = tileBorder(theme, box_state),
-        .border_width = Theme.border_width,
-        .radius = chart.pillRadius(center_side),
-        .pointer = .hand,
-    });
-    try chart.halfRingsArcs(tree, theme, chart.HalfRings.fromCycle(
-        toChartPhase(state.phase),
-        state.fraction,
-        state.tasks_in_cycle,
-        state.tasks_before_long_break,
-    ), .{
-        .outer_radius = outer_radius,
-        .thickness = thickness,
-        .gap = gap,
-    });
-    _ = try tree.icon(.{
-        .codepoint = if (state.run == .running) icons.pause else icons.play,
-        .color = theme.foreground,
-        .size = if (center_side >= 36) Theme.icon else 14,
-    });
-    tree.close(center_btn);
-    tree.close(corner);
 }
 
 fn toChartPhase(phase: Phase) chart.FocusPhase {
@@ -1196,10 +1445,9 @@ pub fn viewTooltip(
         .variant = phaseBadgeVariant(state.phase, state.run),
     });
     if (state.phase != .idle and state.cycle_len > 0) {
-        _ = try tree.text(state.cycleText(), .{
-            .color = theme.muted_foreground,
-            .style = .xs,
-            .figures = .tabular,
+        try badge.view(tree, theme, .{
+            .label = state.cycleText(),
+            .variant = .muted,
         });
     }
     tree.close(row);
@@ -1281,7 +1529,8 @@ fn phaseShortLabel(phase: Phase, run: Run) []const u8 {
 fn progressColor(theme: *const Theme, phase: Phase, run: Run) Color {
     if (run == .waiting) return theme.muted_foreground;
     return switch (phase) {
-        .short_break, .long_break => theme.success,
+        .short_break => theme.success,
+        .long_break => theme.foreground,
         .task, .idle => theme.info,
     };
 }
@@ -1290,7 +1539,8 @@ fn phaseBadgeVariant(phase: Phase, run: Run) badge.Variant {
     if (phase == .idle or run != .running) return .muted;
     return switch (phase) {
         .task => .info,
-        .short_break, .long_break => .success,
+        .short_break => .success,
+        .long_break => .secondary,
         .idle => .muted,
     };
 }
@@ -1325,7 +1575,8 @@ fn progressBorderColor(theme: *const Theme, phase: Phase, run: Run, btn_state: b
     }
     const base = switch (phase) {
         .task => theme.info,
-        .short_break, .long_break => theme.success,
+        .short_break => theme.success,
+        .long_break => theme.foreground,
         .idle => theme.muted_foreground,
     };
     return if (hovered) base else base.alpha(92);
@@ -1347,7 +1598,8 @@ fn trackColor(theme: *const Theme, phase: Phase, run: Run) Color {
     if (phase != .idle and run == .running) {
         return switch (phase) {
             .task => theme.info.alpha(24),
-            .short_break, .long_break => theme.success.alpha(24),
+            .short_break => theme.success.alpha(24),
+            .long_break => theme.foreground.alpha(18),
             .idle => theme.foreground.alpha(14),
         };
     }

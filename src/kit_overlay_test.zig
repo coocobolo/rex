@@ -745,7 +745,7 @@ test "KitOverlay: configure applies wellbeing_widget options and renders all pro
         .tasks_before_long_break = 4,
     }));
 
-    for ([_]wellbeing_widget.ProgressStyle{ .auto, .bar, .ring, .border, .half_rings }) |style| {
+    for ([_]wellbeing_widget.ProgressStyle{ .auto, .bar, .ring, .border, .half_rings, .coil }) |style| {
         kit.configure(.{
             .wellbeing_widget = .{
                 .default_width = 264,
