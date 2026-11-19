@@ -104,38 +104,6 @@ pub fn build(b: *std.Build) !void {
     glfw_c.addIncludePath(glfw_dep.path("include"));
     const glfw_mod = glfw_c.createModule();
 
-    // The X11 and EGL C APIs as modules. They supply types and constants only;
-    // the native X11 backend loads both libraries at runtime with DynLib, so
-    // the binary keeps no link time dependency on them.
-    const x11_c = b.addTranslateC(.{
-        .root_source_file = b.path("src/x11.h"),
-        .target = target,
-        .optimize = optimize,
-        .link_libc = true,
-    });
-    const x11_mod = x11_c.createModule();
-    const egl_c = b.addTranslateC(.{
-        .root_source_file = b.path("src/egl.h"),
-        .target = target,
-        .optimize = optimize,
-        .link_libc = true,
-    });
-    const egl_mod = egl_c.createModule();
-    const wayland_c = b.addTranslateC(.{
-        .root_source_file = b.path("src/wayland.h"),
-        .target = target,
-        .optimize = optimize,
-        .link_libc = true,
-    });
-    const wayland_mod = wayland_c.createModule();
-    const xkbcommon_c = b.addTranslateC(.{
-        .root_source_file = b.path("src/xkbcommon.h"),
-        .target = target,
-        .optimize = optimize,
-        .link_libc = true,
-    });
-    const xkbcommon_mod = xkbcommon_c.createModule();
-
     // Core library module
     // Only the rex module links native code; the fuzz module must not need it.
     const mod = b.addModule("rex", .{
@@ -146,14 +114,33 @@ pub fn build(b: *std.Build) !void {
         .link_libc = true,
         .imports = &.{
             .{ .name = "glfw", .module = glfw_mod },
-            .{ .name = "x11", .module = x11_mod },
-            .{ .name = "egl", .module = egl_mod },
-            .{ .name = "wayland", .module = wayland_mod },
-            .{ .name = "xkbcommon", .module = xkbcommon_mod },
         },
     });
-    if (target.result.os.tag == .linux and std.mem.eql(u8, platform_backend, "wayland")) {
-        mod.addCSourceFile(.{ .file = b.path("src/platform/wayland/proto_tables.c") });
+
+    // The X11, EGL, Wayland and xkbcommon C APIs are Linux-only type modules:
+    // native backends load them at runtime with DynLib so the binary links none.
+    // Creating them only on Linux keeps macOS builds free of Linux headers.
+    if (target.result.os.tag == .linux) {
+        const linux_c_headers = .{
+            .{ "x11", "src/x11.h" },
+            .{ "egl", "src/egl.h" },
+            .{ "wayland", "src/wayland.h" },
+            .{ "xkbcommon", "src/xkbcommon.h" },
+        };
+        inline for (linux_c_headers) |entry| {
+            const translated = b.addTranslateC(.{
+                .root_source_file = b.path(entry[1]),
+                .target = target,
+                .optimize = optimize,
+                .link_libc = true,
+            });
+            mod.addImport(entry[0], translated.createModule());
+        }
+        if (std.mem.eql(u8, platform_backend, "wayland")) {
+            mod.addCSourceFile(.{ .file = b.path("src/platform/wayland/proto_tables.c") });
+        }
+    } else if (!std.mem.eql(u8, platform_backend, "glfw")) {
+        std.debug.panic("platform_backend '{s}' is only supported on Linux", .{platform_backend});
     }
     mod.addIncludePath(freetype_dep.path("include"));
     mod.linkLibrary(freetype_lib);
