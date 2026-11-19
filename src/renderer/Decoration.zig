@@ -194,6 +194,8 @@ pub const Option = struct {
         underline: ?[3]u8 = null,
         strikethrough: ?[3]u8 = null,
         overline: ?[3]u8 = null,
+        /// Color of OSC 8 link underlines; null uses the underline color.
+        link: ?[3]u8 = null,
     } = .{},
 
     /// Opacity of every line, 0.0 to 1.0, on top of the dim alpha.

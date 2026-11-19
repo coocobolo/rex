@@ -78,6 +78,7 @@ pub fn decorationInstance(
     option: *const Decoration.Option,
     cell: term.Cell,
     sgr_underline: ?[3]u8,
+    link: bool,
     foreground: [3]u8,
     foreground_alpha: u8,
     col: u16,
@@ -86,23 +87,27 @@ pub fn decorationInstance(
 ) ?Decoration.Instance {
     const flags = cell.flags;
     if (flags.invisible) return null;
-    if (flags.underline == .none and !flags.strikethrough and !flags.overline) return null;
+    // Linked text is always underlined, even without SGR 4 (ADR 0012).
+    const underline: UnderlineStyle = if (link and flags.underline == .none) .single else flags.underline;
+    if (underline == .none and !flags.strikethrough and !flags.overline) return null;
 
     const alpha: u8 = if (option.dim) foreground_alpha else 255;
     const color = option.color;
+    const link_color = if (link) color.link else null;
     return .{
         .col = col,
         .row = row,
         .span = span,
-        .underline = rgba(sgr_underline orelse color.underline orelse foreground, alpha),
+        .underline = rgba(sgr_underline orelse link_color orelse color.underline orelse foreground, alpha),
         .strikethrough = rgba(color.strikethrough orelse foreground, alpha),
         .overline = rgba(color.overline orelse foreground, alpha),
         .flags = .{
-            .underline = flags.underline,
+            .underline = underline,
             .strikethrough = flags.strikethrough,
             .overline = flags.overline,
             .blink = option.blink and flags.blink,
             .blink_rapid = option.blink and flags.blink_rapid,
+            .link = link,
         },
     };
 }
@@ -185,14 +190,14 @@ fn matchedSpan(start: u32, end: u32, old: ?[2]u32) ?SplicedRange {
 ///   2: overline
 ///   3: blink_rapid
 ///   4-6: underline style (UnderlineStyle)
-///   7: reserved
+///   7: OSC 8 link (ADR 0012)
 pub const Flags = packed struct(u8) {
     strikethrough: bool = false,
     blink: bool = false, // SGR 5, Config.blink.half_period_ms
     overline: bool = false,
     blink_rapid: bool = false, // SGR 6, Config.blink.rapid_half_period_ms
     underline: UnderlineStyle = .none,
-    _pad: u1 = 0,
+    link: bool = false,
 };
 
 // A terminal selection always produces a "staircase" polygon with
@@ -897,7 +902,7 @@ pub fn Builder(comptime option: Option) type {
                     null
                 else
                     palette.resolveKeyRgb(style.underline, .foreground);
-                if (decorationInstance(&self.decoration, c, sgr_underline, foreground, foreground_alpha, col, row, span)) |run| {
+                if (decorationInstance(&self.decoration, c, sgr_underline, style.link != 0, foreground, foreground_alpha, col, row, span)) |run| {
                     Decoration.appendRun(decoration, run);
                 }
 
