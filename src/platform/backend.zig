@@ -6,5 +6,7 @@ const options = @import("build_options");
 
 pub const selected = if (std.mem.eql(u8, options.platform_backend, "x11"))
     @import("x11/backend.zig")
+else if (std.mem.eql(u8, options.platform_backend, "wayland"))
+    @import("wayland/backend.zig")
 else
     @import("glfw/backend.zig");
