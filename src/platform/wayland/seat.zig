@@ -441,8 +441,8 @@ fn onPointerEnter(
     } });
     backend.pushEvent(.{ .cursor_pos = .{
         .window = win.windowHandle(),
-        .x = key.fixedToF64(sx),
-        .y = key.fixedToF64(sy),
+        .x = key.pointerPixelPos(sx, win.scale),
+        .y = key.pointerPixelPos(sy, win.scale),
     } });
 }
 
@@ -463,8 +463,8 @@ fn onPointerMotion(data: ?*anyopaque, _: ?*wl.Proxy, _: u32, sx: i32, sy: i32) c
     const win = self.ptr_focus orelse return;
     backend.pushEvent(.{ .cursor_pos = .{
         .window = win.windowHandle(),
-        .x = key.fixedToF64(sx),
-        .y = key.fixedToF64(sy),
+        .x = key.pointerPixelPos(sx, win.scale),
+        .y = key.pointerPixelPos(sy, win.scale),
     } });
 }
 

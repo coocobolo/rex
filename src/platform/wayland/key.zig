@@ -100,6 +100,14 @@ pub fn fixedToF64(raw: i32) f64 {
     return @as(f64, @floatFromInt(raw)) / 256.0;
 }
 
+/// Converts a Wayland surface-local fixed-point pointer coordinate into
+/// framebuffer pixels using the window's active scale factor. Both `App.zig`
+/// and `tool/host.zig` divide `CursorPosEvent` coordinates by `content_scale`.
+pub fn pointerPixelPos(raw: i32, scale: f32) f64 {
+    const s: f64 = if (scale > 0) @as(f64, scale) else 1.0;
+    return fixedToF64(raw) * s;
+}
+
 /// Converts a Wayland vertical axis delta (positive down) to Rex scroll `dy`
 /// (positive up, matching GLFW and X11).
 pub fn verticalScroll(wl_pixels: f64) f64 {

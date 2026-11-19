@@ -32,6 +32,9 @@ test "Wayland key translation: keysyms, mouse buttons, cursor shapes, fixed-poin
     try testing.expectEqual(proto.cursor_shape_device.shape_text, key.cursorShape(.text));
 
     try testing.expectApproxEqAbs(@as(f64, 12.5), key.fixedToF64(12 * 256 + 128), 1e-9);
+    try testing.expectApproxEqAbs(@as(f64, 100.0), key.pointerPixelPos(80 * 256, 1.25), 1e-9);
+    try testing.expectApproxEqAbs(@as(f64, 120.0), key.pointerPixelPos(80 * 256, 1.5), 1e-9);
+    try testing.expectApproxEqAbs(@as(f64, 80.0), key.pointerPixelPos(80 * 256, 0.0), 1e-9);
     try testing.expectApproxEqAbs(@as(f64, -1.0), key.verticalScroll(10.0), 1e-9);
     try testing.expectApproxEqAbs(@as(f64, 1.0), key.verticalScroll(-10.0), 1e-9);
     try testing.expectApproxEqAbs(@as(f64, 1.0), key.horizontalScroll(10.0), 1e-9);
