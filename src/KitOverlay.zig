@@ -208,8 +208,9 @@ pub fn wellbeingWidgetShown(self: *const KitOverlay) bool {
 pub fn syncWellbeingWidget(self: *KitOverlay, snapshot: widget_mod.Snapshot) bool {
     return widget_mod.update(&self.wellbeing_widget, .{ .sync = snapshot }) != .quiet;
 }
-/// returns what it did: on `.chosen` the caller does what that action
-/// stands for.
+
+/// Applies `event` to the open alert dialog and returns what it did: on
+/// `.chosen` the caller does what that action stands for.
 pub fn dialogInput(self: *KitOverlay, event: alert_dialog.Event) alert_dialog.Outcome {
     return alert_dialog.update(&self.dialog, event);
 }
@@ -221,7 +222,7 @@ pub fn dialogTakesInput(self: *const KitOverlay) bool {
 }
 
 /// Advances timers and motion by `dt_ms`. Returns whether a redraw is due.
-/// While a modal scrim is up the non-scrim surfaces' motion stands still.
+/// While a modal scrim is up, toast lifetimes and non-scrim motion stand still.
 pub fn tick(self: *KitOverlay, dt_ms: u64) bool {
     const dt = std.math.lossyCast(u32, dt_ms);
     const scrim_up = self.hasScrim();
@@ -234,7 +235,7 @@ pub fn tick(self: *KitOverlay, dt_ms: u64) bool {
             .settled => 0,
         };
     }
-    const toasts_changed = toast.update(&self.toasts, .{ .tick = dt });
+    const toasts_changed = if (!scrim_up) toast.update(&self.toasts, .{ .tick = dt }) else false;
     const alert_changed = alert_mod.update(&self.alert, .{ .tick = dt });
     const dialog_changed = if (self.dialog.phase != .closed) alert_dialog.update(&self.dialog, .{ .tick = dt }) != .quiet else false;
     const lock_changed = if (self.lock_screen.isShown()) lock_mod.update(&self.lock_screen, .{ .tick = dt }) != .quiet else false;
@@ -251,10 +252,12 @@ pub fn wakeMs(self: *const KitOverlay) ?u32 {
     var best: ?u32 = self.lock_screen.wakeMs();
     best = minWake(best, self.dialog.phase.wakeMs());
     best = minWake(best, self.alert.wakeMs());
-    if (!self.hasScrim() and self.motion == .moving) {
-        best = minWake(best, frame_ms);
+    if (!self.hasScrim()) {
+        if (self.motion == .moving) {
+            best = minWake(best, frame_ms);
+        }
+        best = minWake(best, self.toasts.wakeMs());
     }
-    best = minWake(best, self.toasts.wakeMs());
     return best;
 }
 

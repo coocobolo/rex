@@ -606,3 +606,84 @@ test "KitOverlay: pointerShape reports hand on buttons, arrow on cards, and null
     // Over the close button: hand.
     try testing.expectEqual(.hand, kit.pointerShape(close.rect.x + close.rect.w / 2, close.rect.y + close.rect.h / 2));
 }
+
+test "KitOverlay: modal dialog pauses toast lifetime and suppresses toast wakeups" {
+    var fixture: Fixture = try .init(1);
+    defer fixture.deinit();
+    const kit = fixture.kit;
+
+    const pushed = kit.pushTracked(.{ .title = "Saved", .duration_ms = 2000 });
+    try testing.expect(pushed.changed);
+    _ = kit.tick(Theme.duration);
+    try testing.expectEqual(@as(?u32, 2000), kit.wakeMs());
+
+    // Advance near expiry: 500 ms left.
+    try testing.expect(!kit.tick(1500));
+    try testing.expectEqual(@as(?u32, 500), kit.wakeMs());
+
+    // Open dialog and let it settle; scrim suppresses toast wakeups and freezes its countdown.
+    try testing.expect(kit.openDialog(prompt()));
+    _ = kit.tick(Theme.duration);
+    try testing.expect(kit.hasScrim());
+    try testing.expectEqual(@as(?u32, null), kit.wakeMs());
+
+    try testing.expect(!kit.tick(5000));
+    try testing.expectEqual(@as(usize, 1), kit.toasts.visible().len);
+    try testing.expectEqual(pushed.serial, kit.toasts.entries[0].serial);
+    try testing.expectEqual(toast.Phase{ .shown = 500 }, kit.toasts.entries[0].phase);
+    try testing.expectEqual(@as(?u32, null), kit.wakeMs());
+
+    // Dismiss dialog and let it finish leaving; toast resumes with its remaining 500 ms.
+    try testing.expectEqual(alert_dialog.Outcome.redraw, kit.dialogInput(.dismiss));
+    _ = kit.tick(Theme.duration);
+    try testing.expect(!kit.hasScrim());
+    try testing.expectEqual(@as(?u32, 500), kit.wakeMs());
+
+    try testing.expect(!kit.tick(499));
+    try testing.expectEqual(@as(?u32, 1), kit.wakeMs());
+    try testing.expect(kit.tick(1));
+    try testing.expectEqual(toast.Phase{ .leaving = 0 }, kit.toasts.entries[0].phase);
+    try testing.expectEqual(@as(?u32, motion.frame_ms), kit.wakeMs());
+    try testing.expect(kit.tick(Theme.duration));
+    try testing.expectEqual(@as(u8, 0), kit.toasts.len);
+    try testing.expectEqual(@as(?u32, null), kit.wakeMs());
+}
+
+test "KitOverlay: lock screen pauses toast lifetime and suppresses toast wakeups" {
+    var fixture: Fixture = try .init(1);
+    defer fixture.deinit();
+    const kit = fixture.kit;
+
+    const pushed = kit.pushTracked(.{ .title = "Copied", .duration_ms = 2000 });
+    try testing.expect(pushed.changed);
+    _ = kit.tick(Theme.duration);
+    try testing.expect(!kit.tick(1000));
+    try testing.expectEqual(@as(?u32, 1000), kit.wakeMs());
+
+    try testing.expect(kit.syncLockScreen(.{
+        .title = "Break time",
+        .subtitle = "Focus cycle 1 of 4",
+        .prompt = "Look away.",
+        .remaining_s = 15,
+        .total_s = 20,
+        .steps_total = 4,
+        .steps_done = 1,
+    }));
+    _ = kit.tick(Theme.duration);
+    try testing.expect(kit.hasScrim());
+    try testing.expectEqual(@as(?u32, null), kit.wakeMs());
+
+    try testing.expect(!kit.tick(5000));
+    try testing.expectEqual(pushed.serial, kit.toasts.entries[0].serial);
+    try testing.expectEqual(toast.Phase{ .shown = 1000 }, kit.toasts.entries[0].phase);
+    try testing.expectEqual(@as(?u32, null), kit.wakeMs());
+
+    try testing.expect(kit.closeLockScreen());
+    _ = kit.tick(Theme.duration);
+    try testing.expect(!kit.hasScrim());
+    try testing.expectEqual(@as(?u32, 1000), kit.wakeMs());
+
+    try testing.expect(kit.tick(1000));
+    try testing.expect(kit.tick(Theme.duration));
+    try testing.expectEqual(@as(u8, 0), kit.toasts.len);
+}
