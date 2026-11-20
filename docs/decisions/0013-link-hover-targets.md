@@ -34,7 +34,11 @@ under the pointer for the hand pointer (`src/App.zig`).
    modifier is held and a real OSC 8 link is under the pointer, draw its URI
    in a one-line tooltip near the pointer. A modal, scrollbar hover or the
    fullscreen ASCII overlay suppresses it. It requires `hyperlink.enabled`,
-   but is otherwise independent of Ctrl+click activation.
+   but is otherwise independent of Ctrl+click activation. Modifier state is
+   tracked from key events: a modifier's own press event reports `ctrl=false`
+   (the state before that event), so the transition is folded in explicitly.
+   The platform key query was found unreliable in a headless GLFW build and
+   is not used for this decision.
 2. **Tooltip.** Reuse `kit/tooltip.zig` in `KitOverlay`. The URI is borrowed
    from the current `Frame` for the one `buildFrame` call; long URIs are
    truncated with `…`. The card has no id, so it never takes a click from the
