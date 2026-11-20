@@ -17,6 +17,7 @@ const harness = @import("harness.zig");
 const invariants = @import("invariants.zig");
 const Source = harness.Source;
 const term = @import("../term/term.zig");
+const UrlTable = @import("../term/UrlTable.zig");
 const test_option = @import("../term/test_fixtures.zig").test_option;
 
 const Terminal = term.Terminal(test_option);
@@ -43,6 +44,11 @@ const Built = struct {
             if (std.mem.eql(u8, self.code, c)) return true;
         }
         return false;
+    }
+
+    /// Whether this is an OSC 8 that would change the current link.
+    fn setsHyperlink(self: Built) bool {
+        return self.kind == .osc and std.mem.eql(u8, self.code, "8");
     }
 
     /// Whether the string was abandoned rather than terminated.
@@ -117,6 +123,9 @@ fn run(src: *Source) !void {
         var icon: [term.max_title_len]u8 = undefined;
         const old_icon = icon[0..t.getIconName().len];
         @memcpy(old_icon, t.getIconName());
+        var old_link_buf: [UrlTable.max_len]u8 = undefined;
+        const old_link = if (t.hyperlink()) |link| old_link_buf[0..link.len] else null;
+        if (old_link) |link| @memcpy(link, t.hyperlink().?);
 
         t.feed(out.items);
         try invariants.expectTerminal(&t);
@@ -125,6 +134,14 @@ fn run(src: *Source) !void {
         if (built.setsTitle() and built.dropped()) {
             try testing.expectEqualStrings(old_title, t.getTitle());
             try testing.expectEqualStrings(old_icon, t.getIconName());
+        }
+        // An abandoned OSC 8 never dispatches, so the pen link is unchanged.
+        if (built.setsHyperlink() and built.dropped()) {
+            if (old_link) |link| {
+                try testing.expectEqualStrings(link, t.hyperlink().?);
+            } else {
+                try testing.expect(t.hyperlink() == null);
+            }
         }
         t.events.clear();
     }
@@ -139,6 +156,10 @@ const seeds = [_][]const u8{
     "\x1b G\x1b[62;0\"p",
     "\x1b%@",
     "\xe2\x82",
+    "\x1b]8;;https://example.com\x1b\\link\x1b]8;;\x1b\\\n",
+    "\x1b]8;;https://example.com\x07link\x1b]8;;\x07next",
+    "\x1b]8;;mailto:user@example.com\x1b\\mail\x1b]8;;\x1b\\",
+    "\x1b]8;;https://example.com\x18abandoned",
 };
 
 const regressions = [_][]const u8{
