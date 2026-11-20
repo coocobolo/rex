@@ -399,7 +399,7 @@ test "KitOverlay: the dialog covers the toast stack" {
 test "KitOverlay: its size" {
     // Nearly all of it is two tables: the font's kerning pairs, and
     // the painter's 2048 instances of 64 bytes with its glyph position cache.
-    try testing.expectEqual(378840, @sizeOf(KitOverlay));
+    try testing.expectEqual(379096, @sizeOf(KitOverlay));
     try testing.expectEqual(161048, @sizeOf(@FieldType(KitOverlay, "painter")));
     try testing.expectEqual(190424, @sizeOf(@FieldType(KitOverlay, "font")));
     try testing.expectEqual(9672, @sizeOf(@FieldType(KitOverlay, "nodes")));
@@ -764,11 +764,11 @@ test "KitOverlay: configure applies wellbeing_widget options and renders all pro
     }
 }
 
-test "KitOverlay: a link hint draws one line and never catches a click" {
+test "KitOverlay: a link hint wraps narrow and never catches a click" {
     var fixture: Fixture = try .init(1);
     defer fixture.deinit();
     const kit = fixture.kit;
-    const uri = "https://example.com/a/very/long/path/that/must/be/truncated/to/fit/the/tooltip";
+    const uri = "https://example.com/" ++ "a" ** 250;
 
     try testing.expect(!fixture.frame());
     try testing.expect(kit.buildFrame(&fixture.atlas, 800, 600, dark, .{ .uri = uri, .x = 400, .y = 300 }));
@@ -778,9 +778,13 @@ test "KitOverlay: a link hint draws one line and never catches a click" {
     for (kit.tree.nodes[0..kit.tree.len]) |node| {
         try testing.expectEqual(.none, node.box.id);
         switch (node.content) {
-            .text => |t| if (std.mem.eql(u8, t.bytes, uri)) {
+            .text => |t| if (std.mem.startsWith(u8, t.bytes, "https://")) {
                 saw_uri = true;
-                try testing.expectEqual(1, t.line_count);
+                try testing.expect(std.mem.indexOfScalar(u8, t.bytes, '\n') != null);
+                try testing.expect(std.mem.endsWith(u8, t.bytes, "…"));
+                try testing.expect(t.line_count > 1);
+                try testing.expect(t.line_count <= 5);
+                try testing.expect(node.rect.w <= 360);
             },
             else => {},
         }
@@ -793,4 +797,15 @@ test "KitOverlay: a link hint draws one line and never catches a click" {
     try testing.expect(fixture.frame());
     try testing.expectEqual(0, kit.painter.len);
     try testing.expect(!fixture.frame());
+
+    // A short URI stays on one line and needs no ellipsis.
+    try testing.expect(kit.buildFrame(&fixture.atlas, 800, 600, dark, .{ .uri = "https://example.com", .x = 400, .y = 300 }));
+    for (kit.tree.nodes[0..kit.tree.len]) |node| {
+        switch (node.content) {
+            .text => |t| if (std.mem.eql(u8, t.bytes, "https://example.com")) {
+                try testing.expectEqual(1, t.line_count);
+            },
+            else => {},
+        }
+    }
 }

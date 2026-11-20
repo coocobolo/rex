@@ -37,7 +37,13 @@ const log = std.log.scoped(.kit_overlay);
 /// combination of simultaneously visible surfaces (alert banner + toast stack +
 /// wellbeing widget, or modal dialog / lock screen).
 const node_capacity = @max(@max(alert_mod.node_max + toast.node_max + widget_mod.node_max + tooltip.nodes(1), alert_dialog.node_max), lock_mod.node_max);
-const line_capacity = @max(@max(alert_mod.line_max + toast.line_max + widget_mod.line_max + 1, alert_dialog.line_max), lock_mod.line_max);
+
+/// The URI tooltip wraps on byte boundaries into at most this many lines,
+/// with an ellipsis when the URI is longer. Keeps the card narrow and its
+/// line use bounded by the fixed buffers below.
+const link_hint_line_max = 5;
+const link_hint_line_bytes = 40;
+const line_capacity = @max(@max(alert_mod.line_max + toast.line_max + widget_mod.line_max + link_hint_line_max, alert_dialog.line_max), lock_mod.line_max);
 
 font: KitFont,
 painter: KitPainter,
@@ -54,6 +60,9 @@ lock_screen: lock_mod.State = .empty,
 wellbeing_widget: widget_mod.State = .empty,
 /// Where each toast was last drawn.
 table: memory.Table = .empty,
+/// The URI text as wrapped for the tooltip. Lives here because the tree
+/// borrows it until the next build.
+link_hint_text: [link_hint_line_max * link_hint_line_bytes + link_hint_line_max + text.ellipsis_bytes.len]u8 = undefined,
 /// Milliseconds ticked since the last built frame while a toast was
 /// gliding: how far the glide advances in the next one. Time that passes
 /// at rest does not count, or a glide that starts after a long rest would
@@ -508,15 +517,41 @@ fn build(self: *KitOverlay, atlas: *Atlas, width: f32, height: f32, theme: *cons
     try self.painter.paint(&self.tree, &self.font, atlas);
 }
 
-/// Writes a one-line card with the target URI next to the pointer. The card
-/// has no id, so it never takes a click from the link underneath.
+/// Wraps the URI at codepoint boundaries into short lines, keeping the card
+/// narrow. A longer URI keeps an ellipsis so the truncation is visible.
+fn linkHintText(self: *KitOverlay, uri: []const u8) []const u8 {
+    const buf = &self.link_hint_text;
+    var len: usize = 0;
+    var src: usize = 0;
+    var line: usize = 0;
+    while (line < link_hint_line_max and src < uri.len) : (line += 1) {
+        if (line != 0) {
+            buf[len] = '\n';
+            len += 1;
+        }
+        const room = @min(link_hint_line_bytes, buf.len - len - text.ellipsis_bytes.len);
+        const n = text.cut(uri[src..], room);
+        if (n == 0) break;
+        @memcpy(buf[len..][0..n], uri[src..][0..n]);
+        len += n;
+        src += n;
+    }
+    if (src < uri.len) {
+        @memcpy(buf[len..][0..text.ellipsis_bytes.len], text.ellipsis_bytes);
+        len += text.ellipsis_bytes.len;
+    }
+    return buf[0..len];
+}
+
+/// Writes a narrow card with the target URI next to the pointer. The card has
+/// no id, so it never takes a click from the link underneath.
 fn viewLinkHint(self: *KitOverlay, theme: *const Theme, width: f32, hint: LinkHint) Tree.Error!void {
     const card = try tooltip.openAt(&self.tree, theme, hint.x, hint.y);
     const max_width = @max(1, @min(360, width - 16));
-    _ = try self.tree.text(hint.uri, .{
+    _ = try self.tree.text(self.linkHintText(hint.uri), .{
         .color = theme.foreground,
         .style = .xs,
-        .wrap = .ellipsis,
+        .wrap = .none,
         .width = .{ .fit_at_most = max_width },
     });
     tooltip.close(&self.tree, card);
