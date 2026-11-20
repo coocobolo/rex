@@ -95,7 +95,7 @@ const page_descriptions = [_][]const u8{
 
 pub fn pageForSection(section: keys.Section) ?Page {
     return switch (section) {
-        .root, .colors, .font, .cursor, .ui => .appearance,
+        .root, .colors, .font, .cursor, .ui, .decoration => .appearance,
         .window, .bell, .scroll, .scrollbar, .selection, .clipboard, .hyperlink, .shell => .window_shell,
         .toast, .banner, .modal, .@"modal.blur", .alert_dialog => .overlays,
         .wellbeing, .@"wellbeing.screen_time", .@"wellbeing.privacy", .@"wellbeing.dashboard" => .wellbeing,
@@ -142,6 +142,7 @@ const section_titles = std.EnumArray(keys.Section, []const u8).init(.{
     .selection = "Selection",
     .clipboard = "Clipboard",
     .hyperlink = "Hyperlinks",
+    .decoration = "Text Decorations",
     .shell = "Shell",
     .keybinds = "Keybinds",
     .env = "Environment",
@@ -250,6 +251,18 @@ const key_meta_table = [_]KeyMetaEntry{
     .{ .section = .hyperlink, .name = "link_color", .label = "Link Color", .description = "Underline color for links; none uses the underline or text color." },
     .{ .section = .hyperlink, .name = "open_command", .label = "Open Command", .description = "Command that opens a URI; empty uses the system default." },
     .{ .section = .hyperlink, .name = "schemes", .label = "Allowed Schemes", .description = "URI schemes a link may open; file is disabled by default." },
+    .{ .section = .decoration, .name = "skip_ink", .label = "Skip Ink Under Descenders", .description = "Break decoration lines where a letter's descender crosses them." },
+    .{ .section = .decoration, .name = "skip_ink_styles", .label = "Styles That Skip Ink", .description = "Underline styles that break around descenders; none keeps every line whole." },
+    .{ .section = .decoration, .name = "skip_ink_threshold", .label = "Ink Coverage Threshold", .description = "How much of a pixel must be covered to count as ink, from 0.0 to 1.0." },
+    .{ .section = .decoration, .name = "skip_ink_gap", .label = "Ink Clearance", .description = "Extra pixels kept between ink and a line; none follows the line thickness." },
+    .{ .section = .decoration, .name = "skip_ink_min_segment", .label = "Shortest Line Piece", .description = "Drop line pieces shorter than this many pixels; none follows the thickness." },
+    .{ .section = .decoration, .name = "order", .label = "Draw Decorations Over Text", .description = "When off, glyphs cover the lines instead of the lines crossing the glyphs." },
+    .{ .section = .decoration, .name = "alpha", .label = "Decoration Opacity", .description = "Opacity of every decoration line, from 0.0 to 1.0." },
+    .{ .section = .decoration, .name = "dim", .label = "Dim Lines With Dim Text", .description = "Dim SGR 2 text also dims its underline, strikethrough and overline." },
+    .{ .section = .decoration, .name = "blink", .label = "Blink Lines With Blinking Text", .description = "Blinking SGR 5 and 6 text also blinks its decoration lines." },
+    .{ .section = .decoration, .name = "underline_color", .label = "Underline Color", .description = "Fixed underline color; none uses the SGR 58, link or text color." },
+    .{ .section = .decoration, .name = "strikethrough_color", .label = "Strikethrough Color", .description = "Fixed strikethrough color; none uses the text color." },
+    .{ .section = .decoration, .name = "overline_color", .label = "Overline Color", .description = "Fixed overline color; none uses the text color." },
 
     .{ .section = .shell, .name = "program", .label = "Shell Program", .description = "Path to your preferred shell executable, or Automatic for your default shell." },
     .{ .section = .shell, .name = "argument", .label = "Shell Arguments", .description = "Arguments passed to the shell on startup." },
@@ -811,7 +824,13 @@ fn sliderValue(idx: u16, cfg: *const Config) f32 {
     @setEvalBranchQuota(keys.eval_branch_quota);
     inline for (keys.table, 0..) |key, i| {
         if (comptime controlKind(key) == .slider) {
-            if (i == idx) return @floatCast(keys.fieldValue(Config, key.field, cfg));
+            if (i == idx) {
+                const val = keys.fieldValue(Config, key.field, cfg);
+                return switch (@typeInfo(@TypeOf(val))) {
+                    .optional => if (val) |v| @floatCast(v) else 0,
+                    else => @floatCast(val),
+                };
+            }
         }
     }
     return 0;
@@ -846,8 +865,11 @@ fn formatHexRgb(rgb: Rgb, buf: []u8) []const u8 {
 }
 
 fn resolvedColorSlot(comptime key_name: []const u8, theme: ThemePreset) Rgb {
-    // Link color is a config-only color: when unset it follows the text color.
-    if (comptime std.mem.eql(u8, key_name, "link_color")) return theme.foreground;
+    // These are config-only colors: when unset they follow the text color.
+    if (comptime std.mem.eql(u8, key_name, "link_color") or
+        std.mem.eql(u8, key_name, "underline_color") or
+        std.mem.eql(u8, key_name, "strikethrough_color") or
+        std.mem.eql(u8, key_name, "overline_color")) return theme.foreground;
     if (comptime @hasField(ThemePreset, key_name)) {
         const value = @field(theme, key_name);
         if (@TypeOf(value) == Rgb) return value;
