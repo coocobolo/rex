@@ -246,9 +246,9 @@ const key_meta_table = [_]KeyMetaEntry{
     .{ .section = .hyperlink, .name = "enabled", .label = "Enable Links", .description = "Let Ctrl+click open OSC 8 hyperlinks in the terminal." },
     .{ .section = .hyperlink, .name = "underline", .label = "Underline Links", .description = "Underline added to linked text: never, always, or only on hover." },
     .{ .section = .hyperlink, .name = "underline_style", .label = "Underline Style", .description = "Style of the underline Rex adds to linked text; explicit SGR underlines keep their own style." },
-    .{ .section = .hyperlink, .name = "show_hyperlink_targets", .label = "Show Link Target", .description = "When to show the target URI while hovering a link." },
-    .{ .section = .hyperlink, .name = "tooltip_uri_style", .label = "URI Tooltip Style", .description = "How a long target URI is shown: multiline, head and tail, or one wide line." },
-    .{ .section = .hyperlink, .name = "link_color", .label = "Link Color", .description = "Underline color for links; none uses the underline or text color." },
+    .{ .section = .hyperlink, .name = "show_targets", .label = "Show Link Target", .description = "When to show the target URI while hovering a link." },
+    .{ .section = .hyperlink, .name = "target_style", .label = "URI Tooltip Style", .description = "How a long target URI is shown: multiline, head and tail, or one wide line." },
+    .{ .section = .hyperlink, .name = "underline_color", .label = "Link Underline Color", .description = "Underline color for OSC 8 links; none uses the decoration underline or text color." },
     .{ .section = .hyperlink, .name = "open_command", .label = "Open Command", .description = "Command that opens a URI; empty uses the system default." },
     .{ .section = .hyperlink, .name = "schemes", .label = "Allowed Schemes", .description = "URI schemes a link may open; file is disabled by default." },
     .{ .section = .decoration, .name = "skip_ink", .label = "Skip Ink Under Descenders", .description = "Break decoration lines where a letter's descender crosses them." },
@@ -260,7 +260,7 @@ const key_meta_table = [_]KeyMetaEntry{
     .{ .section = .decoration, .name = "alpha", .label = "Decoration Opacity", .description = "Opacity of every decoration line, from 0.0 to 1.0." },
     .{ .section = .decoration, .name = "dim", .label = "Dim Lines With Dim Text", .description = "Dim SGR 2 text also dims its underline, strikethrough and overline." },
     .{ .section = .decoration, .name = "blink", .label = "Blink Lines With Blinking Text", .description = "Blinking SGR 5 and 6 text also blinks its decoration lines." },
-    .{ .section = .decoration, .name = "underline_color", .label = "Underline Color", .description = "Fixed underline color; none uses the SGR 58, link or text color." },
+    .{ .section = .decoration, .name = "underline_color", .label = "Text Underline Color", .description = "Fixed color for ordinary underlines; none uses the text color." },
     .{ .section = .decoration, .name = "strikethrough_color", .label = "Strikethrough Color", .description = "Fixed strikethrough color; none uses the text color." },
     .{ .section = .decoration, .name = "overline_color", .label = "Overline Color", .description = "Fixed overline color; none uses the text color." },
 
@@ -592,6 +592,7 @@ pub const Target = union(enum) {
     key_checkbox: struct { key: u16, bit: u8 },
     key_input: u16,
     color_reset: u16,
+    key_reset: u16,
     stepper_dec: u16,
     stepper_inc: u16,
     list_add: u16,
@@ -672,6 +673,10 @@ fn listRemoveId(idx: u16, item: usize) Id {
 
 fn colorResetId(idx: u16) Id {
     return Id.of("settings.color_reset").item(idx);
+}
+
+fn resetId(idx: u16) Id {
+    return Id.of("settings.key_reset").item(idx);
 }
 
 const color_slot_count: usize = blk: {
@@ -866,7 +871,7 @@ fn formatHexRgb(rgb: Rgb, buf: []u8) []const u8 {
 
 fn resolvedColorSlot(comptime key_name: []const u8, theme: ThemePreset) Rgb {
     // These are config-only colors: when unset they follow the text color.
-    if (comptime std.mem.eql(u8, key_name, "link_color") or
+    if (comptime std.mem.eql(u8, key_name, "underline_color") or
         std.mem.eql(u8, key_name, "underline_color") or
         std.mem.eql(u8, key_name, "strikethrough_color") or
         std.mem.eql(u8, key_name, "overline_color")) return theme.foreground;
@@ -1919,6 +1924,10 @@ fn pageFocusTargets(page: Page, ansi_open: bool, cfg: *const Config, out: []Targ
                 .slider => {
                     out[count] = .{ .key_slider = idx };
                     count += 1;
+                    if (info.null_keyword != null) {
+                        out[count] = .{ .key_reset = idx };
+                        count += 1;
+                    }
                 },
                 .select, .enum_set => {
                     out[count] = .{ .key_select = idx };
@@ -2013,6 +2022,7 @@ fn targetId(target: Target) ?Id {
         .key_segment => |seg| segmentId(seg.key, seg.idx),
         .key_input => |idx| inputId(idx),
         .color_reset => |idx| colorResetId(idx),
+        .key_reset => |idx| resetId(idx),
         .stepper_dec => |idx| decId(idx),
         .stepper_inc => |idx| incId(idx),
         .list_add => |idx| listAddId(idx),
@@ -2148,6 +2158,13 @@ fn activate(state: *State, target: Target) bool {
             }
             return true;
         },
+        .key_reset => |idx| {
+            if (row_infos[idx].null_keyword == null) return false;
+            blurFocused(state);
+            state.dirty[idx] = false;
+            commitValue(state, idx, row_infos[idx].null_keyword.?);
+            return true;
+        },
         .color_reset => |idx| {
             const ci = colorInfo(idx, state.activeConfig());
             if (!ci.overridden) return false;
@@ -2244,7 +2261,10 @@ fn over(state: *const State, id: Id) Target {
         const idx: u16 = @intCast(i);
         switch (info.kind) {
             .toggle => if (id == switchId(idx)) return .{ .key_switch = idx },
-            .slider => if (id == sliderId(idx)) return .{ .key_slider = idx },
+            .slider => {
+                if (id == sliderId(idx)) return .{ .key_slider = idx };
+                if (id == resetId(idx) and info.null_keyword != null) return .{ .key_reset = idx };
+            },
             .select => if (id == selectId(idx)) return .{ .key_select = idx },
             .segmented => {
                 for (0..info.display_labels.len) |seg_i| {
@@ -3196,14 +3216,26 @@ fn viewKeyRow(
                 228
             else
                 188;
+            const has_reset = info.null_keyword != null;
             try slider.view(tree, theme, .{
                 .id = sliderId(idx),
                 .value = val,
                 .value_label = pctLabel(val),
-                .track_width = track_w,
+                .track_width = if (has_reset) @max(80, track_w - 64) else track_w,
                 .hovered = std.meta.eql(state.hover, Target{ .key_slider = idx }),
                 .focused = std.meta.eql(state.focused, Target{ .key_slider = idx }),
             });
+            if (has_reset) {
+                const reset_pressed = std.meta.eql(state.pressed, Target{ .key_reset = idx });
+                const reset_hovered = std.meta.eql(state.hover, Target{ .key_reset = idx });
+                try button.view(tree, theme, .{
+                    .id = resetId(idx),
+                    .label = "Reset",
+                    .variant = .outline,
+                    .size = .sm,
+                    .state = if (reset_pressed and reset_hovered) .pressed else if (reset_hovered) .hovered else .normal,
+                });
+            }
         },
         .stepper => {
             const inp = &state.inputs[idx];

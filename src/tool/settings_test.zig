@@ -1442,3 +1442,45 @@ test "settings: text input Ctrl+word, Ctrl+line, and Insert clipboard shortcuts"
     try testing.expect(settings.update(&state, .{ .key = .{ .key = .k, .mods = .{ .ctrl = true } } }));
     try testing.expectEqualStrings("keep", state.inputs[title_idx].text());
 }
+
+test "settings: optional fraction sliders reset to none" {
+    const gpa = testing.allocator;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const dir_path = try std.fs.path.join(gpa, &.{ ".zig-cache", "tmp", &tmp.sub_path });
+    defer gpa.free(dir_path);
+    const cfg_path = try std.fs.path.join(gpa, &.{ dir_path, "config" });
+    defer gpa.free(cfg_path);
+
+    const cfg = config_defaults.default;
+    var state = try settings.init(.{
+        .gpa = gpa,
+        .io = testing.io,
+        .config = &cfg,
+        .state_dir = dir_path,
+        .config_path = cfg_path,
+        .home_dir = dir_path,
+        .wake_loop = struct {
+            fn wake() void {}
+        }.wake,
+    });
+    defer settings.deinit(&state);
+
+    state.frame.current = @intFromEnum(settings.Page.appearance);
+
+    const idx = keyIndex(.decoration, "skip_ink_gap");
+    const slider_id = Id.of("settings.slider").item(idx);
+    const reset_id = Id.of("settings.key_reset").item(idx);
+
+    _ = settings.update(&state, .{ .pointer = .{ .id = slider_id } });
+    _ = settings.update(&state, .{ .press = slider_id });
+    _ = settings.update(&state, .release);
+    try testing.expect(settings.update(&state, .{ .key = .{ .key = .right } }));
+    try testing.expect(state.activeConfig().decoration.skip_ink_gap != null);
+
+    _ = settings.update(&state, .{ .pointer = .{ .id = reset_id } });
+    _ = settings.update(&state, .{ .press = reset_id });
+    try testing.expect(settings.update(&state, .release));
+    try testing.expectEqual(@as(?f32, null), state.activeConfig().decoration.skip_ink_gap);
+}
