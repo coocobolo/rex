@@ -715,13 +715,10 @@ pub fn init(
     var atlas: Atlas = try .init(gpa, .{});
     errdefer atlas.deinit();
 
+    const decoration_option = rendererDecorationOption(&active_config);
     var frame_builder: FrameBuilderType = try .init(gpa, .{
         .dim_alpha = active_config.window.dim_alpha,
-        .decoration = .{
-            .link_underline = active_config.hyperlink.underline,
-            .link_style = cellUnderlineStyle(active_config.hyperlink.underline_style),
-            .color = .{ .link = if (active_config.hyperlink.link_color) |c| .{ c.r, c.g, c.b } else null },
-        },
+        .decoration = decoration_option,
     });
     errdefer frame_builder.deinit(gpa);
 
@@ -731,7 +728,7 @@ pub fn init(
         .background = active_config.window.background,
         .font_metrics = rasterizer.metrics,
         .cursor = rendererCursorOption(active_config.cursor),
-        .decoration = .{},
+        .decoration = decoration_option,
         .scrollbar = rendererScrollbarOption(active_config.scrollbar),
         .selection = rendererSelectionOption(active_config.selection),
         .modal_blur = active_config.window.modal.blur,
@@ -2204,9 +2201,9 @@ pub fn reloadConfig(self: *App) void {
     self.renderer_dirty = true;
 
     self.frame_builder.dim_alpha = renderer_mod.Frame.alphaByte(self.config.window.dim_alpha);
-    self.frame_builder.decoration.link_underline = self.config.hyperlink.underline;
-    self.frame_builder.decoration.link_style = cellUnderlineStyle(self.config.hyperlink.underline_style);
-    self.frame_builder.decoration.color.link = if (self.config.hyperlink.link_color) |c| .{ c.r, c.g, c.b } else null;
+    const decoration_option = rendererDecorationOption(&self.config);
+    self.frame_builder.decoration = decoration_option;
+    self.renderer.setDecoration(decoration_option, self.rasterizer.metrics);
 
     // A size change rebuilds the rasterizer with the new faces; a face
     // change at the same size needs its own rebuild.
@@ -4742,6 +4739,41 @@ fn rendererSelectionOption(sel: Config.Selection) renderer_mod.Selection.Option 
 }
 
 /// Maps `Config.Cursor` into the renderer's `Cursor.Option`.
+fn decorationRgb(color: ?rex.color.Rgb) ?[3]u8 {
+    const c = color orelse return null;
+    return .{ c.r, c.g, c.b };
+}
+
+/// Builds the single decoration option shared by the frame builder and the
+/// renderer, from both the `[decoration]` and `[hyperlink]` sections (ADR 0014).
+pub fn rendererDecorationOption(config: *const Config) renderer_mod.Decoration.Option {
+    const opt = config.decoration;
+    const link = config.hyperlink;
+    return .{
+        .skip_ink = .{
+            .enabled = opt.skip_ink,
+            .styles = opt.skip_ink_styles,
+            .threshold = opt.skip_ink_threshold,
+            .gap = opt.skip_ink_gap,
+            .min_segment = opt.skip_ink_min_segment,
+        },
+        .order = opt.order,
+        .alpha = opt.alpha,
+        .dim = opt.dim,
+        .blink = opt.blink,
+        .color = .{
+            .underline = decorationRgb(opt.underline_color),
+            .strikethrough = decorationRgb(opt.strikethrough_color),
+            .overline = decorationRgb(opt.overline_color),
+        },
+        .link = .{
+            .underline = link.underline,
+            .style = cellUnderlineStyle(link.underline_style),
+            .color = decorationRgb(link.link_color),
+        },
+    };
+}
+
 pub fn rendererCursorOption(cur: Config.Cursor) renderer_mod.Cursor.Option {
     return .{
         .radius = cur.radius,
