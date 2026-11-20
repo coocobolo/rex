@@ -10,10 +10,10 @@
 ADR 0012 added OSC 8 links with a forced underline and a configurable link
 color, but decided that "rendering a hover popup or URL preview" was out of
 scope. The maintainer has since asked for both: a kitty-style
-`show_targets` affordance and a configurable underline style.
+`show_hyperlink_targets` affordance and a configurable underline style.
 
 Read externally (not verified against running terminals): kitty's `kitty.conf(5)`
-documents `show_targets`, `detect_urls`, `url_style` and
+documents `show_hyperlink_targets`, `detect_urls`, `url_style` and
 `underline_hyperlinks`, and notes that `underline_hyperlinks always` applies
 only to real OSC 8 hyperlinks, not hover-detected plain URLs. The sources read
 for xterm did not show OSC 8 or URL auto-detection support.
