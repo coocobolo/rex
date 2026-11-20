@@ -719,6 +719,7 @@ pub fn init(
         .dim_alpha = active_config.window.dim_alpha,
         .decoration = .{
             .link_underline = active_config.hyperlink.underline,
+            .link_hover_only = active_config.hyperlink.underline_visibility == .hover,
             .link_style = cellUnderlineStyle(active_config.hyperlink.underline_style),
             .color = .{ .link = if (active_config.hyperlink.link_color) |c| .{ c.r, c.g, c.b } else null },
         },
@@ -1190,6 +1191,13 @@ fn renderFrame(self: *App) !bool {
 
     const selection_state = self.buildSelectionState(current_frame);
 
+    // Resolve the link under the pointer before building the frame so the
+    // decoration pass can underline it. A modal or the scrollbar takes the
+    // hover away, matching the tooltip and the pointer shape.
+    const hovered_link = self.hoveredLinkId(current_frame);
+    self.frame_builder.hovered_link = if (self.hasModalOverlay() or
+        self.scrollbar_dragging or self.renderer.scrollbar.hover) 0 else hovered_link;
+
     var frame = try self.frame_builder.build(
         self.allocator,
         current_frame,
@@ -1243,8 +1251,7 @@ fn renderFrame(self: *App) !bool {
     if (self.linkHintEnabled() and !self.hasModalOverlay() and
         !self.scrollbar_dragging and !self.renderer.scrollbar.hover and !ascii_ready)
     {
-        const link = self.hoveredLinkId(current_frame);
-        if (link != 0) if (current_frame.hyperlink(link)) |uri| {
+        if (hovered_link != 0) if (current_frame.hyperlink(hovered_link)) |uri| {
             link_hint = .{
                 .uri = uri,
                 .x = self.mouse_x / self.content_scale,
@@ -2195,6 +2202,7 @@ pub fn reloadConfig(self: *App) void {
 
     self.frame_builder.dim_alpha = renderer_mod.Frame.alphaByte(self.config.window.dim_alpha);
     self.frame_builder.decoration.link_underline = self.config.hyperlink.underline;
+    self.frame_builder.decoration.link_hover_only = self.config.hyperlink.underline_visibility == .hover;
     self.frame_builder.decoration.link_style = cellUnderlineStyle(self.config.hyperlink.underline_style);
     self.frame_builder.decoration.color.link = if (self.config.hyperlink.link_color) |c| .{ c.r, c.g, c.b } else null;
 
