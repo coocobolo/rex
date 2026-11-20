@@ -910,15 +910,15 @@ pub fn Builder(comptime option: Option) type {
                     null
                 else
                     palette.resolveKeyRgb(style.underline, .foreground);
-                if (self.decoration.link_underline == .hover and style.link != 0) {
+                if (self.decoration.link_underline == .hover and style.linkId() != 0) {
                     // Only linked cells need the per-cell override; other
                     // cells keep the shared option without copying it.
                     var link_option = self.decoration;
-                    link_option.link_underline = if (style.link == self.hovered_link) .always else .never;
+                    link_option.link_underline = if (style.linkId() == self.hovered_link) .always else .never;
                     if (decorationInstance(&link_option, c, sgr_underline, true, foreground, foreground_alpha, col, row, span)) |run| {
                         Decoration.appendRun(decoration, run);
                     }
-                } else if (decorationInstance(&self.decoration, c, sgr_underline, style.link != 0, foreground, foreground_alpha, col, row, span)) |run| {
+                } else if (decorationInstance(&self.decoration, c, sgr_underline, style.linkId() != 0, foreground, foreground_alpha, col, row, span)) |run| {
                     Decoration.appendRun(decoration, run);
                 }
 

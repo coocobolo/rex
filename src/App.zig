@@ -1124,7 +1124,7 @@ fn tickPointerIdle(self: *App, dt_ms: u64) void {
 /// The link id under the pointer in `frame`, or 0 for no linked cell.
 fn hoveredLinkId(self: *App, frame: *const FrameType) u16 {
     const col, const row = self.mouseCellPos(self.mouse_x, self.mouse_y);
-    return frame.styleOf(frame.cellAt(row, col)).link;
+    return frame.styleOf(frame.cellAt(row, col)).linkId();
 }
 
 /// Whether the configured modifier for `show_hyperlink_targets` is down.
@@ -3624,7 +3624,7 @@ fn onMouseButton(self: *App, event: PlatformEvents.MouseButtonEvent) void {
     // log.debug("mouse_reporting={} shift_held={} is_primary={}", .{ mouse_reporting, shift_held, is_primary });
     // Ctrl+click opens an OSC 8 link; it takes precedence over both selection
     // and mouse reporting, and must not start a selection drag.
-    const link_id = if (event.mods.ctrl and is_primary) frame.styleOf(frame.cellAt(row, col)).link else 0;
+    const link_id = if (event.mods.ctrl and is_primary) frame.styleOf(frame.cellAt(row, col)).linkId() else 0;
     const has_link = link_id != 0 and frame.hyperlink(link_id) != null;
     if (press and event.button == .left and has_link) {
         self.pending_link = .{ .row = row, .col = col, .id = link_id };
@@ -3633,7 +3633,7 @@ fn onMouseButton(self: *App, event: PlatformEvents.MouseButtonEvent) void {
         self.pending_link = null;
         if (event.button == .left and event.mods.ctrl and
             pending.row == row and pending.col == col and
-            frame.styleOf(frame.cellAt(row, col)).link == pending.id)
+            frame.styleOf(frame.cellAt(row, col)).linkId() == pending.id)
         {
             if (frame.hyperlink(pending.id)) |uri| self.activateHyperlink(uri);
             return;
