@@ -39,30 +39,34 @@ under the pointer for the hand pointer (`src/App.zig`).
    (the state before that event), so the transition is folded in explicitly.
    The platform key query was found unreliable in a headless GLFW build and
    is not used for this decision.
-2. **Tooltip.** Reuse `kit/tooltip.zig` in `KitOverlay`. The URI is copied into
-   a fixed buffer and wrapped at codepoint boundaries into at most five
-   short lines, capped at 360 logical pixels wide; a longer URI ends in `…`.
-   The card has no id, so it never takes a click from the link underneath.
-   The fixed node budget grows by five nodes and the line budget by five
-   lines. Hover and modifier changes request a repaint.
-3. **Underline style.** `[hyperlink] underline_style` is one of `single`,
+2. **Tooltip.** Reuse `kit/tooltip.zig` in `KitOverlay`. `[hyperlink]
+   tooltip_uri_style` selects `multiline` (default: a fixed buffer wrapped at
+   codepoint boundaries into at most five short lines, 360 px wide),
+   `head_tail` (one line with the first 40 and last 24 characters and `…`
+   between), or `wide` (one line up to 520 px, ellipsized at the edge). The
+   card has no id, so it never takes a click from the link underneath. The
+   fixed node budget grows by five nodes and the line budget by five lines.
+   Hover and modifier changes request a repaint.
+3. **Underline.** `[hyperlink] underline` becomes the single mode enum
+   `never|always|hover` (default `always`), replacing the earlier boolean and
+   the proposed `underline_visibility` key. This is a config-format change:
+   `underline = true` becomes `always`, `false` becomes `never`. An explicit
+   SGR underline is always drawn, whatever the mode.
+4. **Underline style.** `[hyperlink] underline_style` is one of `single`,
    `double`, `curly`, `dotted`, `dashed`, default `single`. It styles only the
-   underline Rex adds when `underline = true` and the cell has no SGR
-   underline; an explicit SGR underline keeps its own style.
-4. **Underline visibility.** `[hyperlink] underline_visibility` is `always`
-   (default) or `hover`. In `hover` mode the added underline is drawn only on
+   underline Rex adds and only when the cell has no SGR underline.
+5. **Hover underline.** In `hover` mode the added underline is drawn only on
    the link under the pointer, using the same hover resolution as the tooltip
-   and hand pointer (modals and scrollbar hover clear it). An explicit SGR
-   underline is still drawn on every cell. The builder receives the hovered
-   link id before building the frame and treats a change to it as a dirty
-   cell, so decoration runs are rebuilt without a pty update; without this,
-   the cached runs kept the old underline until a click or text output.
-   No per-frame scan or allocation is added. `underline = false` remains the
-   master off switch.
-5. **Scope.** All four keys live in the existing `[hyperlink]` section, are
-   round-tripped by the config writer, pinned in `keys_test.zig` and exposed
-   in Settings. This supersedes decision 3 of ADR 0012's visual treatment;
-   the storage and security decisions there are unchanged.
+   and hand pointer (modals and scrollbar hover clear it). The builder gets
+   the hovered link id before building the frame and treats a change as a
+   dirty cell; without this, cached decoration runs kept the old underline
+   until a click or pty output. Only links with a URI in the frame snapshot
+   qualify, so links above the 16-URI cap cannot show a false affordance.
+   No per-frame scan or allocation is added.
+6. **Scope.** All keys added here live in the existing `[hyperlink]` section,
+   are round-tripped by the config writer, pinned in `keys_test.zig` and
+   exposed in Settings. This supersedes decision 3 of ADR 0012's visual
+   treatment; the storage and security decisions there are unchanged.
 
 ## Alternatives considered
 
@@ -74,13 +78,25 @@ under the pointer for the hand pointer (`src/App.zig`).
 - **Reuse the cell's `UnderlineStyle` enum for the config key.** It includes
   `none`, which duplicates `underline = false`; a config-only enum keeps the
   two settings distinct.
+- **Only one tooltip layout.** Head+tail is best for real URLs, multi-line
+  shows more of a pathological one, and wide is simplest; since the maintainer
+  wanted all three and the current layout as default, a single enum exposes
+  them without new UI or allocation.
 - **Scan the visible buffer for URLs to show their targets.** That is plain
   URL detection, not OSC 8; it remains a separate ticket with its own
   benchmark. Hover resolves one cell only, with no per-frame scan.
 
 ## Consequences
 
-- Two new config keys and their Settings rows; no breaking config change.
+- Three new config keys (`show_hyperlink_targets`, `underline_style`,
+  `tooltip_uri_style`) and one breaking change: `underline` is now
+  `never|always|hover` instead of a boolean. `underline_visibility` is not
+  shipped. Existing configs using `underline = true|false` must be updated.
+- `Frame` grows by the bounded URI snapshot (`[16][1024]u8`, 32 bytes of
+  lengths and a generation counter). Measured `@sizeOf(Frame)` is 36496 for
+  the 12×24 test option and 36520 for the production 200×220 option, with
+  `@alignOf(Frame) == 8`; regression tests pin both. The 64-byte alignment of
+  the cell buffer itself is unchanged.
 - `KitOverlay` carries five more nodes, five more text lines and a 207-byte
   URI buffer of fixed capacity, with no heap allocation. Its measured size
   grew 378304 → 379096 bytes; the wrapped text is borrowed by the tree from
@@ -89,7 +105,9 @@ under the pointer for the hand pointer (`src/App.zig`).
   a bare modifier press or release now requests a repaint. `hover` underline
   mode relies on that repaint, including when no tooltip is shown.
 - In `hover` mode the decoration builder copies its option only for linked
-  cells, to clear the added underline for non-hovered links.
+  cells, to clear the added underline for non-hovered links. The renderer
+  imports the config's `UnderlineVisibility` directly rather than mirroring
+  it, so there is one source of truth and no translation switch.
 - A link id above the frame's URL snapshot bound still renders but has no
-  tooltip, matching its lack of a click target.
+  tooltip, hand pointer, hover underline or click target.
 - Plain-text and pasted URLs remain undetected; that needs its own ticket.
