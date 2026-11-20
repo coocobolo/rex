@@ -11,6 +11,14 @@ pub const Order = enum {
 
 /// Underline styles that take part in ink skipping. The values match
 /// `term.cell.UnderlineStyle` so the renderer can pack them without a switch.
+/// Where dotted, dashed and curly patterns start.
+pub const Phase = enum {
+    /// From the window's left edge, so patterns line up across rows.
+    grid,
+    /// From the first cell of each decorated run.
+    run,
+};
+
 pub const SkipInkStyle = enum(u3) {
     single = 1,
     double = 2,
@@ -55,4 +63,27 @@ pub const Decoration = struct {
     underline_color: ?Rgb = null,
     strikethrough_color: ?Rgb = null,
     overline_color: ?Rgb = null,
+
+    /// Vertical shift of each line from the font's position, in pixels.
+    underline_offset_px: f32 = 0,
+    strikethrough_offset_px: f32 = 0,
+    overline_offset_px: f32 = 0,
+    /// Line thickness overrides in pixels; none uses the font's metric.
+    underline_thickness_px: ?f32 = null,
+    strikethrough_thickness_px: ?f32 = null,
+    overline_thickness_px: ?f32 = null,
+    /// Multiplies the resolved underline thickness.
+    underline_thickness_scale: f32 = 1.0,
+    /// Gap between the two lines of a double underline; none uses thickness.
+    double_gap_px: ?f32 = null,
+    /// Curly wave height and wavelength; none derives them from the cell.
+    curly_amplitude_px: ?f32 = null,
+    curly_wavelength_px: ?f32 = null,
+    /// Dotted and dashed on/off lengths; none derives them from the cell.
+    dot_length_px: ?f32 = null,
+    dot_gap_px: ?f32 = null,
+    dash_length_px: ?f32 = null,
+    dash_gap_px: ?f32 = null,
+    /// Whether dash patterns align to the window grid or to each run.
+    phase: Phase = .grid,
 };

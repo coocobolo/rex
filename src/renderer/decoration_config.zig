@@ -14,6 +14,25 @@ pub fn build(config: *const Config) Decoration.Option {
     const opt = config.decoration;
     const link = config.hyperlink;
     return .{
+        .underline = .{
+            .offset = opt.underline_offset_px,
+            .thickness = opt.underline_thickness_px,
+            .thickness_scale = opt.underline_thickness_scale,
+        },
+        .double_gap = opt.double_gap_px,
+        .curly = .{
+            .amplitude = opt.curly_amplitude_px,
+            .wavelength = opt.curly_wavelength_px,
+        },
+        .dotted = .{
+            .length = opt.dot_length_px,
+            .gap = opt.dot_gap_px,
+        },
+        .dashed = .{
+            .length = opt.dash_length_px,
+            .gap = opt.dash_gap_px,
+        },
+        .phase = opt.phase,
         .skip_ink = .{
             .enabled = opt.skip_ink,
             .styles = opt.skip_ink_styles,
@@ -25,6 +44,14 @@ pub fn build(config: *const Config) Decoration.Option {
         .alpha = opt.alpha,
         .dim = opt.dim,
         .blink = opt.blink,
+        .strikethrough = .{
+            .offset = opt.strikethrough_offset_px,
+            .thickness = opt.strikethrough_thickness_px,
+        },
+        .overline = .{
+            .offset = opt.overline_offset_px,
+            .thickness = opt.overline_thickness_px,
+        },
         .color = .{
             .underline = rgb(opt.underline_color),
             .strikethrough = rgb(opt.strikethrough_color),

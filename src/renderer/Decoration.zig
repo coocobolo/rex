@@ -94,15 +94,6 @@ pub const Pattern = struct {
     gap: ?f32 = null,
 };
 
-/// Where dotted, dashed and curly patterns start.
-pub const Phase = enum {
-    /// From the left edge of the window, so a pattern lines up across
-    /// rows and does not move when the run around it changes.
-    grid,
-    /// From the first cell of each run of decorated cells.
-    run,
-};
-
 /// Breaks the underline where glyph ink crosses it, like the CSS
 /// `text-decoration-skip-ink: auto` browsers apply by default.
 pub const SkipInk = struct {
@@ -183,7 +174,8 @@ pub const Option = struct {
     /// centred in it.
     dashed: Pattern = .{},
 
-    phase: Phase = .grid,
+    /// Pattern origin, owned by the config section.
+    phase: decoration_config.Phase = .grid,
 
     skip_ink: SkipInk = .{},
 

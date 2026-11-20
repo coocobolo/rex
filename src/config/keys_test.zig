@@ -433,6 +433,7 @@ const enum_names = [_]struct { []const u8, []const []const u8 }{
     .{ "hyperlink.target_style", &.{ "multiline", "head_tail", "wide" } },
     .{ "decoration.order", &.{ "over_text", "under_text" } },
     .{ "decoration.skip_ink_styles", &.{ "single", "double", "curly", "dotted", "dashed" } },
+    .{ "decoration.phase", &.{ "grid", "run" } },
     .{ "selection.border_style", &.{ "split", "unified", "underline", "left_bar" } },
     .{ "wellbeing.screen_time.on_limit", &.{ "grayscale", "lock_input", "animation" } },
     .{ "wellbeing.focus.timer", &.{ "countdown", "countup" } },
