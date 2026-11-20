@@ -89,6 +89,25 @@ test "decorationInstance: links force an underline and use the link color" {
     try testing.expect(!run.continuedBy(other));
 }
 
+test "decorationInstance: hover-only underlines skip other links but keep SGR" {
+    const linked: Cell = decorated(.{});
+    var option: Decoration.Option = .{ .link_hover_only = true };
+
+    // The builder copies the option and clears `link_underline` for links
+    // other than the hovered one.
+    option.link_underline = true;
+    const hovered = Frame.decorationInstance(&option, linked, null, true, text, 255, 0, 0, 1).?;
+    try testing.expectEqual(.single, hovered.flags.underline);
+
+    option.link_underline = false;
+    try testing.expectEqual(null, Frame.decorationInstance(&option, linked, null, true, text, 255, 0, 0, 1));
+
+    // An explicit SGR underline is still drawn on a non-hovered link.
+    const sgr_linked = decorated(.{ .underline = .double });
+    const sgr = Frame.decorationInstance(&option, sgr_linked, null, true, text, 255, 0, 0, 1).?;
+    try testing.expectEqual(.double, sgr.flags.underline);
+}
+
 test "decorationInstance: dim and blink follow the option" {
     const cell = decorated(.{ .overline = true, .blink = true, .blink_rapid = true });
 

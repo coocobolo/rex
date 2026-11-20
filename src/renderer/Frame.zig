@@ -382,6 +382,10 @@ pub fn Builder(comptime option: Option) type {
 
         /// Colors, dim and blink rules for the decoration runs.
         decoration: Decoration.Option,
+        /// Link id under the pointer, for `decoration.link_hover_only`.
+        hovered_link: u16 = 0,
+        /// Last hovered link the decoration runs were built with.
+        last_hovered_link: u16 = 0,
         /// Alpha byte of SGR 2 (dim) text, from BuilderOption.dim_alpha.
         dim_alpha: u8,
 
@@ -538,8 +542,12 @@ pub fn Builder(comptime option: Option) type {
                 (self.last_selection != null and self.last_selection.?.fg   != null));
             // zig fmt: on
 
+            // A hover change alters only the decoration runs; include it so
+            // the cached cell buffers are rebuilt without a pty update.
+            const hover_changed = self.hovered_link != self.last_hovered_link;
+            self.last_hovered_link = self.hovered_link;
             const cells_dirty = if (self.last_generation) |gen|
-                gen != frame.generation or fg_override_changed or selection_changed
+                gen != frame.generation or fg_override_changed or selection_changed or hover_changed
             else
                 true;
 
@@ -902,7 +910,15 @@ pub fn Builder(comptime option: Option) type {
                     null
                 else
                     palette.resolveKeyRgb(style.underline, .foreground);
-                if (decorationInstance(&self.decoration, c, sgr_underline, style.link != 0, foreground, foreground_alpha, col, row, span)) |run| {
+                if (self.decoration.link_hover_only and style.link != 0) {
+                    // Only linked cells need the per-cell override; other
+                    // cells keep the shared option without copying it.
+                    var link_option = self.decoration;
+                    link_option.link_underline = style.link == self.hovered_link;
+                    if (decorationInstance(&link_option, c, sgr_underline, true, foreground, foreground_alpha, col, row, span)) |run| {
+                        Decoration.appendRun(decoration, run);
+                    }
+                } else if (decorationInstance(&self.decoration, c, sgr_underline, style.link != 0, foreground, foreground_alpha, col, row, span)) |run| {
                     Decoration.appendRun(decoration, run);
                 }
 
