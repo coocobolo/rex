@@ -1,9 +1,7 @@
 //! Per-screen table of OSC 8 link URIs (ADR 0012).
 //!
-//! A `Style` holds a `UrlTable.Id` so a link travels with its text through
-//! scroll, reflow and erase. IDs are reclaimed by the screen's mark pass
-//! together with unused styles. `Id` 0 means "no link". The allocator is
-//! held here because the screen's reset paths do not take one.
+//! A `Style` holds a `UrlTable.Id` so links travel with their text and are
+//! reclaimed with unused styles. The table owns its URIs; 0 means no link.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
