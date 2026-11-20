@@ -12,8 +12,8 @@ test "decoration: defaults keep the current renderer behaviour" {
     try testing.expect(cfg.dim);
     try testing.expect(cfg.blink);
     try testing.expectEqual(@as(f32, 0.25), cfg.skip_ink_threshold);
-    try testing.expectEqual(null, cfg.skip_ink_gap);
-    try testing.expectEqual(null, cfg.skip_ink_min_segment);
+    try testing.expectEqual(null, cfg.skip_ink_gap_px);
+    try testing.expectEqual(null, cfg.skip_ink_min_segment_px);
     try testing.expectEqual(null, cfg.underline_color);
     try testing.expectEqual(null, cfg.strikethrough_color);
     try testing.expectEqual(null, cfg.overline_color);

@@ -48,9 +48,9 @@ pub const Decoration = struct {
     /// Glyph coverage from which a pixel counts as ink, 0.0 to 1.0.
     skip_ink_threshold: f32 = 0.25,
     /// Extra clearance around ink; none uses the line thickness.
-    skip_ink_gap: ?f32 = null,
+    skip_ink_gap_px: ?f32 = null,
     /// Drop line pieces shorter than this; none uses twice the thickness.
-    skip_ink_min_segment: ?f32 = null,
+    skip_ink_min_segment_px: ?f32 = null,
     /// Draw lines over the glyphs, or let glyphs cover the lines.
     order: Order = .over_text,
     /// Opacity of every decoration line, 0.0 to 1.0.

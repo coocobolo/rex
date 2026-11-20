@@ -260,3 +260,12 @@ test "load: each font style file layers on its own" {
     try std.testing.expectEqualStrings("/b.ttf", std.mem.span(faces.face(.bold).path));
     try std.testing.expectEqualStrings("/r2.ttf", std.mem.span(faces.face(.bold_italic).path));
 }
+
+test "load: ink gap accepts a pixel clearance above 1" {
+    var loaded = try Loaded.load(gpa, io, &test_config, null, &.{
+        text("user", "[decoration]\nskip_ink_gap_px = 4\n"),
+    });
+    defer loaded.deinit(gpa);
+    try std.testing.expectEqual(null, loaded.firstError());
+    try std.testing.expectEqual(@as(?f32, 4), loaded.config.decoration.skip_ink_gap_px);
+}
