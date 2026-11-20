@@ -19,6 +19,7 @@ test "hyperlink: links on by default, file scheme off, system command" {
     const Scheme = hyperlink.Scheme;
     try testing.expect(std.meta.stringToEnum(Scheme, "https") == .https);
     try testing.expect(std.meta.stringToEnum(Scheme, "javascript") == null);
+    try testing.expectEqual(.always, cfg.underline_visibility);
     try testing.expectEqual(.single, cfg.underline_style);
     try testing.expectEqual(.ctrl, cfg.show_hyperlink_targets);
 }

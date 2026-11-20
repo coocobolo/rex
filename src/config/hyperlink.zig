@@ -13,6 +13,12 @@ pub const Scheme = enum {
 
 pub const SchemeSet = std.EnumSet(Scheme);
 
+/// When the underline Rex adds to linked text is visible (ADR 0013).
+pub const UnderlineVisibility = enum {
+    always,
+    hover,
+};
+
 /// Underline style used for linked text with no explicit SGR underline.
 pub const LinkStyle = enum {
     single,
@@ -46,6 +52,8 @@ pub const Hyperlink = struct {
     enabled: bool = true,
     /// Whether linked text is underlined even without SGR 4.
     underline: bool = true,
+    /// Whether that underline is permanent or shown only while hovering.
+    underline_visibility: UnderlineVisibility = .always,
     /// Style of the underline Rex adds to linked text. An explicit SGR
     /// underline keeps its own style.
     underline_style: LinkStyle = .single,

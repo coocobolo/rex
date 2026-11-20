@@ -244,6 +244,7 @@ const key_meta_table = [_]KeyMetaEntry{
     .{ .section = .clipboard, .name = "osc52_read", .label = "Clipboard Read (OSC 52)", .description = "Allow programs inside the terminal to read text from your clipboard." },
     .{ .section = .hyperlink, .name = "enabled", .label = "Enable Links", .description = "Let Ctrl+click open OSC 8 hyperlinks in the terminal." },
     .{ .section = .hyperlink, .name = "underline", .label = "Underline Links", .description = "Underline linked text even without an SGR 4 underline." },
+    .{ .section = .hyperlink, .name = "underline_visibility", .label = "Underline Visibility", .description = "Show the link underline always, or only while hovering the link." },
     .{ .section = .hyperlink, .name = "underline_style", .label = "Underline Style", .description = "Style of the underline Rex adds to linked text; explicit SGR underlines keep their own style." },
     .{ .section = .hyperlink, .name = "show_hyperlink_targets", .label = "Show Link Target", .description = "When to show the target URI while hovering a link." },
     .{ .section = .hyperlink, .name = "link_color", .label = "Link Color", .description = "Underline color for links; none uses the underline or text color." },
