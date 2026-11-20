@@ -111,3 +111,8 @@ under the pointer for the hand pointer (`src/App.zig`).
 - A link id above the frame's URL snapshot bound still renders but has no
   tooltip, hand pointer, hover underline or click target.
 - Plain-text and pasted URLs remain undetected; that needs its own ticket.
+- ReleaseFast A/B against pre-change `develop` (interleaved, CPU-pinned) showed
+  a +2.1% median per-case cost across 34 `term` cases, with a worst case of
+  +17.2% on CJK reflow. Numbers and method are in
+  `docs/perf/osc8-hyperlinks-2026-11.md`. Whether to accept the cost or pack
+  the link ID into existing padding is a maintainer decision.
