@@ -124,7 +124,7 @@ test "input view: node budget, layout, focus, selection, and invalid/disabled st
     try std.testing.expectEqual(expected_h, focused_ring.rect.h);
 
     // Invalid focused ring uses destructive color.
-    const invalid_ring_idx = 1 + 8; // focused view with selection emitted 8 nodes
+    const invalid_ring_idx = 1 + input.node_max; // focused view with selection emitted 12 nodes
     try std.testing.expectEqual(Id.of("in-invalid"), tree.nodes[invalid_ring_idx].box.id);
     try std.testing.expectEqual(theme.destructive.r, tree.nodes[invalid_ring_idx].box.border.r);
 
@@ -157,11 +157,11 @@ test "input view: long focused text scrolls horizontally to keep caret visible" 
         try tree.layout(measurer, 220, 60);
 
         const caret = tree.nodes[tree.scroll_follow].rect;
-        const clip = tree.nodes[tree.nodes[tree.scroll_follow].parent].rect;
+        const clip = tree.nodes[3].rect; // root(0), ring(1), face(2), clip(3)
         try std.testing.expect(caret.x >= clip.x);
         try std.testing.expect(caret.x + caret.w <= clip.x + clip.w + 0.5);
-        const before_text = tree.nodes[tree.scroll_follow - 1].rect;
-        try std.testing.expect(before_text.x < clip.x);
+        const content = tree.nodes[4].rect;
+        try std.testing.expect(content.x < clip.x);
     }
 
     // Caret at start (Home): scroll returns to 0 so the start of the path is visible.
@@ -180,7 +180,7 @@ test "input view: long focused text scrolls horizontally to keep caret visible" 
         try tree.layout(measurer, 220, 60);
 
         const caret = tree.nodes[tree.scroll_follow].rect;
-        const clip = tree.nodes[tree.nodes[tree.scroll_follow].parent].rect;
+        const clip = tree.nodes[3].rect;
         try std.testing.expectApproxEqAbs(clip.x, caret.x, 0.5);
     }
 }
@@ -300,24 +300,35 @@ test "input view: textOriginX tracks unfocused, caret-at-0, centered, and scroll
         try std.testing.expect(hit_end >= long_path.len - 2);
     }
 
-    // 2. Focused at byte 0: skips the caret box so byte 0 lines up with the text node.
+    // 2. Focused at byte 0: visible text stays anchored at byte 0 and never shifts
+    // as the caret moves across the string.
     {
-        var tree = Tree.init(&nodes, &lines);
-        const root = try tree.open(.{ .width = .{ .fixed = 220 }, .height = .{ .fixed = 60 } });
-        try input.view(&tree, &theme, .{
-            .id = Id.of("origin-zero"),
-            .value = "abc",
-            .cursor = 0,
-            .anchor = 0,
-            .focused = true,
-            .width = .{ .fixed = 160 },
-        });
-        tree.close(root);
-        try tree.layout(measurer, 220, 60);
+        var prev_text_rect: ?Tree.Rect = null;
+        for ([_]usize{ 0, 1, 2, 3 }) |cur| {
+            var tree = Tree.init(&nodes, &lines);
+            const root = try tree.open(.{ .width = .{ .fixed = 220 }, .height = .{ .fixed = 60 } });
+            try input.view(&tree, &theme, .{
+                .id = Id.of("origin-zero"),
+                .value = "abc",
+                .cursor = cur,
+                .anchor = cur,
+                .focused = true,
+                .width = .{ .fixed = 160 },
+            });
+            tree.close(root);
+            try tree.layout(measurer, 220, 60);
 
-        const origin = input.textOriginX(&tree, Id.of("origin-zero")).?;
-        const text_node = tree.nodes[5].rect; // root(0), ring(1), face(2), clip(3), caret(4), text(5)
-        try std.testing.expectApproxEqAbs(text_node.x, origin, 0.01);
+            const origin = input.textOriginX(&tree, Id.of("origin-zero")).?;
+            const text_node = tree.nodes[5].rect; // root(0), ring(1), face(2), clip(3), content(4), text(5)
+            try std.testing.expectApproxEqAbs(text_node.x, origin, 0.01);
+            if (prev_text_rect) |prev| {
+                try std.testing.expectEqual(prev, text_node);
+            }
+            prev_text_rect = text_node;
+            // Caret overlays at exact prefix width without pushing text.
+            const caret = tree.nodes[tree.scroll_follow].rect;
+            try std.testing.expectApproxEqAbs(origin + @as(f32, @floatFromInt(cur)) * 8.0, caret.x, 0.01);
+        }
     }
 
     // 3. Centered unfocused input: origin matches centered text, not left clip edge.

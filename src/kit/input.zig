@@ -19,9 +19,10 @@ pub const min_width: f32 = 160;
 pub const caret_width: f32 = 1.5;
 pub const caret_height: f32 = 16;
 
-/// Worst-case nodes written by `view`: ring, face, clip row, before text,
-/// caret, selection wrapper + selected text, after text.
-pub const node_max = 8;
+/// Worst-case nodes written by `view`: ring, face, clip, content,
+/// selection overlay (layer, prefix, box, text), visible text, and caret
+/// overlay (layer, prefix, caret).
+pub const node_max = 12;
 
 pub const Command = enum {
     backspace,
@@ -456,19 +457,13 @@ fn wordRangeAt(bytes: []const u8, pos: usize) struct { start: usize, end: usize 
 pub fn textOriginX(tree: *const Tree, id: Id) ?f32 {
     for (tree.items(), 0..) |node, i| {
         if (node.box.id != id) continue;
-        // `view` emits ring -> face -> clip -> [children...].
+        // `view` emits ring -> face -> clip -> content (for non-empty text).
         const clip_idx = i + 2;
         if (clip_idx >= tree.len) return null;
         const clip = tree.nodes[clip_idx];
         const first_idx = clip_idx + 1;
         if (first_idx >= clip.end) return clip.rect.x;
-        const first = tree.nodes[first_idx];
-        // When the caret sits before byte 0, it is a childless box right before
-        // the text or selection wrapper.
-        if (first.content == .box and first.end == first_idx + 1 and first.end < clip.end) {
-            return tree.nodes[first.end].rect.x;
-        }
-        return first.rect.x;
+        return tree.nodes[first_idx].rect.x;
     }
     return null;
 }
@@ -544,37 +539,75 @@ pub fn view(tree: *Tree, theme: *const Theme, options: Options) Tree.Error!void 
                 .wrap = .none,
             });
         }
-    } else if (!active) {
-        _ = try tree.text(options.value, .{ .color = text_color, .wrap = .none });
     } else {
+        const content = try tree.open(.{
+            .axis = .row,
+            .width = .fit,
+            .height = .fill,
+            .padding = if (options.center) .zero else .{ .right = 2 },
+            .cross = .center,
+            .shrink = false,
+        });
         const cursor = @min(options.cursor, options.value.len);
         const anchor = @min(options.anchor, options.value.len);
-        if (anchor == cursor) {
-            if (cursor > 0) {
-                _ = try tree.text(options.value[0..cursor], .{ .color = text_color, .wrap = .none });
-            }
-            caret_index = try emitCaret(tree, theme);
-            if (cursor < options.value.len) {
-                _ = try tree.text(options.value[cursor..], .{ .color = text_color, .wrap = .none });
-            }
-        } else {
+
+        // Selection highlight renders in an overlay behind the single unsplit
+        // text node so moving the caret or changing selection never shifts
+        // surrounding glyphs or breaks pair kerning.
+        if (active and anchor != cursor) {
             const start = @min(anchor, cursor);
             const end = @max(anchor, cursor);
+            const sel_layer = try tree.open(.{
+                .axis = .row,
+                .height = .fill,
+                .cross = .center,
+                .overlay = true,
+            });
             if (start > 0) {
-                _ = try tree.text(options.value[0..start], .{ .color = text_color, .wrap = .none });
+                _ = try tree.text(options.value[0..start], .{
+                    .color = .transparent,
+                    .wrap = .none,
+                    .shrink = false,
+                });
             }
-            if (cursor == start) caret_index = try emitCaret(tree, theme);
             const sel_box = try tree.open(.{
                 .fill = theme.primary.fade(0.25),
                 .radius = 2,
+                .shrink = false,
             });
-            _ = try tree.text(options.value[start..end], .{ .color = text_color, .wrap = .none });
+            _ = try tree.text(options.value[start..end], .{
+                .color = .transparent,
+                .wrap = .none,
+                .shrink = false,
+            });
             tree.close(sel_box);
-            if (cursor == end) caret_index = try emitCaret(tree, theme);
-            if (end < options.value.len) {
-                _ = try tree.text(options.value[end..], .{ .color = text_color, .wrap = .none });
-            }
+            tree.close(sel_layer);
         }
+
+        _ = try tree.text(options.value, .{
+            .color = text_color,
+            .wrap = .none,
+            .shrink = false,
+        });
+
+        if (active) {
+            const caret_layer = try tree.open(.{
+                .axis = .row,
+                .height = .fill,
+                .cross = .center,
+                .overlay = true,
+            });
+            if (cursor > 0) {
+                _ = try tree.text(options.value[0..cursor], .{
+                    .color = .transparent,
+                    .wrap = .none,
+                    .shrink = false,
+                });
+            }
+            caret_index = try emitCaret(tree, theme);
+            tree.close(caret_layer);
+        }
+        tree.close(content);
     }
 
     tree.close(clip);
@@ -591,6 +624,7 @@ fn emitCaret(tree: *Tree, theme: *const Theme) Tree.Error!Tree.Index {
         .width = .{ .fixed = caret_width },
         .height = .{ .fixed = caret_height },
         .fill = theme.foreground,
+        .shrink = false,
     });
     tree.close(caret);
     return caret;

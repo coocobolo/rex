@@ -235,6 +235,7 @@ pub const Text = struct {
         /// takes the width the parent has left and wraps to it.
         width: Size = .fit,
         id: Id = .none,
+        shrink: bool = true,
     };
 
     /// Borrowed: must stay valid until the view is rebuilt.
@@ -773,7 +774,7 @@ pub fn text(self: *Tree, bytes: []const u8, options: Text.Options) Error!Index {
             .wrap = options.wrap,
             .alignment = options.alignment,
         } },
-        .{ .width = options.width, .id = options.id },
+        .{ .width = options.width, .id = options.id, .shrink = options.shrink },
     );
 }
 
