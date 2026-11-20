@@ -45,7 +45,7 @@ const Fixture = struct {
 
     /// A frame of an 800 by 600 window (logical pixels).
     fn frame(self: *Fixture) bool {
-        return self.kit.buildFrame(&self.atlas, 800, 600, dark);
+        return self.kit.buildFrame(&self.atlas, 800, 600, dark, null);
     }
 };
 
@@ -399,10 +399,10 @@ test "KitOverlay: the dialog covers the toast stack" {
 test "KitOverlay: its size" {
     // Nearly all of it is two tables: the font's kerning pairs, and
     // the painter's 2048 instances of 64 bytes with its glyph position cache.
-    try testing.expectEqual(378304, @sizeOf(KitOverlay));
+    try testing.expectEqual(378840, @sizeOf(KitOverlay));
     try testing.expectEqual(161048, @sizeOf(@FieldType(KitOverlay, "painter")));
     try testing.expectEqual(190424, @sizeOf(@FieldType(KitOverlay, "font")));
-    try testing.expectEqual(9152, @sizeOf(@FieldType(KitOverlay, "nodes")));
+    try testing.expectEqual(9672, @sizeOf(@FieldType(KitOverlay, "nodes")));
 }
 
 test "KitOverlay: configure applies surface options and resets toast glide table on position or layout change" {
@@ -762,4 +762,35 @@ test "KitOverlay: configure applies wellbeing_widget options and renders all pro
         const card = kit.tree.find(wellbeing_widget.card_id).?;
         try testing.expectEqual(Rect{ .x = 16, .y = 16, .w = 264, .h = 132 }, card.rect);
     }
+}
+
+test "KitOverlay: a link hint draws one line and never catches a click" {
+    var fixture: Fixture = try .init(1);
+    defer fixture.deinit();
+    const kit = fixture.kit;
+    const uri = "https://example.com/a/very/long/path/that/must/be/truncated/to/fit/the/tooltip";
+
+    try testing.expect(!fixture.frame());
+    try testing.expect(kit.buildFrame(&fixture.atlas, 800, 600, dark, .{ .uri = uri, .x = 400, .y = 300 }));
+    try testing.expect(kit.painter.len > 0);
+
+    var saw_uri = false;
+    for (kit.tree.nodes[0..kit.tree.len]) |node| {
+        try testing.expectEqual(.none, node.box.id);
+        switch (node.content) {
+            .text => |t| if (std.mem.eql(u8, t.bytes, uri)) {
+                saw_uri = true;
+                try testing.expectEqual(1, t.line_count);
+            },
+            else => {},
+        }
+    }
+    try testing.expect(saw_uri);
+    try testing.expectEqual(KitOverlay.Press.outside, kit.press(400, 300));
+
+    // The next frame without a hint takes the tooltip away; that frame is
+    // still requested so the old pixels are cleared.
+    try testing.expect(fixture.frame());
+    try testing.expectEqual(0, kit.painter.len);
+    try testing.expect(!fixture.frame());
 }

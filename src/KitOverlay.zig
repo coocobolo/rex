@@ -26,6 +26,7 @@ const alert_mod = @import("kit/alert.zig");
 const alert_dialog = @import("kit/alert_dialog.zig");
 const lock_mod = @import("kit/lock_screen.zig");
 const toast = @import("kit/toast.zig");
+const tooltip = @import("kit/tooltip.zig");
 const Tree = @import("kit/Tree.zig");
 const widget_mod = @import("kit/wellbeing_widget.zig");
 const Ui = @import("config/Config.zig").Ui;
@@ -35,8 +36,8 @@ const log = std.log.scoped(.kit_overlay);
 /// Nodes and lines of wrapped text one frame can hold: enough for the worst
 /// combination of simultaneously visible surfaces (alert banner + toast stack +
 /// wellbeing widget, or modal dialog / lock screen).
-const node_capacity = @max(@max(alert_mod.node_max + toast.node_max + widget_mod.node_max, alert_dialog.node_max), lock_mod.node_max);
-const line_capacity = @max(@max(alert_mod.line_max + toast.line_max + widget_mod.line_max, alert_dialog.line_max), lock_mod.line_max);
+const node_capacity = @max(@max(alert_mod.node_max + toast.node_max + widget_mod.node_max + tooltip.nodes(1), alert_dialog.node_max), lock_mod.node_max);
+const line_capacity = @max(@max(alert_mod.line_max + toast.line_max + widget_mod.line_max + 1, alert_dialog.line_max), lock_mod.line_max);
 
 font: KitFont,
 painter: KitPainter,
@@ -84,6 +85,15 @@ pub fn destroy(self: *KitOverlay, gpa: Allocator) void {
     self.font.deinit();
     gpa.destroy(self);
 }
+
+/// The link under the pointer. The URI is borrowed from the frame for the
+/// one `buildFrame` call that draws the tooltip.
+pub const LinkHint = struct {
+    uri: []const u8,
+    /// Logical pixels, relative to the window.
+    x: f32,
+    y: f32,
+};
 
 pub const Options = struct {
     ui: Ui = .{},
@@ -444,13 +454,13 @@ pub fn glyphsLost(self: *KitOverlay, scale: f32) void {
 /// pixels over a terminal whose background is `background` (sRGB).
 /// Returns whether the window has to be drawn for the kit's sake: there
 /// is UI to draw, or the last frame's to take away.
-pub fn buildFrame(self: *KitOverlay, atlas: *Atlas, width: f32, height: f32, background: [3]u8) bool {
+pub fn buildFrame(self: *KitOverlay, atlas: *Atlas, width: f32, height: f32, background: [3]u8, link_hint: ?LinkHint) bool {
     const dt_ms = self.elapsed_ms;
     self.elapsed_ms = 0;
     const drawn_before = self.painter.len > 0;
     self.painter.begin();
     self.tree.reset();
-    self.build(atlas, width, height, self.color_scheme.variant(background).theme(), dt_ms) catch |err| {
+    self.build(atlas, width, height, self.color_scheme.variant(background).theme(), dt_ms, link_hint) catch |err| {
         // The same state would fail the same way every frame.
         if (self.lock_screen.isShown()) {
             log.err("cannot show the lock screen, dropping it: {t}", .{err});
@@ -469,7 +479,7 @@ pub fn buildFrame(self: *KitOverlay, atlas: *Atlas, width: f32, height: f32, bac
     return drawn_before or self.painter.len > 0;
 }
 
-fn build(self: *KitOverlay, atlas: *Atlas, width: f32, height: f32, theme: *const Theme, dt_ms: u32) !void {
+fn build(self: *KitOverlay, atlas: *Atlas, width: f32, height: f32, theme: *const Theme, dt_ms: u32, link_hint: ?LinkHint) !void {
     if (self.lock_screen.isShown()) {
         try lock_mod.viewIn(&self.lock_screen, &self.tree, theme, width);
         try self.tree.layout(self.font.measurer(), width, height);
@@ -489,12 +499,27 @@ fn build(self: *KitOverlay, atlas: *Atlas, width: f32, height: f32, theme: *cons
     const banner = try alert_mod.view(&self.alert, &self.tree, theme);
     const stack = try toast.view(&self.toasts, &self.tree, theme);
     const widget_tip = try widget_mod.viewTooltip(&self.wellbeing_widget, &self.tree, theme, width, height);
+    if (link_hint) |hint| _ = try self.viewLinkHint(theme, width, hint);
     try self.tree.layout(self.font.measurer(), width, height);
     widget_mod.place(&self.wellbeing_widget, &self.tree, widget_root, width, height);
     widget_mod.placeTooltip(&self.tree, widget_root, widget_tip, width, height);
     alert_mod.place(&self.alert, &self.tree, banner);
     self.motion = try toast.place(&self.toasts, &self.tree, stack, &self.table, dt_ms);
     try self.painter.paint(&self.tree, &self.font, atlas);
+}
+
+/// Writes a one-line card with the target URI next to the pointer. The card
+/// has no id, so it never takes a click from the link underneath.
+fn viewLinkHint(self: *KitOverlay, theme: *const Theme, width: f32, hint: LinkHint) Tree.Error!void {
+    const card = try tooltip.openAt(&self.tree, theme, hint.x, hint.y);
+    const max_width = @max(1, @min(360, width - 16));
+    _ = try self.tree.text(hint.uri, .{
+        .color = theme.foreground,
+        .style = .xs,
+        .wrap = .ellipsis,
+        .width = .{ .fit_at_most = max_width },
+    });
+    tooltip.close(&self.tree, card);
 }
 
 /// A frame in which the kit's UI is hidden: nothing is drawn and nothing

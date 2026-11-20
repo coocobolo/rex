@@ -186,6 +186,10 @@ mouse_last_click_ms: f64 = 0,
 mouse_last_click_pos: rex.Selection.Position = .empty,
 mouse_click_count: u2 = 0,
 pointer_visibility: PointerVisibility = .{ .visible = .{} },
+/// Last resolved hover state, so a change in link or modifier repaints the
+/// tooltip without waiting for another event.
+link_hint_id: u16 = 0,
+link_hint_visible: bool = false,
 
 // Selection state
 selection: rex.Selection = .empty,
@@ -397,6 +401,18 @@ pub fn resolvePointerShape(
     if (link_hover) return .hand;
     if (mouse_reporting and !shift_held) return .arrow;
     return .text;
+}
+
+/// The config's link underline style maps onto the cell's SGR style enum;
+/// `none` is not a config value, since `underline = false` turns it off.
+fn cellUnderlineStyle(style: rex.config.hyperlink.LinkStyle) rex.terminal.cell.UnderlineStyle {
+    return switch (style) {
+        .single => .single,
+        .double => .double,
+        .curly => .curly,
+        .dotted => .dotted,
+        .dashed => .dashed,
+    };
 }
 
 /// Picks the moment to draw so `swapBuffers` blocks for about `margin_ns`
@@ -700,6 +716,7 @@ pub fn init(
         .dim_alpha = active_config.window.dim_alpha,
         .decoration = .{
             .link_underline = active_config.hyperlink.underline,
+            .link_style = cellUnderlineStyle(active_config.hyperlink.underline_style),
             .color = .{ .link = if (active_config.hyperlink.link_color) |c| .{ c.r, c.g, c.b } else null },
         },
     });
@@ -1101,6 +1118,29 @@ fn tickPointerIdle(self: *App, dt_ms: u64) void {
     }
 }
 
+/// The link id under the pointer in `frame`, or 0 for no linked cell.
+fn hoveredLinkId(self: *App, frame: *const FrameType) u16 {
+    const col, const row = self.mouseCellPos(self.mouse_x, self.mouse_y);
+    return frame.styleOf(frame.cellAt(row, col)).link;
+}
+
+/// Whether the configured modifier for `show_hyperlink_targets` is down.
+fn linkHintEnabled(self: *App) bool {
+    if (!self.config.hyperlink.enabled) return false;
+    return switch (self.config.hyperlink.show_hyperlink_targets) {
+        .never => false,
+        .always => true,
+        .ctrl => self.platform.isKeyDown(self.window, .left_control) or
+            self.platform.isKeyDown(self.window, .right_control),
+        .cmd => self.platform.isKeyDown(self.window, .left_super) or
+            self.platform.isKeyDown(self.window, .right_super),
+        .alt => self.platform.isKeyDown(self.window, .left_alt) or
+            self.platform.isKeyDown(self.window, .right_alt),
+        .shift => self.platform.isKeyDown(self.window, .left_shift) or
+            self.platform.isKeyDown(self.window, .right_shift),
+    };
+}
+
 fn updatePointerShape(self: *App, shift_held: bool) void {
     const kit_pointer = if (self.kit) |kit|
         kit.pointerShape(self.mouse_x / self.content_scale, self.mouse_y / self.content_scale)
@@ -1109,9 +1149,15 @@ fn updatePointerShape(self: *App, shift_held: bool) void {
     const scrollbar_active = self.scrollbar_dragging or self.renderer.scrollbar.hover;
     const mouse_reporting = self.driver.getModes().mouse_reporting;
     const frame = self.driver.getFrame();
-    const col, const row = self.mouseCellPos(self.mouse_x, self.mouse_y);
-    const link = frame.styleOf(frame.cellAt(row, col)).link;
+    const link = self.hoveredLinkId(frame);
     const link_hover = link != 0 and frame.hyperlink(link) != null;
+    const hint_visible = link_hover and self.linkHintEnabled() and
+        !self.hasModalOverlay() and !scrollbar_active;
+    if (link != self.link_hint_id or hint_visible != self.link_hint_visible) {
+        self.link_hint_id = link;
+        self.link_hint_visible = hint_visible;
+        self.needs_redraw = true;
+    }
     const shape = resolvePointerShape(
         kit_pointer,
         self.hasModalOverlay(),
@@ -1194,10 +1240,24 @@ fn renderFrame(self: *App) !bool {
         frame.dirty.overlay = true;
     }
 
+    var link_hint: ?KitOverlay.LinkHint = null;
+    if (self.linkHintEnabled() and !self.hasModalOverlay() and
+        !self.scrollbar_dragging and !self.renderer.scrollbar.hover and !ascii_ready)
+    {
+        const link = self.hoveredLinkId(current_frame);
+        if (link != 0) if (current_frame.hyperlink(link)) |uri| {
+            link_hint = .{
+                .uri = uri,
+                .x = self.mouse_x / self.content_scale,
+                .y = self.mouse_y / self.content_scale,
+            };
+        };
+    }
+
     if (self.kit) |kit| {
         // The size `handleResize` last saw: asking the window is a
         // round trip to the X server on every frame.
-        if (kit.buildFrame(atlas, fb_width / self.content_scale, fb_height / self.content_scale, background)) {
+        if (kit.buildFrame(atlas, fb_width / self.content_scale, fb_height / self.content_scale, background, link_hint)) {
             frame.dirty.overlay = true;
         }
         frame.overlay_has_modal = kit.hasScrim() and !ascii_ready;
@@ -2136,6 +2196,7 @@ pub fn reloadConfig(self: *App) void {
 
     self.frame_builder.dim_alpha = renderer_mod.Frame.alphaByte(self.config.window.dim_alpha);
     self.frame_builder.decoration.link_underline = self.config.hyperlink.underline;
+    self.frame_builder.decoration.link_style = cellUnderlineStyle(self.config.hyperlink.underline_style);
     self.frame_builder.decoration.color.link = if (self.config.hyperlink.link_color) |c| .{ c.r, c.g, c.b } else null;
 
     // A size change rebuilds the rasterizer with the new faces; a face
@@ -2898,7 +2959,11 @@ fn onText(self: *App, codepoint: u21) void {
 }
 
 fn onKey(self: *App, event: PlatformEvents.KeyEvent) void {
-    if (event.action == .release) return;
+    if (event.action == .release) {
+        // A modifier release can hide the link-target tooltip.
+        if (event.key.isModifier()) self.needs_redraw = true;
+        return;
+    }
     const pressed_at = if (latency_trace.enabled) latency_trace.now(self.io) else {};
     self.wellbeing_state.recordActivity();
 
@@ -2920,6 +2985,9 @@ fn onKey(self: *App, event: PlatformEvents.KeyEvent) void {
         if (maybe_key != null) self.hidePointerOnTyping();
         // Its bytes may come from here or from the char callback.
         if (latency_trace.enabled) self.latency.?.keyPressed(pressed_at);
+    } else {
+        // A bare modifier press can show the link-target tooltip.
+        self.needs_redraw = true;
     }
 
     // Terminal key encoding
