@@ -9,7 +9,8 @@
 
 `src/renderer/Decoration.zig:154` describes its `Option` as "User settings for
 decorations", but `src/App.zig:720-724` wires only three fields from config,
-all under `[hyperlink]`: `link_underline`, `link_style` and `color.link`. The
+all under `[hyperlink]`; in the renderer they are now one nested
+`Decoration.Option.link` value. The
 remaining fields — ink skipping, drawing order, opacity, dim and blink
 behaviour, line placement, style geometry and the strikethrough/overline
 colors — are hard-wired to defaults.
