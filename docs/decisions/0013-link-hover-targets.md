@@ -114,5 +114,7 @@ under the pointer for the hand pointer (`src/App.zig`).
 - ReleaseFast A/B against pre-change `develop` (interleaved, CPU-pinned) showed
   a +2.1% median per-case cost across 34 `term` cases, with a worst case of
   +17.2% on CJK reflow. Numbers and method are in
-  `docs/perf/osc8-hyperlinks-2026-11.md`. Whether to accept the cost or pack
-  the link ID into existing padding is a maintainer decision.
+  `docs/perf/osc8-hyperlinks-2026-11.md`. The maintainer chose to pack the
+  link ID into unused color-key bits, restoring `Style` to 12 bytes; the
+  re-measured median is unchanged within noise and the worst reflow delta
+  fell from +29.8% to +19.7%.

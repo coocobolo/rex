@@ -54,7 +54,24 @@ deltas being in `reflow/cjk_mixed` and `reflow/long_lines`. A 2.1% median cost
 and up to 17% on the worst reflow case is a real but bounded regression; the
 negative `man_bash` delta is within run-to-run noise on this host.
 
+## After packing the link ID
+
+The maintainer chose to pack the link ID into the unused high bits of the
+three 32-bit color keys instead of growing `Style` from 12 to 16 bytes. The
+same interleaved protocol was repeated with three trees: pre-change `develop`,
+the un-packed hyperlink branch (`737787d`), and the packed branch. All 34
+`term` cases were compared again with matching checksums.
+
+| Tree | Median delta vs `develop` | Worst case |
+|---|---:|---:|
+| Un-packed | +0.30% | +29.8% |
+| Packed | +0.34% | +19.7% |
+
+Packed versus un-packed directly: median **−0.21%** (18 cases faster, 16
+slower), largest gain **−7.8%** on `reflow/long_lines/drag`. The largest
+remaining delta is still in CJK/long-line reflow but is about 10 points
+smaller than before packing. The median is unchanged within noise; packing
+buys back the style-table memory without a clear average speed-up.
+
 ReleaseFast was used throughout, as required for meaningful numbers. Real
-fuzzing and multi-minute GUI benchmarks were not run. The ADR 0012 note to
-revisit the style-table growth if measured still applies: whether to accept
-this cost or pack the link ID into existing padding is a maintainer decision.
+fuzzing and multi-minute GUI benchmarks were not run.
