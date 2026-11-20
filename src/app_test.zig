@@ -262,3 +262,9 @@ test "AsciiOverlayState: frame pacing, minimized pause, and reduced motion freez
     // Deactivating after drawing requests one final redraw to clear the last frame.
     try testing.expect(state.tick(16, false, true, .full, 20));
 }
+
+test "production Frame: URL snapshot size and alignment" {
+    const testing = std.testing;
+    try testing.expectEqual(@as(usize, 36520), @sizeOf(App.FrameType));
+    try testing.expectEqual(@as(usize, 8), @alignOf(App.FrameType));
+}
