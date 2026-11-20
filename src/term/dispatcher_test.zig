@@ -4646,7 +4646,7 @@ test "osc 8: a frame snapshot carries the URI for click resolution" {
     t.feed("\x1b]8;;https://example.com\x07A");
     _ = t.snapshot(&frame);
 
-    const id = frame.styleOf(frame.cellAt(0, 0)).link;
+    const id = frame.styleOf(frame.cellAt(0, 0)).linkId();
     try testing.expect(id != 0);
     try testing.expectEqualStrings("https://example.com", frame.hyperlink(id).?);
     try testing.expectEqual(null, frame.hyperlink(0));
@@ -4659,8 +4659,8 @@ test "osc 8: link travels with cells and survives SGR 0 and newline" {
     t.feed("\x1b]8;;https://example.com\x07A");
     const screen = t.active();
     const style = screen.styles.get(screen.row(0)[0].style);
-    try testing.expect(style.link != 0);
-    try testing.expectEqualStrings("https://example.com", screen.urls.get(style.link).?);
+    try testing.expect(style.linkId() != 0);
+    try testing.expectEqualStrings("https://example.com", screen.urls.get(style.linkId()).?);
 
     // SGR 0 and a newline do not clear the link (xterm semantics, ADR 0012).
     t.feed("\x1b[0m\n");
@@ -4670,7 +4670,7 @@ test "osc 8: link travels with cells and survives SGR 0 and newline" {
     t.feed("\x1b[2K");
     for (t.active().row(1)) |cell| {
         if (cell.kind == .empty) {
-            try testing.expectEqual(@as(u16, 0), t.active().styles.get(cell.style).link);
+            try testing.expectEqual(@as(u16, 0), t.active().styles.get(cell.style).linkId());
         }
     }
 }

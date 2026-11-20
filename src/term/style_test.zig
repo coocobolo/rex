@@ -18,7 +18,7 @@ fn fill(table: *Table) u32 {
 }
 
 test "Style: 12 bytes, encodes and decodes every color kind" {
-    try testing.expectEqual(16, @sizeOf(Style));
+    try testing.expectEqual(12, @sizeOf(Style));
     for ([_]Color{ .default, .{ .indexed = 0 }, .{ .indexed = 255 }, .{ .rgb = .{ .r = 1, .g = 2, .b = 3 } } }) |c| {
         try testing.expectEqual(c, Style.decode(Style.encode(c)));
     }

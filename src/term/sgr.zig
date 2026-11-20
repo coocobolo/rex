@@ -32,9 +32,9 @@ pub fn parse(comptime option: Option, term: *Terminal(option), params: []const P
     // CSI m with no params = Normal/default (CSI 0 m). OSC 8 links are not
     // SGR attributes: xterm keeps them until an explicit reset or RIS (ADR 0012).
     if (n == 0) {
-        const link = attr.colors.link;
+        const link = attr.colors.linkId();
         attr.* = .{};
-        attr.colors.link = link;
+        attr.colors = attr.colors.withLink(link);
         return;
     }
 
@@ -46,9 +46,9 @@ pub fn parse(comptime option: Option, term: *Terminal(option), params: []const P
 
         switch (code) {
             0 => {
-                const link = attr.colors.link;
+                const link = attr.colors.linkId();
                 attr.* = .{};
-                attr.colors.link = link;
+                attr.colors = attr.colors.withLink(link);
             },
 
             // Intensity / style

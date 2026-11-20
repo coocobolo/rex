@@ -2,30 +2,30 @@
 //! (ADR 0005, ADR 0012). Attribute flags stay in the cell.
 //!
 //! Each color is stored as a `Key`, the same encoding `Palette` uses, so a
-//! style is 16 bytes with no padding and can be hashed and compared as
-//! bytes. Indexed colors stay indexed and resolve through the palette when
-//! drawn, so OSC 4 and theme changes still apply.
+//! style is 12 bytes with no padding and can be hashed and compared as
+//! bytes. The OSC 8 link ID lives in the keys' unused high bits, so it costs
+//! no extra bytes. Indexed colors stay indexed and resolve through the
+//! palette when drawn, so OSC 4 and theme changes still apply.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Color = @import("../color/color.zig").Color;
 const UrlTable = @import("UrlTable.zig");
 
-pub const Style = @This();
+const Style = @This();
 
 fg: Key = default_key,
 bg: Key = default_key,
 underline: Key = default_key,
-/// OSC 8 link ID into the screen's `UrlTable`; 0 means no link.
-link: UrlTable.Id = 0,
-/// Explicit padding keeps the 16-byte entry free of indeterminate bytes:
-/// `slotOf` hashes `asBytes(&Style)` (ADR 0005).
-_pad: u16 = 0,
 
-/// An encoded `Color`: bits 24-31 are the kind (0 default, 1 indexed,
-/// 2 RGB); below them the index, or the RGB value as 0xRRGGBB.
+/// An encoded `Color`: bits 24-25 are the kind (0 default, 1 indexed, 2 RGB),
+/// bits 0-23 the index or RGB value. Bits 26-31 are reserved for the link ID
+/// and are never set by `encode`.
 pub const Key = u32;
 pub const default_key: Key = 0;
+
+/// Keeps only the color bits of a key, clearing the packed link bits.
+const key_mask: Key = 0x03FF_FFFF;
 
 pub const default: Style = .{};
 
@@ -33,7 +33,7 @@ pub const default: Style = .{};
 pub const Id = u16;
 
 comptime {
-    std.debug.assert(@sizeOf(Style) == 16);
+    std.debug.assert(@sizeOf(Style) == 12);
     std.debug.assert(@alignOf(Style) == 4);
 }
 
@@ -42,27 +42,31 @@ pub fn init(fg: Color, bg: Color, underline: Color) Style {
     return .{ .fg = encode(fg), .bg = encode(bg), .underline = encode(underline) };
 }
 
-/// True when all three color keys and the link match `other`.
+/// The OSC 8 link ID stored in the keys' high bits; 0 means no link.
+pub fn linkId(self: Style) UrlTable.Id {
+    return @as(UrlTable.Id, @truncate(self.fg >> 26)) |
+        (@as(UrlTable.Id, @truncate((self.bg >> 26) & 0x3F)) << 6) |
+        (@as(UrlTable.Id, @truncate((self.underline >> 26) & 0x0F)) << 12);
+}
+
+/// Returns the style with `id` packed into the keys' high bits.
+pub fn withLink(self: Style, id: UrlTable.Id) Style {
+    var out = self;
+    out.fg = (self.fg & key_mask) | (@as(Key, id & 0x3F) << 26);
+    out.bg = (self.bg & key_mask) | (@as(Key, (id >> 6) & 0x3F) << 26);
+    out.underline = (self.underline & key_mask) | (@as(Key, (id >> 12) & 0x0F) << 26);
+    return out;
+}
+
+/// True when all three color keys and the packed link match `other`.
 pub fn eql(self: Style, other: Style) bool {
     return self.fg == other.fg and self.bg == other.bg and
-        self.underline == other.underline and self.link == other.link;
+        self.underline == other.underline;
 }
 
 /// True when all colors use their defaults and there is no link.
 pub fn isDefault(self: Style) bool {
     return self.eql(default);
-}
-
-/// The OSC 8 link ID of this style, or 0 for no link.
-pub fn linkId(self: Style) UrlTable.Id {
-    return self.link;
-}
-
-/// Returns this style with `id` as its OSC 8 link.
-pub fn withLink(self: Style, id: UrlTable.Id) Style {
-    var out = self;
-    out.link = id;
-    return out;
 }
 
 /// Encodes a `Color` into its 32-bit packed `Key` representation.
@@ -76,7 +80,7 @@ pub fn encode(color: Color) Key {
 
 /// Inverse of `encode`. A key with an unknown kind byte is a bug.
 pub fn decode(key: Key) Color {
-    return switch (key >> 24) {
+    return switch ((key >> 24) & 0x3) {
         0 => .default,
         1 => .{ .indexed = @truncate(key) },
         2 => .{ .rgb = .{ .r = @truncate(key >> 16), .g = @truncate(key >> 8), .b = @truncate(key) } },
@@ -89,14 +93,14 @@ pub fn decode(key: Key) Color {
 fn distance(a: Style, b: Style) u64 {
     // Prefer a candidate with the same link: `nearest` is a fallback for a
     // full table, and changing a link changes what a click would open.
-    if (a.link != b.link) return 3 * 255 * 255 + 1;
+    if (a.linkId() != b.linkId()) return 3 * 255 * 255 + 1;
     return keyDistance(a.fg, b.fg) + keyDistance(a.bg, b.bg) + keyDistance(a.underline, b.underline);
 }
 
 fn keyDistance(a: Key, b: Key) u64 {
     if (a == b) return 0;
     const rgb_kind = 2;
-    if (a >> 24 != rgb_kind or b >> 24 != rgb_kind) return 3 * 255 * 255 + 1;
+    if ((a >> 24) & 0x3 != rgb_kind or (b >> 24) & 0x3 != rgb_kind) return 3 * 255 * 255 + 1;
     var sum: u64 = 0;
     inline for (.{ 16, 8, 0 }) |shift| {
         const x: i64 = @as(u8, @truncate(a >> shift));
@@ -119,9 +123,9 @@ fn keyDistance(a: Key, b: Key) u64 {
 /// `sweepDue`); if nothing can be freed, `nearest` gives a new style the
 /// closest live one, so text already drawn never changes color.
 ///
-/// Memory: `entries` 256 KiB, `index` 64 KiB, `free` 32 KiB, owned by the
-/// table and freed by `deinit`. ADR 0005 estimated 192 KiB for the old
-/// 12-byte entry; the link field makes each entry 16 bytes.
+/// Memory: `entries` 192 KiB, `index` 64 KiB, `free` 32 KiB, owned by the
+/// table and freed by `deinit`. Packing keeps the entry at its pre-link size
+/// (ADR 0005), so the OSC 8 link field adds no table memory.
 pub const Table = struct {
     /// Styles per screen, ID 0 (the default style) included. ADR 0005.
     pub const capacity = 16384;

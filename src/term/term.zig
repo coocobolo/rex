@@ -1833,7 +1833,7 @@ pub fn Terminal(comptime option: Option) type {
         /// The current OSC 8 URI, or null when no link is active.
         pub fn hyperlink(self: *Self) ?[]const u8 {
             const screen = self.active();
-            return screen.urls.get(screen.cursor.attr.colors.link);
+            return screen.urls.get(screen.cursor.attr.colors.linkId());
         }
 
         /// Sets the title (OSC 0 and 2), cut to `max_title_len` bytes on

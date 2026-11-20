@@ -81,7 +81,7 @@ pub fn setTheme(self: *Palette, theme: Theme) void {
 /// `.default` resolves to the default for `target`, indexed colors
 /// through `indexed`.
 pub fn resolveKey(self: *const Palette, key: Style.Key, comptime target: GroundTarget) u32 {
-    return switch (key >> 24) {
+    return switch ((key >> 24) & 0x3) {
         0x00 => blk: {
             const c = self.get(target);
             break :blk (@as(u32, c.r) << 24) | (@as(u32, c.g) << 16) | (@as(u32, c.b) << 8) | 0xFF;
@@ -94,7 +94,7 @@ pub fn resolveKey(self: *const Palette, key: Style.Key, comptime target: GroundT
 
 /// `resolveKey` as an RGB triple.
 pub fn resolveKeyRgb(self: *const Palette, key: Style.Key, comptime target: GroundTarget) [3]u8 {
-    return switch (key >> 24) {
+    return switch ((key >> 24) & 0x3) {
         0x00 => blk: {
             const c = self.get(target);
             break :blk .{ c.r, c.g, c.b };

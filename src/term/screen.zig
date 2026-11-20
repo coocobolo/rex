@@ -685,14 +685,14 @@ pub fn Screen(comptime option: Option) type {
         /// table is full. Sets the pen link and re-interns it into cells.
         pub fn setHyperlink(self: *Self, uri: []const u8) void {
             const id = self.urls.intern(uri) orelse return;
-            self.cursor.attr.colors.link = id;
+            self.cursor.attr.colors = self.cursor.attr.colors.withLink(id);
             self.internPen();
         }
 
         /// Clears the pen's OSC 8 link without touching the colors.
         pub fn clearHyperlink(self: *Self) void {
-            if (self.cursor.attr.colors.link == 0) return;
-            self.cursor.attr.colors.link = 0;
+            if (self.cursor.attr.colors.linkId() == 0) return;
+            self.cursor.attr.colors = self.cursor.attr.colors.withLink(0);
             self.internPen();
         }
 
@@ -725,14 +725,14 @@ pub fn Screen(comptime option: Option) type {
             var rows = self.liveRows();
             while (rows.next()) |cells| for (cells) |cell| {
                 in_use.set(cell.style);
-                const link = self.styles.get(cell.style).link;
+                const link = self.styles.get(cell.style).linkId();
                 if (link != 0) urls_in_use.set(link);
             };
             in_use.set(self.cursor.attr.id);
             in_use.set(self.cursor.attr.blank_id);
-            const pen_link = self.cursor.attr.colors.link;
+            const pen_link = self.cursor.attr.colors.linkId();
             if (pen_link != 0) urls_in_use.set(pen_link);
-            const saved_link = self.saved_cursor.colors.link;
+            const saved_link = self.saved_cursor.colors.linkId();
             if (saved_link != 0) urls_in_use.set(saved_link);
             _ = self.styles.sweep(&in_use);
             self.urls.sweep(&urls_in_use);
