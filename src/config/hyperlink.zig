@@ -31,12 +31,14 @@ pub const TooltipUriStyle = enum {
 };
 
 /// Underline style used for linked text with no explicit SGR underline.
-pub const LinkStyle = enum {
-    single,
-    double,
-    curly,
-    dotted,
-    dashed,
+/// Values match `term.cell.UnderlineStyle` so the renderer can convert
+/// without a translation switch; `none` is expressed by `underline = never`.
+pub const LinkStyle = enum(u3) {
+    single = 1,
+    double = 2,
+    curly = 3,
+    dotted = 4,
+    dashed = 5,
 };
 
 /// When to show the target URI under the pointer (ADR 0013).
@@ -68,11 +70,11 @@ pub const Hyperlink = struct {
     /// underline keeps its own style.
     underline_style: LinkStyle = .single,
     /// When to show the target URI in a tooltip while hovering a link.
-    show_hyperlink_targets: ShowTarget = .ctrl,
+    show_targets: ShowTarget = .ctrl,
     /// How a long target URI is laid out in that tooltip.
-    tooltip_uri_style: TooltipUriStyle = .multiline,
-    /// Underline color for links; null uses the configured underline or text color.
-    link_color: ?Rgb = null,
+    target_style: TooltipUriStyle = .multiline,
+    /// Underline color for OSC 8 links; null uses the decoration or text color.
+    underline_color: ?Rgb = null,
     /// Command that opens a URI. Empty uses the platform default
     /// (`xdg-open`, `gio open` or `open`). It receives the URI as one argv element.
     open_command: [:0]const u8 = "",

@@ -21,6 +21,7 @@ const ft = @import("../freetype/root.zig");
 const Rasterizer = ft.Rasterizer;
 const FaceKind = Rasterizer.FaceKind;
 
+const hyperlink = @import("../config/hyperlink.zig");
 const term = @import("../term/root.zig");
 const AttrFlags = term.cell.AttrFlags;
 const UnderlineStyle = term.cell.UnderlineStyle;
@@ -79,6 +80,9 @@ pub fn decorationInstance(
     cell: term.Cell,
     sgr_underline: ?[3]u8,
     link: bool,
+    /// Effective visibility for this cell's added link underline. The frame
+    /// walk passes the configured value, or the hover override.
+    link_underline: hyperlink.UnderlineVisibility,
     foreground: [3]u8,
     foreground_alpha: u8,
     col: u16,
@@ -88,7 +92,7 @@ pub fn decorationInstance(
     const flags = cell.flags;
     if (flags.invisible) return null;
     // Linked text is underlined only when it has no SGR 4 of its own (ADR 0012).
-    const added_link_underline = link and option.link.underline == .always and flags.underline == .none;
+    const added_link_underline = link and link_underline == .always and flags.underline == .none;
     const underline: UnderlineStyle = if (added_link_underline) option.link.style else flags.underline;
     if (underline == .none and !flags.strikethrough and !flags.overline) return null;
 
@@ -913,15 +917,12 @@ pub fn Builder(comptime option: Option) type {
                     null
                 else
                     palette.resolveKeyRgb(style.underline, .foreground);
-                if (self.decoration.link.underline == .hover and style.linkId() != 0) {
-                    // Only linked cells need the per-cell override; other
-                    // cells keep the shared option without copying it.
-                    var link_option = self.decoration;
-                    link_option.link.underline = if (style.linkId() == self.hovered_link) .always else .never;
-                    if (decorationInstance(&link_option, c, sgr_underline, true, foreground, foreground_alpha, col, row, span)) |run| {
-                        Decoration.appendRun(decoration, run);
-                    }
-                } else if (decorationInstance(&self.decoration, c, sgr_underline, style.linkId() != 0, foreground, foreground_alpha, col, row, span)) |run| {
+                const link = style.linkId() != 0;
+                const link_underline: hyperlink.UnderlineVisibility = if (link and self.decoration.link.underline == .hover)
+                    (if (style.linkId() == self.hovered_link) .always else .never)
+                else
+                    self.decoration.link.underline;
+                if (decorationInstance(&self.decoration, c, sgr_underline, link, link_underline, foreground, foreground_alpha, col, row, span)) |run| {
                     Decoration.appendRun(decoration, run);
                 }
 

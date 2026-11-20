@@ -29,6 +29,7 @@ const icons = @import("kit/icons.zig");
 const unicode = rex.unicode;
 
 const renderer_mod = rex.renderer;
+const decoration_config = @import("renderer/decoration_config.zig");
 const Atlas = renderer_mod.Atlas;
 const gl = renderer_mod.gl;
 const Window = @import("platform/Window.zig");
@@ -406,18 +407,6 @@ pub fn resolvePointerShape(
     return .text;
 }
 
-/// The config's link underline style maps onto the cell's SGR style enum;
-/// `none` is not a config value, since `underline = false` turns it off.
-fn cellUnderlineStyle(style: rex.config.hyperlink.LinkStyle) rex.terminal.cell.UnderlineStyle {
-    return switch (style) {
-        .single => .single,
-        .double => .double,
-        .curly => .curly,
-        .dotted => .dotted,
-        .dashed => .dashed,
-    };
-}
-
 /// Picks the moment to draw so `swapBuffers` blocks for about `margin_ns`
 /// instead of a whole refresh. `next_vblank_ns == 0` means the next vblank
 /// is not known: startup, an idle gap, or a swap that did not wait.
@@ -715,7 +704,7 @@ pub fn init(
     var atlas: Atlas = try .init(gpa, .{});
     errdefer atlas.deinit();
 
-    const decoration_option = rendererDecorationOption(&active_config);
+    const decoration_option = decoration_config.build(&active_config);
     var frame_builder: FrameBuilderType = try .init(gpa, .{
         .dim_alpha = active_config.window.dim_alpha,
         .decoration = decoration_option,
@@ -1124,10 +1113,10 @@ fn hoveredLinkId(self: *App, frame: *const FrameType) u16 {
     return frame.styleOf(frame.cellAt(row, col)).linkId();
 }
 
-/// Whether the configured modifier for `show_hyperlink_targets` is down.
+/// Whether the configured modifier for `show_targets` is down.
 fn linkHintEnabled(self: *App) bool {
     if (!self.config.hyperlink.enabled) return false;
-    return switch (self.config.hyperlink.show_hyperlink_targets) {
+    return switch (self.config.hyperlink.show_targets) {
         .never => false,
         .always => true,
         .ctrl => self.mods_down.ctrl,
@@ -1253,7 +1242,7 @@ fn renderFrame(self: *App) !bool {
         if (hovered_link != 0) if (current_frame.hyperlink(hovered_link)) |uri| {
             link_hint = .{
                 .uri = uri,
-                .style = self.config.hyperlink.tooltip_uri_style,
+                .style = self.config.hyperlink.target_style,
                 .x = self.mouse_x / self.content_scale,
                 .y = self.mouse_y / self.content_scale,
             };
@@ -2201,7 +2190,7 @@ pub fn reloadConfig(self: *App) void {
     self.renderer_dirty = true;
 
     self.frame_builder.dim_alpha = renderer_mod.Frame.alphaByte(self.config.window.dim_alpha);
-    const decoration_option = rendererDecorationOption(&self.config);
+    const decoration_option = decoration_config.build(&self.config);
     self.frame_builder.decoration = decoration_option;
     self.renderer.setDecoration(decoration_option, self.rasterizer.metrics);
 
@@ -4739,41 +4728,6 @@ fn rendererSelectionOption(sel: Config.Selection) renderer_mod.Selection.Option 
 }
 
 /// Maps `Config.Cursor` into the renderer's `Cursor.Option`.
-fn decorationRgb(color: ?rex.color.Rgb) ?[3]u8 {
-    const c = color orelse return null;
-    return .{ c.r, c.g, c.b };
-}
-
-/// Builds the single decoration option shared by the frame builder and the
-/// renderer, from both the `[decoration]` and `[hyperlink]` sections (ADR 0014).
-pub fn rendererDecorationOption(config: *const Config) renderer_mod.Decoration.Option {
-    const opt = config.decoration;
-    const link = config.hyperlink;
-    return .{
-        .skip_ink = .{
-            .enabled = opt.skip_ink,
-            .styles = opt.skip_ink_styles,
-            .threshold = opt.skip_ink_threshold,
-            .gap = opt.skip_ink_gap,
-            .min_segment = opt.skip_ink_min_segment,
-        },
-        .order = opt.order,
-        .alpha = opt.alpha,
-        .dim = opt.dim,
-        .blink = opt.blink,
-        .color = .{
-            .underline = decorationRgb(opt.underline_color),
-            .strikethrough = decorationRgb(opt.strikethrough_color),
-            .overline = decorationRgb(opt.overline_color),
-        },
-        .link = .{
-            .underline = link.underline,
-            .style = cellUnderlineStyle(link.underline_style),
-            .color = decorationRgb(link.link_color),
-        },
-    };
-}
-
 pub fn rendererCursorOption(cur: Config.Cursor) renderer_mod.Cursor.Option {
     return .{
         .radius = cur.radius,

@@ -7,6 +7,7 @@ const App = @import("App.zig");
 const Config = @import("config/Config.zig");
 const config = @import("config/root.zig");
 const config_default = @import("config/default.zig").default;
+const decoration_config = @import("renderer/decoration_config.zig");
 const Window = @import("platform/Window.zig");
 const Blur = @import("renderer/root.zig").Blur;
 const Cursor = @import("renderer/Cursor.zig");
@@ -271,7 +272,7 @@ test "production Frame: URL snapshot size and alignment" {
     try testing.expectEqual(@as(usize, 8), @alignOf(App.FrameType));
 }
 
-test "rendererDecorationOption: one value carries config into both consumers" {
+test "decoration_config.build: one value carries config into both consumers" {
     const testing = std.testing;
     var cfg = config_default;
     cfg.decoration.skip_ink = false;
@@ -280,7 +281,7 @@ test "rendererDecorationOption: one value carries config into both consumers" {
     cfg.decoration.underline_color = .{ .r = 1, .g = 2, .b = 3 };
     cfg.hyperlink.underline = .hover;
 
-    const option = App.rendererDecorationOption(&cfg);
+    const option = decoration_config.build(&cfg);
     try testing.expect(!option.skip_ink.enabled);
     try testing.expectEqual(config.decoration.Order.under_text, option.order);
     try testing.expectEqual(@as(f32, 0.5), option.alpha);

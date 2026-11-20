@@ -139,6 +139,21 @@ pub const SkipInk = struct {
 /// User settings for decorations. The defaults draw every line where
 /// the font puts it, in the text color.
 pub const Option = struct {
+    /// Fixed color for each line kind; null uses the text color.
+    pub const Colors = struct {
+        underline: ?[3]u8 = null,
+        strikethrough: ?[3]u8 = null,
+        overline: ?[3]u8 = null,
+    };
+
+    /// Curly underline geometry, resolved from the font when fields are null.
+    pub const Curly = struct {
+        /// Height of a crest above the centre, in pixels.
+        amplitude: ?f32 = null,
+        /// Length of one full wave, in pixels.
+        wavelength: ?f32 = null,
+    };
+
     /// All link-specific decoration policy from `[hyperlink]` (ADR 0012, 0013).
     pub const Link = struct {
         /// When Rex adds an underline to a link without SGR 4. An explicit
@@ -158,14 +173,7 @@ pub const Option = struct {
     double_gap: ?f32 = null,
 
     /// Curly underline, a sine wave centred on the underline.
-    curly: struct {
-        /// Height of a crest above the centre, in pixels. null uses one and
-        /// a half underline thicknesses. The wave is kept inside the cell.
-        amplitude: ?f32 = null,
-        /// Length of one full wave, in pixels. null uses the cell width,
-        /// one wave per cell.
-        wavelength: ?f32 = null,
-    } = .{},
+    curly: Curly = .{},
 
     /// null fields fit whole dots into each cell, each as long as the
     /// space after it.
@@ -187,11 +195,7 @@ pub const Option = struct {
 
     /// Fixed color for each kind of line. null draws it in the text
     /// color, after SGR 7, DECSCNM and the selection text color.
-    color: struct {
-        underline: ?[3]u8 = null,
-        strikethrough: ?[3]u8 = null,
-        overline: ?[3]u8 = null,
-    } = .{},
+    color: Colors = .{},
 
     /// Opacity of every line, 0.0 to 1.0, on top of the dim alpha.
     alpha: f32 = 1.0,
