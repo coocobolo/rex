@@ -10,10 +10,10 @@
 ADR 0012 added OSC 8 links with a forced underline and a configurable link
 color, but decided that "rendering a hover popup or URL preview" was out of
 scope. The maintainer has since asked for both: a kitty-style
-`show_hyperlink_targets` affordance and a configurable underline style.
+`show_targets` affordance and a configurable underline style.
 
 Read externally (not verified against running terminals): kitty's `kitty.conf(5)`
-documents `show_hyperlink_targets`, `detect_urls`, `url_style` and
+documents `show_targets`, `detect_urls`, `url_style` and
 `underline_hyperlinks`, and notes that `underline_hyperlinks always` applies
 only to real OSC 8 hyperlinks, not hover-detected plain URLs. The sources read
 for xterm did not show OSC 8 or URL auto-detection support.
@@ -29,7 +29,7 @@ under the pointer for the hand pointer (`src/App.zig`).
 
 ## Decision
 
-1. **Hover target.** `[hyperlink] show_hyperlink_targets` is one of `never`,
+1. **Hover target.** `[hyperlink] show_targets` is one of `never`,
    `ctrl`, `cmd`, `alt`, `shift`, `always`, default `ctrl`. When the configured
    modifier is held and a real OSC 8 link is under the pointer, draw its URI
    in a narrow tooltip near the pointer. A modal, scrollbar hover or the
@@ -40,7 +40,7 @@ under the pointer for the hand pointer (`src/App.zig`).
    The platform key query was found unreliable in a headless GLFW build and
    is not used for this decision.
 2. **Tooltip.** Reuse `kit/tooltip.zig` in `KitOverlay`. `[hyperlink]
-   tooltip_uri_style` selects `multiline` (default: a fixed buffer wrapped at
+   target_style` selects `multiline` (default: a fixed buffer wrapped at
    codepoint boundaries into at most five short lines, 360 px wide),
    `head_tail` (one line with the first 40 and last 24 characters and `…`
    between), or `wide` (one line up to 520 px, ellipsized at the edge). The
@@ -88,10 +88,12 @@ under the pointer for the hand pointer (`src/App.zig`).
 
 ## Consequences
 
-- Three new config keys (`show_hyperlink_targets`, `underline_style`,
-  `tooltip_uri_style`) and one breaking change: `underline` is now
-  `never|always|hover` instead of a boolean. `underline_visibility` is not
-  shipped. Existing configs using `underline = true|false` must be updated.
+- Three new config keys (`show_targets`, `underline_style`, `target_style`)
+  and breaking changes: `underline` is now `never|always|hover` instead of a
+  boolean; `link_color`, `show_hyperlink_targets` and `tooltip_uri_style` were
+  renamed to `underline_color`, `show_targets` and `target_style` for one
+  consistent key family. `underline_visibility` is not shipped. Existing
+  configs must be updated.
 - `Frame` grows by the bounded URI snapshot (`[16][1024]u8`, 32 bytes of
   lengths and a generation counter). Measured `@sizeOf(Frame)` is 36496 for
   the 12×24 test option and 36520 for the production 200×220 option, with

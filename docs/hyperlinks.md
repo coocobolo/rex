@@ -15,14 +15,14 @@ newline does not end a link; an explicit `OSC 8 ;; ST` reset or a full reset
 ## Discovering links
 
 - Linked text is underlined and the pointer becomes a hand over it.
-- Holding the key set by `show_hyperlink_targets` (Ctrl by default) shows the
+- Holding the key set by `show_targets` (Ctrl by default) shows the
   target URI in a tooltip near the pointer. The tooltip never absorbs a click.
 - With `underline = hover`, only the link under the pointer is underlined.
   An explicit SGR underline is always drawn, whatever this setting is.
 
 By default, the underline is a single line in the text color; use
-`underline_style` and `link_color` to change it. The tooltip layout is chosen
-with `tooltip_uri_style`: `multiline` (narrow card, up to five lines),
+`underline_style` and `underline_color` to change it. The tooltip layout is chosen
+with `target_style`: `multiline` (narrow card, up to five lines),
 `head_tail` (first 40 and last 24 UTF-8 bytes with `…` between), or `wide`
 (one line up to 520 px, ellipsized at the edge).
 
@@ -51,9 +51,9 @@ All settings live in the `[hyperlink]` section of the config file. Run
 enabled = true                 # Ctrl+click and tooltips off when false
 underline = always             # never | always | hover
 underline_style = single       # single | double | curly | dotted | dashed
-show_hyperlink_targets = ctrl  # never | ctrl | cmd | alt | shift | always
-tooltip_uri_style = multiline  # multiline | head_tail | wide
-link_color = none              # #RRGGBB, or none for the text/underline color
+show_targets = ctrl            # never | ctrl | cmd | alt | shift | always
+target_style = multiline      # multiline | head_tail | wide
+underline_color = none         # #RRGGBB, or none for the decoration/text color
 open_command = ""              # empty uses the system handler
 schemes = http, https, mailto  # add file to allow local files
 ```

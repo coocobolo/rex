@@ -31,13 +31,16 @@ live reload.
 ## Decision
 
 1. **Ownership.** A new `[decoration]` section owns general text-decoration
-   settings. Link-specific activation and policy stay in `[hyperlink]`; the
-   existing `hyperlink.underline`, `underline_style` and `link_color` keys keep
-   their names so the recent config format does not break. Both sections feed
-   one effective `Decoration.Option`.
-2. **One value.** `App` builds that option once from config and passes the same
-   value to both `Frame.Builder` and `Renderer`. There is no second default
-   copy and no per-call mutation of config state.
+   settings. Link-specific activation and policy stay in `[hyperlink]`. Both
+   sections feed one effective `Decoration.Option`. The link visual keys are
+   named as one family — `underline`, `underline_style`, `underline_color` —
+   and the tooltip keys as `show_targets`, `target_style`; the section name is
+   not repeated in a key. This renames `link_color`, `show_hyperlink_targets`
+   and `tooltip_uri_style` from #136, a config-format change.
+2. **One value.** `renderer/decoration_config.zig` builds the option once from
+   config and `App` passes the same value to both `Frame.Builder` and
+   `Renderer`. There is no second default copy and no per-call mutation of
+   config state.
 3. **Defaults.** Every new key defaults to today's behaviour. An optional
    value of `none` means "keep the font-derived metric", resolved once in
    `Decoration.Metrics.resolve`. Changing a default is a separate, measured
