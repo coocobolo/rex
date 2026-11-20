@@ -23,7 +23,7 @@ In the code: `src/term/cell.zig:25-34` already defines `single`, `double`,
 carries the shader options for all five. `src/kit/tooltip.zig` draws an
 anchored card with no id, so a hit falls through to what is underneath;
 `src/kit/layout.zig:69-72` clamps a point-anchored card into the viewport and
-`src/kit/Tree.zig:218-225` can truncate text to one line with an ellipsis.
+`src/kit/text.zig:120-127` cuts at UTF-8 boundaries for fixed buffers.
 `KitOverlay` has fixed node and line buffers. `App` already resolves the link
 under the pointer for the hand pointer (`src/App.zig`).
 
@@ -32,23 +32,34 @@ under the pointer for the hand pointer (`src/App.zig`).
 1. **Hover target.** `[hyperlink] show_hyperlink_targets` is one of `never`,
    `ctrl`, `cmd`, `alt`, `shift`, `always`, default `ctrl`. When the configured
    modifier is held and a real OSC 8 link is under the pointer, draw its URI
-   in a one-line tooltip near the pointer. A modal, scrollbar hover or the
+   in a narrow tooltip near the pointer. A modal, scrollbar hover or the
    fullscreen ASCII overlay suppresses it. It requires `hyperlink.enabled`,
    but is otherwise independent of Ctrl+click activation. Modifier state is
    tracked from key events: a modifier's own press event reports `ctrl=false`
    (the state before that event), so the transition is folded in explicitly.
    The platform key query was found unreliable in a headless GLFW build and
    is not used for this decision.
-2. **Tooltip.** Reuse `kit/tooltip.zig` in `KitOverlay`. The URI is borrowed
-   from the current `Frame` for the one `buildFrame` call; long URIs are
-   truncated with `…`. The card has no id, so it never takes a click from the
-   link underneath. The fixed node and line budgets grow by five nodes and
-   one line. Hover and modifier changes request a repaint.
+2. **Tooltip.** Reuse `kit/tooltip.zig` in `KitOverlay`. The URI is copied into
+   a fixed buffer and wrapped at codepoint boundaries into at most five
+   short lines, capped at 360 logical pixels wide; a longer URI ends in `…`.
+   The card has no id, so it never takes a click from the link underneath.
+   The fixed node budget grows by five nodes and the line budget by five
+   lines. Hover and modifier changes request a repaint.
 3. **Underline style.** `[hyperlink] underline_style` is one of `single`,
    `double`, `curly`, `dotted`, `dashed`, default `single`. It styles only the
    underline Rex adds when `underline = true` and the cell has no SGR
    underline; an explicit SGR underline keeps its own style.
-4. **Scope.** Both keys live in the existing `[hyperlink]` section, are
+4. **Underline visibility.** `[hyperlink] underline_visibility` is `always`
+   (default) or `hover`. In `hover` mode the added underline is drawn only on
+   the link under the pointer, using the same hover resolution as the tooltip
+   and hand pointer (modals and scrollbar hover clear it). An explicit SGR
+   underline is still drawn on every cell. The builder receives the hovered
+   link id before building the frame and treats a change to it as a dirty
+   cell, so decoration runs are rebuilt without a pty update; without this,
+   the cached runs kept the old underline until a click or text output.
+   No per-frame scan or allocation is added. `underline = false` remains the
+   master off switch.
+5. **Scope.** All four keys live in the existing `[hyperlink]` section, are
    round-tripped by the config writer, pinned in `keys_test.zig` and exposed
    in Settings. This supersedes decision 3 of ADR 0012's visual treatment;
    the storage and security decisions there are unchanged.
@@ -70,11 +81,15 @@ under the pointer for the hand pointer (`src/App.zig`).
 ## Consequences
 
 - Two new config keys and their Settings rows; no breaking config change.
-- `KitOverlay` carries five more nodes and one more line of fixed capacity,
-  with no heap allocation. The tooltip's URI slice is valid only for the
-  frame that draws it and is never stored.
+- `KitOverlay` carries five more nodes, five more text lines and a 207-byte
+  URI buffer of fixed capacity, with no heap allocation. Its measured size
+  grew 378304 → 379096 bytes; the wrapped text is borrowed by the tree from
+  that buffer until the next build.
 - Repaints happen when the hovered link or the configured modifier changes;
-  a bare modifier press or release now requests a repaint.
+  a bare modifier press or release now requests a repaint. `hover` underline
+  mode relies on that repaint, including when no tooltip is shown.
+- In `hover` mode the decoration builder copies its option only for linked
+  cells, to clear the added underline for non-hovered links.
 - A link id above the frame's URL snapshot bound still renders but has no
   tooltip, matching its lack of a click target.
 - Plain-text and pasted URLs remain undetected; that needs its own ticket.
