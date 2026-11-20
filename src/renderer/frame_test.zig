@@ -63,7 +63,7 @@ test "decorationInstance: only decorated, visible cells produce a run" {
 test "decorationInstance: links force an underline and use the link color" {
     const plain: Cell = decorated(.{});
     const linked: Cell = decorated(.{});
-    const option: Decoration.Option = .{ .color = .{ .link = .{ 4, 5, 6 } } };
+    const option: Decoration.Option = .{ .link = .{ .color = .{ 4, 5, 6 } } };
 
     try testing.expectEqual(null, Frame.decorationInstance(&option, plain, null, false, text, 255, 0, 0, 1));
     const run = Frame.decorationInstance(&option, linked, null, true, text, 255, 0, 0, 1).?;
@@ -76,11 +76,11 @@ test "decorationInstance: links force an underline and use the link color" {
     try testing.expectEqual([4]u8{ 9, 9, 9, 255 }, sgr.underline);
 
     // The configured style applies only to the underline Rex adds.
-    const styled: Decoration.Option = .{ .link_style = .curly };
+    const styled: Decoration.Option = .{ .link = .{ .style = .curly } };
     try testing.expectEqual(.curly, Frame.decorationInstance(&styled, linked, null, true, text, 255, 0, 0, 1).?.flags.underline);
     const sgr_linked = decorated(.{ .underline = .double });
     try testing.expectEqual(.double, Frame.decorationInstance(&styled, sgr_linked, null, true, text, 255, 0, 0, 1).?.flags.underline);
-    const off: Decoration.Option = .{ .link_underline = .never, .link_style = .curly };
+    const off: Decoration.Option = .{ .link = .{ .underline = .never, .style = .curly } };
     try testing.expectEqual(null, Frame.decorationInstance(&off, linked, null, true, text, 255, 0, 0, 1));
 
     // A link run must not coalesce with a plain run of the same color.
@@ -91,21 +91,36 @@ test "decorationInstance: links force an underline and use the link color" {
 
 test "decorationInstance: hover-only underlines skip other links but keep SGR" {
     const linked: Cell = decorated(.{});
-    var option: Decoration.Option = .{ .link_underline = .hover };
+    var option: Decoration.Option = .{ .link = .{ .underline = .hover } };
 
     // The builder copies the option and sets `never` for links other than
     // the hovered one.
-    option.link_underline = .always;
+    option.link.underline = .always;
     const hovered = Frame.decorationInstance(&option, linked, null, true, text, 255, 0, 0, 1).?;
     try testing.expectEqual(.single, hovered.flags.underline);
 
-    option.link_underline = .never;
+    option.link.underline = .never;
     try testing.expectEqual(null, Frame.decorationInstance(&option, linked, null, true, text, 255, 0, 0, 1));
 
     // An explicit SGR underline is still drawn on a non-hovered link.
     const sgr_linked = decorated(.{ .underline = .double });
     const sgr = Frame.decorationInstance(&option, sgr_linked, null, true, text, 255, 0, 0, 1).?;
     try testing.expectEqual(.double, sgr.flags.underline);
+}
+
+test "decorationInstance: link color only colors the underline Rex adds" {
+    var option: Decoration.Option = .{
+        .link = .{ .underline = .never, .color = .{ 4, 5, 6 } },
+        .color = .{ .underline = .{ 1, 2, 3 } },
+    };
+    const linked_sgr: Cell = decorated(.{ .underline = .single });
+    const sgr_run = Frame.decorationInstance(&option, linked_sgr, null, true, text, 255, 0, 0, 1).?;
+    try testing.expectEqual([4]u8{ 1, 2, 3, 255 }, sgr_run.underline);
+
+    option.link.underline = .always;
+    const plain_link: Cell = decorated(.{});
+    const added = Frame.decorationInstance(&option, plain_link, null, true, text, 255, 0, 0, 1).?;
+    try testing.expectEqual([4]u8{ 4, 5, 6, 255 }, added.underline);
 }
 
 test "decorationInstance: dim and blink follow the option" {

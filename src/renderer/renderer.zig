@@ -176,6 +176,16 @@ pub fn Renderer(comptime option: TerminalOption) type {
             self.selection_blur.invalidate();
         }
 
+        /// Replaces the decoration option and rebuilds its font-derived metrics.
+        pub fn setDecoration(self: *Self, decoration_option: Decoration.Option, font: Rasterizer.Metrics) void {
+            self.decoration.option = decoration_option;
+            self.decoration_metrics = .resolve(font, decoration_option);
+            // Decoration lines are drawn into the selection backdrop's blur
+            // scene, so a config change must invalidate its cached pyramid.
+            self.blur.invalidate();
+            self.selection_blur.invalidate();
+        }
+
         pub fn deinit(self: *Self) void {
             self.blur.deinit();
             self.selection_blur.deinit();

@@ -87,13 +87,16 @@ pub fn decorationInstance(
 ) ?Decoration.Instance {
     const flags = cell.flags;
     if (flags.invisible) return null;
-    // Linked text is always underlined, even without SGR 4 (ADR 0012).
-    const underline: UnderlineStyle = if (link and option.link_underline == .always and flags.underline == .none) option.link_style else flags.underline;
+    // Linked text is underlined only when it has no SGR 4 of its own (ADR 0012).
+    const added_link_underline = link and option.link.underline == .always and flags.underline == .none;
+    const underline: UnderlineStyle = if (added_link_underline) option.link.style else flags.underline;
     if (underline == .none and !flags.strikethrough and !flags.overline) return null;
 
     const alpha: u8 = if (option.dim) foreground_alpha else 255;
     const color = option.color;
-    const link_color = if (link) color.link else null;
+    // Link color belongs to the underline Rex adds, not to an SGR underline
+    // that the cell already had.
+    const link_color = if (added_link_underline) option.link.color else null;
     return .{
         .col = col,
         .row = row,
@@ -382,7 +385,7 @@ pub fn Builder(comptime option: Option) type {
 
         /// Colors, dim and blink rules for the decoration runs.
         decoration: Decoration.Option,
-        /// Link id under the pointer, for `decoration.link_underline == .hover`.
+        /// Link id under the pointer, for `decoration.link.underline == .hover`.
         hovered_link: u16 = 0,
         /// Last hovered link the decoration runs were built with.
         last_hovered_link: u16 = 0,
@@ -910,11 +913,11 @@ pub fn Builder(comptime option: Option) type {
                     null
                 else
                     palette.resolveKeyRgb(style.underline, .foreground);
-                if (self.decoration.link_underline == .hover and style.linkId() != 0) {
+                if (self.decoration.link.underline == .hover and style.linkId() != 0) {
                     // Only linked cells need the per-cell override; other
                     // cells keep the shared option without copying it.
                     var link_option = self.decoration;
-                    link_option.link_underline = if (style.linkId() == self.hovered_link) .always else .never;
+                    link_option.link.underline = if (style.linkId() == self.hovered_link) .always else .never;
                     if (decorationInstance(&link_option, c, sgr_underline, true, foreground, foreground_alpha, col, row, span)) |run| {
                         Decoration.appendRun(decoration, run);
                     }

@@ -8,6 +8,7 @@ const gl = @import("gl.zig");
 const Dimension = @import("dimension.zig").Dimension;
 const Flags = @import("Frame.zig").Flags;
 const hyperlink = @import("../config/hyperlink.zig");
+const decoration_config = @import("../config/decoration.zig");
 const InkMask = @import("InkMask.zig");
 const UnderlineStyle = @import("../term/root.zig").cell.UnderlineStyle;
 const Rasterizer = @import("../freetype/root.zig").Rasterizer;
@@ -120,40 +121,35 @@ pub const SkipInk = struct {
     /// Lower values also skip the faint antialiased edges.
     threshold: f32 = 0.25,
 
-    /// Underline styles that skip ink.
-    styles: struct {
-        single: bool = true,
-        double: bool = true,
-        curly: bool = true,
-        dotted: bool = true,
-        dashed: bool = true,
-    } = .{},
+    /// Underline styles that skip ink, owned by the config section.
+    styles: decoration_config.StyleSet = decoration_config.default_styles,
 
     /// Bit `n` set when UnderlineStyle value `n` skips ink, as the
     /// shader reads it. 0 when skipping is off.
     pub fn styleBits(self: SkipInk) u32 {
         if (!self.enabled) return 0;
         var bits: u32 = 0;
-        if (self.styles.single) bits |= 1 << @intFromEnum(UnderlineStyle.single);
-        if (self.styles.double) bits |= 1 << @intFromEnum(UnderlineStyle.double);
-        if (self.styles.curly) bits |= 1 << @intFromEnum(UnderlineStyle.curly);
-        if (self.styles.dotted) bits |= 1 << @intFromEnum(UnderlineStyle.dotted);
-        if (self.styles.dashed) bits |= 1 << @intFromEnum(UnderlineStyle.dashed);
+        inline for (std.enums.values(decoration_config.Style)) |style| {
+            if (self.styles.contains(style)) bits |= @as(u32, 1) << @intFromEnum(style);
+        }
         return bits;
     }
-};
-
-/// Whether decorations are drawn over or under the glyphs.
-pub const Order = enum {
-    /// Lines cross the glyphs, descenders do not hide the underline.
-    over_text,
-    /// Glyphs cover the lines, as in the background pass.
-    under_text,
 };
 
 /// User settings for decorations. The defaults draw every line where
 /// the font puts it, in the text color.
 pub const Option = struct {
+    /// All link-specific decoration policy from `[hyperlink]` (ADR 0012, 0013).
+    pub const Link = struct {
+        /// When Rex adds an underline to a link without SGR 4. An explicit
+        /// SGR underline is always drawn, whatever this is.
+        underline: hyperlink.UnderlineVisibility = .always,
+        /// Style of that underline; explicit SGR underlines keep their own.
+        style: UnderlineStyle = .single,
+        /// Underline color; null uses the configured underline or text color.
+        color: ?[3]u8 = null,
+    };
+
     underline: Line = .{},
 
     /// Gap between the two lines of a double underline, in pixels.
@@ -195,8 +191,6 @@ pub const Option = struct {
         underline: ?[3]u8 = null,
         strikethrough: ?[3]u8 = null,
         overline: ?[3]u8 = null,
-        /// Color of OSC 8 link underlines; null uses the underline color.
-        link: ?[3]u8 = null,
     } = .{},
 
     /// Opacity of every line, 0.0 to 1.0, on top of the dim alpha.
@@ -208,16 +202,17 @@ pub const Option = struct {
     /// Lines of SGR 5 and 6 (blink) text blink with the text.
     blink: bool = true,
 
-    /// Underline Rex adds to OSC 8 links without SGR 4 (ADR 0012, 0013).
-    /// An explicit SGR underline is always drawn, whatever this is.
-    link_underline: hyperlink.UnderlineVisibility = .always,
+    /// All link-specific decoration policy from `[hyperlink]` (ADR 0012, 0013).
+    link: Link = .{},
 
-    /// Style of the underline Rex adds to linked text. An explicit SGR
-    /// underline keeps its own style (ADR 0013).
-    link_style: UnderlineStyle = .single,
-
-    order: Order = .over_text,
+    /// Whether lines draw over or under the glyphs, owned by config.
+    order: decoration_config.Order = .over_text,
 };
+
+comptime {
+    if (@sizeOf(Option) != 180) @compileError("Decoration.Option size changed; update the layout check");
+    if (@alignOf(Option) != 4) @compileError("Decoration.Option alignment changed; update the layout check");
+}
 
 /// Where each decoration line sits, in whole pixels down from the top
 /// of the cell, as the shaders read it.
