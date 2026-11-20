@@ -13,6 +13,7 @@ const Color = @import("cell.zig").Color;
 const SavedCursor = @import("cell.zig").SavedCursor;
 
 const Palette = @import("Palette.zig").Palette;
+const Frame = @import("Frame.zig").Frame(test_option);
 const Rgb = Color.Rgb;
 const ansi = @import("../color/ansi.zig");
 const Theme = @import("../color/Theme.zig");
@@ -4634,6 +4635,21 @@ test "osc 8: sets and resets the current URI, by BEL and ST" {
     try testing.expect(t.hyperlink() == null);
     t.feed("\x1b]8;;https://example.com\x07\x1b]8;\x07");
     try testing.expect(t.hyperlink() == null);
+}
+
+test "osc 8: a frame snapshot carries the URI for click resolution" {
+    var t = try Term.init(alloc);
+    defer t.deinit(alloc);
+    var frame = try Frame.init(alloc);
+    defer frame.deinit(alloc);
+
+    t.feed("\x1b]8;;https://example.com\x07A");
+    _ = t.snapshot(&frame);
+
+    const id = frame.styleOf(frame.cellAt(0, 0)).link;
+    try testing.expect(id != 0);
+    try testing.expectEqualStrings("https://example.com", frame.hyperlink(id).?);
+    try testing.expectEqual(null, frame.hyperlink(0));
 }
 
 test "osc 8: link travels with cells and survives SGR 0 and newline" {

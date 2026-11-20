@@ -189,6 +189,8 @@ pointer_visibility: PointerVisibility = .{ .visible = .{} },
 
 // Selection state
 selection: rex.Selection = .empty,
+/// Pending Ctrl+click on a link: only opened if release lands on the same cell.
+pending_link: ?struct { row: u16, col: u16, id: u16 } = null,
 
 // Scrollbar and Scrolling state
 scroll_accumulator_y: f64 = 0,
@@ -3386,6 +3388,13 @@ fn handleSelectionRelease(self: *App) void {
     }
 }
 
+/// Opens an OSC 8 link. Stage 5 wires the configured command and the scheme
+/// allowlist; until then the resolved URI is only logged.
+fn activateHyperlink(self: *App, uri: []const u8) void {
+    _ = self;
+    log.debug("hyperlink: {s}", .{uri});
+}
+
 fn reportMouseButton(self: *App, col: u16, row: u16, button: PlatformEvents.MouseButton, mod_byte: u8, press: bool) void {
     const held = mouseButtonOf(button);
     self.mouse_report_col = col;
@@ -3488,8 +3497,26 @@ fn onMouseButton(self: *App, event: PlatformEvents.MouseButtonEvent) void {
 
     const is_primary = !frame.is_alternate;
     // log.debug("mouse_reporting={} shift_held={} is_primary={}", .{ mouse_reporting, shift_held, is_primary });
+    // Ctrl+click opens an OSC 8 link; it takes precedence over both selection
+    // and mouse reporting, and must not start a selection drag.
+    const link_id = if (event.mods.ctrl and is_primary) frame.styleOf(frame.cellAt(row, col)).link else 0;
+    const has_link = link_id != 0 and frame.hyperlink(link_id) != null;
+    if (press and event.button == .left and has_link) {
+        self.pending_link = .{ .row = row, .col = col, .id = link_id };
+    } else if (!press and self.pending_link != null) {
+        const pending = self.pending_link.?;
+        self.pending_link = null;
+        if (event.button == .left and event.mods.ctrl and
+            pending.row == row and pending.col == col and
+            frame.styleOf(frame.cellAt(row, col)).link == pending.id)
+        {
+            if (frame.hyperlink(pending.id)) |uri| self.activateHyperlink(uri);
+            return;
+        }
+    }
+
     if (is_primary and (!mouse_reporting or shift_held)) {
-        if (press and event.button == .left) {
+        if (press and event.button == .left and !has_link) {
             self.handleSelectionPress(row, col, event.mods);
         } else if (!press) {
             self.handleSelectionRelease();

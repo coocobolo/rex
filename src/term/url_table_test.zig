@@ -5,7 +5,7 @@ const testing = std.testing;
 const UrlTable = @import("UrlTable.zig");
 
 test "UrlTable: fixed layout per screen" {
-    try testing.expectEqual(@as(usize, 16400), @sizeOf(UrlTable));
+    try testing.expectEqual(@as(usize, 16408), @sizeOf(UrlTable));
     try testing.expectEqual(@as(usize, 8), @alignOf(UrlTable));
 }
 

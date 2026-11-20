@@ -19,6 +19,8 @@ pub const InUse = std.StaticBitSet(capacity);
 gpa: Allocator,
 /// Owned URI copies by ID minus one. A null slot is free.
 entries: [capacity]?[]u8 = @splat(null),
+/// Bumped when the contents change, so frame snapshots only recopy on change.
+generation: u32 = 0,
 
 comptime {
     std.debug.assert(capacity <= std.math.maxInt(Id));
@@ -34,6 +36,7 @@ pub fn deinit(self: *UrlTable) void {
         if (entry.*) |url| self.gpa.free(url);
         entry.* = null;
     }
+    self.generation +%= 1;
 }
 
 /// Frees every URI. Used by RIS and screen resets.
@@ -53,6 +56,7 @@ pub fn intern(self: *UrlTable, url: []const u8) ?Id {
         if (entry.* == null) {
             const owned = self.gpa.dupe(u8, url) catch return null;
             entry.* = owned;
+            self.generation +%= 1;
             return @intCast(i + 1);
         }
     }
@@ -73,6 +77,7 @@ pub fn sweep(self: *UrlTable, in_use: *const InUse) void {
             if (!in_use.isSet(i + 1)) {
                 self.gpa.free(url);
                 entry.* = null;
+                self.generation +%= 1;
             }
         }
     }

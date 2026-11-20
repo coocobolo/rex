@@ -1612,6 +1612,7 @@ pub fn Terminal(comptime option: Option) type {
             if (needs_full or target.style_generation != scr.styles.generation) {
                 target.copyStyles(scr.styles.entries[0..scr.styles.high], scr.styles.generation);
             }
+            target.copyUrls(&scr.urls);
             target.reverse_video = scr.mode.reverse_video;
             target.is_alternate = is_alt;
             target.scrollback_used = scr_scrollback_used;

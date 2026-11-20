@@ -14,6 +14,7 @@ const Cell = @import("cell.zig").Cell;
 const Cursor = @import("Cursor.zig");
 const Palette = @import("Palette.zig").Palette;
 const Style = @import("Style.zig");
+const UrlTable = @import("UrlTable.zig");
 const Option = @import("term.zig").Option;
 const Classifier = @import("../unicode/Classifier.zig");
 
@@ -22,6 +23,9 @@ pub const max_cluster_len = 16;
 
 /// Bounded capacity for grapheme clusters visible within a single frame.
 pub const max_frame_graphemes = 256;
+
+/// Maximum number of OSC 8 URIs carried in a single frame.
+pub const max_frame_urls = 16;
 
 /// Single grapheme entry in the frame's side-table.
 pub const GraphemeEntry = struct {
@@ -83,6 +87,12 @@ pub fn Frame(comptime option: Option) type {
         /// The table's `generation` when copied. With `is_alternate` it tells
         /// whether a copy is still exact.
         style_generation: u32 = 0,
+
+        /// Bounded copy of the URIs referenced by this frame's styles, so a
+        /// consumer can resolve a link ID without touching the terminal.
+        urls: [max_frame_urls][UrlTable.max_len]u8 = undefined,
+        url_lens: [max_frame_urls]u16 = @splat(0),
+        url_generation: u32 = 0,
 
         /// Cursor state mapped to viewport coordinates.
         cursor: CursorSnapshot = .{},
@@ -155,6 +165,29 @@ pub fn Frame(comptime option: Option) type {
             self.style_generation = generation;
         }
 
+        /// Copies URIs from `table` when its generation changed. Frame slot
+        /// `i` holds URL ID `i + 1`; IDs above `max_frame_urls` stay inert.
+        pub fn copyUrls(self: *Self, table: *const UrlTable) void {
+            if (self.url_generation == table.generation) return;
+            for (table.entries[0..@min(table.entries.len, max_frame_urls)], 0..) |entry, i| {
+                if (entry) |url| {
+                    @memcpy(self.urls[i][0..url.len], url);
+                    self.url_lens[i] = @intCast(url.len);
+                } else {
+                    self.url_lens[i] = 0;
+                }
+            }
+            self.url_generation = table.generation;
+        }
+
+        /// The URI for a style's link ID, or null when absent or out of range.
+        pub inline fn hyperlink(self: *const Self, id: UrlTable.Id) ?[]const u8 {
+            if (id == 0 or id > max_frame_urls) return null;
+            const len = self.url_lens[id - 1];
+            if (len == 0) return null;
+            return self.urls[id - 1][0..len];
+        }
+
         /// The colors `cell` is drawn with.
         pub inline fn styleOf(self: *const Self, cell: Cell) Style {
             std.debug.assert(cell.style < self.style_len);
@@ -182,6 +215,11 @@ pub fn Frame(comptime option: Option) type {
             self.reverse_video = src.reverse_video;
             if (self.style_generation != src.style_generation or self.is_alternate != src.is_alternate) {
                 self.copyStyles(src.styles[0..src.style_len], src.style_generation);
+            }
+            if (self.url_generation != src.url_generation) {
+                @memcpy(&self.urls, &src.urls);
+                @memcpy(&self.url_lens, &src.url_lens);
+                self.url_generation = src.url_generation;
             }
             self.is_alternate = src.is_alternate;
             self.scrollback_used = src.scrollback_used;
