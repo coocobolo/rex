@@ -11,6 +11,7 @@ const Allocator = std.mem.Allocator;
 
 const Theme = @import("Theme.zig");
 const focus = @import("focus.zig");
+const text_mod = @import("text.zig");
 const Tree = @import("Tree.zig");
 const Id = Tree.Id;
 
@@ -25,10 +26,18 @@ pub const node_max = 8;
 pub const Command = enum {
     backspace,
     delete,
+    delete_word_backward,
+    delete_word_forward,
+    delete_to_start,
+    delete_to_end,
     left,
     right,
     select_left,
     select_right,
+    word_left,
+    word_right,
+    select_word_left,
+    select_word_right,
     home,
     end,
     select_home,
@@ -137,16 +146,96 @@ pub const State = struct {
         return switch (cmd) {
             .backspace => self.backspace(),
             .delete => self.deleteForward(),
+            .delete_word_backward => self.deleteWordBackward(),
+            .delete_word_forward => self.deleteWordForward(),
+            .delete_to_start => self.deleteToStart(),
+            .delete_to_end => self.deleteToEnd(),
             .left => self.moveLeft(false),
             .right => self.moveRight(false),
             .select_left => self.moveLeft(true),
             .select_right => self.moveRight(true),
+            .word_left => self.moveWordLeft(false),
+            .word_right => self.moveWordRight(false),
+            .select_word_left => self.moveWordLeft(true),
+            .select_word_right => self.moveWordRight(true),
             .home => self.moveHome(false),
             .end => self.moveEnd(false),
             .select_home => self.moveHome(true),
             .select_end => self.moveEnd(true),
             .select_all => self.selectAll(),
         };
+    }
+
+    /// Moves the cursor to the UTF-8 boundary at or before `offset`.
+    /// Keeps `anchor` when `extend` is true; otherwise collapses any selection.
+    pub fn setCursor(self: *State, offset: usize, extend: bool) bool {
+        const before_cursor = self.cursor;
+        const before_anchor = self.anchor;
+        const next = snapBoundary(self.buf.items, offset);
+        self.cursor = next;
+        if (!extend) self.anchor = next;
+        return self.cursor != before_cursor or self.anchor != before_anchor;
+    }
+
+    /// Selects the contiguous word, punctuation, or whitespace run containing
+    /// `offset` (used on double-click).
+    pub fn selectWordAt(self: *State, offset: usize) bool {
+        const before_cursor = self.cursor;
+        const before_anchor = self.anchor;
+        const range = wordRangeAt(self.buf.items, offset);
+        self.anchor = range.start;
+        self.cursor = range.end;
+        return self.cursor != before_cursor or self.anchor != before_anchor;
+    }
+
+    /// Extends a double-click word selection from `[base_start, base_end]` to
+    /// cover the word run at `offset`.
+    pub fn extendWordSelection(self: *State, base_start: usize, base_end: usize, offset: usize) bool {
+        const before_cursor = self.cursor;
+        const before_anchor = self.anchor;
+        const clamped_start = snapBoundary(self.buf.items, @min(base_start, base_end));
+        const clamped_end = snapBoundary(self.buf.items, @max(base_start, base_end));
+        const range = wordRangeAt(self.buf.items, offset);
+        if (range.start < clamped_start) {
+            self.anchor = clamped_end;
+            self.cursor = range.start;
+        } else if (range.end > clamped_end) {
+            self.anchor = clamped_start;
+            self.cursor = range.end;
+        } else {
+            self.anchor = clamped_start;
+            self.cursor = clamped_end;
+        }
+        return self.cursor != before_cursor or self.anchor != before_anchor;
+    }
+
+    /// Returns the nearest UTF-8 codepoint boundary to `local_x` (logical
+    /// pixels from the start of the text), using `measurer` with `.sm` style.
+    pub fn offsetAtX(self: *const State, measurer: text_mod.Measurer, local_x: f32) usize {
+        const bytes = self.buf.items;
+        if (bytes.len == 0 or local_x <= 0) return 0;
+        const full_w = measurer.width(bytes, .sm, .proportional);
+        if (local_x >= full_w) return bytes.len;
+
+        // Binary-search the largest codepoint boundary whose prefix width <= local_x.
+        var lo: usize = 0;
+        var hi: usize = bytes.len;
+        while (lo < hi) {
+            const raw_mid = lo + (hi - lo + 1) / 2;
+            const mid = snapBoundary(bytes, raw_mid);
+            const probe = if (mid <= lo) nextBoundary(bytes, lo) else mid;
+            if (probe >= hi) break;
+            if (measurer.width(bytes[0..probe], .sm, .proportional) <= local_x) {
+                lo = probe;
+            } else {
+                hi = probe;
+            }
+        }
+        const next = nextBoundary(bytes, lo);
+        if (next == lo) return lo;
+        const lo_w = if (lo == 0) 0 else measurer.width(bytes[0..lo], .sm, .proportional);
+        const next_w = measurer.width(bytes[0..next], .sm, .proportional);
+        return if (local_x - lo_w <= next_w - local_x) lo else next;
     }
 
     fn replaceSelectionWith(self: *State, gpa: Allocator, slice: []const u8) Allocator.Error!void {
@@ -172,6 +261,40 @@ pub const State = struct {
         if (self.cursor >= self.buf.items.len) return false;
         const next = nextBoundary(self.buf.items, self.cursor);
         self.buf.replaceRangeAssumeCapacity(self.cursor, next - self.cursor, &.{});
+        return true;
+    }
+
+    fn deleteWordBackward(self: *State) bool {
+        if (self.deleteSelection()) return true;
+        if (self.cursor == 0) return false;
+        const prev = prevWordBoundary(self.buf.items, self.cursor);
+        self.buf.replaceRangeAssumeCapacity(prev, self.cursor - prev, &.{});
+        self.cursor = prev;
+        self.anchor = prev;
+        return true;
+    }
+
+    fn deleteWordForward(self: *State) bool {
+        if (self.deleteSelection()) return true;
+        if (self.cursor >= self.buf.items.len) return false;
+        const next = nextWordBoundary(self.buf.items, self.cursor);
+        self.buf.replaceRangeAssumeCapacity(self.cursor, next - self.cursor, &.{});
+        return true;
+    }
+
+    fn deleteToStart(self: *State) bool {
+        if (self.deleteSelection()) return true;
+        if (self.cursor == 0) return false;
+        self.buf.replaceRangeAssumeCapacity(0, self.cursor, &.{});
+        self.cursor = 0;
+        self.anchor = 0;
+        return true;
+    }
+
+    fn deleteToEnd(self: *State) bool {
+        if (self.deleteSelection()) return true;
+        if (self.cursor >= self.buf.items.len) return false;
+        self.buf.replaceRangeAssumeCapacity(self.cursor, self.buf.items.len - self.cursor, &.{});
         return true;
     }
 
@@ -201,6 +324,22 @@ pub const State = struct {
         return self.cursor != before_cursor or self.anchor != before_anchor;
     }
 
+    fn moveWordLeft(self: *State, extend: bool) bool {
+        const before_cursor = self.cursor;
+        const before_anchor = self.anchor;
+        self.cursor = prevWordBoundary(self.buf.items, self.cursor);
+        if (!extend) self.anchor = self.cursor;
+        return self.cursor != before_cursor or self.anchor != before_anchor;
+    }
+
+    fn moveWordRight(self: *State, extend: bool) bool {
+        const before_cursor = self.cursor;
+        const before_anchor = self.anchor;
+        self.cursor = nextWordBoundary(self.buf.items, self.cursor);
+        if (!extend) self.anchor = self.cursor;
+        return self.cursor != before_cursor or self.anchor != before_anchor;
+    }
+
     fn moveHome(self: *State, extend: bool) bool {
         const before_cursor = self.cursor;
         const before_anchor = self.anchor;
@@ -226,6 +365,28 @@ pub const State = struct {
     }
 };
 
+const CharClass = enum(u2) {
+    space,
+    word,
+    punct,
+};
+
+fn charClassAt(bytes: []const u8, pos: usize) CharClass {
+    const b = bytes[pos];
+    if (b >= 0x80) return .word;
+    if (b == ' ' or b == '\t') return .space;
+    if ((b >= 'a' and b <= 'z') or (b >= 'A' and b <= 'Z') or (b >= '0' and b <= '9') or b == '_') {
+        return .word;
+    }
+    return .punct;
+}
+
+fn snapBoundary(bytes: []const u8, pos: usize) usize {
+    var i = @min(pos, bytes.len);
+    while (i > 0 and i < bytes.len and (bytes[i] & 0xC0) == 0x80) : (i -= 1) {}
+    return i;
+}
+
 fn prevBoundary(bytes: []const u8, pos: usize) usize {
     var i = @min(pos, bytes.len);
     if (i == 0) return 0;
@@ -239,6 +400,77 @@ fn nextBoundary(bytes: []const u8, pos: usize) usize {
     if (i >= bytes.len) return bytes.len;
     const len = std.unicode.utf8ByteSequenceLength(bytes[i]) catch 1;
     return @min(i + len, bytes.len);
+}
+
+fn prevWordBoundary(bytes: []const u8, pos: usize) usize {
+    var i = snapBoundary(bytes, pos);
+    while (i > 0) {
+        const prev = prevBoundary(bytes, i);
+        if (charClassAt(bytes, prev) != .space) break;
+        i = prev;
+    }
+    if (i == 0) return 0;
+    const cls = charClassAt(bytes, prevBoundary(bytes, i));
+    while (i > 0) {
+        const prev = prevBoundary(bytes, i);
+        if (charClassAt(bytes, prev) != cls) break;
+        i = prev;
+    }
+    return i;
+}
+
+fn nextWordBoundary(bytes: []const u8, pos: usize) usize {
+    var i = snapBoundary(bytes, pos);
+    while (i < bytes.len and charClassAt(bytes, i) == .space) {
+        i = nextBoundary(bytes, i);
+    }
+    if (i >= bytes.len) return bytes.len;
+    const cls = charClassAt(bytes, i);
+    while (i < bytes.len and charClassAt(bytes, i) == cls) {
+        i = nextBoundary(bytes, i);
+    }
+    return i;
+}
+
+fn wordRangeAt(bytes: []const u8, pos: usize) struct { start: usize, end: usize } {
+    if (bytes.len == 0) return .{ .start = 0, .end = 0 };
+    var idx = snapBoundary(bytes, pos);
+    if (idx >= bytes.len) idx = prevBoundary(bytes, bytes.len);
+    const cls = charClassAt(bytes, idx);
+    var start = idx;
+    while (start > 0) {
+        const prev = prevBoundary(bytes, start);
+        if (charClassAt(bytes, prev) != cls) break;
+        start = prev;
+    }
+    var end = nextBoundary(bytes, idx);
+    while (end < bytes.len and charClassAt(bytes, end) == cls) {
+        end = nextBoundary(bytes, end);
+    }
+    return .{ .start = start, .end = end };
+}
+
+/// Returns the laid-out screen-space `x` coordinate of byte `0` for the input
+/// built with `id` in `tree` (accounting for alignment and horizontal scroll),
+/// or `null` if `id` is not present.
+pub fn textOriginX(tree: *const Tree, id: Id) ?f32 {
+    for (tree.items(), 0..) |node, i| {
+        if (node.box.id != id) continue;
+        // `view` emits ring -> face -> clip -> [children...].
+        const clip_idx = i + 2;
+        if (clip_idx >= tree.len) return null;
+        const clip = tree.nodes[clip_idx];
+        const first_idx = clip_idx + 1;
+        if (first_idx >= clip.end) return clip.rect.x;
+        const first = tree.nodes[first_idx];
+        // When the caret sits before byte 0, it is a childless box right before
+        // the text or selection wrapper.
+        if (first.content == .box and first.end == first_idx + 1 and first.end < clip.end) {
+            return tree.nodes[first.end].rect.x;
+        }
+        return first.rect.x;
+    }
+    return null;
 }
 
 pub const Options = struct {
