@@ -378,9 +378,9 @@ const tail_rows = [_]Key{
 
     .{ .section = .hyperlink, .name = "enabled", .field = "hyperlink.enabled" },
     .{ .section = .hyperlink, .name = "underline", .field = "hyperlink.underline" },
-    .{ .section = .hyperlink, .name = "underline_visibility", .field = "hyperlink.underline_visibility" },
     .{ .section = .hyperlink, .name = "underline_style", .field = "hyperlink.underline_style" },
     .{ .section = .hyperlink, .name = "show_hyperlink_targets", .field = "hyperlink.show_hyperlink_targets" },
+    .{ .section = .hyperlink, .name = "tooltip_uri_style", .field = "hyperlink.tooltip_uri_style" },
     .{ .section = .hyperlink, .name = "link_color", .field = "hyperlink.link_color", .kind = .color, .null_keyword = .none },
     .{ .section = .hyperlink, .name = "open_command", .field = "hyperlink.open_command", .kind = .text },
     .{ .section = .hyperlink, .name = "schemes", .field = "hyperlink.schemes", .kind = .set },

@@ -15,8 +15,19 @@ pub const SchemeSet = std.EnumSet(Scheme);
 
 /// When the underline Rex adds to linked text is visible (ADR 0013).
 pub const UnderlineVisibility = enum {
+    never,
     always,
     hover,
+};
+
+/// How a long target URI is shown in the hover tooltip (ADR 0013).
+pub const TooltipUriStyle = enum {
+    /// Wrap into short lines, keeping the card narrow.
+    multiline,
+    /// One line: first 40 and last 24 UTF-8 bytes with an ellipsis between.
+    head_tail,
+    /// One wider line, truncated with an ellipsis at the edge.
+    wide,
 };
 
 /// Underline style used for linked text with no explicit SGR underline.
@@ -50,15 +61,16 @@ pub const default_schemes: SchemeSet = blk: {
 pub const Hyperlink = struct {
     /// Whether Ctrl+click opens OSC 8 links.
     enabled: bool = true,
-    /// Whether linked text is underlined even without SGR 4.
-    underline: bool = true,
-    /// Whether that underline is permanent or shown only while hovering.
-    underline_visibility: UnderlineVisibility = .always,
+    /// Underline Rex adds to linked text without SGR 4: never, always, or
+    /// only on hover. An explicit SGR underline is always drawn.
+    underline: UnderlineVisibility = .always,
     /// Style of the underline Rex adds to linked text. An explicit SGR
     /// underline keeps its own style.
     underline_style: LinkStyle = .single,
     /// When to show the target URI in a tooltip while hovering a link.
     show_hyperlink_targets: ShowTarget = .ctrl,
+    /// How a long target URI is laid out in that tooltip.
+    tooltip_uri_style: TooltipUriStyle = .multiline,
     /// Underline color for links; null uses the configured underline or text color.
     link_color: ?Rgb = null,
     /// Command that opens a URI. Empty uses the platform default
