@@ -254,8 +254,8 @@ const key_meta_table = [_]KeyMetaEntry{
     .{ .section = .decoration, .name = "skip_ink", .label = "Skip Ink Under Descenders", .description = "Break decoration lines where a letter's descender crosses them." },
     .{ .section = .decoration, .name = "skip_ink_styles", .label = "Styles That Skip Ink", .description = "Underline styles that break around descenders; none keeps every line whole." },
     .{ .section = .decoration, .name = "skip_ink_threshold", .label = "Ink Coverage Threshold", .description = "How much of a pixel must be covered to count as ink, from 0.0 to 1.0." },
-    .{ .section = .decoration, .name = "skip_ink_gap", .label = "Ink Clearance", .description = "Extra pixels kept between ink and a line; none follows the line thickness." },
-    .{ .section = .decoration, .name = "skip_ink_min_segment", .label = "Shortest Line Piece", .description = "Drop line pieces shorter than this many pixels; none follows the thickness." },
+    .{ .section = .decoration, .name = "skip_ink_gap_px", .label = "Ink Gap", .description = "Extra pixels kept between ink and a line; none follows the line thickness." },
+    .{ .section = .decoration, .name = "skip_ink_min_segment_px", .label = "Minimum Ink Segment", .description = "Drop line pieces shorter than this many pixels; none follows the thickness." },
     .{ .section = .decoration, .name = "order", .label = "Draw Decorations Over Text", .description = "When off, glyphs cover the lines instead of the lines crossing the glyphs." },
     .{ .section = .decoration, .name = "alpha", .label = "Decoration Opacity", .description = "Opacity of every decoration line, from 0.0 to 1.0." },
     .{ .section = .decoration, .name = "dim", .label = "Dim Lines With Dim Text", .description = "Dim SGR 2 text also dims its underline, strikethrough and overline." },
@@ -271,13 +271,13 @@ const key_meta_table = [_]KeyMetaEntry{
     .{ .section = .decoration, .name = "overline_thickness_px", .label = "Overline Thickness", .description = "Overline thickness in pixels; none uses the resolved underline thickness." },
     .{ .section = .decoration, .name = "underline_thickness_scale", .label = "Underline Thickness Scale", .description = "Multiply the resolved underline thickness by this factor." },
     .{ .section = .decoration, .name = "double_gap_px", .label = "Double Underline Gap", .description = "Gap between the two lines of a double underline; none uses the thickness." },
-    .{ .section = .decoration, .name = "curly_amplitude_px", .label = "Curly Underline Height", .description = "Height of a curly underline wave; none derives it from the font." },
+    .{ .section = .decoration, .name = "curly_amplitude_px", .label = "Curly Underline Amplitude", .description = "Amplitude of the curly underline wave in pixels; none derives it from the font." },
     .{ .section = .decoration, .name = "curly_wavelength_px", .label = "Curly Underline Wavelength", .description = "Length of one curly underline wave; none uses one wave per cell." },
     .{ .section = .decoration, .name = "dot_length_px", .label = "Dot Length", .description = "Length of each dot in a dotted underline; none fits whole dots to the cell." },
     .{ .section = .decoration, .name = "dot_gap_px", .label = "Dot Gap", .description = "Space after each dot; none matches the dot length." },
     .{ .section = .decoration, .name = "dash_length_px", .label = "Dash Length", .description = "Length of each dash in a dashed underline; none uses half a cell." },
     .{ .section = .decoration, .name = "dash_gap_px", .label = "Dash Gap", .description = "Space after each dash; none derives it from the cell width." },
-    .{ .section = .decoration, .name = "phase", .label = "Dash Pattern Origin", .description = "Start dotted, dashed and curly patterns at the window grid or at each run." },
+    .{ .section = .decoration, .name = "phase", .label = "Pattern Phase", .description = "Start dotted, dashed and curly patterns at the window grid or at each run." },
 
     .{ .section = .shell, .name = "program", .label = "Shell Program", .description = "Path to your preferred shell executable, or Automatic for your default shell." },
     .{ .section = .shell, .name = "argument", .label = "Shell Arguments", .description = "Arguments passed to the shell on startup." },
@@ -1960,7 +1960,15 @@ fn pageFocusTargets(page: Page, ansi_open: bool, cfg: *const Config, out: []Targ
                     out[count] = .{ .key_select = idx };
                     count += 1;
                 },
-                .stepper, .text_input, .list, .color => {
+                .stepper => {
+                    out[count] = .{ .key_input = idx };
+                    count += 1;
+                    if (info.null_keyword != null) {
+                        out[count] = .{ .key_reset = idx };
+                        count += 1;
+                    }
+                },
+                .text_input, .list, .color => {
                     out[count] = .{ .key_input = idx };
                     count += 1;
                 },
@@ -2296,6 +2304,7 @@ fn over(state: *const State, id: Id) Target {
                 if (id == inputId(idx)) return .{ .key_input = idx };
                 if (id == decId(idx)) return .{ .stepper_dec = idx };
                 if (id == incId(idx)) return .{ .stepper_inc = idx };
+                if (id == resetId(idx) and info.null_keyword != null) return .{ .key_reset = idx };
             },
             .list => {
                 if (id == inputId(idx)) return .{ .key_input = idx };
@@ -3299,6 +3308,17 @@ fn viewKeyRow(
                 .disabled = at_max,
             });
             input_group.close(tree, group);
+            if (info.null_keyword != null) {
+                const reset_pressed = std.meta.eql(state.pressed, Target{ .key_reset = idx });
+                const reset_hovered = std.meta.eql(state.hover, Target{ .key_reset = idx });
+                try button.view(tree, theme, .{
+                    .id = resetId(idx),
+                    .label = "Reset",
+                    .variant = .outline,
+                    .size = .sm,
+                    .state = if (reset_pressed and reset_hovered) .pressed else if (reset_hovered) .hovered else .normal,
+                });
+            }
         },
         .duration => {
             const inp = &state.inputs[idx];

@@ -1443,7 +1443,7 @@ test "settings: text input Ctrl+word, Ctrl+line, and Insert clipboard shortcuts"
     try testing.expectEqualStrings("keep", state.inputs[title_idx].text());
 }
 
-test "settings: optional fraction sliders reset to none" {
+test "settings: optional pixel steppers reset to none" {
     const gpa = testing.allocator;
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -1469,18 +1469,19 @@ test "settings: optional fraction sliders reset to none" {
 
     state.frame.current = @intFromEnum(settings.Page.appearance);
 
-    const idx = keyIndex(.decoration, "skip_ink_gap");
-    const slider_id = Id.of("settings.slider").item(idx);
+    const idx = keyIndex(.decoration, "skip_ink_gap_px");
+    const input_id = Id.of("settings.input").item(idx);
     const reset_id = Id.of("settings.key_reset").item(idx);
 
-    _ = settings.update(&state, .{ .pointer = .{ .id = slider_id } });
-    _ = settings.update(&state, .{ .press = slider_id });
+    _ = settings.update(&state, .{ .pointer = .{ .id = input_id } });
+    _ = settings.update(&state, .{ .press = input_id });
     _ = settings.update(&state, .release);
-    try testing.expect(settings.update(&state, .{ .key = .{ .key = .right } }));
-    try testing.expect(state.activeConfig().decoration.skip_ink_gap != null);
+    for ("0.5") |ch| try testing.expect(settings.update(&state, .{ .char = ch }));
+    try testing.expect(settings.update(&state, .{ .key = .{ .key = .enter } }));
+    try testing.expect(state.activeConfig().decoration.skip_ink_gap_px != null);
 
     _ = settings.update(&state, .{ .pointer = .{ .id = reset_id } });
     _ = settings.update(&state, .{ .press = reset_id });
     try testing.expect(settings.update(&state, .release));
-    try testing.expectEqual(@as(?f32, null), state.activeConfig().decoration.skip_ink_gap);
+    try testing.expectEqual(@as(?f32, null), state.activeConfig().decoration.skip_ink_gap_px);
 }
