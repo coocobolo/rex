@@ -30,6 +30,7 @@ const tooltip = @import("kit/tooltip.zig");
 const Tree = @import("kit/Tree.zig");
 const widget_mod = @import("kit/wellbeing_widget.zig");
 const Ui = @import("config/Config.zig").Ui;
+const hyperlink = @import("config/hyperlink.zig");
 
 const log = std.log.scoped(.kit_overlay);
 
@@ -95,10 +96,11 @@ pub fn destroy(self: *KitOverlay, gpa: Allocator) void {
     gpa.destroy(self);
 }
 
-/// The link under the pointer. The URI is borrowed from the frame for the
-/// one `buildFrame` call that draws the tooltip.
+/// The link under the pointer. `wide` borrows the URI from the frame for the
+/// one `buildFrame` call; the other styles copy it into a fixed buffer.
 pub const LinkHint = struct {
     uri: []const u8,
+    style: hyperlink.TooltipUriStyle,
     /// Logical pixels, relative to the window.
     x: f32,
     y: f32,
@@ -517,10 +519,31 @@ fn build(self: *KitOverlay, atlas: *Atlas, width: f32, height: f32, theme: *cons
     try self.painter.paint(&self.tree, &self.font, atlas);
 }
 
-/// Wraps the URI at codepoint boundaries into short lines, keeping the card
-/// narrow. A longer URI keeps an ellipsis so the truncation is visible.
-fn linkHintText(self: *KitOverlay, uri: []const u8) []const u8 {
+/// Start of the last `n` bytes, moved forward to a UTF-8 boundary.
+fn tailStart(bytes: []const u8, n: usize) usize {
+    if (bytes.len <= n) return 0;
+    var start = bytes.len - n;
+    while (start < bytes.len and bytes[start] & 0xC0 == 0x80) start += 1;
+    return start;
+}
+
+/// Lays the URI out for the tooltip. `multiline` wraps at codepoint
+/// boundaries into short lines; `head_tail` keeps both ends of a long URI;
+/// `wide` uses the URI itself and the text node truncates it.
+fn linkHintText(self: *KitOverlay, uri: []const u8, style: hyperlink.TooltipUriStyle) []const u8 {
     const buf = &self.link_hint_text;
+    if (style == .head_tail) {
+        const head_chars = 40;
+        const tail_chars = 24;
+        if (uri.len <= head_chars + tail_chars) return uri;
+        const head = text.cut(uri, head_chars);
+        const tail = uri[tailStart(uri, tail_chars)..];
+        const ell = text.ellipsis_bytes;
+        @memcpy(buf[0..head], uri[0..head]);
+        @memcpy(buf[head..][0..ell.len], ell);
+        @memcpy(buf[head + ell.len ..][0..tail.len], tail);
+        return buf[0 .. head + ell.len + tail.len];
+    }
     var len: usize = 0;
     var src: usize = 0;
     var line: usize = 0;
@@ -547,11 +570,14 @@ fn linkHintText(self: *KitOverlay, uri: []const u8) []const u8 {
 /// no id, so it never takes a click from the link underneath.
 fn viewLinkHint(self: *KitOverlay, theme: *const Theme, width: f32, hint: LinkHint) Tree.Error!void {
     const card = try tooltip.openAt(&self.tree, theme, hint.x, hint.y);
-    const max_width = @max(1, @min(360, width - 16));
-    _ = try self.tree.text(self.linkHintText(hint.uri), .{
+    const wide = hint.style == .wide;
+    const cap: f32 = if (wide) 520 else 360;
+    const max_width = @max(@as(f32, 1), @min(cap, width - 16));
+    const bytes = if (wide) hint.uri else self.linkHintText(hint.uri, hint.style);
+    _ = try self.tree.text(bytes, .{
         .color = theme.foreground,
         .style = .xs,
-        .wrap = .none,
+        .wrap = if (wide) .ellipsis else .none,
         .width = .{ .fit_at_most = max_width },
     });
     tooltip.close(&self.tree, card);

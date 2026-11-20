@@ -771,7 +771,7 @@ test "KitOverlay: a link hint wraps narrow and never catches a click" {
     const uri = "https://example.com/" ++ "a" ** 250;
 
     try testing.expect(!fixture.frame());
-    try testing.expect(kit.buildFrame(&fixture.atlas, 800, 600, dark, .{ .uri = uri, .x = 400, .y = 300 }));
+    try testing.expect(kit.buildFrame(&fixture.atlas, 800, 600, dark, .{ .uri = uri, .style = .multiline, .x = 400, .y = 300 }));
     try testing.expect(kit.painter.len > 0);
 
     var saw_uri = false;
@@ -799,7 +799,7 @@ test "KitOverlay: a link hint wraps narrow and never catches a click" {
     try testing.expect(!fixture.frame());
 
     // A short URI stays on one line and needs no ellipsis.
-    try testing.expect(kit.buildFrame(&fixture.atlas, 800, 600, dark, .{ .uri = "https://example.com", .x = 400, .y = 300 }));
+    try testing.expect(kit.buildFrame(&fixture.atlas, 800, 600, dark, .{ .uri = "https://example.com", .style = .multiline, .x = 400, .y = 300 }));
     for (kit.tree.nodes[0..kit.tree.len]) |node| {
         switch (node.content) {
             .text => |t| if (std.mem.eql(u8, t.bytes, "https://example.com")) {
@@ -808,4 +808,41 @@ test "KitOverlay: a link hint wraps narrow and never catches a click" {
             else => {},
         }
     }
+}
+
+test "KitOverlay: head_tail and wide URI tooltip styles" {
+    var fixture: Fixture = try .init(1);
+    defer fixture.deinit();
+    const kit = fixture.kit;
+    const uri = "https://example.com/" ++ "a" ** 250;
+
+    try testing.expect(kit.buildFrame(&fixture.atlas, 800, 600, dark, .{ .uri = uri, .style = .head_tail, .x = 400, .y = 300 }));
+    var saw_head_tail = false;
+    for (kit.tree.nodes[0..kit.tree.len]) |node| {
+        switch (node.content) {
+            .text => |t| if (std.mem.startsWith(u8, t.bytes, "https://")) {
+                saw_head_tail = true;
+                try testing.expectEqual(1, t.line_count);
+                try testing.expect(std.mem.indexOf(u8, t.bytes, "…") != null);
+                try testing.expect(std.mem.endsWith(u8, t.bytes, "aaaa"));
+                try testing.expect(node.rect.w <= 360);
+            },
+            else => {},
+        }
+    }
+    try testing.expect(saw_head_tail);
+
+    try testing.expect(kit.buildFrame(&fixture.atlas, 800, 600, dark, .{ .uri = uri, .style = .wide, .x = 400, .y = 300 }));
+    var saw_wide = false;
+    for (kit.tree.nodes[0..kit.tree.len]) |node| {
+        switch (node.content) {
+            .text => |t| if (std.mem.eql(u8, t.bytes, uri)) {
+                saw_wide = true;
+                try testing.expectEqual(1, t.line_count);
+                try testing.expect(node.rect.w <= 520);
+            },
+            else => {},
+        }
+    }
+    try testing.expect(saw_wide);
 }
