@@ -88,7 +88,7 @@ pub fn decorationInstance(
     const flags = cell.flags;
     if (flags.invisible) return null;
     // Linked text is always underlined, even without SGR 4 (ADR 0012).
-    const underline: UnderlineStyle = if (link and option.link_underline and flags.underline == .none) option.link_style else flags.underline;
+    const underline: UnderlineStyle = if (link and option.link_underline == .always and flags.underline == .none) option.link_style else flags.underline;
     if (underline == .none and !flags.strikethrough and !flags.overline) return null;
 
     const alpha: u8 = if (option.dim) foreground_alpha else 255;
@@ -382,7 +382,7 @@ pub fn Builder(comptime option: Option) type {
 
         /// Colors, dim and blink rules for the decoration runs.
         decoration: Decoration.Option,
-        /// Link id under the pointer, for `decoration.link_hover_only`.
+        /// Link id under the pointer, for `decoration.link_underline == .hover`.
         hovered_link: u16 = 0,
         /// Last hovered link the decoration runs were built with.
         last_hovered_link: u16 = 0,
@@ -910,11 +910,11 @@ pub fn Builder(comptime option: Option) type {
                     null
                 else
                     palette.resolveKeyRgb(style.underline, .foreground);
-                if (self.decoration.link_hover_only and style.link != 0) {
+                if (self.decoration.link_underline == .hover and style.link != 0) {
                     // Only linked cells need the per-cell override; other
                     // cells keep the shared option without copying it.
                     var link_option = self.decoration;
-                    link_option.link_underline = style.link == self.hovered_link;
+                    link_option.link_underline = if (style.link == self.hovered_link) .always else .never;
                     if (decorationInstance(&link_option, c, sgr_underline, true, foreground, foreground_alpha, col, row, span)) |run| {
                         Decoration.appendRun(decoration, run);
                     }

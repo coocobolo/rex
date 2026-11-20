@@ -80,7 +80,7 @@ test "decorationInstance: links force an underline and use the link color" {
     try testing.expectEqual(.curly, Frame.decorationInstance(&styled, linked, null, true, text, 255, 0, 0, 1).?.flags.underline);
     const sgr_linked = decorated(.{ .underline = .double });
     try testing.expectEqual(.double, Frame.decorationInstance(&styled, sgr_linked, null, true, text, 255, 0, 0, 1).?.flags.underline);
-    const off: Decoration.Option = .{ .link_underline = false, .link_style = .curly };
+    const off: Decoration.Option = .{ .link_underline = .never, .link_style = .curly };
     try testing.expectEqual(null, Frame.decorationInstance(&off, linked, null, true, text, 255, 0, 0, 1));
 
     // A link run must not coalesce with a plain run of the same color.
@@ -91,15 +91,15 @@ test "decorationInstance: links force an underline and use the link color" {
 
 test "decorationInstance: hover-only underlines skip other links but keep SGR" {
     const linked: Cell = decorated(.{});
-    var option: Decoration.Option = .{ .link_hover_only = true };
+    var option: Decoration.Option = .{ .link_underline = .hover };
 
-    // The builder copies the option and clears `link_underline` for links
-    // other than the hovered one.
-    option.link_underline = true;
+    // The builder copies the option and sets `never` for links other than
+    // the hovered one.
+    option.link_underline = .always;
     const hovered = Frame.decorationInstance(&option, linked, null, true, text, 255, 0, 0, 1).?;
     try testing.expectEqual(.single, hovered.flags.underline);
 
-    option.link_underline = false;
+    option.link_underline = .never;
     try testing.expectEqual(null, Frame.decorationInstance(&option, linked, null, true, text, 255, 0, 0, 1));
 
     // An explicit SGR underline is still drawn on a non-hovered link.

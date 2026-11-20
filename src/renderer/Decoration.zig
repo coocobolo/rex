@@ -7,6 +7,7 @@ const Buffer = @import("buffer.zig").DecorationBuffer;
 const gl = @import("gl.zig");
 const Dimension = @import("dimension.zig").Dimension;
 const Flags = @import("Frame.zig").Flags;
+const hyperlink = @import("../config/hyperlink.zig");
 const InkMask = @import("InkMask.zig");
 const UnderlineStyle = @import("../term/root.zig").cell.UnderlineStyle;
 const Rasterizer = @import("../freetype/root.zig").Rasterizer;
@@ -207,12 +208,9 @@ pub const Option = struct {
     /// Lines of SGR 5 and 6 (blink) text blink with the text.
     blink: bool = true,
 
-    /// Give OSC 8 links an underline even without SGR 4 (ADR 0012).
-    link_underline: bool = true,
-
-    /// Underline only the link under the pointer (ADR 0013). An explicit
-    /// SGR underline is still drawn on every cell.
-    link_hover_only: bool = false,
+    /// Underline Rex adds to OSC 8 links without SGR 4 (ADR 0012, 0013).
+    /// An explicit SGR underline is always drawn, whatever this is.
+    link_underline: hyperlink.UnderlineVisibility = .always,
 
     /// Style of the underline Rex adds to linked text. An explicit SGR
     /// underline keeps its own style (ADR 0013).
