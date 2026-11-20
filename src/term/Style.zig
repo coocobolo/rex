@@ -53,6 +53,18 @@ pub fn isDefault(self: Style) bool {
     return self.eql(default);
 }
 
+/// The OSC 8 link ID of this style, or 0 for no link.
+pub fn linkId(self: Style) UrlTable.Id {
+    return self.link;
+}
+
+/// Returns this style with `id` as its OSC 8 link.
+pub fn withLink(self: Style, id: UrlTable.Id) Style {
+    var out = self;
+    out.link = id;
+    return out;
+}
+
 /// Encodes a `Color` into its 32-bit packed `Key` representation.
 pub fn encode(color: Color) Key {
     return switch (color) {
