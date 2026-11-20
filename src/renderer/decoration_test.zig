@@ -93,7 +93,7 @@ test "Metrics.resolve: the curly wave never leaves the cell" {
 test "SkipInk.styleBits: one bit per UnderlineStyle value, none when off" {
     try testing.expectEqual(0b111110, (Decoration.SkipInk{}).styleBits());
     try testing.expectEqual(0, (Decoration.SkipInk{ .enabled = false }).styleBits());
-    var only_curly: @import("../config/decoration.zig").StyleSet = .empty;
+    var only_curly: @import("../config/decoration.zig").SkipInkStyleSet = .empty;
     only_curly.insert(.curly);
     const option: Decoration.SkipInk = .{ .styles = only_curly };
     try testing.expectEqual(0b1000, option.styleBits());

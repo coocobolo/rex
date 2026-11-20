@@ -100,7 +100,7 @@ pub fn destroy(self: *KitOverlay, gpa: Allocator) void {
 /// one `buildFrame` call; the other styles copy it into a fixed buffer.
 pub const LinkHint = struct {
     uri: []const u8,
-    style: hyperlink.TooltipUriStyle,
+    style: hyperlink.TargetStyle,
     /// Logical pixels, relative to the window.
     x: f32,
     y: f32,
@@ -530,7 +530,7 @@ fn tailStart(bytes: []const u8, n: usize) usize {
 /// Lays the URI out for the tooltip. `multiline` wraps at codepoint
 /// boundaries into short lines; `head_tail` keeps both ends of a long URI;
 /// `wide` uses the URI itself and the text node truncates it.
-fn linkHintText(self: *KitOverlay, uri: []const u8, style: hyperlink.TooltipUriStyle) []const u8 {
+fn linkHintText(self: *KitOverlay, uri: []const u8, style: hyperlink.TargetStyle) []const u8 {
     const buf = &self.link_hint_text;
     if (style == .head_tail) {
         const head_chars = 40;

@@ -122,14 +122,14 @@ pub const SkipInk = struct {
     threshold: f32 = 0.25,
 
     /// Underline styles that skip ink, owned by the config section.
-    styles: decoration_config.StyleSet = decoration_config.default_styles,
+    styles: decoration_config.SkipInkStyleSet = decoration_config.default_skip_ink_styles,
 
     /// Bit `n` set when UnderlineStyle value `n` skips ink, as the
     /// shader reads it. 0 when skipping is off.
     pub fn styleBits(self: SkipInk) u32 {
         if (!self.enabled) return 0;
         var bits: u32 = 0;
-        inline for (std.enums.values(decoration_config.Style)) |style| {
+        inline for (std.enums.values(decoration_config.SkipInkStyle)) |style| {
             if (self.styles.contains(style)) bits |= @as(u32, 1) << @intFromEnum(style);
         }
         return bits;

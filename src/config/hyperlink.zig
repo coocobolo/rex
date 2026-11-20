@@ -21,7 +21,7 @@ pub const UnderlineVisibility = enum {
 };
 
 /// How a long target URI is shown in the hover tooltip (ADR 0013).
-pub const TooltipUriStyle = enum {
+pub const TargetStyle = enum {
     /// Wrap into short lines, keeping the card narrow.
     multiline,
     /// One line: first 40 and last 24 UTF-8 bytes with an ellipsis between.
@@ -33,7 +33,7 @@ pub const TooltipUriStyle = enum {
 /// Underline style used for linked text with no explicit SGR underline.
 /// Values match `term.cell.UnderlineStyle` so the renderer can convert
 /// without a translation switch; `none` is expressed by `underline = never`.
-pub const LinkStyle = enum(u3) {
+pub const UnderlineStyle = enum(u3) {
     single = 1,
     double = 2,
     curly = 3,
@@ -68,11 +68,11 @@ pub const Hyperlink = struct {
     underline: UnderlineVisibility = .always,
     /// Style of the underline Rex adds to linked text. An explicit SGR
     /// underline keeps its own style.
-    underline_style: LinkStyle = .single,
+    underline_style: UnderlineStyle = .single,
     /// When to show the target URI in a tooltip while hovering a link.
     show_targets: ShowTarget = .ctrl,
     /// How a long target URI is laid out in that tooltip.
-    target_style: TooltipUriStyle = .multiline,
+    target_style: TargetStyle = .multiline,
     /// Underline color for OSC 8 links; null uses the decoration or text color.
     underline_color: ?Rgb = null,
     /// Command that opens a URI. Empty uses the platform default

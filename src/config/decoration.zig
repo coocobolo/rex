@@ -11,7 +11,7 @@ pub const Order = enum {
 
 /// Underline styles that take part in ink skipping. The values match
 /// `term.cell.UnderlineStyle` so the renderer can pack them without a switch.
-pub const Style = enum(u3) {
+pub const SkipInkStyle = enum(u3) {
     single = 1,
     double = 2,
     curly = 3,
@@ -19,11 +19,11 @@ pub const Style = enum(u3) {
     dashed = 5,
 };
 
-pub const StyleSet = std.EnumSet(Style);
+pub const SkipInkStyleSet = std.EnumSet(SkipInkStyle);
 
 /// All underline styles skip ink by default, matching the current renderer.
-pub const default_styles: StyleSet = blk: {
-    var set: StyleSet = .empty;
+pub const default_skip_ink_styles: SkipInkStyleSet = blk: {
+    var set: SkipInkStyleSet = .empty;
     set.insert(.single);
     set.insert(.double);
     set.insert(.curly);
@@ -36,7 +36,7 @@ pub const Decoration = struct {
     /// Break decoration lines where a descender crosses them.
     skip_ink: bool = true,
     /// Underline styles that skip ink.
-    skip_ink_styles: StyleSet = default_styles,
+    skip_ink_styles: SkipInkStyleSet = default_skip_ink_styles,
     /// Glyph coverage from which a pixel counts as ink, 0.0 to 1.0.
     skip_ink_threshold: f32 = 0.25,
     /// Extra clearance around ink; none uses the line thickness.
