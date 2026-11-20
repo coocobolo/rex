@@ -1261,3 +1261,184 @@ test "settings: Reminders page maps all [wellbeing.ascii] keys" {
     cfg.window.wellbeing_ascii.scene = .file;
     try testing.expect(settings.rowVisible(file_idx, &cfg));
 }
+
+test "settings: text input pointer click, drag selection, Shift+Click, and multi-click" {
+    const gpa = testing.allocator;
+    const Helper = struct {
+        var tree: kit.Tree = undefined;
+
+        fn getRect(t: *const kit.Tree, id: Id) ?kit.Tree.Rect {
+            const node = t.find(id) orelse return null;
+            return node.rect;
+        }
+
+        fn getOrigin(t: *const kit.Tree, id: Id) ?f32 {
+            return kit.input.textOriginX(t, id);
+        }
+    };
+
+    const cfg = config_defaults.default;
+    var state = try settings.init(.{
+        .gpa = gpa,
+        .io = testing.io,
+        .config = &cfg,
+        .state_dir = "",
+        .wake_loop = struct {
+            fn wake() void {}
+        }.wake,
+        .node_rect = .init(kit.Tree, &Helper.tree, Helper.getRect),
+        .input_origin = .init(kit.Tree, &Helper.tree, Helper.getOrigin),
+        .text_measurer = measurer,
+    });
+    defer settings.deinit(&state);
+
+    state.frame.current = @intFromEnum(settings.Page.window_shell);
+    _ = settings.update(&state, .{ .size = .{ .width = 900, .height = 1200 } });
+
+    const title_idx = keyIndex(.window, "title");
+    const title_id = Id.of("settings.input").item(title_idx);
+    try state.inputs[title_idx].setText(gpa, "hello world");
+
+    var nodes: [settings.node_max]kit.Tree.Node = undefined;
+    var lines: [settings.line_max]kit.text.Line = undefined;
+    const layoutTree = struct {
+        fn run(st: *const settings.State, n: *[settings.node_max]kit.Tree.Node, l: *[settings.line_max]kit.text.Line) !void {
+            Helper.tree = .init(n, l);
+            try settings.view(st, &Helper.tree, &kit.Theme.dark);
+            try Helper.tree.layout(measurer, 900, 1200);
+        }
+    }.run;
+
+    try layoutTree(&state, &nodes, &lines);
+    const origin = kit.input.textOriginX(&Helper.tree, title_id).?;
+    const rect = Helper.tree.find(title_id).?.rect;
+    const mid_y = rect.y + rect.h * 0.5;
+    // `measurer` in settings_test is 8 px per byte.
+    const x_at = struct {
+        fn px(o: f32, col: usize) f32 {
+            return o + @as(f32, @floatFromInt(col)) * 8.0;
+        }
+    }.px;
+
+    // Click at byte 2 ('l'): focuses immediately on press and places caret.
+    _ = settings.update(&state, .{ .pointer = .{ .id = title_id, .x = x_at(origin, 2), .y = mid_y } });
+    try testing.expect(settings.update(&state, .{ .press = title_id }));
+    try testing.expectEqual(@as(usize, 2), state.inputs[title_idx].cursor);
+    try testing.expect(!state.inputs[title_idx].hasSelection());
+
+    // Drag to byte 5: selects "llo".
+    try testing.expect(settings.update(&state, .{ .pointer = .{ .id = title_id, .x = x_at(origin, 5), .y = mid_y } }));
+    try testing.expectEqualStrings("llo", state.inputs[title_idx].selectedText());
+    _ = settings.update(&state, .release);
+
+    // Shift+Click at byte 8 (different x so not a multi-click): extends selection from anchor 2 to 8 ("llo wo").
+    try layoutTree(&state, &nodes, &lines);
+    const origin2 = kit.input.textOriginX(&Helper.tree, title_id).?;
+    _ = settings.update(&state, .{ .pointer = .{
+        .id = title_id,
+        .x = x_at(origin2, 8),
+        .y = mid_y,
+        .mods = .{ .shift = true },
+    } });
+    try testing.expect(settings.update(&state, .{ .press = title_id }));
+    _ = settings.update(&state, .release);
+    try testing.expectEqualStrings("llo wo", state.inputs[title_idx].selectedText());
+
+    // Double-click inside "world" (byte 8) selects "world"; triple-click selects all.
+    try layoutTree(&state, &nodes, &lines);
+    const origin3 = kit.input.textOriginX(&Helper.tree, title_id).?;
+    const x_world = x_at(origin3, 8);
+    // Click 1 places caret at byte 8 (Shift+Click above does not seed a double-click).
+    _ = settings.update(&state, .{ .pointer = .{ .id = title_id, .x = x_world, .y = mid_y } });
+    _ = settings.update(&state, .{ .press = title_id });
+    _ = settings.update(&state, .release);
+    try testing.expect(!state.inputs[title_idx].hasSelection());
+    try testing.expectEqual(@as(usize, 8), state.inputs[title_idx].cursor);
+
+    // Click 2 (double-click) selects "world".
+    _ = settings.update(&state, .{ .pointer = .{ .id = title_id, .x = x_world, .y = mid_y } });
+    _ = settings.update(&state, .{ .press = title_id });
+    _ = settings.update(&state, .release);
+    try testing.expectEqualStrings("world", state.inputs[title_idx].selectedText());
+
+    // Click 3 (triple-click) selects all.
+    _ = settings.update(&state, .{ .pointer = .{ .id = title_id, .x = x_world, .y = mid_y } });
+    _ = settings.update(&state, .{ .press = title_id });
+    _ = settings.update(&state, .release);
+    try testing.expectEqualStrings("hello world", state.inputs[title_idx].selectedText());
+}
+
+test "settings: text input Ctrl+word, Ctrl+line, and Insert clipboard shortcuts" {
+    const gpa = testing.allocator;
+    const MockClip = struct {
+        buf: [64]u8 = undefined,
+        len: usize = 0,
+
+        fn get(ctx: *anyopaque) ?[:0]const u8 {
+            const self: *@This() = @ptrCast(@alignCast(ctx));
+            if (self.len == 0) return null;
+            return self.buf[0..self.len :0];
+        }
+
+        fn set(ctx: *anyopaque, value: [:0]const u8) void {
+            const self: *@This() = @ptrCast(@alignCast(ctx));
+            const n = @min(value.len, self.buf.len - 1);
+            @memcpy(self.buf[0..n], value[0..n]);
+            self.buf[n] = 0;
+            self.len = n;
+        }
+    };
+    var clip: MockClip = .{};
+
+    const cfg = config_defaults.default;
+    var state = try settings.init(.{
+        .gpa = gpa,
+        .io = testing.io,
+        .config = &cfg,
+        .state_dir = "",
+        .wake_loop = struct {
+            fn wake() void {}
+        }.wake,
+        .clipboard = .{
+            .ctx = &clip,
+            .getFn = MockClip.get,
+            .setFn = MockClip.set,
+        },
+    });
+    defer settings.deinit(&state);
+
+    const title_idx = keyIndex(.window, "title");
+    try state.inputs[title_idx].setText(gpa, "alpha beta gamma");
+    state.focused = .{ .key_input = title_idx };
+
+    // Ctrl+Shift+Left selects "gamma", Ctrl+Insert copies it.
+    try testing.expect(settings.update(&state, .{ .key = .{ .key = .left, .mods = .{ .ctrl = true, .shift = true } } }));
+    try testing.expectEqualStrings("gamma", state.inputs[title_idx].selectedText());
+    _ = settings.update(&state, .{ .key = .{ .key = .insert, .mods = .{ .ctrl = true } } });
+    try testing.expectEqualStrings("gamma", clip.buf[0..clip.len]);
+
+    // Ctrl+Home then Ctrl+Right jumps after "alpha"; Shift+Insert pastes "gamma".
+    try testing.expect(settings.update(&state, .{ .key = .{ .key = .home, .mods = .{ .ctrl = true } } }));
+    try testing.expect(settings.update(&state, .{ .key = .{ .key = .right, .mods = .{ .ctrl = true } } }));
+    try testing.expect(settings.update(&state, .{ .key = .{ .key = .insert, .mods = .{ .shift = true } } }));
+    try testing.expectEqualStrings("alphagamma beta gamma", state.inputs[title_idx].text());
+
+    // Ctrl+Backspace deletes "alphagamma"; Ctrl+Delete deletes " beta".
+    try testing.expect(settings.update(&state, .{ .key = .{ .key = .backspace, .mods = .{ .ctrl = true } } }));
+    try testing.expectEqualStrings(" beta gamma", state.inputs[title_idx].text());
+    try testing.expect(settings.update(&state, .{ .key = .{ .key = .delete, .mods = .{ .ctrl = true } } }));
+    try testing.expectEqualStrings(" gamma", state.inputs[title_idx].text());
+
+    // Ctrl+End, Ctrl+W deletes "gamma"; Ctrl+U clears leading space.
+    try testing.expect(settings.update(&state, .{ .key = .{ .key = .end, .mods = .{ .ctrl = true } } }));
+    try testing.expect(settings.update(&state, .{ .key = .{ .key = .w, .mods = .{ .ctrl = true } } }));
+    try testing.expectEqualStrings(" ", state.inputs[title_idx].text());
+    try testing.expect(settings.update(&state, .{ .key = .{ .key = .u, .mods = .{ .ctrl = true } } }));
+    try testing.expectEqualStrings("", state.inputs[title_idx].text());
+
+    // Ctrl+K deletes from cursor to end of line.
+    try state.inputs[title_idx].setText(gpa, "keep drop");
+    _ = state.inputs[title_idx].setCursor(4, false);
+    try testing.expect(settings.update(&state, .{ .key = .{ .key = .k, .mods = .{ .ctrl = true } } }));
+    try testing.expectEqualStrings("keep", state.inputs[title_idx].text());
+}

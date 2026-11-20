@@ -65,7 +65,7 @@ pub const Event = union(enum) {
     size: struct { width: f32, height: f32 },
     /// The pointer moved onto the node with this id; `.none` for no node or
     /// off the window. `x` and `y` are in logical pixels (`-1` when off).
-    pointer: struct { id: Id, x: f32 = 0, y: f32 = 0 },
+    pointer: struct { id: Id, x: f32 = 0, y: f32 = 0, mods: input_key.Modifiers = .none },
     /// The left button went down on the node with this id.
     press: Id,
     /// The left button was let go, wherever the pointer is.
@@ -135,6 +135,32 @@ pub const NodeRect = struct {
     }
 };
 
+/// Screen-space `x` origin lookup for laid-out `kit.input` fields so tools can
+/// map pointer clicks to text offsets without referencing the host's `Tree`.
+pub const InputOrigin = struct {
+    ctx: ?*const anyopaque = null,
+    getFn: ?*const fn (ctx: *const anyopaque, id: Id) ?f32 = null,
+
+    pub fn init(
+        comptime T: type,
+        ctx: *const T,
+        comptime f: fn (*const T, Id) ?f32,
+    ) InputOrigin {
+        const Wrap = struct {
+            fn call(p: *const anyopaque, id: Id) ?f32 {
+                return f(@ptrCast(@alignCast(p)), id);
+            }
+        };
+        return .{ .ctx = ctx, .getFn = Wrap.call };
+    }
+
+    pub fn get(self: InputOrigin, id: Id) ?f32 {
+        const ctx = self.ctx orelse return null;
+        const f = self.getFn orelse return null;
+        return f(ctx, id);
+    }
+};
+
 pub const ToolLauncher = struct {
     ctx: ?*anyopaque = null,
     openFn: ?*const fn (ctx: *anyopaque, subcommand: []const u8) void = null,
@@ -163,6 +189,10 @@ pub const Context = struct {
     clipboard: Clipboard = .{},
     /// Laid-out rectangle lookup for the most recently rendered frame.
     node_rect: NodeRect = .{},
+    /// Laid-out byte-0 `x` origin lookup for `kit.input` fields.
+    input_origin: InputOrigin = .{},
+    /// UI font measurer for pointer-to-caret mapping (`null` in headless tests).
+    text_measurer: ?kit.text.Measurer = null,
     /// Spawns a detached sibling tool window (`rex <subcommand>`).
     tool_launcher: ToolLauncher = .{},
 };
@@ -326,6 +356,8 @@ fn Host(comptime Tool: type) type {
                     .setFn = clipboardSet,
                 },
                 .node_rect = .init(Self, self, nodeRect),
+                .input_origin = .init(Self, self, inputOriginX),
+                .text_measurer = self.font.measurer(),
                 .tool_launcher = .{
                     .ctx = self,
                     .openFn = openTool,
@@ -502,6 +534,10 @@ fn Host(comptime Tool: type) type {
             return n.rect;
         }
 
+        fn inputOriginX(self: *const Self, id: Id) ?f32 {
+            return kit.input.textOriginX(&self.tree, id);
+        }
+
         fn openTool(ctx: *anyopaque, subcommand: []const u8) void {
             const self: *Self = @ptrCast(@alignCast(ctx));
             var exe_buf: [std.fs.max_path_bytes]u8 = undefined;
@@ -565,7 +601,7 @@ fn Host(comptime Tool: type) type {
                                 }
                             }
                             self.drag_id = self.over;
-                            self.send(.{ .pointer = .{ .id = self.over, .x = self.pointer_x, .y = self.pointer_y } });
+                            self.send(.{ .pointer = .{ .id = self.over, .x = self.pointer_x, .y = self.pointer_y, .mods = e.mods } });
                             self.send(.{ .press = self.over });
                         },
                         .release => {

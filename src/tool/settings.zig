@@ -8,6 +8,7 @@ const Allocator = std.mem.Allocator;
 
 const kit = @import("../kit/root.zig");
 const host = @import("host.zig");
+const Modifiers = @import("../input/key.zig").Modifiers;
 const FileWatch = @import("FileWatch.zig");
 const Config = @import("../config/Config.zig");
 const overlay = @import("../config/overlay.zig");
@@ -684,6 +685,22 @@ const StepperHold = union(enum) {
     },
 };
 
+const multi_click_ms: i64 = 400;
+const multi_click_dist: f32 = 6.0;
+
+const InputDrag = union(enum) {
+    idle,
+    chars: u16,
+    words: struct { key: u16, base_start: usize, base_end: usize },
+};
+
+const InputClick = struct {
+    key: u16 = 0,
+    count: u8 = 0,
+    last_ms: i64 = 0,
+    last_x: f32 = 0,
+};
+
 pub const State = struct {
     gpa: Allocator,
     io: std.Io,
@@ -691,6 +708,8 @@ pub const State = struct {
     home_dir: []const u8,
     clipboard: host.Clipboard,
     node_rect: host.NodeRect = .{},
+    input_origin: host.InputOrigin = .{},
+    text_measurer: ?kit.text.Measurer = null,
     initial_config: *const Config,
     loaded: ?Loaded = null,
     frame: sidebar.State = .{},
@@ -699,10 +718,13 @@ pub const State = struct {
     viewport_height: f32 = 600,
     pointer_x: f32 = 0,
     pointer_y: f32 = 0,
+    pointer_mods: Modifiers = .none,
     hover: Target = .none,
     pressed: Target = .none,
     focused: Target = .none,
     dragging_slider: ?u16 = null,
+    input_drag: InputDrag = .idle,
+    input_click: InputClick = .{},
     open_select: ?struct { key: u16, highlight: usize, scroll_y: f32 = 0 } = null,
     inputs: [keys.table.len]input.State = [_]input.State{.{}} ** keys.table.len,
     color_placeholders: [color_slot_count][7]u8 = [_][7]u8{.{ '#', '0', '0', '0', '0', '0', '0' }} ** color_slot_count,
@@ -746,6 +768,8 @@ pub fn init(context: host.Context) !State {
         .home_dir = context.home_dir,
         .clipboard = context.clipboard,
         .node_rect = context.node_rect,
+        .input_origin = context.input_origin,
+        .text_measurer = context.text_measurer,
         .initial_config = context.config,
     };
     errdefer deinit(&state);
@@ -1262,8 +1286,12 @@ pub fn update(state: *State, event: host.Event) bool {
         .pointer => |pointer| {
             state.pointer_x = pointer.x;
             state.pointer_y = pointer.y;
+            state.pointer_mods = pointer.mods;
             if (state.dragging_slider) |idx| {
                 return updateSliderFromPointer(state, idx, pointer.x);
+            }
+            if (state.input_drag != .idle) {
+                return updateInputDrag(state, pointer.x);
             }
             if (state.preview_dialog.phase != .closed) {
                 const over_btn: u8 = switch (kit.alert_dialog.hit(pointer.id) orelse .scrim) {
@@ -1314,6 +1342,7 @@ pub fn update(state: *State, event: host.Event) bool {
         },
         .press => |id| {
             state.stepper_hold = .idle;
+            state.input_drag = .idle;
             if (state.preview_dialog.phase != .closed) {
                 switch (kit.alert_dialog.hit(id) orelse .scrim) {
                     .action => |btn_idx| {
@@ -1379,6 +1408,46 @@ pub fn update(state: *State, event: host.Event) bool {
                 _ = updateSliderFromPointer(state, idx, state.pointer_x);
                 return true;
             }
+            if (target == .key_input) {
+                const idx = target.key_input;
+                const was_focused = state.focused == .key_input and state.focused.key_input == idx;
+                if (!was_focused) {
+                    blurFocused(state);
+                    state.focused = target;
+                }
+                state.pressed = target;
+                const now_ms = previewNowMs(state);
+                const same_spot = !state.pointer_mods.shift and
+                    state.input_click.count > 0 and
+                    state.input_click.key == idx and
+                    now_ms - state.input_click.last_ms <= multi_click_ms and
+                    @abs(state.pointer_x - state.input_click.last_x) <= multi_click_dist;
+                const clicks: u8 = if (same_spot) (if (state.input_click.count >= 3) 1 else state.input_click.count + 1) else 1;
+                state.input_click = if (state.pointer_mods.shift) .{} else .{
+                    .key = idx,
+                    .count = clicks,
+                    .last_ms = now_ms,
+                    .last_x = state.pointer_x,
+                };
+                if (inputOffsetAtX(state, idx, state.pointer_x)) |offset| {
+                    if (clicks == 3) {
+                        _ = state.inputs[idx].apply(.select_all);
+                        state.input_drag = .idle;
+                    } else if (clicks == 2) {
+                        _ = state.inputs[idx].selectWordAt(offset);
+                        const range = state.inputs[idx].selectionRange();
+                        state.input_drag = .{ .words = .{
+                            .key = idx,
+                            .base_start = range.start,
+                            .base_end = range.end,
+                        } };
+                    } else {
+                        _ = state.inputs[idx].setCursor(offset, was_focused and state.pointer_mods.shift);
+                        state.input_drag = .{ .chars = idx };
+                    }
+                }
+                return true;
+            }
             if (target != .none) {
                 state.pressed = target;
                 switch (target) {
@@ -1425,6 +1494,11 @@ pub fn update(state: *State, event: host.Event) bool {
                 state.dragging_slider = null;
                 commitSlider(state, idx);
                 return true;
+            }
+            if (state.input_drag != .idle) {
+                state.input_drag = .idle;
+                state.pressed = .none;
+                return false;
             }
             const sb = state.frame.update(page_count, .release);
             state.pressed = .none;
@@ -1544,30 +1618,48 @@ fn handleKey(state: *State, press: host.KeyPress) bool {
         const idx = state.focused.key_input;
         const inp = &state.inputs[idx];
         if (press.mods.ctrl) {
-            switch (press.key) {
-                .a => return inp.apply(.select_all),
-                .c => {
+            return switch (press.key) {
+                .a => inp.apply(.select_all),
+                .c, .insert => blk: {
                     copySelection(state, inp);
-                    return false;
+                    break :blk false;
                 },
-                .x => {
+                .x => blk: {
                     copySelection(state, inp);
                     const changed = inp.deleteSelection();
                     if (changed) state.dirty[idx] = true;
-                    return changed;
+                    break :blk changed;
                 },
-                .v => {
-                    if (state.clipboard.get()) |clip| {
-                        const changed = inp.insertSlice(state.gpa, clip) catch false;
-                        if (changed) state.dirty[idx] = true;
-                        return changed;
-                    }
-                    return false;
+                .v => pasteIntoInput(state, idx),
+                .left => inp.apply(if (press.mods.shift) .select_word_left else .word_left),
+                .right => inp.apply(if (press.mods.shift) .select_word_right else .word_right),
+                .home => inp.apply(if (press.mods.shift) .select_home else .home),
+                .end => inp.apply(if (press.mods.shift) .select_end else .end),
+                .backspace, .w => blk: {
+                    const changed = inp.apply(.delete_word_backward);
+                    if (changed) state.dirty[idx] = true;
+                    break :blk changed;
                 },
-                else => {},
-            }
+                .delete => blk: {
+                    const changed = inp.apply(.delete_word_forward);
+                    if (changed) state.dirty[idx] = true;
+                    break :blk changed;
+                },
+                .u => blk: {
+                    const changed = inp.apply(.delete_to_start);
+                    if (changed) state.dirty[idx] = true;
+                    break :blk changed;
+                },
+                .k => blk: {
+                    const changed = inp.apply(.delete_to_end);
+                    if (changed) state.dirty[idx] = true;
+                    break :blk changed;
+                },
+                else => false,
+            };
         }
         switch (press.key) {
+            .insert => return if (press.mods.shift) pasteIntoInput(state, idx) else false,
             .backspace => {
                 const changed = inp.apply(.backspace);
                 if (changed) state.dirty[idx] = true;
@@ -1914,7 +2006,36 @@ fn copySelection(state: *State, inp: *const input.State) void {
     state.clipboard.set(z);
 }
 
+fn pasteIntoInput(state: *State, idx: u16) bool {
+    const clip = state.clipboard.get() orelse return false;
+    const changed = state.inputs[idx].insertSlice(state.gpa, clip) catch false;
+    if (changed) state.dirty[idx] = true;
+    return changed;
+}
+
+fn inputOffsetAtX(state: *const State, idx: u16, x: f32) ?usize {
+    const measurer = state.text_measurer orelse return null;
+    const origin_x = state.input_origin.get(inputId(idx)) orelse return null;
+    return state.inputs[idx].offsetAtX(measurer, x - origin_x);
+}
+
+fn updateInputDrag(state: *State, x: f32) bool {
+    return switch (state.input_drag) {
+        .idle => false,
+        .chars => |idx| blk: {
+            const offset = inputOffsetAtX(state, idx, x) orelse break :blk false;
+            break :blk state.inputs[idx].setCursor(offset, true);
+        },
+        .words => |w| blk: {
+            const offset = inputOffsetAtX(state, w.key, x) orelse break :blk false;
+            break :blk state.inputs[w.key].extendWordSelection(w.base_start, w.base_end, offset);
+        },
+    };
+}
+
 fn blurFocused(state: *State) void {
+    state.input_drag = .idle;
+    state.input_click = .{};
     if (state.focused == .key_input) {
         const idx = state.focused.key_input;
         if (!keys.isList(idx) and state.dirty[idx]) commitInput(state, idx);
