@@ -4891,3 +4891,8 @@ test "csi: extra or unexpected intermediates are ignored on remapped sequences" 
     t.feed("\x1b[?$6n\x1b[?!$p");
     try testing.expect(t.response.isEmpty());
 }
+
+test "Frame: URL snapshot size and alignment" {
+    try testing.expectEqual(@as(usize, 36496), @sizeOf(Frame));
+    try testing.expectEqual(@as(usize, 8), @alignOf(Frame));
+}
