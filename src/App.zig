@@ -186,6 +186,9 @@ mouse_last_click_ms: f64 = 0,
 mouse_last_click_pos: rex.Selection.Position = .empty,
 mouse_click_count: u2 = 0,
 pointer_visibility: PointerVisibility = .{ .visible = .{} },
+/// Modifier state from key events, used for the link tooltip. The platform
+/// key query is not reliable on every backend; an event's own modifiers are.
+mods_down: rex.input.Modifiers = .{},
 /// Last resolved hover state, so a change in link or modifier repaints the
 /// tooltip without waiting for another event.
 link_hint_id: u16 = 0,
@@ -1130,14 +1133,10 @@ fn linkHintEnabled(self: *App) bool {
     return switch (self.config.hyperlink.show_hyperlink_targets) {
         .never => false,
         .always => true,
-        .ctrl => self.platform.isKeyDown(self.window, .left_control) or
-            self.platform.isKeyDown(self.window, .right_control),
-        .cmd => self.platform.isKeyDown(self.window, .left_super) or
-            self.platform.isKeyDown(self.window, .right_super),
-        .alt => self.platform.isKeyDown(self.window, .left_alt) or
-            self.platform.isKeyDown(self.window, .right_alt),
-        .shift => self.platform.isKeyDown(self.window, .left_shift) or
-            self.platform.isKeyDown(self.window, .right_shift),
+        .ctrl => self.mods_down.ctrl,
+        .cmd => self.mods_down.super,
+        .alt => self.mods_down.alt,
+        .shift => self.mods_down.shift,
     };
 }
 
@@ -2958,12 +2957,34 @@ fn onText(self: *App, codepoint: u21) void {
     }
 }
 
-fn onKey(self: *App, event: PlatformEvents.KeyEvent) void {
-    if (event.action == .release) {
-        // A modifier release can hide the link-target tooltip.
-        if (event.key.isModifier()) self.needs_redraw = true;
-        return;
+/// A modifier's own key event carries the state before that event, so Ctrl
+/// press reports ctrl = false. Fold the transition in to keep `mods_down`
+/// aligned with what is actually held.
+fn modsAfterEvent(event: PlatformEvents.KeyEvent) rex.input.Modifiers {
+    var mods = event.mods;
+    if (!event.key.isModifier()) return mods;
+    const down = event.action != .release;
+    switch (event.key) {
+        .left_shift, .right_shift => mods.shift = down,
+        .left_control, .right_control => mods.ctrl = down,
+        .left_alt, .right_alt => mods.alt = down,
+        .left_super, .right_super => mods.super = down,
+        else => {},
     }
+    return mods;
+}
+
+fn onKey(self: *App, event: PlatformEvents.KeyEvent) void {
+    // Every key event carries the modifiers held at that moment, including
+    // modifier releases. Keep our own copy for the link tooltip and repaint
+    // when it changes.
+    const mods = modsAfterEvent(event);
+    const mods_bits: u8 = @bitCast(mods);
+    if (mods_bits != @as(u8, @bitCast(self.mods_down))) {
+        self.mods_down = mods;
+        self.needs_redraw = true;
+    }
+    if (event.action == .release) return;
     const pressed_at = if (latency_trace.enabled) latency_trace.now(self.io) else {};
     self.wellbeing_state.recordActivity();
 
@@ -2985,9 +3006,6 @@ fn onKey(self: *App, event: PlatformEvents.KeyEvent) void {
         if (maybe_key != null) self.hidePointerOnTyping();
         // Its bytes may come from here or from the char callback.
         if (latency_trace.enabled) self.latency.?.keyPressed(pressed_at);
-    } else {
-        // A bare modifier press can show the link-target tooltip.
-        self.needs_redraw = true;
     }
 
     // Terminal key encoding
@@ -3892,6 +3910,7 @@ fn onCursorPos(self: *App, x: f64, y: f64) void {
 fn onFocus(self: *App, focused: bool) void {
     if (self.window_focused != focused) {
         self.window_focused = focused;
+        if (!focused) self.mods_down = .{};
         self.syncWindowEffects();
         self.renderer_dirty = true;
         self.needs_redraw = true;
