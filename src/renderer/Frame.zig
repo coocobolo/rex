@@ -88,7 +88,7 @@ pub fn decorationInstance(
     const flags = cell.flags;
     if (flags.invisible) return null;
     // Linked text is always underlined, even without SGR 4 (ADR 0012).
-    const underline: UnderlineStyle = if (link and option.link_underline and flags.underline == .none) .single else flags.underline;
+    const underline: UnderlineStyle = if (link and option.link_underline and flags.underline == .none) option.link_style else flags.underline;
     if (underline == .none and !flags.strikethrough and !flags.overline) return null;
 
     const alpha: u8 = if (option.dim) foreground_alpha else 255;

@@ -75,6 +75,14 @@ test "decorationInstance: links force an underline and use the link color" {
     const sgr = Frame.decorationInstance(&option, linked, .{ 9, 9, 9 }, true, text, 255, 0, 0, 1).?;
     try testing.expectEqual([4]u8{ 9, 9, 9, 255 }, sgr.underline);
 
+    // The configured style applies only to the underline Rex adds.
+    const styled: Decoration.Option = .{ .link_style = .curly };
+    try testing.expectEqual(.curly, Frame.decorationInstance(&styled, linked, null, true, text, 255, 0, 0, 1).?.flags.underline);
+    const sgr_linked = decorated(.{ .underline = .double });
+    try testing.expectEqual(.double, Frame.decorationInstance(&styled, sgr_linked, null, true, text, 255, 0, 0, 1).?.flags.underline);
+    const off: Decoration.Option = .{ .link_underline = false, .link_style = .curly };
+    try testing.expectEqual(null, Frame.decorationInstance(&off, linked, null, true, text, 255, 0, 0, 1));
+
     // A link run must not coalesce with a plain run of the same color.
     const underlined = decorated(.{ .underline = .single });
     const other = Frame.decorationInstance(&option, underlined, null, false, .{ 4, 5, 6 }, 255, 1, 0, 1).?;

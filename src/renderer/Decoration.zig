@@ -210,6 +210,10 @@ pub const Option = struct {
     /// Give OSC 8 links an underline even without SGR 4 (ADR 0012).
     link_underline: bool = true,
 
+    /// Style of the underline Rex adds to linked text. An explicit SGR
+    /// underline keeps its own style (ADR 0013).
+    link_style: UnderlineStyle = .single,
+
     order: Order = .over_text,
 };
 
