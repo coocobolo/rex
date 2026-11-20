@@ -51,6 +51,7 @@ pub const Section = enum {
     scrollbar,
     selection,
     clipboard,
+    hyperlink,
     shell,
     keybinds,
     env,
@@ -374,6 +375,12 @@ const tail_rows = [_]Key{
 
     .{ .section = .clipboard, .name = "osc52_write", .field = "clipboard.osc52_write" },
     .{ .section = .clipboard, .name = "osc52_read", .field = "clipboard.osc52_read" },
+
+    .{ .section = .hyperlink, .name = "enabled", .field = "hyperlink.enabled" },
+    .{ .section = .hyperlink, .name = "underline", .field = "hyperlink.underline" },
+    .{ .section = .hyperlink, .name = "link_color", .field = "hyperlink.link_color", .kind = .color, .null_keyword = .none },
+    .{ .section = .hyperlink, .name = "open_command", .field = "hyperlink.open_command", .kind = .text },
+    .{ .section = .hyperlink, .name = "schemes", .field = "hyperlink.schemes", .kind = .set },
     .{ .section = .shell, .name = "program", .field = "shell.program", .kind = .program_path, .null_keyword = .auto, .reload = .restart },
     .{ .section = .shell, .name = "argument", .field = "shell.arguments", .kind = .shell_argument, .reload = .restart },
     .{ .section = .shell, .name = "working_directory", .field = "shell.working_directory", .kind = .directory_path, .null_keyword = .inherit, .reload = .restart },

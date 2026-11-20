@@ -96,7 +96,7 @@ const page_descriptions = [_][]const u8{
 pub fn pageForSection(section: keys.Section) ?Page {
     return switch (section) {
         .root, .colors, .font, .cursor, .ui => .appearance,
-        .window, .bell, .scroll, .scrollbar, .selection, .clipboard, .shell => .window_shell,
+        .window, .bell, .scroll, .scrollbar, .selection, .clipboard, .hyperlink, .shell => .window_shell,
         .toast, .banner, .modal, .@"modal.blur", .alert_dialog => .overlays,
         .wellbeing, .@"wellbeing.screen_time", .@"wellbeing.privacy", .@"wellbeing.dashboard" => .wellbeing,
         .@"wellbeing.focus", .@"wellbeing.widget", .@"wellbeing.winddown" => .focus_winddown,
@@ -141,6 +141,7 @@ const section_titles = std.EnumArray(keys.Section, []const u8).init(.{
     .scrollbar = "Scrollbar",
     .selection = "Selection",
     .clipboard = "Clipboard",
+    .hyperlink = "Hyperlinks",
     .shell = "Shell",
     .keybinds = "Keybinds",
     .env = "Environment",
@@ -241,6 +242,11 @@ const key_meta_table = [_]KeyMetaEntry{
 
     .{ .section = .clipboard, .name = "osc52_write", .label = "Clipboard Write (OSC 52)", .description = "Allow programs inside the terminal to copy text to your clipboard." },
     .{ .section = .clipboard, .name = "osc52_read", .label = "Clipboard Read (OSC 52)", .description = "Allow programs inside the terminal to read text from your clipboard." },
+    .{ .section = .hyperlink, .name = "enabled", .label = "Enable Links", .description = "Let Ctrl+click open OSC 8 hyperlinks in the terminal." },
+    .{ .section = .hyperlink, .name = "underline", .label = "Underline Links", .description = "Underline linked text even without an SGR 4 underline." },
+    .{ .section = .hyperlink, .name = "link_color", .label = "Link Color", .description = "Underline color for links; none uses the underline or text color." },
+    .{ .section = .hyperlink, .name = "open_command", .label = "Open Command", .description = "Command that opens a URI; empty uses the system default." },
+    .{ .section = .hyperlink, .name = "schemes", .label = "Allowed Schemes", .description = "URI schemes a link may open; file is disabled by default." },
 
     .{ .section = .shell, .name = "program", .label = "Shell Program", .description = "Path to your preferred shell executable, or Automatic for your default shell." },
     .{ .section = .shell, .name = "argument", .label = "Shell Arguments", .description = "Arguments passed to the shell on startup." },
@@ -837,6 +843,8 @@ fn formatHexRgb(rgb: Rgb, buf: []u8) []const u8 {
 }
 
 fn resolvedColorSlot(comptime key_name: []const u8, theme: ThemePreset) Rgb {
+    // Link color is a config-only color: when unset it follows the text color.
+    if (comptime std.mem.eql(u8, key_name, "link_color")) return theme.foreground;
     if (comptime @hasField(ThemePreset, key_name)) {
         const value = @field(theme, key_name);
         if (@TypeOf(value) == Rgb) return value;
