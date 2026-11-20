@@ -427,6 +427,8 @@ const enum_names = [_]struct { []const u8, []const []const u8 }{
     .{ "clipboard.osc52_write", &.{ "allow", "deny", "ask" } },
     .{ "clipboard.osc52_read", &.{ "allow", "deny", "ask" } },
     .{ "hyperlink.schemes", &.{ "http", "https", "mailto", "file" } },
+    .{ "hyperlink.underline_style", &.{ "single", "double", "curly", "dotted", "dashed" } },
+    .{ "hyperlink.show_hyperlink_targets", &.{ "never", "ctrl", "cmd", "alt", "shift", "always" } },
     .{ "selection.border_style", &.{ "split", "unified", "underline", "left_bar" } },
     .{ "wellbeing.screen_time.on_limit", &.{ "grayscale", "lock_input", "animation" } },
     .{ "wellbeing.focus.timer", &.{ "countdown", "countup" } },
