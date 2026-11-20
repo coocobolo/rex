@@ -207,6 +207,9 @@ pub const Option = struct {
     /// Lines of SGR 5 and 6 (blink) text blink with the text.
     blink: bool = true,
 
+    /// Give OSC 8 links an underline even without SGR 4 (ADR 0012).
+    link_underline: bool = true,
+
     order: Order = .over_text,
 };
 

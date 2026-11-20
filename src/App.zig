@@ -384,6 +384,7 @@ pub fn resolvePointerShape(
     scrollbar_active: bool,
     mouse_reporting: bool,
     shift_held: bool,
+    link_hover: bool,
 ) Window.PointerShape {
     if (kit_pointer) |kp| return switch (kp) {
         .arrow => .arrow,
@@ -391,6 +392,9 @@ pub fn resolvePointerShape(
         .text => .text,
     };
     if (modal_active or scrollbar_active) return .arrow;
+    // A link under the pointer is clickable with Ctrl even during mouse
+    // reporting, so it keeps the hand over the terminal's text shape.
+    if (link_hover) return .hand;
     if (mouse_reporting and !shift_held) return .arrow;
     return .text;
 }
@@ -694,7 +698,10 @@ pub fn init(
 
     var frame_builder: FrameBuilderType = try .init(gpa, .{
         .dim_alpha = active_config.window.dim_alpha,
-        .decoration = .{},
+        .decoration = .{
+            .link_underline = active_config.hyperlink.underline,
+            .color = .{ .link = if (active_config.hyperlink.link_color) |c| .{ c.r, c.g, c.b } else null },
+        },
     });
     errdefer frame_builder.deinit(gpa);
 
@@ -1101,12 +1108,17 @@ fn updatePointerShape(self: *App, shift_held: bool) void {
         null;
     const scrollbar_active = self.scrollbar_dragging or self.renderer.scrollbar.hover;
     const mouse_reporting = self.driver.getModes().mouse_reporting;
+    const frame = self.driver.getFrame();
+    const col, const row = self.mouseCellPos(self.mouse_x, self.mouse_y);
+    const link = frame.styleOf(frame.cellAt(row, col)).link;
+    const link_hover = link != 0 and frame.hyperlink(link) != null;
     const shape = resolvePointerShape(
         kit_pointer,
         self.hasModalOverlay(),
         scrollbar_active,
         mouse_reporting,
         shift_held,
+        link_hover,
     );
     // The renderer and platform shapes share their order and values.
     self.window.setPointerShape(shape);
@@ -2123,6 +2135,8 @@ pub fn reloadConfig(self: *App) void {
     self.renderer_dirty = true;
 
     self.frame_builder.dim_alpha = renderer_mod.Frame.alphaByte(self.config.window.dim_alpha);
+    self.frame_builder.decoration.link_underline = self.config.hyperlink.underline;
+    self.frame_builder.decoration.color.link = if (self.config.hyperlink.link_color) |c| .{ c.r, c.g, c.b } else null;
 
     // A size change rebuilds the rasterizer with the new faces; a face
     // change at the same size needs its own rebuild.
@@ -3388,11 +3402,26 @@ fn handleSelectionRelease(self: *App) void {
     }
 }
 
-/// Opens an OSC 8 link. Stage 5 wires the configured command and the scheme
-/// allowlist; until then the resolved URI is only logged.
+/// Opens an OSC 8 link with the configured command. The URI comes from pty
+/// bytes, so its scheme is checked against the allowlist and it is passed as
+/// a single argv element, never through a shell (ADR 0012).
 fn activateHyperlink(self: *App, uri: []const u8) void {
-    _ = self;
-    log.debug("hyperlink: {s}", .{uri});
+    const option = self.config.hyperlink;
+    if (!option.enabled) return;
+    const colon = std.mem.indexOfScalar(u8, uri, ':') orelse return;
+    const Scheme = rex.config.hyperlink.Scheme;
+    const scheme = std.meta.stringToEnum(Scheme, uri[0..colon]) orelse return;
+    if (!option.schemes.contains(scheme)) return;
+
+    const command: []const u8 = if (option.open_command.len == 0)
+        (if (builtin.os.tag == .macos) "open" else "xdg-open")
+    else
+        option.open_command;
+    const child = spawnDetached(self.io, &.{ command, uri }, .inherit) catch |err| {
+        log.err("hyperlink: cannot open {s}: {}", .{ command, err });
+        return;
+    };
+    reapDetached(child, "hyperlink");
 }
 
 fn reportMouseButton(self: *App, col: u16, row: u16, button: PlatformEvents.MouseButton, mod_byte: u8, press: bool) void {

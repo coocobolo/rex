@@ -78,16 +78,20 @@ test "PointerVisibility: typing auto-hide, idle timeout, and modal/focus restore
     try testing.expect(vis.isVisible());
 }
 
-test "resolvePointerShape: kit overlays, modals, scrollbar, and mouse reporting" {
+test "resolvePointerShape: kit overlays, modals, scrollbar, links and mouse reporting" {
     const testing = std.testing;
-    try testing.expectEqual(Window.PointerShape.hand, resolvePointerShape(.hand, false, false, false, false));
-    try testing.expectEqual(Window.PointerShape.arrow, resolvePointerShape(.arrow, false, false, false, false));
-    try testing.expectEqual(Window.PointerShape.text, resolvePointerShape(.text, true, true, true, false));
-    try testing.expectEqual(Window.PointerShape.arrow, resolvePointerShape(null, true, false, false, false));
-    try testing.expectEqual(Window.PointerShape.arrow, resolvePointerShape(null, false, true, false, false));
-    try testing.expectEqual(Window.PointerShape.arrow, resolvePointerShape(null, false, false, true, false));
-    try testing.expectEqual(Window.PointerShape.text, resolvePointerShape(null, false, false, true, true));
-    try testing.expectEqual(Window.PointerShape.text, resolvePointerShape(null, false, false, false, false));
+    try testing.expectEqual(Window.PointerShape.hand, resolvePointerShape(.hand, false, false, false, false, false));
+    try testing.expectEqual(Window.PointerShape.arrow, resolvePointerShape(.arrow, false, false, false, false, false));
+    try testing.expectEqual(Window.PointerShape.text, resolvePointerShape(.text, true, true, true, false, false));
+    try testing.expectEqual(Window.PointerShape.arrow, resolvePointerShape(null, true, false, false, false, false));
+    try testing.expectEqual(Window.PointerShape.arrow, resolvePointerShape(null, false, true, false, false, false));
+    try testing.expectEqual(Window.PointerShape.arrow, resolvePointerShape(null, false, false, true, false, false));
+    try testing.expectEqual(Window.PointerShape.text, resolvePointerShape(null, false, false, true, true, false));
+    try testing.expectEqual(Window.PointerShape.text, resolvePointerShape(null, false, false, false, false, false));
+    // A link keeps the hand over mouse reporting, but not over a modal or scrollbar.
+    try testing.expectEqual(Window.PointerShape.hand, resolvePointerShape(null, false, false, true, false, true));
+    try testing.expectEqual(Window.PointerShape.arrow, resolvePointerShape(null, true, false, false, false, true));
+    try testing.expectEqual(Window.PointerShape.arrow, resolvePointerShape(null, false, true, false, false, true));
 }
 
 test "PeriodicTimer.setPeriod: shrinking period clamps elapsed_ms without underflow" {
