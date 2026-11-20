@@ -8,6 +8,7 @@
 const window_types = @import("window.zig");
 const selection_types = @import("selection.zig");
 const hyperlink_types = @import("hyperlink.zig");
+const decoration_types = @import("decoration.zig");
 const overlay = @import("overlay.zig");
 const font_config = @import("font.zig");
 const Binding = @import("../input/binding.zig").Binding;
@@ -38,6 +39,7 @@ scrollbar: Scrollbar = .{},
 selection: Selection,
 clipboard: Clipboard = .{},
 hyperlink: hyperlink_types.Hyperlink = .{},
+decoration: decoration_types.Decoration = .{},
 /// Stores list of plain environment variable using "KEY=VALUE" format
 environments: []const PlainVar,
 

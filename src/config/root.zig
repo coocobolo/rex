@@ -6,6 +6,7 @@ const std = @import("std");
 
 pub const Config = @import("Config.zig");
 pub const hyperlink = @import("hyperlink.zig");
+pub const decoration = @import("decoration.zig");
 /// The built-in defaults (`default.zig`).
 pub const default = @import("default.zig").default;
 /// The documented default config file, every key with its default.
@@ -29,6 +30,7 @@ test {
     _ = @import("keybind_test.zig");
     _ = @import("default_test.zig");
     _ = @import("hyperlink_test.zig");
+    _ = @import("decoration_test.zig");
     _ = @import("diagnostics_test.zig");
     _ = @import("loaded_test.zig");
     _ = @import("writer_test.zig");
