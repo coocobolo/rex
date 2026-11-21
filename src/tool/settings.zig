@@ -908,7 +908,6 @@ fn formatHexRgb(rgb: Rgb, buf: []u8) []const u8 {
 fn resolvedColorSlot(comptime key_name: []const u8, theme: ThemePreset) Rgb {
     // These are config-only colors: when unset they follow the text color.
     if (comptime std.mem.eql(u8, key_name, "underline_color") or
-        std.mem.eql(u8, key_name, "underline_color") or
         std.mem.eql(u8, key_name, "strikethrough_color") or
         std.mem.eql(u8, key_name, "overline_color")) return theme.foreground;
     if (comptime @hasField(ThemePreset, key_name)) {
@@ -2425,9 +2424,11 @@ fn selectUnderPoint(state: *const State, x: f32, y: f32) ?u16 {
     return null;
 }
 
-fn updateSliderFromPointer(state: *State, idx: u16, x: f32) bool {
+/// Pointer-to-value mapping must use the same ring width the hit box was
+/// laid out with. Layout uses `theme.ring_width`, so pointer math does too.
+pub fn updateSliderFromPointer(state: *State, idx: u16, x: f32) bool {
     const rect = state.node_rect.get(sliderId(idx)) orelse return false;
-    const raw = slider.ratioFromX(rect, x, state.activeConfig().ui.focus_ring_width);
+    const raw = slider.ratioFromX(rect, x, currentTheme(state).ring_width);
     const rounded = @round(raw * 100.0) / 100.0;
     if (state.slider_values[idx] == rounded) return false;
     state.slider_values[idx] = rounded;

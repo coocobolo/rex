@@ -1615,3 +1615,38 @@ test "settings: tooltip fields follow the hyperlink target style" {
     try testing.expect(settings.rowCfgVisible(wide, &cfg));
     try testing.expect(!settings.rowCfgVisible(head, &cfg));
 }
+
+test "settings: slider pointer math uses the laid-out ring width" {
+    const RingCtx = struct {
+        rect: kit.Tree.Rect,
+
+        fn get(ctx: *const @This(), _: Id) ?kit.Tree.Rect {
+            return ctx.rect;
+        }
+    };
+    var cfg = config_defaults.default;
+    cfg.ui.focus_ring_width = 7;
+    var state = try settings.init(.{
+        .gpa = testing.allocator,
+        .io = testing.io,
+        .config = &cfg,
+        .state_dir = "/tmp",
+        .config_path = "/tmp/rex.conf",
+        .home_dir = "/tmp",
+        .wake_loop = struct {
+            fn wake() void {}
+        }.wake,
+        .node_rect = .{},
+    });
+    defer settings.deinit(&state);
+
+    // 200px track laid out with the theme's 3px ring, so the hit box is 206px.
+    // A pointer at x=57 is the 25% point under that ring width; using the
+    // configured 7px ring here instead would map it to 0.24.
+    var ctx: RingCtx = .{ .rect = .{ .x = 0, .y = 0, .w = 206, .h = 16 } };
+    state.node_rect = host.NodeRect.init(RingCtx, &ctx, RingCtx.get);
+    const idx: u16 = 0;
+    state.slider_values[idx] = 0.5;
+    _ = settings.updateSliderFromPointer(&state, idx, 57);
+    try testing.expectEqual(@as(f32, 0.25), state.slider_values[idx]);
+}
