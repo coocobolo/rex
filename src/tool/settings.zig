@@ -615,6 +615,7 @@ pub const Target = union(enum) {
     list_down: struct { key: u16, item: u16 },
     list_remove: struct { key: u16, item: u16 },
     ansi_colors_toggle,
+    decoration_group: DecorationGroup,
     preview_toast,
     preview_banner,
     preview_dialog,
@@ -775,6 +776,9 @@ pub const State = struct {
     slider_values: [keys.table.len]f32 = [_]f32{0} ** keys.table.len,
     dirty: [keys.table.len]bool = [_]bool{false} ** keys.table.len,
     ansi_colors_open: bool = false,
+    /// Open state for the four advanced decoration groups (ink, geometry,
+    /// patterns, colors). The basics group is always visible.
+    decoration_groups_open: [4]bool = .{ false, false, false, false },
     error_key: ?u16 = null,
     error_msg: std.ArrayListUnmanaged(u8) = .empty,
     preview_toast: kit.toast.State = .empty,
@@ -1812,6 +1816,14 @@ fn handleKey(state: *State, press: host.KeyPress) bool {
             },
             else => {},
         },
+        .decoration_group => |group| switch (press.key) {
+            .enter, .space => return activate(state, .{ .decoration_group = group }),
+            .escape => {
+                state.focused = .none;
+                return true;
+            },
+            else => {},
+        },
         .ansi_colors_toggle => switch (press.key) {
             .enter, .space => return activate(state, .ansi_colors_toggle),
             .escape => {
@@ -1884,7 +1896,7 @@ fn isInactiveSubRow(idx: u16) bool {
     };
 }
 
-pub fn rowVisible(idx: u16, cfg: *const Config) bool {
+pub fn rowCfgVisible(idx: u16, cfg: *const Config) bool {
     return switch (idx) {
         inactive_bg_opacity_idx => cfg.window.on_inactive.contains(.opacity),
         inactive_dim_opacity_idx => cfg.window.on_inactive.contains(.dim),
@@ -1892,6 +1904,13 @@ pub fn rowVisible(idx: u16, cfg: *const Config) bool {
         ascii_file_idx => cfg.window.wellbeing_ascii.scene == .file,
         else => true,
     };
+}
+
+pub fn rowVisible(state: *const State, idx: u16, cfg: *const Config) bool {
+    if (decorationGroup(idx)) |group| {
+        if (!state.decoration_groups_open[@intFromEnum(group)]) return false;
+    }
+    return rowCfgVisible(idx, cfg);
 }
 
 fn pageSections(page: Page, out: *[max_section_count]keys.Section) []const keys.Section {
@@ -1929,14 +1948,22 @@ fn sectionRows(page: Page, sec: keys.Section, out: *[keys.table.len]u16) []const
     return out[0..count];
 }
 
-fn pageFocusTargets(page: Page, ansi_open: bool, cfg: *const Config, out: []Target) usize {
+fn pageFocusTargets(state: *const State, page: Page, ansi_open: bool, cfg: *const Config, out: []Target) usize {
     var count: usize = 0;
     var sec_buf: [max_section_count]keys.Section = undefined;
     var row_buf: [keys.table.len]u16 = undefined;
     for (pageSections(page, &sec_buf)) |sec| {
         var ansi_toggle_added = false;
+        var decoration_toggles_added = false;
         for (sectionRows(page, sec, &row_buf)) |idx| {
-            if (!rowVisible(idx, cfg)) continue;
+            if (sec == .decoration and !decoration_toggles_added) {
+                inline for ([_]DecorationGroup{ .ink, .geometry, .patterns, .colors }) |group| {
+                    out[count] = .{ .decoration_group = group };
+                    count += 1;
+                }
+                decoration_toggles_added = true;
+            }
+            if (!rowVisible(state, idx, cfg)) continue;
             const info = row_infos[idx];
             if (info.is_ansi_color) {
                 if (!ansi_toggle_added) {
@@ -2018,7 +2045,7 @@ fn cycleFocus(state: *State, reverse: bool) bool {
         targets[0] = .sidebar;
         count = 1;
     }
-    count += pageFocusTargets(page, state.ansi_colors_open, state.activeConfig(), targets[count..]);
+    count += pageFocusTargets(state, page, state.ansi_colors_open, state.activeConfig(), targets[count..]);
     if (count == 0) return false;
 
     state.open_select = null;
@@ -2065,6 +2092,7 @@ fn targetId(target: Target) ?Id {
         .stepper_inc => |idx| incId(idx),
         .list_add => |idx| listAddId(idx),
         .ansi_colors_toggle => ansi_toggle_id,
+        .decoration_group => |group| decorationGroupId(group),
         .preview_toast => preview_toast_id,
         .preview_banner => preview_banner_id,
         .preview_dialog => preview_dialog_id,
@@ -2248,6 +2276,12 @@ fn activate(state: *State, target: Target) bool {
             state.ansi_colors_open = !state.ansi_colors_open;
             return true;
         },
+        .decoration_group => |group| {
+            const g = @intFromEnum(group);
+            blurFocused(state);
+            state.decoration_groups_open[g] = !state.decoration_groups_open[g];
+            return true;
+        },
         .preview_toast => {
             if (state.focused != .preview_toast) blurFocused(state);
             triggerPreviewToast(state);
@@ -2287,6 +2321,9 @@ fn over(state: *const State, id: Id) Target {
     }
     if (id == layer_id) return .layer;
     if (id == ansi_toggle_id) return .ansi_colors_toggle;
+    inline for ([_]DecorationGroup{ .ink, .geometry, .patterns, .colors }) |group| {
+        if (id == decorationGroupId(group)) return .{ .decoration_group = group };
+    }
     if (id == preview_toast_id) return .preview_toast;
     if (id == preview_banner_id) return .preview_banner;
     if (id == preview_dialog_id) return .preview_dialog;
@@ -2734,8 +2771,9 @@ fn firstLayerError(idx: u16, loaded: *const Loaded, buf: []u8) ?[]const u8 {
     }
 }
 
-fn setError(state: *State, idx: u16, msg: []const u8) void {
+pub fn setError(state: *State, idx: u16, msg: []const u8) void {
     if (row_infos[idx].is_ansi_color) state.ansi_colors_open = true;
+    if (decorationGroup(idx)) |group| state.decoration_groups_open[@intFromEnum(group)] = true;
     state.error_key = idx;
     state.error_msg.clearRetainingCapacity();
     state.error_msg.appendSlice(state.gpa, msg) catch {};
@@ -2798,6 +2836,7 @@ pub fn view(state: *const State, tree: *Tree, theme: *const Theme) kit.Tree.Erro
 }
 
 const RowInfo = struct {
+    name: []const u8,
     section: keys.Section,
     display_section: keys.Section,
     page: ?Page,
@@ -2814,6 +2853,45 @@ const RowInfo = struct {
     labels: []const []const u8,
     display_labels: []const []const u8,
 };
+
+pub const DecorationGroup = enum(u8) {
+    ink,
+    geometry,
+    patterns,
+    colors,
+};
+
+const decoration_group_titles = [_][]const u8{
+    "Ink Skipping",
+    "Line Geometry",
+    "Pattern Shapes",
+    "Decoration Colors",
+};
+
+const decoration_group_descriptions = [_][]const u8{
+    "Where underlines break around descenders",
+    "Offsets, thicknesses and gaps for each line",
+    "Curly, dotted and dashed underline shapes",
+    "Fixed colors for each kind of decoration line",
+};
+
+fn decorationGroup(idx: u16) ?DecorationGroup {
+    const info = row_infos[idx];
+    if (info.section != .decoration) return null;
+    const key_name = info.name;
+    if (std.mem.eql(u8, key_name, "skip_ink") or std.mem.eql(u8, key_name, "order") or
+        std.mem.eql(u8, key_name, "alpha") or std.mem.eql(u8, key_name, "dim") or
+        std.mem.eql(u8, key_name, "blink")) return null;
+    if (std.mem.startsWith(u8, key_name, "skip_ink_")) return .ink;
+    if (std.mem.startsWith(u8, key_name, "curly_") or std.mem.startsWith(u8, key_name, "dot_") or
+        std.mem.startsWith(u8, key_name, "dash_") or std.mem.eql(u8, key_name, "phase")) return .patterns;
+    if (std.mem.endsWith(u8, key_name, "_color")) return .colors;
+    return .geometry;
+}
+
+fn decorationGroupId(group: DecorationGroup) Id {
+    return Id.of("settings.decoration_group").item(@intFromEnum(group));
+}
 
 fn comptimeStepperIsInt(comptime key: keys.Key) bool {
     const T = keys.FieldType(Config, key.field);
@@ -2895,6 +2973,7 @@ const row_infos: [keys.table.len]RowInfo = blk: {
     var table: [keys.table.len]RowInfo = undefined;
     for (keys.table, 0..) |key, i| {
         table[i] = .{
+            .name = key.name,
             .section = key.section,
             .display_section = displaySection(key),
             .page = pageForSection(key.section),
@@ -2915,14 +2994,18 @@ const row_infos: [keys.table.len]RowInfo = blk: {
     break :blk table;
 };
 
-const ansi_overridden_labels: [17][]const u8 = blk: {
-    @setEvalBranchQuota(20000);
-    var labels: [17][]const u8 = undefined;
-    for (0..17) |i| {
-        labels[i] = std.fmt.comptimePrint("{d} overridden", .{i});
-    }
+const modified_labels: [keys.table.len + 1][]const u8 = blk: {
+    @setEvalBranchQuota(keys.eval_branch_quota);
+    var labels: [keys.table.len + 1][]const u8 = undefined;
+    for (&labels, 0..) |*label, i| label.* = std.fmt.comptimePrint("{d} modified", .{i});
     break :blk labels;
 };
+
+/// One wording for every "changed from default" badge in Settings.
+fn modifiedBadge(count: usize) []const u8 {
+    if (count == 0) return "";
+    return modified_labels[@min(count, modified_labels.len - 1)];
+}
 
 fn paneWidth(state: *const State) f32 {
     return if (state.frame.shown() and !state.frame.narrow)
@@ -2953,7 +3036,7 @@ fn viewAnsiCollapsible(
         .id = ansi_toggle_id,
         .title = "ANSI Palette",
         .description = "Terminal palette colors 0–15",
-        .badge = if (overridden_count > 0) ansi_overridden_labels[@min(overridden_count, 16)] else "",
+        .badge = modifiedBadge(overridden_count),
         .open = state.ansi_colors_open,
         .hovered = hovered,
         .focused = focused,
@@ -3002,17 +3085,101 @@ fn viewAnsiCollapsible(
     collapsible.close(tree, card);
 }
 
+fn viewDecorationSection(
+    state: *const State,
+    tree: *Tree,
+    theme: *const Theme,
+    cfg: *const Config,
+) kit.Tree.Error!void {
+    var row_buf: [keys.table.len]u16 = undefined;
+    const rows = sectionRows(.appearance, .decoration, &row_buf);
+
+    try field.legend(tree, theme, "Text Decorations");
+    const basics = try card_kit.open(tree, theme, .{ .padding = .all(14), .gap = 12, .radius = Theme.radius_md });
+    var first_basic = true;
+    for (rows) |idx| {
+        if (decorationGroup(idx) != null) continue;
+        if (!first_basic) try separator.horizontal(tree, theme);
+        first_basic = false;
+        try viewKeyRow(state, tree, theme, row_infos[idx], idx, cfg);
+    }
+    card_kit.close(tree, basics);
+
+    inline for ([_]DecorationGroup{ .ink, .geometry, .patterns, .colors }) |group| {
+        const g = @intFromEnum(group);
+        var modified: usize = 0;
+        for (rows) |idx| {
+            if (decorationGroup(idx) == group and isOverridden(idx, cfg)) modified += 1;
+        }
+        const card = try collapsible.open(tree, theme, .{});
+        const target: Target = .{ .decoration_group = group };
+        const trigger = try collapsible.openTrigger(tree, theme, .{
+            .id = decorationGroupId(group),
+            .title = decoration_group_titles[g],
+            .description = decoration_group_descriptions[g],
+            .badge = modifiedBadge(modified),
+            .open = state.decoration_groups_open[g],
+            .hovered = std.meta.eql(state.hover, target),
+            .focused = std.meta.eql(state.focused, target),
+        });
+        if (group == .colors and paneWidth(state) >= 520) {
+            const strip = try tree.open(.{
+                .axis = .row,
+                .gap = 2,
+                .cross = .center,
+                .padding = .all(3),
+                .fill = theme.background,
+                .border = theme.border,
+                .border_width = Theme.border_width,
+                .radius = Theme.radius_sm,
+            });
+            const color_indices = [_]u16{
+                @intCast(keys.lookup(.decoration, "underline_color").?),
+                @intCast(keys.lookup(.decoration, "strikethrough_color").?),
+                @intCast(keys.lookup(.decoration, "overline_color").?),
+            };
+            for (color_indices) |color_idx| {
+                const rgb = colorInfo(color_idx, cfg).resolved;
+                _ = try tree.leaf(.{
+                    .width = .{ .fixed = 10 },
+                    .height = .{ .fixed = 14 },
+                    .fill = .{ .r = rgb.r, .g = rgb.g, .b = rgb.b },
+                    .radius = 2,
+                });
+            }
+            tree.close(strip);
+        }
+        try collapsible.closeTrigger(tree, theme, trigger);
+        if (state.decoration_groups_open[g]) {
+            const body = try collapsible.openContent(tree, theme, .{});
+            var first = true;
+            for (rows) |idx| {
+                if (decorationGroup(idx) != group) continue;
+                if (!first) try separator.horizontal(tree, theme);
+                first = false;
+                try viewKeyRow(state, tree, theme, row_infos[idx], idx, cfg);
+            }
+            collapsible.closeContent(tree, body);
+        }
+        collapsible.close(tree, card);
+    }
+}
+
 fn viewPage(state: *const State, tree: *Tree, theme: *const Theme, page: Page) kit.Tree.Error!void {
     const cfg = state.activeConfig();
     var sec_buf: [max_section_count]keys.Section = undefined;
     var row_buf: [keys.table.len]u16 = undefined;
     for (pageSections(page, &sec_buf)) |sec| {
+        if (sec == .decoration) {
+            try viewDecorationSection(state, tree, theme, cfg);
+            continue;
+        }
         var section_open: ?kit.Tree.Index = null;
         var first_in_section = true;
         var ansi_drawn = false;
 
         for (sectionRows(page, sec, &row_buf)) |idx| {
-            if (isInactiveSubRow(idx) or !rowVisible(idx, cfg)) continue;
+            if (isInactiveSubRow(idx) or !rowVisible(state, idx, cfg)) continue;
             const info = row_infos[idx];
             if (info.is_ansi_color) {
                 if (!ansi_drawn) {
@@ -3051,7 +3218,7 @@ fn viewPage(state: *const State, tree: *Tree, theme: *const Theme, page: Page) k
                 });
                 var first_sub = true;
                 for (inactive_sub_rows) |sub_idx| {
-                    if (!rowVisible(sub_idx, cfg)) continue;
+                    if (!rowVisible(state, sub_idx, cfg)) continue;
                     if (!first_sub) {
                         try separator.horizontal(tree, theme);
                     }

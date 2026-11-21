@@ -1161,9 +1161,9 @@ test "settings: on_inactive reveals only the sub-rows matching enabled effects" 
     var lines: [settings.line_max]kit.text.Line = undefined;
 
     // 1. Default (`on_inactive = none`): all three sub-rows are hidden.
-    try testing.expect(!settings.rowVisible(bg_idx, &cfg));
-    try testing.expect(!settings.rowVisible(dim_idx, &cfg));
-    try testing.expect(!settings.rowVisible(blur_idx, &cfg));
+    try testing.expect(!settings.rowVisible(&state, bg_idx, &cfg));
+    try testing.expect(!settings.rowVisible(&state, dim_idx, &cfg));
+    try testing.expect(!settings.rowVisible(&state, blur_idx, &cfg));
     var tree = kit.Tree.init(&nodes, &lines);
     try settings.view(&state, &tree, &kit.Theme.dark);
     try testing.expectEqual(null, tree.find(bg_id));
@@ -1173,9 +1173,9 @@ test "settings: on_inactive reveals only the sub-rows matching enabled effects" 
     // 2. Enable `opacity` and `blur`: only those two sub-rows appear.
     cfg.window.on_inactive.insert(.opacity);
     cfg.window.on_inactive.insert(.blur);
-    try testing.expect(settings.rowVisible(bg_idx, &cfg));
-    try testing.expect(!settings.rowVisible(dim_idx, &cfg));
-    try testing.expect(settings.rowVisible(blur_idx, &cfg));
+    try testing.expect(settings.rowVisible(&state, bg_idx, &cfg));
+    try testing.expect(!settings.rowVisible(&state, dim_idx, &cfg));
+    try testing.expect(settings.rowVisible(&state, blur_idx, &cfg));
     tree = kit.Tree.init(&nodes, &lines);
     try settings.view(&state, &tree, &kit.Theme.dark);
     try testing.expect(tree.find(bg_id) != null);
@@ -1257,9 +1257,9 @@ test "settings: Reminders page maps all [wellbeing.ascii] keys" {
 
     const file_idx = keys.lookup(.@"wellbeing.ascii", "file").?;
     var cfg = config_defaults.default;
-    try testing.expect(!settings.rowVisible(file_idx, &cfg));
+    try testing.expect(!settings.rowCfgVisible(file_idx, &cfg));
     cfg.window.wellbeing_ascii.scene = .file;
-    try testing.expect(settings.rowVisible(file_idx, &cfg));
+    try testing.expect(settings.rowCfgVisible(file_idx, &cfg));
 }
 
 test "settings: text input pointer click, drag selection, Shift+Click, and multi-click" {
@@ -1520,4 +1520,79 @@ test "settings: reset on a default value writes nothing" {
         break :blk true;
     };
     try testing.expect(!wrote_file);
+}
+
+test "settings: decoration groups start collapsed and open from their trigger" {
+    const gpa = testing.allocator;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const dir_path = try std.fs.path.join(gpa, &.{ ".zig-cache", "tmp", &tmp.sub_path });
+    defer gpa.free(dir_path);
+    const cfg_path = try std.fs.path.join(gpa, &.{ dir_path, "config" });
+    defer gpa.free(cfg_path);
+
+    const cfg = config_defaults.default;
+    var state = try settings.init(.{
+        .gpa = gpa,
+        .io = testing.io,
+        .config = &cfg,
+        .state_dir = dir_path,
+        .config_path = cfg_path,
+        .home_dir = dir_path,
+        .wake_loop = struct {
+            fn wake() void {}
+        }.wake,
+    });
+    defer settings.deinit(&state);
+    state.frame.current = @intFromEnum(settings.Page.appearance);
+
+    const ink_idx = keyIndex(.decoration, "skip_ink_threshold");
+    const basics_idx = keyIndex(.decoration, "skip_ink");
+    try testing.expect(settings.rowVisible(&state, basics_idx, state.activeConfig()));
+    try testing.expect(!settings.rowVisible(&state, ink_idx, state.activeConfig()));
+
+    const ink_trigger = Id.of("settings.decoration_group").item(0);
+    _ = settings.update(&state, .{ .pointer = .{ .id = ink_trigger } });
+    _ = settings.update(&state, .{ .press = ink_trigger });
+    _ = settings.update(&state, .release);
+    try testing.expect(settings.rowVisible(&state, ink_idx, state.activeConfig()));
+
+    for (1..4) |g| {
+        const trigger = Id.of("settings.decoration_group").item(@intCast(g));
+        _ = settings.update(&state, .{ .pointer = .{ .id = trigger } });
+        _ = settings.update(&state, .{ .press = trigger });
+        _ = settings.update(&state, .release);
+    }
+    var nodes: [settings.node_max]kit.Tree.Node = undefined;
+    var lines: [settings.line_max]kit.text.Line = undefined;
+    var tree = kit.Tree.init(&nodes, &lines);
+    try settings.view(&state, &tree, &kit.Theme.dark);
+}
+
+test "settings: an error on a collapsed decoration row opens its group" {
+    const gpa = testing.allocator;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const dir_path = try std.fs.path.join(gpa, &.{ ".zig-cache", "tmp", &tmp.sub_path });
+    defer gpa.free(dir_path);
+    const cfg_path = try std.fs.path.join(gpa, &.{ dir_path, "config" });
+    defer gpa.free(cfg_path);
+
+    const cfg = config_defaults.default;
+    var state = try settings.init(.{
+        .gpa = gpa,
+        .io = testing.io,
+        .config = &cfg,
+        .state_dir = dir_path,
+        .config_path = cfg_path,
+        .home_dir = dir_path,
+        .wake_loop = struct {
+            fn wake() void {}
+        }.wake,
+    });
+    defer settings.deinit(&state);
+
+    const dash_gap_idx = keyIndex(.decoration, "dash_gap_px");
+    settings.setError(&state, dash_gap_idx, "invalid value");
+    try testing.expect(state.decoration_groups_open[2]);
 }
