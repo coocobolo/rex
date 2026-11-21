@@ -106,6 +106,12 @@ pub const Ui = struct {
     motion: Motion = .full,
     /// Dark or light UI, or whichever reads well over the terminal.
     color_scheme: ColorScheme = .auto,
+    /// Horizontal padding inside a tooltip card.
+    tooltip_padding_x: u8 = 12,
+    /// Vertical padding inside a tooltip card.
+    tooltip_padding_y: u8 = 8,
+    /// Gap between a tooltip's swatch, name and value, and between lines.
+    tooltip_gap: u8 = 8,
 };
 
 pub const Window = struct {
@@ -239,6 +245,8 @@ pub const Scrollbar = struct {
     thumb_color: Rgb = .{ .r = 0xB3, .g = 0xB3, .b = 0xB3 },
     thumb_hover_color: Rgb = .{ .r = 0xE6, .g = 0xE6, .b = 0xE6 },
     auto_hide: bool = true,
+    /// Fraction of the remaining gap closed per millisecond when easing width/opacity.
+    animation_speed: f32 = 0.009,
 
     pub const default: Scrollbar = .{};
 };
@@ -284,6 +292,8 @@ pub const Cursor = struct {
     hollow_border_width: f32 = 3.0,
     /// Half-period of cursor and SGR 5 blink in milliseconds.
     blink_interval_ms: u32 = 500,
+    /// Half-period of SGR 6 rapid blink in milliseconds.
+    rapid_blink_interval_ms: u32 = 250,
 
     pub const default: Cursor = .{};
 };

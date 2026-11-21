@@ -240,6 +240,7 @@ const tail_rows = [_]Key{
     .{ .section = .cursor, .name = "beam_thickness", .field = "cursor.beam_thickness", .kind = .fraction },
     .{ .section = .cursor, .name = "hollow_border_width", .field = "cursor.hollow_border_width", .bounds = .{ .min = 0, .max = 16 } },
     .{ .section = .cursor, .name = "blink_interval", .field = "cursor.blink_interval_ms", .kind = .duration, .bounds = .{ .min = 50, .max = 5000 } },
+    .{ .section = .cursor, .name = "rapid_blink_interval", .field = "cursor.rapid_blink_interval_ms", .kind = .duration, .bounds = .{ .min = 50, .max = 5000 } },
 
     .{ .section = .window, .name = "background_opacity", .field = "window.background.alpha", .kind = .fraction },
     .{ .section = .window, .name = "dim_text_opacity", .field = "window.dim_alpha", .kind = .fraction },
@@ -346,6 +347,9 @@ const tail_rows = [_]Key{
 
     .{ .section = .ui, .name = "motion", .field = "ui.motion" },
     .{ .section = .ui, .name = "color_scheme", .field = "ui.color_scheme" },
+    .{ .section = .ui, .name = "tooltip_padding_x", .field = "ui.tooltip_padding_x", .bounds = .{ .min = 0, .max = 64 } },
+    .{ .section = .ui, .name = "tooltip_padding_y", .field = "ui.tooltip_padding_y", .bounds = .{ .min = 0, .max = 64 } },
+    .{ .section = .ui, .name = "tooltip_gap", .field = "ui.tooltip_gap", .bounds = .{ .min = 0, .max = 64 } },
     .{ .section = .scroll, .name = "step_lines", .field = "scroll.lines", .bounds = at_least_one },
     .{ .section = .scroll, .name = "wheel_lines", .field = "scroll.wheel_lines", .bounds = at_least_one },
 
@@ -354,6 +358,7 @@ const tail_rows = [_]Key{
     .{ .section = .scrollbar, .name = "gap", .field = "scrollbar.gap", .bounds = .{ .min = 0, .max = 40 } },
     .{ .section = .scrollbar, .name = "min_thumb_height", .field = "scrollbar.min_thumb_height", .bounds = .{ .min = 1, .max = 200 } },
     .{ .section = .scrollbar, .name = "radius", .field = "scrollbar.radius", .bounds = .{ .min = 0, .max = 20 } },
+    .{ .section = .scrollbar, .name = "animation_speed", .field = "scrollbar.animation_speed", .bounds = .{ .min = 0.001, .max = 0.1 } },
     .{ .section = .scrollbar, .name = "auto_hide", .field = "scrollbar.auto_hide" },
     .{ .section = .scrollbar, .name = "auto_hide_opacity", .field = "scrollbar.auto_hide_opacity", .kind = .fraction },
     .{ .section = .scrollbar, .name = "track_color", .field = "scrollbar.track_color", .kind = .color },
@@ -385,6 +390,12 @@ const tail_rows = [_]Key{
     .{ .section = .hyperlink, .name = "underline_color", .field = "hyperlink.underline_color", .kind = .color, .null_keyword = .none },
     .{ .section = .hyperlink, .name = "open_command", .field = "hyperlink.open_command", .kind = .text },
     .{ .section = .hyperlink, .name = "schemes", .field = "hyperlink.schemes", .kind = .set },
+    .{ .section = .hyperlink, .name = "tooltip_head_bytes", .field = "hyperlink.tooltip.head_bytes", .bounds = .{ .min = 1, .max = 256 } },
+    .{ .section = .hyperlink, .name = "tooltip_tail_bytes", .field = "hyperlink.tooltip.tail_bytes", .bounds = .{ .min = 1, .max = 256 } },
+    .{ .section = .hyperlink, .name = "tooltip_line_bytes", .field = "hyperlink.tooltip.line_bytes", .bounds = .{ .min = 1, .max = 256 } },
+    .{ .section = .hyperlink, .name = "tooltip_max_lines", .field = "hyperlink.tooltip.max_lines", .bounds = .{ .min = 1, .max = 16 } },
+    .{ .section = .hyperlink, .name = "tooltip_width", .field = "hyperlink.tooltip.width", .bounds = .{ .min = 120, .max = 1200 } },
+    .{ .section = .hyperlink, .name = "tooltip_wide_width", .field = "hyperlink.tooltip.wide_width", .bounds = .{ .min = 120, .max = 2000 } },
     .{ .section = .decoration, .name = "skip_ink", .field = "decoration.skip_ink" },
     .{ .section = .decoration, .name = "skip_ink_styles", .field = "decoration.skip_ink_styles", .kind = .set },
     .{ .section = .decoration, .name = "skip_ink_threshold", .field = "decoration.skip_ink_threshold", .kind = .fraction },

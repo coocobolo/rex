@@ -60,6 +60,16 @@ pub const default_schemes: SchemeSet = blk: {
     break :blk set;
 };
 
+/// Dimensions of the target URI tooltip, in bytes and logical pixels.
+pub const TooltipLayout = struct {
+    head_bytes: u16 = 40,
+    tail_bytes: u16 = 24,
+    line_bytes: u16 = 40,
+    max_lines: u8 = 5,
+    width: u16 = 360,
+    wide_width: u16 = 520,
+};
+
 pub const Hyperlink = struct {
     /// Whether Ctrl+click opens OSC 8 links.
     enabled: bool = true,
@@ -73,6 +83,8 @@ pub const Hyperlink = struct {
     show_targets: ShowTarget = .ctrl,
     /// How a long target URI is laid out in that tooltip.
     target_style: TargetStyle = .multiline,
+    /// Dimensions of the target URI tooltip.
+    tooltip: TooltipLayout = .{},
     /// Underline color for OSC 8 links; null uses the decoration or text color.
     underline_color: ?Rgb = null,
     /// Command that opens a URI. Empty uses the platform default

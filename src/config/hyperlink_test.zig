@@ -22,4 +22,10 @@ test "hyperlink: links on by default, file scheme off, system command" {
     try testing.expectEqual(.single, cfg.underline_style);
     try testing.expectEqual(.ctrl, cfg.show_targets);
     try testing.expectEqual(.multiline, cfg.target_style);
+    try testing.expectEqual(@as(u16, 40), cfg.tooltip.head_bytes);
+    try testing.expectEqual(@as(u16, 24), cfg.tooltip.tail_bytes);
+    try testing.expectEqual(@as(u16, 40), cfg.tooltip.line_bytes);
+    try testing.expectEqual(@as(u8, 5), cfg.tooltip.max_lines);
+    try testing.expectEqual(@as(u16, 360), cfg.tooltip.width);
+    try testing.expectEqual(@as(u16, 520), cfg.tooltip.wide_width);
 }
