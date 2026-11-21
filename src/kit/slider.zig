@@ -17,6 +17,8 @@ pub const track_height: f32 = 6;
 pub const thumb_size: f32 = 16;
 pub const default_track_width: f32 = 180;
 pub const readout_width: f32 = 42;
+/// Gap between the track hit box and the readout.
+pub const readout_gap: f32 = 10;
 
 /// Outer row, hit box, active segment, thumb ring, thumb, inactive segment, readout box & text.
 pub const node_max = 8;
@@ -45,7 +47,7 @@ pub fn view(tree: *Tree, theme: *const Theme, options: Options) Tree.Error!void 
     const row = try tree.open(.{
         .axis = .row,
         .cross = .center,
-        .gap = 10,
+        .gap = readout_gap,
     });
 
     const track_w = @max(options.track_width, thumb_size);

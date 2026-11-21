@@ -1485,3 +1485,39 @@ test "settings: optional pixel steppers reset to none" {
     try testing.expect(settings.update(&state, .release));
     try testing.expectEqual(@as(?f32, null), state.activeConfig().decoration.skip_ink_gap_px);
 }
+
+test "settings: reset on a default value writes nothing" {
+    const gpa = testing.allocator;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const dir_path = try std.fs.path.join(gpa, &.{ ".zig-cache", "tmp", &tmp.sub_path });
+    defer gpa.free(dir_path);
+    const cfg_path = try std.fs.path.join(gpa, &.{ dir_path, "config" });
+    defer gpa.free(cfg_path);
+
+    const cfg = config_defaults.default;
+    var state = try settings.init(.{
+        .gpa = gpa,
+        .io = testing.io,
+        .config = &cfg,
+        .state_dir = dir_path,
+        .config_path = cfg_path,
+        .home_dir = dir_path,
+        .wake_loop = struct {
+            fn wake() void {}
+        }.wake,
+    });
+    defer settings.deinit(&state);
+    state.frame.current = @intFromEnum(settings.Page.appearance);
+
+    const idx = keyIndex(.decoration, "dash_gap_px");
+    const reset_id = Id.of("settings.key_reset").item(idx);
+    _ = settings.update(&state, .{ .pointer = .{ .id = reset_id } });
+    _ = settings.update(&state, .{ .press = reset_id });
+    _ = settings.update(&state, .release);
+    const wrote_file = blk: {
+        tmp.dir.access(testing.io, "config", .{}) catch break :blk false;
+        break :blk true;
+    };
+    try testing.expect(!wrote_file);
+}

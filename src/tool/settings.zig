@@ -904,6 +904,21 @@ const ColorInfo = struct {
     reset_token: []const u8,
 };
 
+/// True when a reset-capable field differs from the built-in default.
+fn isOverridden(idx: u16, cfg: *const Config) bool {
+    @setEvalBranchQuota(keys.eval_branch_quota);
+    inline for (keys.table, 0..) |key, i| {
+        if (comptime (key.kind == .color or key.null_keyword != null)) {
+            if (idx == i) {
+                const value = keys.fieldValue(Config, key.field, cfg);
+                const fallback = keys.fieldValue(Config, key.field, &config_defaults.default);
+                return !std.meta.eql(value, fallback);
+            }
+        }
+    }
+    return false;
+}
+
 fn colorInfo(idx: u16, cfg: *const Config) ColorInfo {
     @setEvalBranchQuota(keys.eval_branch_quota);
     const theme = cfg.resolvedTheme();
@@ -1939,7 +1954,7 @@ fn pageFocusTargets(page: Page, ansi_open: bool, cfg: *const Config, out: []Targ
                 .slider => {
                     out[count] = .{ .key_slider = idx };
                     count += 1;
-                    if (info.null_keyword != null) {
+                    if (info.null_keyword != null and isOverridden(idx, cfg)) {
                         out[count] = .{ .key_reset = idx };
                         count += 1;
                     }
@@ -1963,7 +1978,7 @@ fn pageFocusTargets(page: Page, ansi_open: bool, cfg: *const Config, out: []Targ
                 .stepper => {
                     out[count] = .{ .key_input = idx };
                     count += 1;
-                    if (info.null_keyword != null) {
+                    if (info.null_keyword != null and isOverridden(idx, cfg)) {
                         out[count] = .{ .key_reset = idx };
                         count += 1;
                     }
@@ -2286,7 +2301,7 @@ fn over(state: *const State, id: Id) Target {
             .toggle => if (id == switchId(idx)) return .{ .key_switch = idx },
             .slider => {
                 if (id == sliderId(idx)) return .{ .key_slider = idx };
-                if (id == resetId(idx) and info.null_keyword != null) return .{ .key_reset = idx };
+                if (id == resetId(idx) and info.null_keyword != null and isOverridden(idx, state.activeConfig())) return .{ .key_reset = idx };
             },
             .select => if (id == selectId(idx)) return .{ .key_select = idx },
             .segmented => {
@@ -2304,7 +2319,7 @@ fn over(state: *const State, id: Id) Target {
                 if (id == inputId(idx)) return .{ .key_input = idx };
                 if (id == decId(idx)) return .{ .stepper_dec = idx };
                 if (id == incId(idx)) return .{ .stepper_inc = idx };
-                if (id == resetId(idx) and info.null_keyword != null) return .{ .key_reset = idx };
+                if (id == resetId(idx) and info.null_keyword != null and isOverridden(idx, state.activeConfig())) return .{ .key_reset = idx };
             },
             .list => {
                 if (id == inputId(idx)) return .{ .key_input = idx };
@@ -2319,7 +2334,7 @@ fn over(state: *const State, id: Id) Target {
             .text_input => if (id == inputId(idx)) return .{ .key_input = idx },
             .color => {
                 if (id == inputId(idx)) return .{ .key_input = idx };
-                if (id == colorResetId(idx) and colorInfo(idx, state.activeConfig()).overridden) {
+                if (id == colorResetId(idx) and isOverridden(idx, state.activeConfig())) {
                     return .{ .color_reset = idx };
                 }
             },
@@ -3206,12 +3221,13 @@ fn viewKeyRow(
     const meta = info.meta;
     const pane_w = paneWidth(state);
     const compact = pane_w < 540;
-    const control_width: kit.Tree.Size = if (compact)
-        .fill
-    else if (pane_w >= 760)
-        .{ .fixed = 280 }
-    else
-        .{ .fixed = 240 };
+    const control_px: f32 = if (pane_w >= 760) 280 else 240;
+    // Every field gets one right-hand column, right-aligned. Controls fill
+    // it; only Reset takes a fixed slot when the field actually has one.
+    const reset_slot: f32 = 64;
+    const cluster_gap: f32 = 8;
+    const cluster_px: f32 = control_px + cluster_gap + reset_slot;
+    const cluster_width: kit.Tree.Size = if (compact) .fill else .{ .fixed = cluster_px };
 
     const row = try field.open(tree, theme, .{
         .label = meta.label,
@@ -3221,6 +3237,21 @@ fn viewKeyRow(
         .orientation = .responsive,
         .compact = compact,
         .align_top = info.kind == .list,
+    });
+
+    const reset_target: ?Target = if (info.kind == .color)
+        .{ .color_reset = idx }
+    else if (info.null_keyword != null)
+        .{ .key_reset = idx }
+    else
+        null;
+
+    const cluster = try tree.open(.{
+        .axis = .row,
+        .width = cluster_width,
+        .gap = cluster_gap,
+        .cross = .center,
+        .main = .end,
     });
 
     switch (info.kind) {
@@ -3234,32 +3265,22 @@ fn viewKeyRow(
         },
         .slider => {
             const val = state.slider_values[idx];
+            // The slider's total width is track + focus ring + gap + readout;
+            // make that exactly the shared control column width.
+            const slider_extra = @as(f32, Theme.ring_width) * 2 + slider.readout_gap + slider.readout_width;
+            const reset_taken: f32 = if (reset_target != null) cluster_gap + reset_slot else 0;
             const track_w: f32 = if (compact)
-                @max(pane_w - 130, 100)
-            else if (pane_w >= 760)
-                228
+                @max(pane_w - 130 - reset_taken - slider_extra, 60)
             else
-                188;
-            const has_reset = info.null_keyword != null;
+                cluster_px - reset_taken - slider_extra;
             try slider.view(tree, theme, .{
                 .id = sliderId(idx),
                 .value = val,
                 .value_label = pctLabel(val),
-                .track_width = if (has_reset) @max(80, track_w - 64) else track_w,
+                .track_width = track_w,
                 .hovered = std.meta.eql(state.hover, Target{ .key_slider = idx }),
                 .focused = std.meta.eql(state.focused, Target{ .key_slider = idx }),
             });
-            if (has_reset) {
-                const reset_pressed = std.meta.eql(state.pressed, Target{ .key_reset = idx });
-                const reset_hovered = std.meta.eql(state.hover, Target{ .key_reset = idx });
-                try button.view(tree, theme, .{
-                    .id = resetId(idx),
-                    .label = "Reset",
-                    .variant = .outline,
-                    .size = .sm,
-                    .state = if (reset_pressed and reset_hovered) .pressed else if (reset_hovered) .hovered else .normal,
-                });
-            }
         },
         .stepper => {
             const inp = &state.inputs[idx];
@@ -3276,7 +3297,7 @@ fn viewKeyRow(
                 std.meta.eql(state.focused, Target{ .stepper_inc = idx });
 
             const group = try input_group.open(tree, theme, .{
-                .width = control_width,
+                .width = .fill,
                 .focused = any_focused,
                 .hovered = input_hovered or dec_hovered or inc_hovered,
                 .invalid = is_err,
@@ -3308,17 +3329,6 @@ fn viewKeyRow(
                 .disabled = at_max,
             });
             input_group.close(tree, group);
-            if (info.null_keyword != null) {
-                const reset_pressed = std.meta.eql(state.pressed, Target{ .key_reset = idx });
-                const reset_hovered = std.meta.eql(state.hover, Target{ .key_reset = idx });
-                try button.view(tree, theme, .{
-                    .id = resetId(idx),
-                    .label = "Reset",
-                    .variant = .outline,
-                    .size = .sm,
-                    .state = if (reset_pressed and reset_hovered) .pressed else if (reset_hovered) .hovered else .normal,
-                });
-            }
         },
         .duration => {
             const inp = &state.inputs[idx];
@@ -3330,7 +3340,7 @@ fn viewKeyRow(
             const is_open = if (state.open_select) |sel| sel.key == idx else false;
 
             const group = try input_group.open(tree, theme, .{
-                .width = control_width,
+                .width = .fill,
                 .focused = input_focused,
                 .hovered = input_hovered or select_hovered or is_open,
                 .invalid = is_err,
@@ -3370,7 +3380,7 @@ fn viewKeyRow(
             try select.trigger(tree, theme, .{
                 .id = selectId(idx),
                 .value = current_label,
-                .width = control_width,
+                .width = .fill,
                 .hovered = std.meta.eql(state.hover, Target{ .key_select = idx }),
                 .open = is_open,
                 .focused = std.meta.eql(state.focused, Target{ .key_select = idx }),
@@ -3410,7 +3420,7 @@ fn viewKeyRow(
             try select.trigger(tree, theme, .{
                 .id = selectId(idx),
                 .value = enumSetSummaryValue(idx, cfg),
-                .width = control_width,
+                .width = .fill,
                 .hovered = std.meta.eql(state.hover, Target{ .key_select = idx }),
                 .open = is_open,
                 .focused = std.meta.eql(state.focused, Target{ .key_select = idx }),
@@ -3420,7 +3430,7 @@ fn viewKeyRow(
             const items = state.list_items[idx].items;
             const list_col = try tree.open(.{
                 .axis = .column,
-                .width = control_width,
+                .width = .fill,
                 .gap = 6,
             });
             for (items, 0..) |item, item_i| {
@@ -3552,20 +3562,9 @@ fn viewKeyRow(
                 &state.color_placeholders[slot]
             else
                 info.placeholder;
-            const reset_hovered = std.meta.eql(state.hover, Target{ .color_reset = idx });
-            const reset_pressed = std.meta.eql(state.pressed, Target{ .color_reset = idx });
-            const reset_state: button.State = if (!ci.overridden)
-                .disabled
-            else if (reset_pressed and reset_hovered)
-                .pressed
-            else if (reset_hovered)
-                .hovered
-            else
-                .normal;
-
             const color_row = try tree.open(.{
                 .axis = .row,
-                .width = control_width,
+                .width = .fill,
                 .gap = 8,
                 .cross = .center,
             });
@@ -3588,13 +3587,6 @@ fn viewKeyRow(
                 .focused = std.meta.eql(state.focused, Target{ .key_input = idx }),
                 .invalid = is_err,
             });
-            try button.view(tree, theme, .{
-                .id = colorResetId(idx),
-                .label = "Reset",
-                .variant = .outline,
-                .size = .sm,
-                .state = reset_state,
-            });
             tree.close(color_row);
         },
         .text_input => {
@@ -3606,13 +3598,27 @@ fn viewKeyRow(
                 .placeholder = info.placeholder,
                 .cursor = inp.cursor,
                 .anchor = inp.anchor,
-                .width = control_width,
+                .width = .fill,
                 .hovered = std.meta.eql(state.hover, Target{ .key_input = idx }),
                 .focused = std.meta.eql(state.focused, Target{ .key_input = idx }),
                 .invalid = is_err,
             });
         },
     }
+
+    if (reset_target) |target| {
+        const reset_pressed = std.meta.eql(state.pressed, target);
+        const reset_hovered = std.meta.eql(state.hover, target);
+        const disabled = !isOverridden(idx, cfg);
+        try button.view(tree, theme, .{
+            .id = targetId(target).?,
+            .label = "Reset",
+            .variant = .outline,
+            .size = .sm,
+            .state = if (disabled) .disabled else if (reset_pressed and reset_hovered) .pressed else if (reset_hovered) .hovered else .normal,
+        });
+    }
+    tree.close(cluster);
 
     try field.close(tree, theme, row);
 }
