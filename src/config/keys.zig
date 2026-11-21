@@ -273,6 +273,8 @@ const tail_rows = [_]Key{
     .{ .section = .toast, .name = "gap", .field = "window.toast.gap", .bounds = .{ .min = 0, .max = 64 } },
     .{ .section = .toast, .name = "peek", .field = "window.toast.peek", .bounds = .{ .min = 0, .max = 32 } },
     .{ .section = .toast, .name = "scale_step", .field = "window.toast.scale_step", .bounds = .{ .min = 0, .max = 0.25 } },
+    .{ .section = .toast, .name = "rise_distance", .field = "window.toast.rise_distance", .bounds = .{ .min = 0, .max = 64 } },
+    .{ .section = .toast, .name = "glide_ms", .field = "window.toast.glide_ms", .bounds = .{ .min = 1, .max = 1000 } },
 
     .{ .section = .banner, .name = "enabled", .field = "window.banner.enabled" },
     .{ .section = .banner, .name = "placement", .field = "window.banner.placement" },
@@ -280,6 +282,7 @@ const tail_rows = [_]Key{
     .{ .section = .banner, .name = "max_width", .field = "window.banner.max_width", .bounds = .{ .min = 200, .max = 1600 } },
     .{ .section = .banner, .name = "margin", .field = "window.banner.margin", .bounds = .{ .min = 0, .max = 128 } },
     .{ .section = .banner, .name = "padding", .field = "window.banner.padding", .bounds = .{ .min = 0, .max = 64 } },
+    .{ .section = .banner, .name = "slide_distance", .field = "window.banner.slide_distance", .bounds = .{ .min = 0, .max = 64 } },
 
     .{ .section = .modal, .name = "backdrop_opacity", .field = "window.modal.backdrop_opacity", .kind = .fraction },
     .{ .section = .modal, .name = "on_outside_click", .field = "window.modal.on_outside_click" },
@@ -350,6 +353,9 @@ const tail_rows = [_]Key{
     .{ .section = .ui, .name = "tooltip_padding_x", .field = "ui.tooltip_padding_x", .bounds = .{ .min = 0, .max = 64 } },
     .{ .section = .ui, .name = "tooltip_padding_y", .field = "ui.tooltip_padding_y", .bounds = .{ .min = 0, .max = 64 } },
     .{ .section = .ui, .name = "tooltip_gap", .field = "ui.tooltip_gap", .bounds = .{ .min = 0, .max = 64 } },
+    .{ .section = .ui, .name = "animation_duration", .field = "ui.animation_duration_ms", .kind = .duration, .bounds = .{ .min = 50, .max = 5000 } },
+    .{ .section = .ui, .name = "focus_ring_width", .field = "ui.focus_ring_width", .bounds = .{ .min = 0, .max = 16 } },
+    .{ .section = .ui, .name = "focus_ring_opacity", .field = "ui.focus_ring_opacity", .bounds = .{ .min = 0, .max = 100 } },
     .{ .section = .scroll, .name = "step_lines", .field = "scroll.lines", .bounds = at_least_one },
     .{ .section = .scroll, .name = "wheel_lines", .field = "scroll.wheel_lines", .bounds = at_least_one },
 

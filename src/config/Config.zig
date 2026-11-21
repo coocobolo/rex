@@ -112,6 +112,12 @@ pub const Ui = struct {
     tooltip_padding_y: u8 = 8,
     /// Gap between a tooltip's swatch, name and value, and between lines.
     tooltip_gap: u8 = 8,
+    /// How long a UI enter or leave takes, in milliseconds.
+    animation_duration_ms: u32 = 200,
+    /// Width of the focus ring drawn outside a control's border.
+    focus_ring_width: u8 = 3,
+    /// Opacity of the focus ring, in percent.
+    focus_ring_opacity: u8 = 50,
 };
 
 pub const Window = struct {

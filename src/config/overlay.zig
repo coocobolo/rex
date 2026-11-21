@@ -23,11 +23,17 @@ pub const Toast = struct {
     padding: u8 = toast.padding,
     gap: u8 = toast.gap,
     peek: u8 = toast.peek,
+    /// How far below its place a toast starts and ends, in pixels.
+    rise_distance: f32 = 16,
+    /// Time constant of the glide to a new place, in milliseconds.
+    glide_ms: u32 = 40,
     enabled: bool = true,
 };
 
 pub const Banner = struct {
     max_width: f32 = 560,
+    /// How far a banner slides in from the edge, in pixels.
+    slide_distance: f32 = 12,
     placement: AlertPlacement = .floating,
     position: ScreenAnchor = .top_center,
     margin: u8 = 16,
