@@ -88,7 +88,7 @@ pub fn view(tree: *Tree, theme: *const Theme, options: Options) Tree.Error!void 
     _ = try tree.leaf(.{
         .width = .{ .fixed = thumb_size },
         .height = .{ .fixed = thumb_size },
-        .fill = theme.background.fade(presence),
+        .fill = theme.muted_foreground.fade(presence),
         .border = thumb_border,
         .border_width = 2,
         .radius = 255,
