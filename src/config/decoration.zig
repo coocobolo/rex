@@ -9,8 +9,6 @@ pub const Order = enum {
     under_text,
 };
 
-/// Underline styles that take part in ink skipping. The values match
-/// `term.cell.UnderlineStyle` so the renderer can pack them without a switch.
 /// Where dotted, dashed and curly patterns start.
 pub const Phase = enum {
     /// From the window's left edge, so patterns line up across rows.
@@ -19,6 +17,8 @@ pub const Phase = enum {
     run,
 };
 
+/// Underline styles that take part in ink skipping. The values match
+/// `term.cell.UnderlineStyle` so the renderer can pack them without a switch.
 pub const SkipInkStyle = enum(u3) {
     single = 1,
     double = 2,
