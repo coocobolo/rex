@@ -320,3 +320,32 @@ test "blendRgb: interpolates selection foreground between base and target" {
     try testing.expectEqual(target, Frame.blendRgb(base, target, 255));
     try testing.expectEqual([3]u8{ 140, 60, 150 }, Frame.blendRgb(base, target, 128));
 }
+
+test "SGR 5 and SGR 6 set distinct cell flags" {
+    var t = try Term.init(testing.allocator);
+    defer t.deinit(testing.allocator);
+    t.feed("\x1b[5mA\x1b[0m\x1b[6mB");
+    const row = t.active().row(0);
+    try testing.expect(row[0].flags.blink);
+    try testing.expect(!row[0].flags.blink_rapid);
+    try testing.expect(!row[1].flags.blink);
+    try testing.expect(row[1].flags.blink_rapid);
+
+    // The renderer's packed flags must keep the two bits distinct.
+    const slow: Frame.Flags = .{ .blink = row[0].flags.blink, .blink_rapid = row[0].flags.blink_rapid };
+    const rapid: Frame.Flags = .{ .blink = row[1].flags.blink, .blink_rapid = row[1].flags.blink_rapid };
+    try testing.expect(slow.blink and !slow.blink_rapid);
+    try testing.expect(!rapid.blink and rapid.blink_rapid);
+    try testing.expectEqual(@as(u8, 2), @as(u8, @bitCast(slow)));
+    try testing.expectEqual(@as(u8, 8), @as(u8, @bitCast(rapid)));
+}
+
+test "blinkChanged: a rapid-only phase change dirties the frame" {
+    // The shader's u_blink_rapid_on uniform changes on a rapid-only toggle.
+    // Without a dirty flag, renderFrame skips the draw and the text freezes.
+    try testing.expect(Frame.blinkChanged(false, false, false, true));
+    try testing.expect(Frame.blinkChanged(true, true, true, false));
+    try testing.expect(Frame.blinkChanged(false, true, true, true));
+    try testing.expect(!Frame.blinkChanged(true, true, true, true));
+    try testing.expect(!Frame.blinkChanged(false, false, false, false));
+}

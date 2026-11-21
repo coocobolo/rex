@@ -68,6 +68,12 @@ pub fn alphaByte(alpha: f32) u8 {
     return @intFromFloat(@round(std.math.clamp(alpha, 0.0, 1.0) * 255.0));
 }
 
+/// Whether either blink phase changed since the last built frame. Both
+/// phases are shader uniforms: a rapid-only change still needs a redraw.
+pub fn blinkChanged(slow: bool, rapid: bool, last_slow: bool, last_rapid: bool) bool {
+    return slow != last_slow or rapid != last_rapid;
+}
+
 /// Returns the decoration run for one cell, or null when the cell has
 /// no visible decoration. `foreground` is the text color after reverse
 /// video and the selection override; `foreground_alpha` carries SGR 2.
@@ -371,6 +377,7 @@ pub fn Builder(comptime option: Option) type {
 
         // last_polygon: ?SelectionPolygon,
         last_blink_on: bool = false,
+        last_blink_rapid_on: bool = false,
         last_generation: ?u32,
         /// `seq` of the newest frame whose dirty rows the stored instances
         /// account for. A frame's dirty rows are a usable span only when
@@ -532,6 +539,7 @@ pub fn Builder(comptime option: Option) type {
             atlas: *Atlas,
             rasterizer: *Rasterizer,
             blink_on: bool,
+            blink_rapid_on: bool,
             selection_state: ?Selection.State,
             cursor_color_override: ?[3]u8,
         ) !FrameData {
@@ -558,8 +566,9 @@ pub fn Builder(comptime option: Option) type {
             else
                 true;
 
-            const blink_changed = blink_on != self.last_blink_on;
+            const blink_changed = blinkChanged(blink_on, blink_rapid_on, self.last_blink_on, self.last_blink_rapid_on);
             self.last_blink_on = blink_on;
+            self.last_blink_rapid_on = blink_rapid_on;
 
             // Dirty rows are relative to the previous snapshot. After a
             // skipped frame, or for a frame already consumed, they miss rows.

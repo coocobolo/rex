@@ -1191,6 +1191,7 @@ fn renderFrame(self: *App) !bool {
         atlas,
         &self.rasterizer,
         self.blink_on,
+        self.blink_rapid_on,
         selection_state,
         null,
     );
