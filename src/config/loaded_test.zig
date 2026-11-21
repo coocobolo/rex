@@ -269,3 +269,14 @@ test "load: ink gap accepts a pixel clearance above 1" {
     try std.testing.expectEqual(null, loaded.firstError());
     try std.testing.expectEqual(@as(?f32, 4), loaded.config.decoration.skip_ink_gap_px);
 }
+
+test "load: signed decoration offsets accept negative pixels" {
+    var loaded = try Loaded.load(gpa, io, &test_config, null, &.{
+        text("user", "[decoration]\nunderline_offset_px = -8\nstrikethrough_offset_px = -3.5\noverline_offset_px = 4\n"),
+    });
+    defer loaded.deinit(gpa);
+    try std.testing.expectEqual(null, loaded.firstError());
+    try std.testing.expectEqual(@as(f32, -8), loaded.config.decoration.underline_offset_px);
+    try std.testing.expectEqual(@as(f32, -3.5), loaded.config.decoration.strikethrough_offset_px);
+    try std.testing.expectEqual(@as(f32, 4), loaded.config.decoration.overline_offset_px);
+}

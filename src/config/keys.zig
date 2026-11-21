@@ -833,6 +833,8 @@ fn checkRow(comptime key: Key, comptime T: type) void {
     if (!is_optional and key.null_keyword != null)
         @compileError(key.name ++ ": null_keyword on a field that can't be null");
     const Value = if (is_optional) @typeInfo(T).optional.child else T;
+    if (key.bounds.min < 0 and @typeInfo(Value) != .float)
+        @compileError(key.name ++ ": negative bounds need a float field; only parseDecimal accepts a sign");
     const ok = switch (key.kind) {
         .infer => switch (@typeInfo(Value)) {
             .bool, .@"enum" => key.bounds.min == 0 and key.bounds.max == std.math.inf(f64),
@@ -866,10 +868,10 @@ fn parseValue(comptime key: Key, comptime V: type, text: []const u8) Error!V {
             },
             .@"enum" => return std.meta.stringToEnum(V, text) orelse error.InvalidValue,
             .int => return fitInt(V, key.bounds, try parseDigits(text)),
-            .float => return fitFloat(V, key.bounds, try parseDecimal(text)),
+            .float => return fitFloat(V, key.bounds, try parseDecimal(text, key.bounds.min < 0)),
             else => unreachable, // checkRow
         },
-        .fraction => return fitFloat(V, .{ .min = 0, .max = 1 }, try parseDecimal(text)),
+        .fraction => return fitFloat(V, .{ .min = 0, .max = 1 }, try parseDecimal(text, false)),
         .duration => return fitInt(V, key.bounds, try parseDuration(text)),
         .time_of_day => return parseTimeOfDay(text),
         .set => return parseSet(V, text),
@@ -908,15 +910,18 @@ fn parseDigits(text: []const u8) Error!u64 {
     return std.fmt.parseUnsigned(u64, text, 10) catch error.OutOfRange;
 }
 
-/// Digits, optionally a '.' and more digits: no sign, exponent, hex, `inf`
-/// or `nan`.
-fn parseDecimal(text: []const u8) Error!f64 {
-    const dot = std.mem.indexOfScalar(u8, text, '.');
-    const whole = text[0 .. dot orelse text.len];
+/// Digits, optionally a '.' and more digits: no exponent, hex, `inf` or
+/// `nan`. A leading '-' is accepted only when the key's bounds allow negative
+/// values; fractions stay unsigned.
+fn parseDecimal(text: []const u8, comptime allow_sign: bool) Error!f64 {
+    const body = if (allow_sign and std.mem.startsWith(u8, text, "-")) text[1..] else text;
+    if (body.len == 0) return error.InvalidValue;
+    const dot = std.mem.indexOfScalar(u8, body, '.');
+    const whole = body[0 .. dot orelse body.len];
     if (whole.len == 0) return error.InvalidValue;
     for (whole) |c| if (!std.ascii.isDigit(c)) return error.InvalidValue;
     if (dot) |d| {
-        const fraction = text[d + 1 ..];
+        const fraction = body[d + 1 ..];
         if (fraction.len == 0) return error.InvalidValue;
         for (fraction) |c| if (!std.ascii.isDigit(c)) return error.InvalidValue;
     }
