@@ -40,7 +40,7 @@ pub fn trigger(tree: *Tree, theme: *const Theme, options: TriggerOptions) Tree.E
     });
     const touched = !options.disabled and (options.hovered or options.open);
 
-    const ring = try focus.openRing(tree, .{
+    const ring = try focus.openRing(tree, theme, .{
         .id = options.id,
         .width = if (options.width == .fill) .fill else .fit,
         .pointer = if (options.disabled) .arrow else .hand,

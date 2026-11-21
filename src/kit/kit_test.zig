@@ -411,7 +411,7 @@ test "snap: shared edges stay shared and hairlines stay visible at fractional sc
 test "sizes of the kit's types" {
     // Reported in the ticket; a change here is a layout change to look at.
     try testing.expectEqual(4, @sizeOf(Theme.Color));
-    try testing.expectEqual(108, @sizeOf(Theme));
+    try testing.expectEqual(112, @sizeOf(Theme));
     try testing.expectEqual(12, @sizeOf(text.Line));
     try testing.expectEqual(104, @sizeOf(Node));
     try testing.expectEqual(8, @alignOf(Node));
@@ -562,13 +562,26 @@ test "focus: move wraps at ends and enters cleanly from none" {
     try testing.expectEqual(0, focus.move(0, 1, .previous));
 }
 
+test "focus: ring width and opacity come from the theme instance" {
+    var t = Theme.dark;
+    t.ring_width = 7;
+    t.ring_opacity = 80;
+    try testing.expectEqual(t.ring.alpha(80), focus.ringColor(&t, .{ .focused = true }));
+
+    var fixture: Fixture = .{};
+    var tree = fixture.tree();
+    const ring = try focus.openRing(&tree, &t, .{ .border = t.ring });
+    try testing.expectEqual(@as(u8, 7), tree.nodes[ring].box.border_width);
+    try testing.expectEqual(Tree.Edges.all(7), tree.nodes[ring].box.padding);
+}
+
 test "motion: progress eases out for full motion and snaps for none" {
-    try testing.expectEqual(0, motion.progress(.full, 0));
-    try testing.expectEqual(0.875, motion.progress(.full, Theme.duration / 2));
-    try testing.expectEqual(1, motion.progress(.full, Theme.duration));
-    try testing.expectEqual(1, motion.progress(.full, 60_000));
-    try testing.expectEqual(1, motion.progress(.none, 0));
-    try testing.expectEqual(0, motion.duration(.none));
+    try testing.expectEqual(0, motion.progress(.full, 0, Theme.duration));
+    try testing.expectEqual(0.875, motion.progress(.full, Theme.duration / 2, Theme.duration));
+    try testing.expectEqual(1, motion.progress(.full, Theme.duration, Theme.duration));
+    try testing.expectEqual(1, motion.progress(.full, 60_000, Theme.duration));
+    try testing.expectEqual(1, motion.progress(.none, 0, Theme.duration));
+    try testing.expectEqual(0, motion.duration(.none, Theme.duration));
 }
 
 test "layout: fit_at_most hugs smaller content, caps at max, and gives way to a tighter parent" {
@@ -930,12 +943,12 @@ test "focus: ringColor, controlColors, and openRing handle focus, disabled, inva
 
     // ringColor: focused / disabled / invalid / show_invalid_ring / presence.
     try testing.expectEqual(Theme.Color.transparent, focus.ringColor(t, .{}));
-    try testing.expectEqual(t.ring.alpha(Theme.ring_opacity), focus.ringColor(t, .{ .focused = true }));
+    try testing.expectEqual(t.ring.alpha(Theme.dark.ring_opacity), focus.ringColor(t, .{ .focused = true }));
     try testing.expectEqual(Theme.Color.transparent, focus.ringColor(t, .{ .focused = true, .disabled = true }));
     try testing.expectEqual(Theme.Color.transparent, focus.ringColor(t, .{ .invalid = true }));
-    try testing.expectEqual(t.destructive.alpha(Theme.ring_opacity), focus.ringColor(t, .{ .invalid = true, .show_invalid_ring = true }));
-    try testing.expectEqual(t.destructive.alpha(Theme.ring_opacity), focus.ringColor(t, .{ .focused = true, .invalid = true }));
-    try testing.expectEqual(t.ring.alpha(Theme.ring_opacity).fade(0.5), focus.ringColor(t, .{ .focused = true, .presence = 0.5 }));
+    try testing.expectEqual(t.destructive.alpha(Theme.dark.ring_opacity), focus.ringColor(t, .{ .invalid = true, .show_invalid_ring = true }));
+    try testing.expectEqual(t.destructive.alpha(Theme.dark.ring_opacity), focus.ringColor(t, .{ .focused = true, .invalid = true }));
+    try testing.expectEqual(t.ring.alpha(Theme.dark.ring_opacity).fade(0.5), focus.ringColor(t, .{ .focused = true, .presence = 0.5 }));
 
     // controlColors: invalid > focused > hovered > input, with disabled suppression & 0.5 border fade.
     const rest = focus.controlColors(t, .{});
@@ -947,7 +960,7 @@ test "focus: ringColor, controlColors, and openRing handle focus, disabled, inva
     try testing.expectEqual(t.foreground.fade(0.35), hovered.border);
 
     const focused = focus.controlColors(t, .{ .focused = true });
-    try testing.expectEqual(t.ring.alpha(Theme.ring_opacity), focused.ring);
+    try testing.expectEqual(t.ring.alpha(Theme.dark.ring_opacity), focused.ring);
     try testing.expectEqual(t.ring, focused.border);
 
     const disabled = focus.controlColors(t, .{ .focused = true, .hovered = true, .disabled = true });
@@ -959,21 +972,21 @@ test "focus: ringColor, controlColors, and openRing handle focus, disabled, inva
     try testing.expectEqual(t.destructive, invalid_unfocused.border);
 
     const invalid_group = focus.controlColors(t, .{ .invalid = true, .show_invalid_ring = true });
-    try testing.expectEqual(t.destructive.alpha(Theme.ring_opacity), invalid_group.ring);
+    try testing.expectEqual(t.destructive.alpha(Theme.dark.ring_opacity), invalid_group.ring);
     try testing.expectEqual(t.destructive, invalid_group.border);
 
     // openRing: padding, border_width, radius clamping (radius_md + 3 and 255 -> 255), id/shrink forwarding.
     var fixture: Fixture = .{};
     var tree = fixture.tree();
     const id_a = Id.of("focus.ring.a");
-    const a = try focus.openRing(&tree, .{
+    const a = try focus.openRing(&tree, t, .{
         .id = id_a,
         .pointer = .hand,
         .border = focused.ring,
         .shrink = false,
     });
     tree.close(a);
-    const b = try focus.openRing(&tree, .{
+    const b = try focus.openRing(&tree, t, .{
         .border = focused.ring,
         .inner_radius = 255,
     });
@@ -981,9 +994,9 @@ test "focus: ringColor, controlColors, and openRing handle focus, disabled, inva
 
     try testing.expectEqual(id_a, tree.nodes[a].box.id);
     try testing.expectEqual(Tree.PointerShape.hand, tree.nodes[a].box.pointer);
-    try testing.expectEqual(Theme.ring_width, tree.nodes[a].box.border_width);
-    try testing.expectEqual(Tree.Edges.all(Theme.ring_width), tree.nodes[a].box.padding);
-    try testing.expectEqual(@as(u8, Theme.radius_md + Theme.ring_width), tree.nodes[a].box.radius);
+    try testing.expectEqual(Theme.dark.ring_width, tree.nodes[a].box.border_width);
+    try testing.expectEqual(Tree.Edges.all(Theme.dark.ring_width), tree.nodes[a].box.padding);
+    try testing.expectEqual(@as(u8, Theme.radius_md + Theme.dark.ring_width), tree.nodes[a].box.radius);
     try testing.expectEqual(false, tree.nodes[a].box.shrink);
 
     try testing.expectEqual(Id.none, tree.nodes[b].box.id);

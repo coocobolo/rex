@@ -110,11 +110,11 @@ test "button: the focus ring surrounds the face without moving it, and carries t
     var fixture: Fixture = .{};
     var tree = try one(&fixture, theme, .{ .id = id, .label = "Save" });
     const face = tree.nodes[1].rect;
-    try testing.expectEqual(Tree.Rect{ .x = Theme.ring_width, .y = Theme.ring_width, .w = 2 * 16 + 4 * byte_width, .h = Theme.control }, face);
+    try testing.expectEqual(Tree.Rect{ .x = Theme.dark.ring_width, .y = Theme.dark.ring_width, .w = 2 * 16 + 4 * byte_width, .h = Theme.control }, face);
 
     tree = try one(&fixture, theme, .{ .id = id, .label = "Save", .focused = true });
     try testing.expectEqual(face, tree.nodes[1].rect);
-    try testing.expectEqual(theme.ring.alpha(Theme.ring_opacity), tree.nodes[0].box.border);
+    try testing.expectEqual(theme.ring.alpha(Theme.dark.ring_opacity), tree.nodes[0].box.border);
     try testing.expectEqual(theme.ring, tree.nodes[1].box.border);
     try testing.expectEqual(id, tree.hitTest(1, 1));
     try testing.expectEqual(id, tree.hitTest(face.x + 4, face.y + 4));
@@ -209,7 +209,7 @@ test "button: fill width ellipsizes overflowing label on one line" {
     const face = tree.nodes[1].rect;
     const label = tree.nodes[2];
     const line = tree.lines.buffer[label.content.text.first_line];
-    try testing.expectEqual(@as(f32, 120 - 2 * Theme.ring_width), face.w);
+    try testing.expectEqual(@as(f32, 120 - 2 * Theme.dark.ring_width), face.w);
     try testing.expectEqual(@as(u16, 1), label.content.text.line_count);
     try testing.expectEqual(@as(f32, Theme.control), face.h);
     try testing.expect(line.width <= face.w - 2 * @as(f32, @floatFromInt(button.Size.default.pad())) + 0.5);

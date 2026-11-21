@@ -483,7 +483,7 @@ test "dialog: narrow widths wrap footer buttons without wrapping labels" {
 
     const cancel_face = face(&tree, 0);
     const close_face = face(&tree, 1);
-    const right_edge = card.x + card.w - @as(f32, @floatFromInt(state.option.padding + Theme.ring_width));
+    const right_edge = card.x + card.w - @as(f32, @floatFromInt(state.option.padding + Theme.dark.ring_width));
     // Wrapped onto separate rows at intrinsic button width, right-aligned.
     try testing.expect(close_face.rect.y >= cancel_face.rect.y + cancel_face.rect.h + @as(f32, @floatFromInt(@import("button.zig").gap)));
     try testing.expectEqual(right_edge, cancel_face.rect.x + cancel_face.rect.w);

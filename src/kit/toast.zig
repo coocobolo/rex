@@ -69,6 +69,10 @@ pub const Option = struct {
     padding: u8 = padding,
     gap: u8 = gap,
     peek: u8 = peek,
+    /// How far a toast slides in from its place, in pixels.
+    rise_distance: f32 = rise,
+    /// Time constant of the glide to a new place, in milliseconds.
+    glide_ms: u32 = glide_ms,
 };
 
 pub const Kind = enum(u8) {
@@ -124,12 +128,12 @@ pub const Entry = struct {
     }
 
     /// 0 (invisible, `rise` below its place) to 1 (at rest).
-    fn presence(self: *const Entry, mode: motion.Mode) f32 {
+    fn presence(self: *const Entry, mode: motion.Mode, duration_ms: u16) f32 {
         return switch (self.phase) {
             .waiting => 0,
-            .entering => |elapsed| motion.progress(mode, elapsed),
+            .entering => |elapsed| motion.progress(mode, elapsed, duration_ms),
             .shown => 1,
-            .leaving => |elapsed| 1 - motion.progress(mode, elapsed),
+            .leaving => |elapsed| 1 - motion.progress(mode, elapsed, duration_ms),
         };
     }
 };
@@ -151,6 +155,8 @@ pub const State = struct {
     pointer: Pointer = .away,
     /// Set by the owner, from the user's setting.
     motion: motion.Mode = .full,
+    /// Enter/leave duration from `[ui] animation_duration`.
+    duration_ms: u16 = Theme.duration,
     option: Option = .{},
 
     pub const empty: State = .{};
@@ -203,7 +209,7 @@ pub const State = struct {
     }
 
     fn tick(self: *State, dt_ms: u32) bool {
-        const duration = motion.duration(self.motion);
+        const duration = motion.duration(self.motion, self.duration_ms);
         const dt_short = std.math.lossyCast(u16, dt_ms);
         var changed = false;
         var index: usize = 0;
@@ -253,7 +259,7 @@ pub const State = struct {
             // Leaves from as far as it got, so it does not jump to full
             // presence first.
             .entering => |elapsed| {
-                const duration = motion.duration(self.motion);
+                const duration = motion.duration(self.motion, self.duration_ms);
                 entry.phase = .{ .leaving = duration - @min(elapsed, duration) };
             },
             .shown => entry.phase = .{ .leaving = 0 },
@@ -400,7 +406,7 @@ pub fn view(state: *const State, tree: *Tree, theme: *const Theme) Tree.Error!?I
         const depth = entries.len - 1 - i;
         const stacked_behind = state.option.layout == .stacked and depth > 0;
         const close_active = !(stacked_behind and state.pointer == .away);
-        const presence = entry.presence(state.motion);
+        const presence = entry.presence(state.motion, state.duration_ms);
         const card = try tree.open(.{
             .id = cardId(entry.serial),
             .axis = .row,
@@ -468,13 +474,13 @@ pub fn place(state: *const State, tree: *Tree, stack: ?Index, table: *memory.Tab
             const target = node.rect.y;
             // A toast seen for the first time starts in its place.
             const drawn = switch (state.motion) {
-                .full => glide(table.get(node.box.id) orelse target, target, dt_ms),
+                .full => glide(table.get(node.box.id) orelse target, target, dt_ms, state.option.glide_ms),
                 .none => target,
             };
             try table.set(node.box.id, drawn);
             if (drawn != target) status = .moving;
-            const rise_offset: f32 = if (state.option.position.isTop()) -rise else rise;
-            tree.translate(cursor, 0, drawn - target + (1 - entry.presence(state.motion)) * rise_offset);
+            const rise_offset: f32 = if (state.option.position.isTop()) -state.option.rise_distance else state.option.rise_distance;
+            tree.translate(cursor, 0, drawn - target + (1 - entry.presence(state.motion, state.duration_ms)) * rise_offset);
             cursor = node.end;
         }
         return status;
@@ -496,7 +502,7 @@ pub fn place(state: *const State, tree: *Tree, stack: ?Index, table: *memory.Tab
     const expand_target: f32 = if (state.pointer == .over and n > 1) 1 else 0;
     const expand: f32 = if (n > 1) blk: {
         const drawn_expand = switch (state.motion) {
-            .full => glideUnit(table.get(expand_id) orelse expand_target, expand_target, dt_ms),
+            .full => glideUnit(table.get(expand_id) orelse expand_target, expand_target, dt_ms, state.option.glide_ms),
             .none => expand_target,
         };
         try table.set(expand_id, drawn_expand);
@@ -511,7 +517,7 @@ pub fn place(state: *const State, tree: *Tree, stack: ?Index, table: *memory.Tab
     const gap_f: f32 = @floatFromInt(state.option.gap);
     const peek_f: f32 = @floatFromInt(state.option.peek);
     const step = if (std.math.isFinite(state.option.scale_step)) std.math.clamp(state.option.scale_step, 0, 0.25) else 0;
-    const rise_offset: f32 = if (is_top) -rise else rise;
+    const rise_offset: f32 = if (is_top) -state.option.rise_distance else state.option.rise_distance;
 
     var expanded_y: [visible_max]f32 = undefined;
     var offset_y: f32 = 0;
@@ -541,13 +547,13 @@ pub fn place(state: *const State, tree: *Tree, stack: ?Index, table: *memory.Tab
         const target_y = collapsed_y + (expanded_y[i] - collapsed_y) * expand;
 
         const drawn_y = switch (state.motion) {
-            .full => glide(table.get(node.box.id) orelse target_y, target_y, dt_ms),
+            .full => glide(table.get(node.box.id) orelse target_y, target_y, dt_ms, state.option.glide_ms),
             .none => target_y,
         };
         try table.set(node.box.id, drawn_y);
         if (drawn_y != target_y) status = .moving;
 
-        const final_y = drawn_y + (1 - entry.presence(state.motion)) * rise_offset;
+        const final_y = drawn_y + (1 - entry.presence(state.motion, state.duration_ms)) * rise_offset;
         tree.translate(card, target_x - orig[i].x, final_y - orig[i].y);
         node.rect.w = target_w;
         node.rect.h = target_h;
@@ -586,12 +592,12 @@ fn fadeDescendants(tree: *Tree, card: Index, factor: f32) void {
 /// `from` after `dt_ms` of closing in on `to`: the distance left decays
 /// exponentially, so the result is the same however the time is split
 /// into frames.
-fn glide(from: f32, to: f32, dt_ms: u32) f32 {
-    const left = (from - to) * @exp(-@as(f32, @floatFromInt(dt_ms)) / glide_ms);
+fn glide(from: f32, to: f32, dt_ms: u32, glide_constant: u32) f32 {
+    const left = (from - to) * @exp(-@as(f32, @floatFromInt(dt_ms)) / @as(f32, @floatFromInt(glide_constant)));
     return if (@abs(left) < 0.5) to else to + left;
 }
 
-fn glideUnit(from: f32, to: f32, dt_ms: u32) f32 {
-    const left = (from - to) * @exp(-@as(f32, @floatFromInt(dt_ms)) / glide_ms);
+fn glideUnit(from: f32, to: f32, dt_ms: u32, glide_constant: u32) f32 {
+    const left = (from - to) * @exp(-@as(f32, @floatFromInt(dt_ms)) / @as(f32, @floatFromInt(glide_constant)));
     return if (@abs(left) < 0.005) to else to + left;
 }

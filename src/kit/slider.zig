@@ -57,8 +57,8 @@ pub fn view(tree: *Tree, theme: *const Theme, options: Options) Tree.Error!void 
     const hit = try tree.open(.{
         .id = options.id,
         .axis = .row,
-        .width = .{ .fixed = track_w + Theme.ring_width * 2 },
-        .height = .{ .fixed = thumb_size + Theme.ring_width * 2 },
+        .width = .{ .fixed = track_w + theme.ring_width * 2 },
+        .height = .{ .fixed = thumb_size + theme.ring_width * 2 },
         .cross = .center,
         .pointer = if (options.disabled) .arrow else .hand,
     });
@@ -77,9 +77,9 @@ pub fn view(tree: *Tree, theme: *const Theme, options: Options) Tree.Error!void 
     else
         theme.primary.fade(presence);
 
-    const thumb_ring = try focus.openRing(tree, .{
-        .width = .{ .fixed = thumb_size + Theme.ring_width * 2 },
-        .height = .{ .fixed = thumb_size + Theme.ring_width * 2 },
+    const thumb_ring = try focus.openRing(tree, theme, .{
+        .width = .{ .fixed = thumb_size + theme.ring_width * 2 },
+        .height = .{ .fixed = thumb_size + theme.ring_width * 2 },
         .main = .center,
         .cross = .center,
         .border = ring_color,
@@ -126,8 +126,8 @@ pub fn view(tree: *Tree, theme: *const Theme, options: Options) Tree.Error!void 
 
 /// Maps a logical pointer `x` coordinate onto `[0.0, 1.0]` along a laid-out
 /// slider hit box returned by `view`.
-pub fn ratioFromX(rect: Rect, x: f32) f32 {
-    const ring: f32 = Theme.ring_width;
+pub fn ratioFromX(rect: Rect, x: f32, ring_width: u8) f32 {
+    const ring: f32 = @floatFromInt(ring_width);
     const travel = rect.w - ring * 2 - thumb_size;
     if (travel <= 0) return 0;
     const origin = rect.x + ring + thumb_size * 0.5;

@@ -109,6 +109,8 @@ pub const State = struct {
     touch: button.State = .normal,
     focused: bool = false,
     motion: motion.Mode = .full,
+    /// Enter/leave duration from `[ui] animation_duration`.
+    duration_ms: u16 = Theme.duration,
     scrim_alpha: u8 = 128,
     steps_total: u8 = 0,
     steps_done: u8 = 0,
@@ -192,7 +194,7 @@ pub fn update(state: *State, event: Event) Outcome {
     return switch (event) {
         .sync => |req| sync(state, req),
         .close => if (beginLeave(state)) .redraw else .quiet,
-        .tick => |dt_ms| switch (state.phase.tick(state.motion, dt_ms)) {
+        .tick => |dt_ms| switch (state.phase.tick(state.motion, dt_ms, state.duration_ms)) {
             .quiet => .quiet,
             .redraw => .redraw,
             .closed => {
@@ -233,7 +235,7 @@ fn sync(self: *State, req: Request) Outcome {
         std.mem.eql(u8, self.subtitle(), req.subtitle[0..new_sub_len]) and
         std.mem.eql(u8, self.prompt(), req.prompt[0..new_prompt_len]);
 
-    const entered = self.phase.enterImmediate(self.motion);
+    const entered = self.phase.enterImmediate(self.motion, self.duration_ms);
     if (entered) {
         self.touch = .normal;
         self.focused = req.focus;
@@ -267,7 +269,7 @@ fn sync(self: *State, req: Request) Outcome {
 
 fn beginLeave(self: *State) bool {
     self.touch = .normal;
-    return self.phase.leaveImmediate(self.motion);
+    return self.phase.leaveImmediate(self.motion, self.duration_ms);
 }
 
 fn hoverAt(self: *State, over: Pointer) Outcome {
@@ -334,7 +336,7 @@ pub fn view(state: *const State, tree: *Tree, theme: *const Theme) Tree.Error!vo
 /// wide, stacking the bottom HUD vertically on narrow windows.
 pub fn viewIn(state: *const State, tree: *Tree, theme: *const Theme, viewport_width: f32) Tree.Error!void {
     if (state.phase == .closed) return;
-    const presence = state.phase.presence(state.motion);
+    const presence = state.phase.presence(state.motion, state.duration_ms);
     const accent = state.presentation.tone.accent(theme).fade(presence);
 
     switch (state.presentation.layout) {

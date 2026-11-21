@@ -189,7 +189,7 @@ pub fn view(tree: *Tree, theme: *const Theme, options: Options) Tree.Error!void 
     // shift when the focus moves. The ring is the slot's border, not its
     // fill, which would show through an outline button. The id is on the
     // slot: a click on the ring is a click on the button.
-    const slot = try focus.openRing(tree, .{
+    const slot = try focus.openRing(tree, theme, .{
         .id = options.id,
         .width = if (options.fill_width and !square) .fill else .fit,
         .pointer = if (options.state == .disabled) .arrow else .hand,

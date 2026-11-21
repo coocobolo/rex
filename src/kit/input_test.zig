@@ -120,7 +120,7 @@ test "input view: node budget, layout, focus, selection, and invalid/disabled st
     const focused_ring = tree.nodes[1];
     try std.testing.expectEqual(kit.Tree.PointerShape.text, focused_ring.box.pointer);
     try std.testing.expect(focused_ring.box.border.a > 0);
-    const expected_h: f32 = @floatFromInt(Theme.control_sm + 2 * Theme.ring_width);
+    const expected_h: f32 = @floatFromInt(Theme.control_sm + 2 * Theme.dark.ring_width);
     try std.testing.expectEqual(expected_h, focused_ring.rect.h);
 
     // Invalid focused ring uses destructive color.

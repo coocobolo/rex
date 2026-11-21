@@ -38,7 +38,7 @@ pub fn view(tree: *Tree, theme: *const Theme, options: Options) Tree.Error!void 
         .gap = gap,
     });
 
-    const ring = try focus.openRing(tree, .{
+    const ring = try focus.openRing(tree, theme, .{
         .border = focus.ringColor(theme, .{
             .focused = options.focused,
             .disabled = options.disabled,

@@ -181,6 +181,26 @@ test "kitOverlayOptions: forwards [wellbeing.widget] options to KitOverlay" {
     try testing.expect(!opts.wellbeing_widget.tooltip);
 }
 
+test "kitOverlayOptions: forwards stage 4 motion and focus keys" {
+    const testing = std.testing;
+    var ui: Config.Ui = .{};
+    ui.animation_duration_ms = 420;
+    ui.focus_ring_width = 7;
+    ui.focus_ring_opacity = 80;
+    var win: Config.Window = .default;
+    win.toast.rise_distance = 24;
+    win.toast.glide_ms = 60;
+    win.banner.slide_distance = 20;
+
+    const opts = App.kitOverlayOptions(ui, win);
+    try testing.expectEqual(@as(u32, 420), opts.ui.animation_duration_ms);
+    try testing.expectEqual(@as(u8, 7), opts.ui.focus_ring_width);
+    try testing.expectEqual(@as(u8, 80), opts.ui.focus_ring_opacity);
+    try testing.expectEqual(@as(f32, 24), opts.toast.rise_distance);
+    try testing.expectEqual(@as(u32, 60), opts.toast.glide_ms);
+    try testing.expectEqual(@as(f32, 20), opts.banner.drop);
+}
+
 test "AsciiOverlayState: mode resolution honors enabled opt-out, trigger, and focus" {
     const testing = std.testing;
     const State = App.AsciiOverlayState;

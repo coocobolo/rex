@@ -12,20 +12,20 @@ pub const frame_ms = 16;
 pub const Mode = enum(u8) { full, none };
 
 /// How long an enter or leave takes, in milliseconds.
-pub fn duration(mode: Mode) u16 {
+pub fn duration(mode: Mode, duration_ms: u16) u16 {
     return switch (mode) {
-        .full => Theme.duration,
+        .full => duration_ms,
         .none => 0,
     };
 }
 
 /// How far an enter or leave that started `elapsed_ms` ago has come, from
 /// 0 to 1, eased out (cubic): fast at first, settling at the end.
-pub fn progress(mode: Mode, elapsed_ms: u16) f32 {
+pub fn progress(mode: Mode, elapsed_ms: u16, duration_ms: u16) f32 {
     switch (mode) {
         .none => return 1,
         .full => {
-            const rest = 1 - @min(1, @as(f32, @floatFromInt(elapsed_ms)) / Theme.duration);
+            const rest = 1 - @min(1, @as(f32, @floatFromInt(elapsed_ms)) / @as(f32, @floatFromInt(duration_ms)));
             return 1 - rest * rest * rest;
         },
     }

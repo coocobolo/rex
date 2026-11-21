@@ -23,7 +23,7 @@ pub const Options = struct {
 
 pub fn view(tree: *Tree, theme: *const Theme, options: Options) Tree.Error!void {
     const presence: f32 = if (options.disabled) 0.5 else 1.0;
-    const ring = try focus.openRing(tree, .{
+    const ring = try focus.openRing(tree, theme, .{
         .id = options.id,
         .pointer = if (options.disabled) .arrow else .hand,
         .border = focus.ringColor(theme, .{

@@ -44,7 +44,7 @@ test "switch: focused sets ring border; disabled suppresses ring and hand pointe
 
     var focused = Tree.init(&nodes, &lines);
     try switch_control.view(&focused, &Theme.dark, .{ .id = Id.of("sw"), .focused = true });
-    try testing.expectEqual(Theme.dark.ring.alpha(Theme.ring_opacity), focused.nodes[0].box.border);
+    try testing.expectEqual(Theme.dark.ring.alpha(Theme.dark.ring_opacity), focused.nodes[0].box.border);
     try testing.expectEqual(Tree.PointerShape.hand, focused.nodes[0].box.pointer);
 
     var disabled = Tree.init(&nodes, &lines);

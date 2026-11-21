@@ -72,6 +72,10 @@ border: Color,
 input: Color,
 /// The focus ring, drawn at `ring_opacity`.
 ring: Color,
+/// Width of the focus ring drawn outside a control's border.
+ring_width: u8 = 3,
+/// Opacity of the focus ring, in percent.
+ring_opacity: u8 = 50,
 /// Toast icons.
 success: Color,
 warning: Color,
@@ -149,10 +153,6 @@ pub const radius_md = 11;
 pub const radius_sm = 9;
 /// Every outline. Painted at least one physical pixel wide.
 pub const border_width = 1;
-/// The focus ring, outside the border.
-pub const ring_width = 3;
-/// Opacity of the focus ring, in percent.
-pub const ring_opacity = 50;
 /// The step every padding and gap is a multiple of.
 pub const space = 4;
 /// Heights of extra-small, small, default and large controls.

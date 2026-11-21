@@ -314,8 +314,8 @@ test "sizes of the toast surface" {
     // 19 bytes of fields, 256 of text, 1 of padding.
     try testing.expectEqual(276, @sizeOf(toast.Entry));
     try testing.expectEqual(4, @alignOf(toast.Entry));
-    try testing.expectEqual(16, @sizeOf(toast.Option));
-    try testing.expectEqual(2232, @sizeOf(State));
+    try testing.expectEqual(24, @sizeOf(toast.Option));
+    try testing.expectEqual(2244, @sizeOf(State));
     try testing.expectEqual(132, @sizeOf(memory.Table));
 }
 

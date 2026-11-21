@@ -47,9 +47,9 @@ pub const RingOptions = struct {
 pub fn ringColor(theme: *const Theme, options: RingState) Color {
     const active = options.focused and !options.disabled;
     const base: Color = if (options.invalid and (active or options.show_invalid_ring))
-        theme.destructive.alpha(Theme.ring_opacity)
+        theme.destructive.alpha(theme.ring_opacity)
     else if (active)
-        theme.ring.alpha(Theme.ring_opacity)
+        theme.ring.alpha(theme.ring_opacity)
     else
         .transparent;
     return if (options.presence < 1.0) base.fade(options.presence) else base;
@@ -78,8 +78,8 @@ pub fn controlColors(theme: *const Theme, options: ControlState) ControlColors {
     };
 }
 
-/// Opens the outer focus-ring slot reserving `Theme.ring_width` around a control.
-pub fn openRing(tree: *Tree, options: RingOptions) Tree.Error!Tree.Index {
+/// Opens the outer focus-ring slot reserving `theme.ring_width` around a control.
+pub fn openRing(tree: *Tree, theme: *const Theme, options: RingOptions) Tree.Error!Tree.Index {
     return tree.open(.{
         .id = options.id,
         .pointer = options.pointer,
@@ -87,10 +87,10 @@ pub fn openRing(tree: *Tree, options: RingOptions) Tree.Error!Tree.Index {
         .height = options.height,
         .main = options.main,
         .cross = options.cross,
-        .padding = .all(Theme.ring_width),
+        .padding = .all(theme.ring_width),
         .border = options.border,
-        .border_width = Theme.ring_width,
-        .radius = @min(255, @as(u16, options.inner_radius) + Theme.ring_width),
+        .border_width = theme.ring_width,
+        .radius = @min(255, @as(u16, options.inner_radius) + theme.ring_width),
         .shrink = options.shrink,
     });
 }

@@ -4766,6 +4766,7 @@ pub fn kitOverlayOptions(ui: Config.Ui, win: Config.Window) KitOverlay.Options {
             .position = win.banner.position,
             .margin = win.banner.margin,
             .padding = win.banner.padding,
+            .drop = win.banner.slide_distance,
         },
         .toast = .{
             .width = win.toast.width,
@@ -4776,6 +4777,8 @@ pub fn kitOverlayOptions(ui: Config.Ui, win: Config.Window) KitOverlay.Options {
             .padding = win.toast.padding,
             .gap = win.toast.gap,
             .peek = win.toast.peek,
+            .rise_distance = win.toast.rise_distance,
+            .glide_ms = win.toast.glide_ms,
         },
         .dialog = .{
             .width = win.alert_dialog.width,

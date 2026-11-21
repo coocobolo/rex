@@ -89,13 +89,13 @@ pub fn openTrigger(tree: *Tree, theme: *const Theme, options: TriggerOptions) Tr
         .id = options.id,
         .pointer = if (options.disabled) .arrow else .hand,
         .width = .fill,
-        .padding = .all(Theme.ring_width),
+        .padding = .all(theme.ring_width),
         .border = focus.ringColor(theme, .{
             .focused = options.focused,
             .disabled = options.disabled,
             .presence = presence,
         }),
-        .border_width = Theme.ring_width,
+        .border_width = theme.ring_width,
         .radius = options.card_radius -| Theme.border_width,
     });
 
@@ -103,8 +103,8 @@ pub fn openTrigger(tree: *Tree, theme: *const Theme, options: TriggerOptions) Tr
         .axis = .row,
         .width = .fill,
         .padding = .symmetric(
-            options.padding_x -| Theme.ring_width,
-            options.padding_y -| Theme.ring_width,
+            options.padding_x -| theme.ring_width,
+            options.padding_y -| theme.ring_width,
         ),
         .gap = 12,
         .cross = .center,

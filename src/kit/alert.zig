@@ -36,6 +36,8 @@ pub const Position = Tree.ScreenAnchor;
 
 pub const Option = struct {
     max_width: f32 = max_width,
+    /// How far the banner slides in from the edge, in pixels.
+    drop: f32 = drop,
     placement: Placement = .floating,
     position: Position = .top_center,
     margin: u8 = margin,
@@ -78,6 +80,8 @@ pub const State = struct {
     kind: Kind = .err,
     touch: button.State = .normal,
     motion: motion.Mode = .full,
+    /// Enter/leave duration from `[ui] animation_duration`.
+    duration_ms: u16 = Theme.duration,
     option: Option = .{},
     title_len: u8 = 0,
     description_len: u16 = 0,
@@ -128,7 +132,7 @@ pub fn update(state: *State, event: Event) bool {
     return switch (event) {
         .show => |req| show(state, req),
         .dismiss => beginLeave(state),
-        .tick => |dt_ms| switch (state.phase.tick(state.motion, dt_ms)) {
+        .tick => |dt_ms| switch (state.phase.tick(state.motion, dt_ms, state.duration_ms)) {
             .quiet => false,
             .redraw => true,
             .closed => {
@@ -157,13 +161,13 @@ fn show(self: *State, req: Request) bool {
     @memcpy(self.description_bytes[0..new_desc_len], req.description[0..new_desc_len]);
     self.touch = .normal;
 
-    const entered = self.phase.enterImmediate(self.motion);
+    const entered = self.phase.enterImmediate(self.motion, self.duration_ms);
     return entered or !content_same;
 }
 
 fn beginLeave(self: *State) bool {
     self.touch = .normal;
-    return self.phase.leaveImmediate(self.motion);
+    return self.phase.leaveImmediate(self.motion, self.duration_ms);
 }
 
 fn hoverAt(self: *State, over: Pointer) bool {
@@ -205,7 +209,7 @@ pub const node_max = 7 + button.node_max;
 /// Writes the alert banner anchored per `state.option`, or returns null when closed.
 pub fn view(state: *const State, tree: *Tree, theme: *const Theme) Tree.Error!?Index {
     if (state.phase == .closed) return null;
-    const presence = state.phase.presence(state.motion);
+    const presence = state.phase.presence(state.motion, state.duration_ms);
     const style = state.kind.accent(theme);
     const docked = state.option.placement == .docked;
 
@@ -272,10 +276,10 @@ pub fn view(state: *const State, tree: *Tree, theme: *const Theme) Tree.Error!?I
 pub fn place(state: *const State, tree: *Tree, root: ?Index) void {
     const start = root orelse return;
     if (state.motion == .none) return;
-    const presence = state.phase.presence(state.motion);
+    const presence = state.phase.presence(state.motion, state.duration_ms);
     if (presence >= 1) return;
     const card: Index = start + 1;
     assert(tree.nodes[card].box.id == card_id);
-    const offset = (1 - presence) * drop;
+    const offset = (1 - presence) * state.option.drop;
     tree.translate(card, 0, if (state.option.position.isTop()) -offset else offset);
 }

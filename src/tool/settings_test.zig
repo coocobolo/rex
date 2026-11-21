@@ -1099,7 +1099,7 @@ test "settings: clicking select value label opens and switches directly between 
     var lines: [settings.line_max]kit.text.Line = undefined;
     Helper.tree = .init(&nodes, &lines);
     try settings.view(&state, &Helper.tree, &kit.Theme.dark);
-    try Helper.tree.layout(measurer, 360, 2000);
+    try Helper.tree.layout(measurer, 360, 2600);
 
     const pos_idx = keyIndex(.toast, "position");
     const place_idx = keyIndex(.banner, "placement");
@@ -1108,7 +1108,7 @@ test "settings: clicking select value label opens and switches directly between 
 
     const pos_rect = Helper.tree.find(pos_id).?.rect;
     const place_rect = Helper.tree.find(place_id).?.rect;
-    try testing.expect(place_rect.y + place_rect.h < 2000);
+    try testing.expect(place_rect.y + place_rect.h < 2600);
     // Clicking the value text inside a compact select trigger hits the select.
     try testing.expectEqual(pos_id, Helper.tree.hitTest(pos_rect.x + 18, pos_rect.y + pos_rect.h / 2));
 
@@ -1122,7 +1122,7 @@ test "settings: clicking select value label opens and switches directly between 
     // Rebuild with popup open; clicking directly onto Banner Placement switches dropdowns in one click.
     Helper.tree = .init(&nodes, &lines);
     try settings.view(&state, &Helper.tree, &kit.Theme.dark);
-    try Helper.tree.layout(measurer, 360, 2000);
+    try Helper.tree.layout(measurer, 360, 2600);
 
     const layer = Helper.tree.hitTest(place_rect.x + 18, place_rect.y + place_rect.h / 2);
     try testing.expectEqual(Id.of("settings.layer"), layer);

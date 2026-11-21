@@ -46,15 +46,15 @@ test "Slider: ratioFromX clamps to [0, 1] across the thumb travel range" {
     const rect: Tree.Rect = .{
         .x = 100,
         .y = 20,
-        .w = 180 + Theme.ring_width * 2,
-        .h = slider.thumb_size + Theme.ring_width * 2,
+        .w = 180 + Theme.dark.ring_width * 2,
+        .h = slider.thumb_size + Theme.dark.ring_width * 2,
     };
-    const left_center = rect.x + Theme.ring_width + slider.thumb_size * 0.5;
-    const right_center = rect.x + rect.w - Theme.ring_width - slider.thumb_size * 0.5;
+    const left_center = rect.x + Theme.dark.ring_width + slider.thumb_size * 0.5;
+    const right_center = rect.x + rect.w - Theme.dark.ring_width - slider.thumb_size * 0.5;
 
-    try testing.expectApproxEqAbs(@as(f32, 0.0), slider.ratioFromX(rect, left_center), 1e-4);
-    try testing.expectApproxEqAbs(@as(f32, 0.0), slider.ratioFromX(rect, 0), 1e-4);
-    try testing.expectApproxEqAbs(@as(f32, 0.5), slider.ratioFromX(rect, (left_center + right_center) * 0.5), 1e-4);
-    try testing.expectApproxEqAbs(@as(f32, 1.0), slider.ratioFromX(rect, right_center), 1e-4);
-    try testing.expectApproxEqAbs(@as(f32, 1.0), slider.ratioFromX(rect, 999), 1e-4);
+    try testing.expectApproxEqAbs(@as(f32, 0.0), slider.ratioFromX(rect, left_center, Theme.dark.ring_width), 1e-4);
+    try testing.expectApproxEqAbs(@as(f32, 0.0), slider.ratioFromX(rect, 0, Theme.dark.ring_width), 1e-4);
+    try testing.expectApproxEqAbs(@as(f32, 0.5), slider.ratioFromX(rect, (left_center + right_center) * 0.5, Theme.dark.ring_width), 1e-4);
+    try testing.expectApproxEqAbs(@as(f32, 1.0), slider.ratioFromX(rect, right_center, Theme.dark.ring_width), 1e-4);
+    try testing.expectApproxEqAbs(@as(f32, 1.0), slider.ratioFromX(rect, @as(f32, 999), Theme.dark.ring_width), 1e-4);
 }

@@ -501,7 +501,7 @@ pub fn view(tree: *Tree, theme: *const Theme, options: Options) Tree.Error!void 
         .id = options.id,
         .width = if (options.width == .fill) .fill else .fit,
         .pointer = if (options.disabled) .arrow else .text,
-    }) else try focus.openRing(tree, .{
+    }) else try focus.openRing(tree, theme, .{
         .id = options.id,
         .width = if (options.width == .fill) .fill else .fit,
         .pointer = if (options.disabled) .arrow else .text,

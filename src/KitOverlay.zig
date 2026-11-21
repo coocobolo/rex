@@ -72,6 +72,9 @@ elapsed_ms: u32 = 0,
 /// Whether the last built frame left a toast short of its place.
 motion: toast.Motion = .settled,
 color_scheme: Theme.ColorScheme = .auto,
+/// Focus ring width/opacity from `[ui]`, applied to a theme copy per frame.
+focus_ring_width: u8 = 3,
+focus_ring_opacity: u8 = 50,
 /// Tooltip card metrics from `[ui]`. Set by `configure`.
 tooltip_metrics: tooltip.Metrics = .{},
 
@@ -119,11 +122,18 @@ pub const Options = struct {
 
 /// Applies the user's `[ui]` and overlay settings, from the next frame on.
 pub fn configure(self: *KitOverlay, options: Options) void {
+    const duration: u16 = @intCast(@min(options.ui.animation_duration_ms, @as(u32, std.math.maxInt(u16))));
     self.toasts.motion = options.ui.motion;
+    self.toasts.duration_ms = duration;
     self.alert.motion = options.ui.motion;
+    self.alert.duration_ms = duration;
     self.dialog.motion = options.ui.motion;
+    self.dialog.duration_ms = duration;
     self.lock_screen.motion = options.ui.motion;
+    self.lock_screen.duration_ms = duration;
     self.color_scheme = options.ui.color_scheme;
+    self.focus_ring_width = options.ui.focus_ring_width;
+    self.focus_ring_opacity = options.ui.focus_ring_opacity;
     self.tooltip_metrics = .{
         .pad_x = options.ui.tooltip_padding_x,
         .pad_y = options.ui.tooltip_padding_y,
@@ -479,7 +489,10 @@ pub fn buildFrame(self: *KitOverlay, atlas: *Atlas, width: f32, height: f32, bac
     const drawn_before = self.painter.len > 0;
     self.painter.begin();
     self.tree.reset();
-    self.build(atlas, width, height, self.color_scheme.variant(background).theme(), dt_ms, link_hint) catch |err| {
+    var themed = self.color_scheme.variant(background).theme().*;
+    themed.ring_width = self.focus_ring_width;
+    themed.ring_opacity = self.focus_ring_opacity;
+    self.build(atlas, width, height, &themed, dt_ms, link_hint) catch |err| {
         // The same state would fail the same way every frame.
         if (self.lock_screen.isShown()) {
             log.err("cannot show the lock screen, dropping it: {t}", .{err});

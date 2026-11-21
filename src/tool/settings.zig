@@ -196,6 +196,9 @@ const key_meta_table = [_]KeyMetaEntry{
     .{ .section = .ui, .name = "tooltip_padding_x", .label = "Tooltip Horizontal Padding", .description = "Horizontal padding inside tooltip cards, in logical pixels." },
     .{ .section = .ui, .name = "tooltip_padding_y", .label = "Tooltip Vertical Padding", .description = "Vertical padding inside tooltip cards, in logical pixels." },
     .{ .section = .ui, .name = "tooltip_gap", .label = "Tooltip Gap", .description = "Spacing between tooltip rows and their swatches, in logical pixels." },
+    .{ .section = .ui, .name = "animation_duration", .label = "Animation Duration", .description = "How long UI enter and leave animations take (50ms–5s)." },
+    .{ .section = .ui, .name = "focus_ring_width", .label = "Focus Ring Width", .description = "Width of the focus ring drawn outside a control's border." },
+    .{ .section = .ui, .name = "focus_ring_opacity", .label = "Focus Ring Opacity", .description = "Opacity of the focus ring, in percent." },
 
     .{ .section = .window, .name = "background_opacity", .label = "Background Opacity", .description = "How solid the terminal background is, from 0.0 (see-through) to 1.0 (opaque)." },
     .{ .section = .window, .name = "dim_text_opacity", .label = "Dim Text Opacity", .description = "Brightness multiplier for dimmed terminal text (0.0–1.0)." },
@@ -304,6 +307,8 @@ const key_meta_table = [_]KeyMetaEntry{
     .{ .section = .toast, .name = "gap", .label = "Stack Gap", .description = "Vertical spacing between expanded toast cards in pixels." },
     .{ .section = .toast, .name = "peek", .label = "Stack Peek", .description = "Visible vertical strip of each card peeking behind the front toast in pixels (0–32)." },
     .{ .section = .toast, .name = "scale_step", .label = "Stack Scale Step", .description = "Width shrink fraction per card behind the front toast when stacked (0.0–0.25)." },
+    .{ .section = .toast, .name = "rise_distance", .label = "Rise Distance", .description = "How far a toast slides in from its resting place, in pixels." },
+    .{ .section = .toast, .name = "glide_ms", .label = "Glide Time Constant", .description = "How quickly a toast glides to a new place, in milliseconds." },
 
     .{ .section = .banner, .name = "enabled", .label = "Enable Banners", .description = "Show persistent status banners inside the terminal." },
     .{ .section = .banner, .name = "placement", .label = "Placement", .description = "Display as a rounded floating card or a full-width docked bar." },
@@ -311,6 +316,7 @@ const key_meta_table = [_]KeyMetaEntry{
     .{ .section = .banner, .name = "max_width", .label = "Maximum Width", .description = "Maximum width of floating banners in pixels." },
     .{ .section = .banner, .name = "margin", .label = "Edge Margin", .description = "Distance between floating banners and window edges in pixels." },
     .{ .section = .banner, .name = "padding", .label = "Inner Padding", .description = "Space inside each status banner in pixels." },
+    .{ .section = .banner, .name = "slide_distance", .label = "Slide Distance", .description = "How far the banner slides in from the edge, in pixels." },
 
     .{ .section = .modal, .name = "backdrop_opacity", .label = "Backdrop Opacity", .description = "Dimming opacity of the backdrop behind modal dialogs (0.0–1.0)." },
     .{ .section = .modal, .name = "on_outside_click", .label = "Outside Click", .description = "Whether clicking outside a modal dialog dismisses it." },
@@ -2421,7 +2427,7 @@ fn selectUnderPoint(state: *const State, x: f32, y: f32) ?u16 {
 
 fn updateSliderFromPointer(state: *State, idx: u16, x: f32) bool {
     const rect = state.node_rect.get(sliderId(idx)) orelse return false;
-    const raw = slider.ratioFromX(rect, x);
+    const raw = slider.ratioFromX(rect, x, state.activeConfig().ui.focus_ring_width);
     const rounded = @round(raw * 100.0) / 100.0;
     if (state.slider_values[idx] == rounded) return false;
     state.slider_values[idx] = rounded;
@@ -3462,7 +3468,7 @@ fn viewKeyRow(
             const val = state.slider_values[idx];
             // The slider's total width is track + focus ring + gap + readout;
             // make that exactly the shared control column width.
-            const slider_extra = @as(f32, Theme.ring_width) * 2 + slider.readout_gap + slider.readout_width;
+            const slider_extra = @as(f32, theme.ring_width) * 2 + slider.readout_gap + slider.readout_width;
             const reset_taken: f32 = if (reset_target != null) cluster_gap + reset_slot else 0;
             const track_w: f32 = if (compact)
                 @max(pane_w - 130 - reset_taken - slider_extra, 60)
@@ -3632,7 +3638,7 @@ fn viewKeyRow(
                 const item_u16: u16 = @intCast(item_i);
                 const item_pad = try tree.open(.{
                     .width = .fill,
-                    .padding = .symmetric(Theme.ring_width, 0),
+                    .padding = .symmetric(theme.ring_width, 0),
                 });
                 const item_row = try tree.open(.{
                     .axis = .row,

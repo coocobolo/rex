@@ -127,6 +127,8 @@ pub const State = struct {
     count: u8 = 0,
     /// Set by the owner, from the user's setting.
     motion: motion.Mode = .full,
+    /// Enter/leave duration from `[ui] animation_duration`.
+    duration_ms: u16 = Theme.duration,
     /// Backdrop opacity (0-255), or null for the theme default.
     scrim_alpha: ?u8 = null,
     option: Option = .{},
@@ -245,7 +247,7 @@ pub fn update(state: *State, event: Event) Outcome {
 fn open(self: *State, request: Request) Outcome {
     assert(request.actions.len >= 1 and request.actions.len <= actions_max);
     assert(request.focus < request.actions.len or request.focus == no_action);
-    if (!self.phase.enter(self.motion)) return .quiet;
+    if (!self.phase.enter(self.motion, self.duration_ms)) return .quiet;
     self.focus = request.focus;
     self.hover = no_action;
     self.pressed = no_action;
@@ -264,7 +266,7 @@ fn open(self: *State, request: Request) Outcome {
 }
 
 fn tick(self: *State, dt_ms: u32) Outcome {
-    switch (self.phase.tick(self.motion, dt_ms)) {
+    switch (self.phase.tick(self.motion, dt_ms, self.duration_ms)) {
         .quiet => return .quiet,
         .redraw => return .redraw,
         .closed => {
@@ -333,7 +335,7 @@ fn take(self: *State, index: u8) Outcome {
 }
 
 fn beginLeave(self: *State) Outcome {
-    if (!self.phase.leave(self.motion)) return .quiet;
+    if (!self.phase.leave(self.motion, self.duration_ms)) return .quiet;
     self.hover = no_action;
     self.pressed = no_action;
     return .redraw;
@@ -371,7 +373,7 @@ pub fn view(state: *const State, tree: *Tree, theme: *const Theme) Tree.Error!?I
 /// viewports (`viewport_width < narrow_width`).
 pub fn viewIn(state: *const State, tree: *Tree, theme: *const Theme, viewport_width: f32) Tree.Error!?Index {
     if (state.phase == .closed) return null;
-    const presence = state.phase.presence(state.motion);
+    const presence = state.phase.presence(state.motion, state.duration_ms);
     const narrow = viewport_width < narrow_width;
     const compact = viewport_width < 220;
     const card_margin: u8 = if (compact) @min(state.option.margin, 4) else if (narrow) @min(state.option.margin, 8) else state.option.margin;

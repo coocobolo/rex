@@ -33,12 +33,12 @@ pub const Phase = union(enum) {
     leaving: u16,
 
     /// 0 (invisible) to 1 (fully shown): the opacity of everything drawn.
-    pub fn presence(self: Phase, mode: motion.Mode) f32 {
+    pub fn presence(self: Phase, mode: motion.Mode, duration_ms: u16) f32 {
         return switch (self) {
             .closed => 0,
-            .entering => |elapsed| motion.progress(mode, elapsed),
+            .entering => |elapsed| motion.progress(mode, elapsed, duration_ms),
             .open => 1,
-            .leaving => |elapsed| 1 - motion.progress(mode, elapsed),
+            .leaving => |elapsed| 1 - motion.progress(mode, elapsed, duration_ms),
         };
     }
 
@@ -60,8 +60,8 @@ pub const Phase = union(enum) {
 
     /// Starts fading in, from as far as it had faded out. Returns false,
     /// changing nothing, when it is already entering or open.
-    pub fn enter(self: *Phase, mode: motion.Mode) bool {
-        const duration = motion.duration(mode);
+    pub fn enter(self: *Phase, mode: motion.Mode, duration_ms: u16) bool {
+        const duration = motion.duration(mode, duration_ms);
         self.* = switch (self.*) {
             .entering, .open => return false,
             .closed => .{ .entering = 0 },
@@ -71,19 +71,19 @@ pub const Phase = union(enum) {
     }
 
     /// Starts fading in, or jumps straight to `.open` when `mode` has zero duration.
-    pub fn enterImmediate(self: *Phase, mode: motion.Mode) bool {
+    pub fn enterImmediate(self: *Phase, mode: motion.Mode, duration_ms: u16) bool {
         if (mode == .none) {
             const was_open = self.acceptsInput();
             self.* = .open;
             return !was_open;
         }
-        return self.enter(mode);
+        return self.enter(mode, duration_ms);
     }
 
     /// Starts fading out, from as far as it had faded in. Returns false,
     /// changing nothing, when it is already leaving or closed.
-    pub fn leave(self: *Phase, mode: motion.Mode) bool {
-        const duration = motion.duration(mode);
+    pub fn leave(self: *Phase, mode: motion.Mode, duration_ms: u16) bool {
+        const duration = motion.duration(mode, duration_ms);
         self.* = switch (self.*) {
             .closed, .leaving => return false,
             .entering => |elapsed| .{ .leaving = duration - @min(elapsed, duration) },
@@ -93,13 +93,13 @@ pub const Phase = union(enum) {
     }
 
     /// Starts fading out, or jumps straight to `.closed` when `mode` has zero duration.
-    pub fn leaveImmediate(self: *Phase, mode: motion.Mode) bool {
+    pub fn leaveImmediate(self: *Phase, mode: motion.Mode, duration_ms: u16) bool {
         if (mode == .none) {
             const was_open = self.* != .closed;
             self.* = .closed;
             return was_open;
         }
-        return self.leave(mode);
+        return self.leave(mode, duration_ms);
     }
 
     pub const Step = enum {
@@ -112,9 +112,9 @@ pub const Phase = union(enum) {
     };
 
     /// `dt_ms` milliseconds passed.
-    pub fn tick(self: *Phase, mode: motion.Mode, dt_ms: u32) Step {
+    pub fn tick(self: *Phase, mode: motion.Mode, dt_ms: u32, duration_ms: u16) Step {
         const dt: u16 = std.math.lossyCast(u16, dt_ms);
-        const duration = motion.duration(mode);
+        const duration = motion.duration(mode, duration_ms);
         switch (self.*) {
             .closed, .open => return .quiet,
             .entering => |elapsed| {

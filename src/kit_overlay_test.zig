@@ -399,7 +399,7 @@ test "KitOverlay: the dialog covers the toast stack" {
 test "KitOverlay: its size" {
     // Nearly all of it is two tables: the font's kerning pairs, and
     // the painter's 2048 instances of 64 bytes with its glyph position cache.
-    try testing.expectEqual(383120, @sizeOf(KitOverlay));
+    try testing.expectEqual(383144, @sizeOf(KitOverlay));
     try testing.expectEqual(161048, @sizeOf(@FieldType(KitOverlay, "painter")));
     try testing.expectEqual(190424, @sizeOf(@FieldType(KitOverlay, "font")));
     try testing.expectEqual(9672, @sizeOf(@FieldType(KitOverlay, "nodes")));

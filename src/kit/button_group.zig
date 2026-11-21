@@ -37,7 +37,7 @@ pub fn open(tree: *Tree, theme: *const Theme, options: Options) Tree.Error!Frame
         .invalid = options.invalid,
         .disabled = options.disabled,
     });
-    const ring = try focus.openRing(tree, .{
+    const ring = try focus.openRing(tree, theme, .{
         .id = options.id,
         .width = if (options.width == .fill) .fill else .fit,
         .border = colors.ring,
