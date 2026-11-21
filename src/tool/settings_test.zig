@@ -1596,3 +1596,22 @@ test "settings: an error on a collapsed decoration row opens its group" {
     settings.setError(&state, dash_gap_idx, "invalid value");
     try testing.expect(state.decoration_groups_open[2]);
 }
+
+test "settings: tooltip fields follow the hyperlink target style" {
+    var cfg = config_defaults.default;
+    const head = keys.lookup(.hyperlink, "tooltip_head_bytes").?;
+    const line = keys.lookup(.hyperlink, "tooltip_line_bytes").?;
+    const wide = keys.lookup(.hyperlink, "tooltip_wide_width").?;
+
+    try testing.expect(!settings.rowCfgVisible(head, &cfg));
+    try testing.expect(settings.rowCfgVisible(line, &cfg));
+    try testing.expect(!settings.rowCfgVisible(wide, &cfg));
+
+    cfg.hyperlink.target_style = .head_tail;
+    try testing.expect(settings.rowCfgVisible(head, &cfg));
+    try testing.expect(!settings.rowCfgVisible(line, &cfg));
+
+    cfg.hyperlink.target_style = .wide;
+    try testing.expect(settings.rowCfgVisible(wide, &cfg));
+    try testing.expect(!settings.rowCfgVisible(head, &cfg));
+}
