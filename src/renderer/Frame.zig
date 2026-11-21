@@ -200,9 +200,9 @@ fn matchedSpan(start: u32, end: u32, old: ?[2]u32) ?SplicedRange {
 ///   7: OSC 8 link (ADR 0012)
 pub const Flags = packed struct(u8) {
     strikethrough: bool = false,
-    blink: bool = false, // SGR 5, Config.blink.half_period_ms
+    blink: bool = false, // SGR 5, cursor.blink_interval
     overline: bool = false,
-    blink_rapid: bool = false, // SGR 6, Config.blink.rapid_half_period_ms
+    blink_rapid: bool = false, // SGR 6, cursor.rapid_blink_interval
     underline: UnderlineStyle = .none,
     link: bool = false,
 };

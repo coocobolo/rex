@@ -83,7 +83,6 @@ const Loaded = rex.config.Loaded;
 const diagnostics = rex.config.diagnostics;
 
 /// Half period of SGR 6 rapid blink, in ms.
-const rapid_blink_half_period_ms = 250;
 /// How long a synchronized update (DEC mode 2026) may hold frames back.
 const sync_output_timeout_ms = 150;
 
@@ -820,7 +819,7 @@ pub fn init(
         .frame_latch = .init(app_platform.primaryRefreshHz()),
         .background_color = normalizedRgba(resolved_theme.background, background_alpha),
         .blink = .{ .period_ms = active_config.cursor.blink_interval_ms },
-        .blink_rapid = .{ .period_ms = rapid_blink_half_period_ms },
+        .blink_rapid = .{ .period_ms = active_config.cursor.rapid_blink_interval_ms },
         .dirs = dirs,
         .argv0 = argv0,
         .allocator = gpa,
@@ -1243,6 +1242,7 @@ fn renderFrame(self: *App) !bool {
             link_hint = .{
                 .uri = uri,
                 .style = self.config.hyperlink.target_style,
+                .layout = self.config.hyperlink.tooltip,
                 .x = self.mouse_x / self.content_scale,
                 .y = self.mouse_y / self.content_scale,
             };
@@ -2159,6 +2159,7 @@ pub fn reloadConfig(self: *App) void {
     self.renderer.setScrollbarOption(rendererScrollbarOption(self.config.scrollbar));
     self.renderer.setCursorOption(rendererCursorOption(self.config.cursor));
     self.blink.setPeriod(self.config.cursor.blink_interval_ms);
+    self.blink_rapid.setPeriod(self.config.cursor.rapid_blink_interval_ms);
     self.updateScrollbarHover();
     if (self.kit) |kit| {
         kit.configure(kitOverlayOptions(self.config.ui, self.config.window));
@@ -4747,6 +4748,7 @@ fn rendererScrollbarOption(sb: Config.Scrollbar) renderer_mod.Scrollbar.Option {
     out.gap = sb.gap;
     out.min_thumb_height = sb.min_thumb_height;
     out.radius = sb.radius;
+    out.lerp_speed = sb.animation_speed;
     out.auto_hide = sb.auto_hide;
     out.auto_hide_alpha = sb.auto_hide_opacity;
     out.track_color = normalizedRgba(sb.track_color, sb.track_opacity);

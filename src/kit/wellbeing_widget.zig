@@ -1427,6 +1427,7 @@ pub fn viewTooltip(
     theme: *const Theme,
     viewport_w: f32,
     viewport_h: f32,
+    metrics: tooltip.Metrics,
 ) Tree.Error!?Index {
     if (!state.visible or !state.option.tooltip) return null;
     if (!state.pointer_inside and state.hovered == .none) return null;
@@ -1434,7 +1435,7 @@ pub fn viewTooltip(
     const eff = state.effectiveSize(viewport_w, viewport_h);
     if (eff.mode != .mini) return null;
 
-    const card = try tooltip.openAt(tree, theme, 0, 0);
+    const card = try tooltip.openAt(tree, theme, 0, 0, metrics);
     const row = try tree.open(.{
         .axis = .row,
         .gap = 6,

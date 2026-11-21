@@ -17,28 +17,34 @@ const Tree = @import("Tree.zig");
 const Id = Tree.Id;
 const Index = Tree.Index;
 
+/// Card padding and row spacing, owned by the surface that shows the tooltip.
+pub const Metrics = struct {
+    pad_x: u8 = default_pad_x,
+    pad_y: u8 = default_pad_y,
+    gap: u8 = default_gap,
+};
+
 pub const Options = struct {
     anchor: Id,
     side: Tree.Anchor.Side = .auto,
     alignment: Tree.Anchor.Alignment = .start,
     gap: u8 = layout.anchor_gap,
     margin: u8 = layout.anchor_margin,
+    metrics: Metrics = .{},
 };
 
-/// Horizontal padding inside the card.
-pub const pad_x = 12;
-/// Vertical padding inside the card.
-pub const pad_y = 8;
 /// The color swatch, a square the shader rounds into a dot.
 pub const swatch = 8;
-/// Between the swatch, the name and the value, and between lines.
-pub const gap = 8;
+const default_pad_x: u8 = 12;
+const default_pad_y: u8 = 8;
+const default_gap: u8 = 8;
 
 pub const Line = struct {
     /// Borrowed until the view is rebuilt, like `value`.
     name: []const u8,
     value: []const u8,
     swatch: Color,
+    metrics: Metrics = .{},
 };
 
 /// The card, then each line's row, swatch, name and value.
@@ -49,7 +55,7 @@ pub fn nodes(count: usize) usize {
 /// Opens the card as a root, anchored to `options.anchor` without stretching to
 /// its width. Write the lines, then `close`.
 pub fn open(tree: *Tree, theme: *const Theme, options: Options) Tree.Error!Index {
-    const card = try openCard(tree, theme);
+    const card = try openCard(tree, theme, options.metrics);
     try tree.anchorToWith(card, options.anchor, .{
         .side = options.side,
         .alignment = options.alignment,
@@ -62,17 +68,17 @@ pub fn open(tree: *Tree, theme: *const Theme, options: Options) Tree.Error!Index
 
 /// Opens the card as a root, placed near `(x, y)` in logical pixels.
 /// Write the lines, then `close`.
-pub fn openAt(tree: *Tree, theme: *const Theme, x: f32, y: f32) Tree.Error!Index {
-    const card = try openCard(tree, theme);
+pub fn openAt(tree: *Tree, theme: *const Theme, x: f32, y: f32, metrics: Metrics) Tree.Error!Index {
+    const card = try openCard(tree, theme, metrics);
     try tree.anchorAt(card, x, y);
     return card;
 }
 
-fn openCard(tree: *Tree, theme: *const Theme) Tree.Error!Index {
+fn openCard(tree: *Tree, theme: *const Theme, metrics: Metrics) Tree.Error!Index {
     assert(tree.current == Tree.none);
     return tree.open(.{
-        .padding = .symmetric(pad_x, pad_y),
-        .gap = gap,
+        .padding = .symmetric(metrics.pad_x, metrics.pad_y),
+        .gap = metrics.gap,
         .fill = theme.popover,
         .border = theme.border,
         .border_width = Theme.border_width,
@@ -88,7 +94,7 @@ pub fn close(tree: *Tree, card: Index) void {
 pub fn line(tree: *Tree, theme: *const Theme, item: Line) Tree.Error!void {
     const row = try tree.open(.{
         .axis = .row,
-        .gap = gap,
+        .gap = item.metrics.gap,
         .cross = .center,
     });
     _ = try tree.leaf(.{

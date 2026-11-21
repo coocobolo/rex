@@ -39,12 +39,12 @@ const log = std.log.scoped(.kit_overlay);
 /// wellbeing widget, or modal dialog / lock screen).
 const node_capacity = @max(@max(alert_mod.node_max + toast.node_max + widget_mod.node_max + tooltip.nodes(1), alert_dialog.node_max), lock_mod.node_max);
 
-/// The URI tooltip wraps on byte boundaries into at most this many lines,
-/// with an ellipsis when the URI is longer. Keeps the card narrow and its
-/// line use bounded by the fixed buffers below.
-const link_hint_line_max = 5;
-const link_hint_line_bytes = 40;
-const line_capacity = @max(@max(alert_mod.line_max + toast.line_max + widget_mod.line_max + link_hint_line_max, alert_dialog.line_max), lock_mod.line_max);
+/// Fixed maxima for the configurable URI tooltip layout. Config values are
+/// clamped to these so the layout stays inside the buffers below.
+const link_hint_max_lines = 16;
+const link_hint_max_line_bytes = 256;
+const link_hint_buffer_len = link_hint_max_lines * link_hint_max_line_bytes + text.ellipsis_bytes.len;
+const line_capacity = @max(@max(alert_mod.line_max + toast.line_max + widget_mod.line_max + link_hint_max_lines, alert_dialog.line_max), lock_mod.line_max);
 
 font: KitFont,
 painter: KitPainter,
@@ -63,7 +63,7 @@ wellbeing_widget: widget_mod.State = .empty,
 table: memory.Table = .empty,
 /// The URI text as wrapped for the tooltip. Lives here because the tree
 /// borrows it until the next build.
-link_hint_text: [link_hint_line_max * link_hint_line_bytes + link_hint_line_max + text.ellipsis_bytes.len]u8 = undefined,
+link_hint_text: [link_hint_buffer_len]u8 = undefined,
 /// Milliseconds ticked since the last built frame while a toast was
 /// gliding: how far the glide advances in the next one. Time that passes
 /// at rest does not count, or a glide that starts after a long rest would
@@ -72,6 +72,8 @@ elapsed_ms: u32 = 0,
 /// Whether the last built frame left a toast short of its place.
 motion: toast.Motion = .settled,
 color_scheme: Theme.ColorScheme = .auto,
+/// Tooltip card metrics from `[ui]`. Set by `configure`.
+tooltip_metrics: tooltip.Metrics = .{},
 
 pub const CreateError = Allocator.Error || @import("freetype/root.zig").FtError || @import("renderer/Shader.zig").Error;
 
@@ -101,6 +103,7 @@ pub fn destroy(self: *KitOverlay, gpa: Allocator) void {
 pub const LinkHint = struct {
     uri: []const u8,
     style: hyperlink.TargetStyle,
+    layout: hyperlink.TooltipLayout,
     /// Logical pixels, relative to the window.
     x: f32,
     y: f32,
@@ -121,6 +124,11 @@ pub fn configure(self: *KitOverlay, options: Options) void {
     self.dialog.motion = options.ui.motion;
     self.lock_screen.motion = options.ui.motion;
     self.color_scheme = options.ui.color_scheme;
+    self.tooltip_metrics = .{
+        .pad_x = options.ui.tooltip_padding_x,
+        .pad_y = options.ui.tooltip_padding_y,
+        .gap = options.ui.tooltip_gap,
+    };
 
     if (self.toasts.option.position != options.toast.position or
         self.toasts.option.layout != options.toast.layout)
@@ -509,7 +517,7 @@ fn build(self: *KitOverlay, atlas: *Atlas, width: f32, height: f32, theme: *cons
     const widget_root = try widget_mod.view(&self.wellbeing_widget, &self.tree, theme, width, height);
     const banner = try alert_mod.view(&self.alert, &self.tree, theme);
     const stack = try toast.view(&self.toasts, &self.tree, theme);
-    const widget_tip = try widget_mod.viewTooltip(&self.wellbeing_widget, &self.tree, theme, width, height);
+    const widget_tip = try widget_mod.viewTooltip(&self.wellbeing_widget, &self.tree, theme, width, height, self.tooltip_metrics);
     if (link_hint) |hint| _ = try self.viewLinkHint(theme, width, hint);
     try self.tree.layout(self.font.measurer(), width, height);
     widget_mod.place(&self.wellbeing_widget, &self.tree, widget_root, width, height);
@@ -530,11 +538,11 @@ fn tailStart(bytes: []const u8, n: usize) usize {
 /// Lays the URI out for the tooltip. `multiline` wraps at codepoint
 /// boundaries into short lines; `head_tail` keeps both ends of a long URI;
 /// `wide` uses the URI itself and the text node truncates it.
-fn linkHintText(self: *KitOverlay, uri: []const u8, style: hyperlink.TargetStyle) []const u8 {
+fn linkHintText(self: *KitOverlay, uri: []const u8, style: hyperlink.TargetStyle, layout: hyperlink.TooltipLayout) []const u8 {
     const buf = &self.link_hint_text;
     if (style == .head_tail) {
-        const head_chars = 40;
-        const tail_chars = 24;
+        const head_chars = @min(@as(usize, layout.head_bytes), link_hint_max_line_bytes);
+        const tail_chars = @min(@as(usize, layout.tail_bytes), link_hint_max_line_bytes);
         if (uri.len <= head_chars + tail_chars) return uri;
         const head = text.cut(uri, head_chars);
         const tail = uri[tailStart(uri, tail_chars)..];
@@ -547,12 +555,13 @@ fn linkHintText(self: *KitOverlay, uri: []const u8, style: hyperlink.TargetStyle
     var len: usize = 0;
     var src: usize = 0;
     var line: usize = 0;
-    while (line < link_hint_line_max and src < uri.len) : (line += 1) {
+    const max_lines = @min(@as(usize, layout.max_lines), link_hint_max_lines);
+    while (line < max_lines and src < uri.len) : (line += 1) {
         if (line != 0) {
             buf[len] = '\n';
             len += 1;
         }
-        const room = @min(link_hint_line_bytes, buf.len - len - text.ellipsis_bytes.len);
+        const room = @min(@as(usize, layout.line_bytes), @min(link_hint_max_line_bytes, buf.len - len - text.ellipsis_bytes.len));
         const n = text.cut(uri[src..], room);
         if (n == 0) break;
         @memcpy(buf[len..][0..n], uri[src..][0..n]);
@@ -569,11 +578,11 @@ fn linkHintText(self: *KitOverlay, uri: []const u8, style: hyperlink.TargetStyle
 /// Writes a narrow card with the target URI next to the pointer. The card has
 /// no id, so it never takes a click from the link underneath.
 fn viewLinkHint(self: *KitOverlay, theme: *const Theme, width: f32, hint: LinkHint) Tree.Error!void {
-    const card = try tooltip.openAt(&self.tree, theme, hint.x, hint.y);
+    const card = try tooltip.openAt(&self.tree, theme, hint.x, hint.y, self.tooltip_metrics);
     const wide = hint.style == .wide;
-    const cap: f32 = if (wide) 520 else 360;
+    const cap: f32 = @floatFromInt(if (wide) hint.layout.wide_width else hint.layout.width);
     const max_width = @max(@as(f32, 1), @min(cap, width - 16));
-    const bytes = if (wide) hint.uri else self.linkHintText(hint.uri, hint.style);
+    const bytes = if (wide) hint.uri else self.linkHintText(hint.uri, hint.style, hint.layout);
     _ = try self.tree.text(bytes, .{
         .color = theme.foreground,
         .style = .xs,

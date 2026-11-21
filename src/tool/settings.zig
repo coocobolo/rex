@@ -189,9 +189,13 @@ const key_meta_table = [_]KeyMetaEntry{
     .{ .section = .cursor, .name = "beam_thickness", .label = "Beam Thickness", .description = "Width of the vertical bar cursor as a fraction of cell width (0.0–1.0)." },
     .{ .section = .cursor, .name = "hollow_border_width", .label = "Unfocused Border Width", .description = "Outline thickness in pixels when the window is unfocused (0 keeps the cursor filled)." },
     .{ .section = .cursor, .name = "blink_interval", .label = "Blink Interval", .description = "Half-period for blinking cursors and blinking text (50ms–5s)." },
+    .{ .section = .cursor, .name = "rapid_blink_interval", .label = "Rapid Blink Interval", .description = "Half-period for SGR 6 rapid blinking text (50ms–5s)." },
 
     .{ .section = .ui, .name = "motion", .label = "Animations", .description = "Play smooth transitions in menus and overlays, or switch immediately." },
     .{ .section = .ui, .name = "color_scheme", .label = "Interface Theme", .description = "Light or dark look for settings, dialogs, and overlays, or match your terminal theme." },
+    .{ .section = .ui, .name = "tooltip_padding_x", .label = "Tooltip Horizontal Padding", .description = "Horizontal padding inside tooltip cards, in logical pixels." },
+    .{ .section = .ui, .name = "tooltip_padding_y", .label = "Tooltip Vertical Padding", .description = "Vertical padding inside tooltip cards, in logical pixels." },
+    .{ .section = .ui, .name = "tooltip_gap", .label = "Tooltip Gap", .description = "Spacing between tooltip rows and their swatches, in logical pixels." },
 
     .{ .section = .window, .name = "background_opacity", .label = "Background Opacity", .description = "How solid the terminal background is, from 0.0 (see-through) to 1.0 (opaque)." },
     .{ .section = .window, .name = "dim_text_opacity", .label = "Dim Text Opacity", .description = "Brightness multiplier for dimmed terminal text (0.0–1.0)." },
@@ -221,6 +225,7 @@ const key_meta_table = [_]KeyMetaEntry{
     .{ .section = .scrollbar, .name = "gap", .label = "Edge Gap", .description = "Space between the scrollbar and the right window edge in pixels." },
     .{ .section = .scrollbar, .name = "min_thumb_height", .label = "Minimum Thumb Height", .description = "Shortest height the draggable scrollbar thumb can shrink to in pixels." },
     .{ .section = .scrollbar, .name = "radius", .label = "Corner Radius", .description = "Roundness of the scrollbar track and thumb corners in pixels." },
+    .{ .section = .scrollbar, .name = "animation_speed", .label = "Animation Speed", .description = "How quickly the scrollbar eases to its width and opacity." },
     .{ .section = .scrollbar, .name = "auto_hide", .label = "Auto-hide at Bottom", .description = "Fade the scrollbar down when viewing the latest output." },
     .{ .section = .scrollbar, .name = "auto_hide_opacity", .label = "Idle Opacity", .description = "Opacity of the faded scrollbar while at the bottom (0.0–1.0)." },
     .{ .section = .scrollbar, .name = "track_color", .label = "Track Color", .description = "Background color of the scrollbar track." },
@@ -248,6 +253,12 @@ const key_meta_table = [_]KeyMetaEntry{
     .{ .section = .hyperlink, .name = "underline_style", .label = "Underline Style", .description = "Style of the underline Rex adds to linked text; explicit SGR underlines keep their own style." },
     .{ .section = .hyperlink, .name = "show_targets", .label = "Show Targets", .description = "When to show the target URI while hovering a link." },
     .{ .section = .hyperlink, .name = "target_style", .label = "Target Style", .description = "How a long target URI is shown: multiline, head and tail, or one wide line." },
+    .{ .section = .hyperlink, .name = "tooltip_head_bytes", .label = "Tooltip Head Bytes", .description = "How many leading bytes of a long URI the head+tail layout keeps." },
+    .{ .section = .hyperlink, .name = "tooltip_tail_bytes", .label = "Tooltip Tail Bytes", .description = "How many trailing bytes of a long URI the head+tail layout keeps." },
+    .{ .section = .hyperlink, .name = "tooltip_line_bytes", .label = "Tooltip Line Bytes", .description = "Bytes per line in the multiline URI tooltip." },
+    .{ .section = .hyperlink, .name = "tooltip_max_lines", .label = "Tooltip Max Lines", .description = "Maximum number of lines in the multiline URI tooltip." },
+    .{ .section = .hyperlink, .name = "tooltip_width", .label = "Tooltip Width", .description = "Maximum width of the multiline tooltip in logical pixels." },
+    .{ .section = .hyperlink, .name = "tooltip_wide_width", .label = "Wide Tooltip Width", .description = "Maximum width of the one-line tooltip in logical pixels." },
     .{ .section = .hyperlink, .name = "underline_color", .label = "Link Underline Color", .description = "Underline color for OSC 8 links; none uses the decoration underline or text color." },
     .{ .section = .hyperlink, .name = "open_command", .label = "Open Command", .description = "Command that opens a URI; empty uses the system default." },
     .{ .section = .hyperlink, .name = "schemes", .label = "Allowed Schemes", .description = "URI schemes a link may open; file is disabled by default." },
@@ -1897,6 +1908,15 @@ fn isInactiveSubRow(idx: u16) bool {
 }
 
 pub fn rowCfgVisible(idx: u16, cfg: *const Config) bool {
+    const info = row_infos[idx];
+    // Tooltip dimensions only apply to the selected target layout.
+    if (info.section == .hyperlink and std.mem.startsWith(u8, info.name, "tooltip_")) {
+        const style = cfg.hyperlink.target_style;
+        if (std.mem.eql(u8, info.name, "tooltip_head_bytes") or
+            std.mem.eql(u8, info.name, "tooltip_tail_bytes")) return style == .head_tail;
+        if (std.mem.eql(u8, info.name, "tooltip_wide_width")) return style == .wide;
+        return style == .multiline;
+    }
     return switch (idx) {
         inactive_bg_opacity_idx => cfg.window.on_inactive.contains(.opacity),
         inactive_dim_opacity_idx => cfg.window.on_inactive.contains(.dim),
@@ -2780,6 +2800,7 @@ pub fn setError(state: *State, idx: u16, msg: []const u8) void {
 }
 
 pub fn view(state: *const State, tree: *Tree, theme: *const Theme) kit.Tree.Error!void {
+    const cfg = state.activeConfig();
     const frame = try sidebar.begin(tree, theme, &groups, &state.frame, .{});
 
     const scroll_box = try scroll_area.open(tree, .{
@@ -2818,7 +2839,14 @@ pub fn view(state: *const State, tree: *Tree, theme: *const Theme) kit.Tree.Erro
         const seg = state.hover.key_segment;
         const info = row_infos[seg.key];
         if (seg.idx < info.display_labels.len) {
-            const card = try tooltip.open(tree, theme, .{ .anchor = segmentId(seg.key, seg.idx) });
+            const card = try tooltip.open(tree, theme, .{
+                .anchor = segmentId(seg.key, seg.idx),
+                .metrics = .{
+                    .pad_x = cfg.ui.tooltip_padding_x,
+                    .pad_y = cfg.ui.tooltip_padding_y,
+                    .gap = cfg.ui.tooltip_gap,
+                },
+            });
             _ = try tree.text(info.display_labels[seg.idx], .{
                 .color = theme.foreground,
                 .style = .xs,

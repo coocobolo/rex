@@ -433,7 +433,7 @@ test "wellbeing_widget: hover tooltip shows phase and cycle only in mini while n
         var fixture: Fixture = .{};
         var tree = fixture.tree();
         _ = (try widget.view(&state, &tree, &Theme.dark, 800, 600)).?;
-        try testing.expectEqual(null, try widget.viewTooltip(&state, &tree, &Theme.dark, 800, 600));
+        try testing.expectEqual(null, try widget.viewTooltip(&state, &tree, &Theme.dark, 800, 600, .{}));
     }
 
     // Hovered in mini: tooltip shows colored Focus badge + 2/4 cycle below card near top.
@@ -442,7 +442,7 @@ test "wellbeing_widget: hover tooltip shows phase and cycle only in mini while n
         var fixture: Fixture = .{};
         var tree = fixture.tree();
         const root = (try widget.view(&state, &tree, &Theme.dark, 800, 600)).?;
-        const tip = (try widget.viewTooltip(&state, &tree, &Theme.dark, 800, 600)).?;
+        const tip = (try widget.viewTooltip(&state, &tree, &Theme.dark, 800, 600, .{})).?;
         try tree.layout(measurer, 800, 600);
         widget.place(&state, &tree, root, 800, 600);
         widget.placeTooltip(&tree, root, tip, 800, 600);
@@ -488,7 +488,7 @@ test "wellbeing_widget: hover tooltip shows phase and cycle only in mini while n
         var fixture: Fixture = .{};
         var tree = fixture.tree();
         const root = (try widget.view(&state, &tree, &Theme.dark, 800, 600)).?;
-        const tip = (try widget.viewTooltip(&state, &tree, &Theme.dark, 800, 600)).?;
+        const tip = (try widget.viewTooltip(&state, &tree, &Theme.dark, 800, 600, .{})).?;
         try tree.layout(measurer, 800, 600);
         widget.place(&state, &tree, root, 800, 600);
         widget.placeTooltip(&tree, root, tip, 800, 600);
@@ -521,7 +521,7 @@ test "wellbeing_widget: hover tooltip shows phase and cycle only in mini while n
         var fixture: Fixture = .{};
         var tree = fixture.tree();
         _ = (try widget.view(&state, &tree, &Theme.dark, 800, 600)).?;
-        try testing.expectEqual(null, try widget.viewTooltip(&state, &tree, &Theme.dark, 800, 600));
+        try testing.expectEqual(null, try widget.viewTooltip(&state, &tree, &Theme.dark, 800, 600, .{}));
     }
     _ = widget.update(&state, .{ .release = .resize });
     state.width = 264;
@@ -530,7 +530,7 @@ test "wellbeing_widget: hover tooltip shows phase and cycle only in mini while n
         var fixture: Fixture = .{};
         var tree = fixture.tree();
         _ = (try widget.view(&state, &tree, &Theme.dark, 800, 600)).?;
-        try testing.expectEqual(null, try widget.viewTooltip(&state, &tree, &Theme.dark, 800, 600));
+        try testing.expectEqual(null, try widget.viewTooltip(&state, &tree, &Theme.dark, 800, 600, .{}));
     }
 }
 
@@ -580,7 +580,7 @@ test "wellbeing_widget: tooltip picks below/above/left/right side cleanly with f
         var fixture: Fixture = .{};
         var tree = fixture.tree();
         const root = (try widget.view(&state, &tree, &Theme.dark, c.vw, c.vh)).?;
-        const tip = (try widget.viewTooltip(&state, &tree, &Theme.dark, c.vw, c.vh)).?;
+        const tip = (try widget.viewTooltip(&state, &tree, &Theme.dark, c.vw, c.vh, .{})).?;
         try tree.layout(measurer, c.vw, c.vh);
         widget.place(&state, &tree, root, c.vw, c.vh);
         widget.placeTooltip(&tree, root, tip, c.vw, c.vh);
@@ -724,7 +724,7 @@ test "wellbeing_widget: Option anchor, default size, configure, and tooltip disa
         var fixture: Fixture = .{};
         var tree = fixture.tree();
         const root = (try widget.view(&state, &tree, &Theme.dark, 800, 600)).?;
-        try testing.expectEqual(null, try widget.viewTooltip(&state, &tree, &Theme.dark, 800, 600));
+        try testing.expectEqual(null, try widget.viewTooltip(&state, &tree, &Theme.dark, 800, 600, .{}));
         try tree.layout(measurer, 800, 600);
         widget.place(&state, &tree, root, 800, 600);
         try testing.expectEqual(Tree.Rect{ .x = 16, .y = 16, .w = 120, .h = 120 }, tree.nodes[root].rect);

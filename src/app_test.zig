@@ -114,7 +114,7 @@ test "PeriodicTimer.setPeriod: shrinking period clamps elapsed_ms without underf
 
 test "rendererCursorOption: maps Config.Cursor onto renderer Cursor.Option" {
     const testing = std.testing;
-    try testing.expectEqual(@as(usize, 28), @sizeOf(Config.Cursor));
+    try testing.expectEqual(@as(usize, 32), @sizeOf(Config.Cursor));
     try testing.expectEqual(Cursor.Option.default, App.rendererCursorOption(.default));
 
     const custom: Config.Cursor = .{

@@ -399,7 +399,7 @@ test "KitOverlay: the dialog covers the toast stack" {
 test "KitOverlay: its size" {
     // Nearly all of it is two tables: the font's kerning pairs, and
     // the painter's 2048 instances of 64 bytes with its glyph position cache.
-    try testing.expectEqual(379096, @sizeOf(KitOverlay));
+    try testing.expectEqual(383120, @sizeOf(KitOverlay));
     try testing.expectEqual(161048, @sizeOf(@FieldType(KitOverlay, "painter")));
     try testing.expectEqual(190424, @sizeOf(@FieldType(KitOverlay, "font")));
     try testing.expectEqual(9672, @sizeOf(@FieldType(KitOverlay, "nodes")));
@@ -771,7 +771,7 @@ test "KitOverlay: a link hint wraps narrow and never catches a click" {
     const uri = "https://example.com/" ++ "a" ** 250;
 
     try testing.expect(!fixture.frame());
-    try testing.expect(kit.buildFrame(&fixture.atlas, 800, 600, dark, .{ .uri = uri, .style = .multiline, .x = 400, .y = 300 }));
+    try testing.expect(kit.buildFrame(&fixture.atlas, 800, 600, dark, .{ .uri = uri, .style = .multiline, .layout = .{}, .x = 400, .y = 300 }));
     try testing.expect(kit.painter.len > 0);
 
     var saw_uri = false;
@@ -799,7 +799,7 @@ test "KitOverlay: a link hint wraps narrow and never catches a click" {
     try testing.expect(!fixture.frame());
 
     // A short URI stays on one line and needs no ellipsis.
-    try testing.expect(kit.buildFrame(&fixture.atlas, 800, 600, dark, .{ .uri = "https://example.com", .style = .multiline, .x = 400, .y = 300 }));
+    try testing.expect(kit.buildFrame(&fixture.atlas, 800, 600, dark, .{ .uri = "https://example.com", .style = .multiline, .layout = .{}, .x = 400, .y = 300 }));
     for (kit.tree.nodes[0..kit.tree.len]) |node| {
         switch (node.content) {
             .text => |t| if (std.mem.eql(u8, t.bytes, "https://example.com")) {
@@ -816,7 +816,7 @@ test "KitOverlay: head_tail and wide URI tooltip styles" {
     const kit = fixture.kit;
     const uri = "https://example.com/" ++ "a" ** 250;
 
-    try testing.expect(kit.buildFrame(&fixture.atlas, 800, 600, dark, .{ .uri = uri, .style = .head_tail, .x = 400, .y = 300 }));
+    try testing.expect(kit.buildFrame(&fixture.atlas, 800, 600, dark, .{ .uri = uri, .style = .head_tail, .layout = .{}, .x = 400, .y = 300 }));
     var saw_head_tail = false;
     for (kit.tree.nodes[0..kit.tree.len]) |node| {
         switch (node.content) {
@@ -832,7 +832,7 @@ test "KitOverlay: head_tail and wide URI tooltip styles" {
     }
     try testing.expect(saw_head_tail);
 
-    try testing.expect(kit.buildFrame(&fixture.atlas, 800, 600, dark, .{ .uri = uri, .style = .wide, .x = 400, .y = 300 }));
+    try testing.expect(kit.buildFrame(&fixture.atlas, 800, 600, dark, .{ .uri = uri, .style = .wide, .layout = .{}, .x = 400, .y = 300 }));
     var saw_wide = false;
     for (kit.tree.nodes[0..kit.tree.len]) |node| {
         switch (node.content) {

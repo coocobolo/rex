@@ -1158,7 +1158,7 @@ fn historyPage(state: *const State, tree: *Tree, theme: *const Theme) kit.Tree.E
 
 /// The hovered day's date and numbers, placed near the pointer.
 fn dayTooltip(state: *const State, tree: *Tree, theme: *const Theme) kit.Tree.Error!void {
-    const tip = try tooltip.openAt(tree, theme, state.pointer_x, state.pointer_y);
+    const tip = try tooltip.openAt(tree, theme, state.pointer_x, state.pointer_y, .{});
     _ = try tree.text(state.tip.title.slice(), .{ .color = theme.foreground, .style = .xs });
     try tooltip.line(tree, theme, .{ .name = "Screen", .value = state.tip.screen.slice(), .swatch = screenFill(theme) });
     try tooltip.line(tree, theme, .{ .name = "Focus", .value = state.tip.focus.slice(), .swatch = focusFill(theme) });
@@ -1170,7 +1170,7 @@ fn dayTooltip(state: *const State, tree: *Tree, theme: *const Theme) kit.Tree.Er
 fn programTooltip(state: *const State, tree: *Tree, theme: *const Theme, index: u8) kit.Tree.Error!void {
     const rows = programRows(state);
     if (index >= rows.len) return;
-    const tip = try tooltip.openAt(tree, theme, state.pointer_x, state.pointer_y);
+    const tip = try tooltip.openAt(tree, theme, state.pointer_x, state.pointer_y, .{});
     try tooltip.line(tree, theme, .{
         .name = rows[index].name.slice(),
         .value = state.tip.program_value.slice(),
